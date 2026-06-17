@@ -44,6 +44,18 @@ Notes:
 - The cold HDD is a **new HAMR platform**: spin-up/ready is ~15–30 s, not the ~8 s of
   classic drives. Controller is native **Intel AHCI** (not USB), so software standby works.
 
+**Concrete assignment (bound to drive serial — re-cable to any SATA slot freely):**
+
+| Role | Drive serial (`/dev/disk/by-id/...`) |
+|---|---|
+| Hot SSD (with cold HDD) | `ata-Samsung_SSD_870_QVO_8TB_S5SSNF0WA00268B` |
+| Audio SSD | `ata-Samsung_SSD_870_QVO_8TB_S5SSNF0W909892P` |
+| Cold HDD | `ata-ST30000NM004K-3RM133_K1S05Y9M` |
+
+Nothing references `/dev/sdX` or a SATA port: drives are wiped/partitioned by `by-id`
+serial, mounted by filesystem `UUID`, and hd-idle/smartd target the HDD by serial. See
+`scripts/setup-storage.sh`.
+
 ---
 
 ## 3. Final mount layout
