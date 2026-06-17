@@ -24,7 +24,7 @@ of the time.
 - ✅ Mounted by **UUID** via the managed `/etc/fstab` block; mergerfs pool `/srv/video`
   reports **35 TB** (8 TB hot + 27 TB cold). `/srv/audio` = 7.3 TB.
 - ✅ Spin-down: **`hd-idle` active + enabled**, parking only the cold HDD by serial after
-  15 min (`-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 900`).
+  5 min (`-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 300`).
 - ✅ `smartd` active (HDD `-n standby`), `fstrim.timer` enabled, `user_allow_other` set.
 - ✅ **Spin-state logger active** — 5-min `smartctl` timer logging to
   `/var/log/hdd-spinstate.log` (§11).
@@ -218,7 +218,7 @@ In Docker, bind-mount `/srv/video` into containers with **`bind-propagation: rsl
 sudo apt install -y hd-idle smartmontools
 ```
 
-- **`hd-idle`** parks the cold HDD after ~15–20 min of *actual* zero I/O (preferred over
+- **`hd-idle`** parks the cold HDD after ~5 min of *actual* zero I/O (preferred over
   `hdparm -S`, whose firmware APM timer some Exos ignore; hd-idle watches
   `/proc/diskstats`). Target **only the cold HDD**, and pass the **full
   `/dev/disk/by-id/...` path** to `-a` (a bare basename won't resolve → hd-idle silently
@@ -441,7 +441,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313  /srv/.disks/hdd-cold  xfs   noatime  
 
 | Item | State |
 |---|---|
-| `hd-idle` | **active + enabled** — `-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 900 -l /var/log/hd-idle.log` (idle=900 s; **full by-id path** required) |
+| `hd-idle` | **active + enabled** — `-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 300 -l /var/log/hd-idle.log` (idle=300 s / 5 min; **full by-id path** required) |
 | `smartmontools` (smartd) | active (`-n standby` on the HDD) |
 | `fstrim.timer` | enabled (weekly TRIM, all SSDs) |
 | `user_allow_other` in `/etc/fuse.conf` | set |
