@@ -217,15 +217,16 @@ sudo docker run -d \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v /var/lib/docker/volumes:/var/lib/docker/volumes \
   -v /:/host \
-  portainer/agent:2.33.1
+  portainer/agent:2.33.6
 ```
 
 > Run with `sudo` (we don't join the `docker` group on this host — see §5).
 
-> **Pin the agent to your Portainer *server* version.** The tag `2.33.1` must match (or be
-> compatible with) the Portainer **server** you're attaching to — mismatched major/minor versions
-> can fail to connect. Check the server's version in its Web UI footer and bump this tag to match
-> when you upgrade the server.
+> **Pin the agent to your Portainer *server* version.** The tag `2.33.6` here matches the
+> Portainer **server** we attach to (check yours: the Web UI footer, or
+> `curl -sk https://<server>:9443/api/status`). The agent should match (or be compatible with)
+> the server — mismatched major/minor versions can fail to connect, so bump this tag whenever you
+> upgrade the server.
 >
 > **What this agent can do / security:** the command mounts the Docker socket and `-v /:/host`,
 > i.e. the agent has **full root-level control of this host** by design — that's how Portainer
@@ -243,3 +244,19 @@ sudo docker run -d \
 
 You should now see the new environment under **Home** in Portainer; opening it shows this host's
 Stacks, Images, Networks, Containers and Volumes.
+
+### 4. Re-registering a host? Remove the stale environment
+
+If this host was **previously registered** in this Portainer (e.g. after a reinstall, a new
+agent, or an IP change), the **old environment entry remains** and will show as down or
+duplicated. Clean it up so there's exactly one entry per host:
+
+- In the Portainer Web UI → **Environments**, identify the **old** entry for this host
+  (stale `Down` status, old address, or a duplicate name).
+- Open it → **Remove** (this only deletes Portainer's record of the environment; it does **not**
+  touch any containers/volumes on the host).
+- Keep the freshly added one from step 3.
+
+> Tip: if the old entry pointed at the **same** `LAN-IP:9001`, Portainer may simply reconnect it
+> to the new agent — in that case you don't need a new entry, just confirm the existing one goes
+> green. Remove any genuine duplicates either way.
