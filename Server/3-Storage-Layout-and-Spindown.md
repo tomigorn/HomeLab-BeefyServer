@@ -458,7 +458,8 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313  /srv/.disks/hdd-cold  xfs   noatime  
 - ✅ **Reboot persistence** — confirmed: after `sudo reboot` the pool auto-mounted via
   systemd (mergerfs `/srv/video` 35 TB), and hd-idle / hdd-spinstate / smartd / fstrim all
   came back active+enabled.
-- ⏳ **Physical spin-down** — pending observation: confirm the cold HDD reaches `STANDBY`
-  after 15 min idle via `/var/log/hdd-spinstate.log` and a `spindown` event in
-  `/var/log/hd-idle.log`. (Note: `hdparm -C` reports `unknown` on this drive; the logger
-  uses `smartctl`, which reports `IDLE_A`/`STANDBY` correctly.)
+- ✅ **Physical spin-down** — confirmed (after the by-id-path fix): the cold HDD reaches
+  `STANDBY` when idle, and the spin-state log records `SPUN-DOWN [STANDBY]` with the
+  read/written counters unchanged (proving `smartctl` reads it non-wakingly). The SCSI
+  spindown command works on this drive (no `-c ata` needed). `hdparm -C` reports `unknown`
+  here, which is why the logger uses `smartctl`.
