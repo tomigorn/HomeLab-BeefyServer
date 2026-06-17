@@ -24,16 +24,20 @@ of the time.
 - ✅ Mounted by **UUID** via the managed `/etc/fstab` block; mergerfs pool `/srv/video`
   reports **35 TB** (8 TB hot + 27 TB cold). `/srv/audio` = 7.3 TB.
 - ✅ Spin-down: **`hd-idle` active + enabled**, parking only the cold HDD by serial after
-  15 min (`-i 0 -a ata-ST30000NM004K-3RM133_K1S05Y9M -i 900`).
+  15 min (`-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 900`).
 - ✅ `smartd` active (HDD `-n standby`), `fstrim.timer` enabled, `user_allow_other` set.
-- ⏳ **Spin-state logger committed but NOT yet activated** — run
-  `sudo bash ~/Projects/Server/scripts/install-hdd-spinlog.sh` to start the 5-min timer (§11b).
+- ✅ **Spin-state logger active** — 5-min `smartctl` timer logging to
+  `/var/log/hdd-spinstate.log` (§11).
 
 **Fixes applied during build (for the record):**
 - First mount attempt failed because `commit=60` is an **ext4-only** option that XFS rejects
   → removed; the cold tier mounts with `noatime` only.
 - `setup-storage.sh` gained a re-runnable **`--configure`** mode (mounts/services without
   re-wiping) used to recover from that failed mount.
+- hd-idle initially never spun the drive down: `-a` was given the by-id **basename**, which
+  hd-idle can't resolve to a device, so it silently applied its default (never spin down).
+  Fixed to the **full `/dev/disk/by-id/...` path** + `-s 1` (runtime symlink resolution).
+- `hdparm -C` returns `unknown` on this HAMR Exos → the spin-state logger uses `smartctl`.
 
 **PLANNED — not yet implemented** (later migration phases): the tiering **mover** (§5), the
 Docker mount-ordering drop-in (§6), **promote-on-detail-view** (§7), integrity/backup (§9),
@@ -216,7 +220,9 @@ sudo apt install -y hd-idle smartmontools
 
 - **`hd-idle`** parks the cold HDD after ~15–20 min of *actual* zero I/O (preferred over
   `hdparm -S`, whose firmware APM timer some Exos ignore; hd-idle watches
-  `/proc/diskstats`). Configure it to target **only the cold HDD by-id name**.
+  `/proc/diskstats`). Target **only the cold HDD**, and pass the **full
+  `/dev/disk/by-id/...` path** to `-a` (a bare basename won't resolve → hd-idle silently
+  applies its default of *never spin down*); add `-s 1` for runtime symlink resolution.
 - The drive's **write-back cache is on**, so `fsync`/journal FLUSH commands wake a parked
   drive — this is why writes to the cold tier are *batched* by the mover (§5).
 - **`smartd -n standby`** so SMART polls don't wake it; schedule self-tests off-standby.
@@ -435,7 +441,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313  /srv/.disks/hdd-cold  xfs   noatime  
 
 | Item | State |
 |---|---|
-| `hd-idle` | **active + enabled** — `-i 0 -a ata-ST30000NM004K-3RM133_K1S05Y9M -i 900 -l /var/log/hd-idle.log` (idle=900 s, scsi) |
+| `hd-idle` | **active + enabled** — `-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 900 -l /var/log/hd-idle.log` (idle=900 s; **full by-id path** required) |
 | `smartmontools` (smartd) | active (`-n standby` on the HDD) |
 | `fstrim.timer` | enabled (weekly TRIM, all SSDs) |
 | `user_allow_other` in `/etc/fuse.conf` | set |

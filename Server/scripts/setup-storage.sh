@@ -131,7 +131,9 @@ EOF
   # Spin-down: hd-idle parks ONLY the cold HDD (by serial), 15 min idle.
   cat > /etc/default/hd-idle <<EOF
 START_HD_IDLE=true
-HD_IDLE_OPTS="-i 0 -a ata-ST30000NM004K-3RM133_K1S05Y9M -i 900 -l /var/log/hd-idle.log"
+# NOTE: -a must be the FULL by-id PATH (a bare basename won't resolve -> hd-idle
+# silently applies its default of "never spin down"). -s 1 re-resolves at runtime.
+HD_IDLE_OPTS="-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 900 -l /var/log/hd-idle.log"
 EOF
   systemctl enable hd-idle 2>/dev/null || true
   systemctl restart hd-idle 2>/dev/null || true
