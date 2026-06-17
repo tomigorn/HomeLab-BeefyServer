@@ -15,6 +15,33 @@ of the time.
 
 ---
 
+## 0. Status — as-built (2026-06-17)
+
+**LIVE on beefy now** (built via `scripts/setup-storage.sh`; see Appendix A for captured proof):
+
+- ✅ Three data drives wiped (incl. old bcache/LVM signatures), GPT-partitioned, formatted:
+  ext4 `ssd-hot`, ext4 `audio`, xfs `hdd-cold`.
+- ✅ Mounted by **UUID** via the managed `/etc/fstab` block; mergerfs pool `/srv/video`
+  reports **35 TB** (8 TB hot + 27 TB cold). `/srv/audio` = 7.3 TB.
+- ✅ Spin-down: **`hd-idle` active + enabled**, parking only the cold HDD by serial after
+  15 min (`-i 0 -a ata-ST30000NM004K-3RM133_K1S05Y9M -i 900`).
+- ✅ `smartd` active (HDD `-n standby`), `fstrim.timer` enabled, `user_allow_other` set.
+- ⏳ **Spin-state logger committed but NOT yet activated** — run
+  `sudo bash ~/Projects/Server/scripts/install-hdd-spinlog.sh` to start the 5-min timer (§11b).
+
+**Fixes applied during build (for the record):**
+- First mount attempt failed because `commit=60` is an **ext4-only** option that XFS rejects
+  → removed; the cold tier mounts with `noatime` only.
+- `setup-storage.sh` gained a re-runnable **`--configure`** mode (mounts/services without
+  re-wiping) used to recover from that failed mount.
+
+**PLANNED — not yet implemented** (later migration phases): the tiering **mover** (§5), the
+Docker mount-ordering drop-in (§6), **promote-on-detail-view** (§7), integrity/backup (§9),
+Samba shares, and the services (Audiobookshelf, download/seed stack). Ownership of
+`/srv/video` & `/srv/audio` is still `root:root` — set per service when wired.
+
+---
+
 ## 1. Goals (in priority order)
 
 1. **The 28 TB HDD sleeps almost always** — only a genuinely cold video read wakes it.
@@ -81,6 +108,12 @@ serial, mounted by filesystem `UUID`, and hd-idle/smartd target the HDD by seria
 ---
 
 ## 4. Build steps
+
+> **These steps are implemented and automated by `scripts/setup-storage.sh`** (which is how
+> the live system was built). Run it as root: `sudo bash scripts/setup-storage.sh` for a fresh
+> wipe+build, or `sudo bash scripts/setup-storage.sh --configure` to (re)apply mounts/services
+> without wiping. The drive serial→role assignment and all options are baked into that script.
+> The manual steps below explain what it does and why.
 
 ### 4.1 Identify drives by stable ID
 
@@ -338,3 +371,68 @@ accesses**, with a wake (a) per cold-movie play — for the whole film unless pr
 and (b) per deep library scan (mitigated, not eliminated). The OS, all configs/DBs,
 audiobooks, music, browsing of hot content, and every download live on SSD/NVMe and never
 touch the HDD.
+
+---
+
+## Appendix A — As-built verification (captured 2026-06-17)
+
+Live state on beefy after running `setup-storage.sh` (+ `--configure` to fix the XFS mount).
+
+### Drives, partitions, UUIDs (bound by serial)
+
+| Role | Drive serial (`/dev/disk/by-id/...`) | Part | FS | Label | UUID |
+|---|---|---|---|---|---|
+| Hot SSD (with cold HDD) | `ata-Samsung_SSD_870_QVO_8TB_S5SSNF0WA00268B` | sda1 | ext4 | ssd-hot | `5e19e1fd-ce5c-4c1d-80ba-d87983494e46` |
+| Audio SSD | `ata-Samsung_SSD_870_QVO_8TB_S5SSNF0W909892P` | sdb1 | ext4 | audio | `9a2d3432-cfc8-4844-b4b1-e0dddfb5ef4b` |
+| Cold HDD | `ata-ST30000NM004K-3RM133_K1S05Y9M` | sdc1 | xfs | hdd-cold | `b805bc03-6217-41ea-9161-2b55281e0313` |
+
+(`/dev/sdX` shown for reference only — nothing depends on it.)
+
+### `/proc/mounts`
+
+```
+/dev/sdb1 /srv/audio ext4 rw,noatime 0 0
+/dev/sda1 /srv/.disks/ssd-hot ext4 rw,relatime 0 0
+/dev/sdc1 /srv/.disks/hdd-cold xfs rw,noatime,inode64,logbufs=8,logbsize=32k,noquota 0 0
+mergerfs /srv/video fuse.mergerfs rw,relatime,user_id=0,group_id=0,default_permissions,allow_other 0 0
+```
+
+### Capacity
+
+```
+mergerfs       fuse.mergerfs   35T  535G   34T   2%  /srv/video
+/dev/sdb1      ext4           7.3T  2.1M  6.9T   1%  /srv/audio
+```
+
+### Live `/etc/fstab` managed block
+
+```
+# >>> beefy-storage (managed by setup-storage.sh) >>>
+UUID=9a2d3432-cfc8-4844-b4b1-e0dddfb5ef4b  /srv/audio            ext4  noatime    0 2
+UUID=5e19e1fd-ce5c-4c1d-80ba-d87983494e46  /srv/.disks/ssd-hot   ext4  relatime   0 2
+UUID=b805bc03-6217-41ea-9161-2b55281e0313  /srv/.disks/hdd-cold  xfs   noatime    0 2
+/srv/.disks/ssd-hot:/srv/.disks/hdd-cold  /srv/video  fuse.mergerfs  defaults,allow_other,use_ino,cache.files=partial,dropcacheonclose=true,category.create=ff,minfreespace=50G,moveonenospc=true,statfs=base,fsname=mergerfs,x-systemd.requires=/srv/.disks/ssd-hot,x-systemd.requires=/srv/.disks/hdd-cold  0 0
+# <<< beefy-storage (managed by setup-storage.sh) <<<
+```
+
+### Services
+
+| Item | State |
+|---|---|
+| `hd-idle` | **active + enabled** — `-i 0 -a ata-ST30000NM004K-3RM133_K1S05Y9M -i 900 -l /var/log/hd-idle.log` (idle=900 s, scsi) |
+| `smartmontools` (smartd) | active (`-n standby` on the HDD) |
+| `fstrim.timer` | enabled (weekly TRIM, all SSDs) |
+| `user_allow_other` in `/etc/fuse.conf` | set |
+| `hdd-spinstate.timer` | **not yet installed** — run `install-hdd-spinlog.sh` to activate |
+
+### Scripts (in `~/Projects/Server/scripts/`)
+
+- `setup-storage.sh` — wipe/partition/format/mount + mergerfs + hd-idle/smartd/fstrim (`--configure` = no-wipe).
+- `hdd-spinstate.sh` — one non-waking power-state sample (`hdparm -C` + `/proc/diskstats`).
+- `install-hdd-spinlog.sh` — installs the 5-min spin-state logger timer.
+
+### Not yet validated
+
+- **Reboot persistence** (auto-mount of the pool via systemd at boot).
+- **Physical spin-down** (drive reaching `standby` after 15 min idle) — confirm via the
+  spin-state log once the logger is installed, or `sudo hdparm -C <by-id>`.
