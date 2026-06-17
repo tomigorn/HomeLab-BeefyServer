@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install the non-waking cold-HDD power-state logger (5-minute systemd timer).
+# Install the non-waking cold-HDD power-state logger (1-minute systemd timer).
 # Run as root:  sudo bash install-hdd-spinlog.sh
 #
 set -euo pipefail
@@ -25,11 +25,11 @@ EOF
 
 cat > /etc/systemd/system/hdd-spinstate.timer <<'EOF'
 [Unit]
-Description=Poll cold HDD power state every 5 minutes
+Description=Poll cold HDD power state every minute
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=5min
-AccuracySec=10s
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
 Persistent=true
 [Install]
 WantedBy=timers.target

@@ -26,7 +26,7 @@ of the time.
 - ✅ Spin-down: **`hd-idle` active + enabled**, parking only the cold HDD by serial after
   5 min (`-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 300`).
 - ✅ `smartd` active (HDD `-n standby`), `fstrim.timer` enabled, `user_allow_other` set.
-- ✅ **Spin-state logger active** — 5-min `smartctl` timer logging to
+- ✅ **Spin-state logger active** — 1-min `smartctl` timer logging to
   `/var/log/hdd-spinstate.log` (§11).
 
 **Fixes applied during build (for the record):**
@@ -361,7 +361,7 @@ A UPS isn't available, so we engineer around power loss:
 ## 11. Verifying spin-down (non-waking power-state log)
 
 `scripts/hdd-spinstate.sh` + `scripts/install-hdd-spinlog.sh` install a systemd timer that
-logs the cold HDD's power state every 5 minutes to `/var/log/hdd-spinstate.log` — **without
+logs the cold HDD's power state every minute to `/var/log/hdd-spinstate.log` — **without
 waking it**.
 
 > **Note:** this HAMR Exos returns `unknown` to `hdparm -C`, so the logger uses **`smartctl`**
@@ -451,7 +451,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313  /srv/.disks/hdd-cold  xfs   noatime  
 
 - `setup-storage.sh` — wipe/partition/format/mount + mergerfs + hd-idle/smartd/fstrim (`--configure` = no-wipe).
 - `hdd-spinstate.sh` — one non-waking power-state sample (`hdparm -C` + `/proc/diskstats`).
-- `install-hdd-spinlog.sh` — installs the 5-min spin-state logger timer.
+- `install-hdd-spinlog.sh` — installs the 1-min spin-state logger timer.
 
 ### Validation
 
