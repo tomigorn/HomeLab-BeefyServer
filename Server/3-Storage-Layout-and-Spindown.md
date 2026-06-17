@@ -361,10 +361,20 @@ waking it**.
 > **Note:** this HAMR Exos returns `unknown` to `hdparm -C`, so the logger uses **`smartctl`**
 > instead. `smartctl -n standby` checks the power mode (ATA *CHECK POWER MODE*, non-data) and
 > aborts without spinning a parked drive up — i.e. non-waking. `/proc/diskstats` is read from
-> memory. Neither resets hd-idle's timer. Logged state: **`STANDBY`** = motor off (asleep, the
-> goal); `IDLE_A`/`IDLE_B`/`ACTIVE` = spinning.
+> memory. Neither resets hd-idle's timer.
 
-Review over a day or two to confirm the drive reads `STANDBY` whenever idle and isn't being
+The log shows a plain-language state with the raw ATA mode in brackets:
+
+| Log label | Meaning | Raw ATA |
+|---|---|---|
+| **`SPUN-DOWN`** | motor off — parked / asleep **(the goal)** | `STANDBY` |
+| `SLEEP` | deepest state, interface off | `SLEEP` |
+| `IDLE-LOWRPM` | spinning at reduced RPM | `IDLE_C` |
+| `IDLE-SPINNING` | idle, platters at full RPM | `IDLE_A`/`IDLE_B` |
+| `ACTIVE` | spinning and in use | `ACTIVE` |
+| `UNKNOWN` | could not be determined | — |
+
+Review over a day or two to confirm the drive reads `SPUN-DOWN` whenever idle and isn't being
 woken by background activity. hd-idle's own spindown/spinup *transition* events are in
 `/var/log/hd-idle.log` (made world-readable by the installer).
 
