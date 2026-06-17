@@ -356,11 +356,17 @@ A UPS isn't available, so we engineer around power loss:
 
 `scripts/hdd-spinstate.sh` + `scripts/install-hdd-spinlog.sh` install a systemd timer that
 logs the cold HDD's power state every 5 minutes to `/var/log/hdd-spinstate.log` — **without
-waking it**: `hdparm -C` issues ATA *CHECK POWER MODE* (a non-data command that doesn't spin
-a parked drive up) and `/proc/diskstats` is read from memory. Neither touches the platters or
-resets hd-idle's timer. Review over a day or two to confirm the drive reads `standby` whenever
-idle and isn't being woken by background activity. hd-idle's own spindown/spinup *transition*
-events are in `/var/log/hd-idle.log` (made world-readable by the installer).
+waking it**.
+
+> **Note:** this HAMR Exos returns `unknown` to `hdparm -C`, so the logger uses **`smartctl`**
+> instead. `smartctl -n standby` checks the power mode (ATA *CHECK POWER MODE*, non-data) and
+> aborts without spinning a parked drive up — i.e. non-waking. `/proc/diskstats` is read from
+> memory. Neither resets hd-idle's timer. Logged state: **`STANDBY`** = motor off (asleep, the
+> goal); `IDLE_A`/`IDLE_B`/`ACTIVE` = spinning.
+
+Review over a day or two to confirm the drive reads `STANDBY` whenever idle and isn't being
+woken by background activity. hd-idle's own spindown/spinup *transition* events are in
+`/var/log/hd-idle.log` (made world-readable by the installer).
 
 Install:  `sudo bash ~/Projects/Server/scripts/install-hdd-spinlog.sh`
 
@@ -431,8 +437,12 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313  /srv/.disks/hdd-cold  xfs   noatime  
 - `hdd-spinstate.sh` — one non-waking power-state sample (`hdparm -C` + `/proc/diskstats`).
 - `install-hdd-spinlog.sh` — installs the 5-min spin-state logger timer.
 
-### Not yet validated
+### Validation
 
-- **Reboot persistence** (auto-mount of the pool via systemd at boot).
-- **Physical spin-down** (drive reaching `standby` after 15 min idle) — confirm via the
-  spin-state log once the logger is installed, or `sudo hdparm -C <by-id>`.
+- ✅ **Reboot persistence** — confirmed: after `sudo reboot` the pool auto-mounted via
+  systemd (mergerfs `/srv/video` 35 TB), and hd-idle / hdd-spinstate / smartd / fstrim all
+  came back active+enabled.
+- ⏳ **Physical spin-down** — pending observation: confirm the cold HDD reaches `STANDBY`
+  after 15 min idle via `/var/log/hdd-spinstate.log` and a `spindown` event in
+  `/var/log/hd-idle.log`. (Note: `hdparm -C` reports `unknown` on this drive; the logger
+  uses `smartctl`, which reports `IDLE_A`/`STANDBY` correctly.)
