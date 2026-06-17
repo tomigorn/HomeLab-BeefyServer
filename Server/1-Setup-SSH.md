@@ -134,11 +134,13 @@ passphrase and added the key to ssh-agent, you won't be prompted for that either
 > **Important:** Keep your working SSH session open while you change the config and test from a
 > *second* window, so you can revert if something goes wrong and you get locked out.
 
-On modern Ubuntu (24.04), `/etc/ssh/sshd_config` ends with
-`Include /etc/ssh/sshd_config.d/*.conf`, and packages such as cloud-init may drop a
-`50-cloud-init.conf` that sets `PasswordAuthentication yes`. Because sshd uses the **first**
-value it finds for each option, editing the main file lower down can be silently overridden.
-The robust approach is a drop-in file whose name sorts *before* any existing one.
+On modern Ubuntu (22.04 and later, including 26.04), `/etc/ssh/sshd_config` has an
+`Include /etc/ssh/sshd_config.d/*.conf` line **near the top**, and packages such as cloud-init
+may drop a `50-cloud-init.conf` that sets `PasswordAuthentication yes`. Because the Include sits
+at the top and sshd uses the **first** value it finds for each option, drop-ins are read before
+the main file's own defaults — but a *later*-sorting drop-in still loses to an earlier one. So
+editing the main file lower down can be silently overridden, and your drop-in must sort *before*
+any conflicting one (lower number wins, e.g. `10-` beats `50-`).
 
 ### a) Check for conflicting drop-ins
 
@@ -163,6 +165,8 @@ EOF
 
 (`KbdInteractiveAuthentication` replaces the old, now-deprecated `ChallengeResponseAuthentication`.)
 
+To revert later, just delete the drop-in and restart: `sudo rm /etc/ssh/sshd_config.d/10-hardening.conf && sudo systemctl restart ssh`. Because we never touched the main `sshd_config`, there's no backup to restore.
+
 ### c) Test the config, then apply it
 
 ```bash
@@ -185,7 +189,7 @@ TriggeredBy: ● ssh.socket
              └─4557 "sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups"
 ```
 
-> Note the `TriggeredBy: ssh.socket` line — on Ubuntu 24.04 SSH is **socket-activated**.
+> Note the `TriggeredBy: ssh.socket` line — on Ubuntu 22.04+ SSH is **socket-activated**.
 > Auth changes apply to new connections automatically, but if you ever change the listening
 > **Port**, you must also restart the socket:
 > `sudo systemctl restart ssh.socket`.
@@ -199,29 +203,60 @@ echo "AllowUsers buntu" | sudo tee -a /etc/ssh/sshd_config.d/10-hardening.conf
 sudo sshd -t && sudo systemctl restart ssh
 ```
 
+> **Note:** `AllowUsers buntu` is a whitelist — once set, **only** `buntu` may log in over SSH;
+> every other account (including `root`) is refused regardless of keys. List multiple users
+> space-separated (`AllowUsers buntu alice`) if you need more.
+
 ## 7. Test the connection
 
-Without logging out of your current session, open a **new** PowerShell window. First confirm
-that password login is now refused, then confirm the key works:
+Without logging out of your current session, open a **new** PowerShell window and test.
+
+What proves password auth is disabled is the *kind* of failure: a client with no usable key
+gets **`Permission denied (publickey)`** and is **never offered a password prompt**. If you were
+ever asked for a password, password auth would still be on.
 
 ```powershell
-# Default location has no matching key -> should be rejected
-ssh buntu@beefy
-# buntu@beefy: Permission denied (publickey).
+# A name/user with no configured key -> rejected, and NOT offered a password
+ssh someone@beefy
+# someone@beefy: Permission denied (publickey).
 
-# Explicit key -> should succeed
+# Your explicit key -> succeeds
 ssh -i $env:USERPROFILE\.ssh\beefy buntu@beefy
-# Welcome to Ubuntu 24.04.3 LTS (GNU/Linux 6.8.0-79-generic x86_64)
+# Welcome to Ubuntu 26.04 LTS (GNU/Linux 7.0.0-22-generic x86_64)
 ```
+
+> **Don't use `ssh beefy` as your "should fail" test.** Once you add the `Host` block below,
+> `ssh beefy` *succeeds* because it supplies the key automatically. The same is why an alias that
+> resolves to the server but isn't in your config (e.g. `beefy.local`) fails with `publickey`:
+> no key is offered for that name — the server did **not** fall back to passwords.
 
 > **Tip:** To avoid typing `-i` every time, add a host entry in `C:\Users\<you>\.ssh\config`:
 >
 > ```text
-> Host beefy
->     HostName beefy
+> Host beefy beefy.local
+>     HostName 192.168.1.102
 >     User buntu
 >     IdentityFile ~/.ssh/beefy
 >     IdentitiesOnly yes
 > ```
 >
-> Then you can simply run `ssh beefy`.
+> List every alias you might type on the `Host` line — otherwise that alias (e.g. `beefy.local`)
+> gets no key and fails with `publickey`. `IdentitiesOnly yes` stops ssh from offering every
+> agent key. Then you can simply run `ssh beefy`.
+
+## 8. Optional: further hardening
+
+Beyond key-only login, you can tighten things further. Add any of these to the same
+`10-hardening.conf` drop-in, then re-run `sudo sshd -t && sudo systemctl restart ssh`:
+
+```bash
+MaxAuthTries 3              # fewer auth attempts per connection
+LoginGraceTime 20          # drop un-authenticated connections quickly
+LogLevel VERBOSE           # log the key fingerprint used for each login (good for auditing)
+AuthenticationMethods publickey   # make public key the only accepted method, explicitly
+AddressFamily inet         # listen on IPv4 only (skip if you rely on IPv6 / beefy.local over v6)
+```
+
+None of these are required — steps 1–6 already enforce key-only logins. Note that
+`AddressFamily inet` disables IPv6, which would stop link-local `beefy.local` connections that
+resolve over IPv6 (as seen in step 7).
