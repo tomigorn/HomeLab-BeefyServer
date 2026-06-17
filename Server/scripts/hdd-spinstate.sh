@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# Append the cold HDD's power state to a log WITHOUT waking it.
+# Check the cold HDD power state every run (the timer fires every minute) but only
+# APPEND a line when the state CHANGED vs. the last logged line — so every line in the
+# log is a real transition. Rotates to the most recent $MAXLINES lines.
 #
 #   - This HAMR Exos returns "unknown" to `hdparm -C`, so we use `smartctl` instead.
 #   - `smartctl -n standby` checks the power mode first (ATA CHECK POWER MODE, a non-data
@@ -20,6 +22,7 @@
 
 DISK_ID="${1:-/dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M}"
 LOG="${HDD_SPINSTATE_LOG:-/var/log/hdd-spinstate.log}"
+MAXLINES="${HDD_SPINSTATE_MAXLINES:-15000}"
 
 dev="$(readlink -f "$DISK_ID")"
 kname="$(basename "$dev")"
@@ -42,9 +45,19 @@ case "$raw" in
   *)                   label="$raw" ;;
 esac
 
+# Only log when the state label differs from the last logged line.
+last="$(awk 'END{print $2}' "$LOG" 2>/dev/null)"
+[ "$label" = "$last" ] && exit 0
+
 # sectors_read = field 6, sectors_written = field 10 of /proc/diskstats
 sr="$(awk -v k="$kname" '$3==k{print $6}' /proc/diskstats)"
 sw="$(awk -v k="$kname" '$3==k{print $10}' /proc/diskstats)"
 
 printf '%s  %-13s [%-8s]  read=%s written=%s\n' \
   "$(date -Is)" "$label" "$raw" "${sr:-?}" "${sw:-?}" >> "$LOG"
+
+# Rotate: keep the most recent $MAXLINES lines (inode-preserving so `tail -f` survives).
+n="$(wc -l < "$LOG" 2>/dev/null || echo 0)"
+if [ "$n" -gt "$MAXLINES" ]; then
+  tmp="$(mktemp)" && tail -n "$MAXLINES" "$LOG" > "$tmp" && cat "$tmp" > "$LOG" && rm -f "$tmp"
+fi
