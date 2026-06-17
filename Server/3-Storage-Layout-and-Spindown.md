@@ -266,6 +266,16 @@ later once cold (and not seeding).
 the SSD branch → served from SSD + cache, **HDD not spun up**. (A deep `ls -la` into a cold
 file's folder can `stat` that file and wake the HDD once, then served from cache.)
 
+**F. Seeding (uploading to peers):** active torrents always seed **from SSD, never the cold
+HDD** — peers issue random reads at unpredictable times, so seeded data on the HDD would
+keep it awake constantly. Audiobook/music torrents seed from `/srv/audio` (pure SSD, no HDD
+behind it). Movie/series torrents seed from the **SSD hot tier** of `/srv/video`; the mover
+**pins actively-seeding files to the SSD** and demotes to the cold HDD only *after* seeding
+stops (ratio/time cap). The cold HDD therefore holds only finished, non-seeding content.
+**Caveat:** the live-seeding set must fit on the SSD — bound it with seed-ratio/time limits
+so finished torrents stop seeding and demote. (Exact download-dir / category save-path /
+import-hardlink layout is defined in the download-stack phase.)
+
 ---
 
 ## 9. Integrity & backup
