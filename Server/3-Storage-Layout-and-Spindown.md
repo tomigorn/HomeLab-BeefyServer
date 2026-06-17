@@ -64,13 +64,15 @@ serial, mounted by filesystem `UUID`, and hd-idle/smartd target the HDD by seria
 /                       nvme0n1p2   ext4               OS, Docker, container config/state + DBs
 /srv/audio              <audio-ssd> ext4  noatime      audiobooks / music / cloud (pure SSD)
 /srv/.disks/ssd-hot     <hot-ssd>   ext4  relatime     mergerfs hot branch
-/srv/.disks/hdd-cold    <cold-hdd>  xfs   noatime,commit=60   mergerfs cold branch
+/srv/.disks/hdd-cold    <cold-hdd>  xfs   noatime             mergerfs cold branch
 /srv/video              mergerfs    union(ssd-hot, hdd-cold)   <-- apps + Samba use THIS
 ```
 
 - **`noatime` is the load-bearing spin-down option** on the cold tier — it stops reads
-  from writing an access-time back to the disk. `commit=60` coalesces journal writes so
-  mover demotions don't trickle-wake the drive.
+  from writing an access-time back to the disk. Note: `commit=N` is an **ext4-only**
+  option; XFS rejects it (it broke the first mount attempt). XFS has no equivalent flag,
+  and on an idle read-only cold disk there's nothing to flush anyway, so `noatime`
+  suffices (optional `logbsize=256k` would batch log writes if ever needed).
 - `relatime` on the **hot SSD** so the mover can tell what was recently watched.
 - Cold tier is **xfs** (handles very large volumes / large files / fsck time better, and
   delayed-logging coalesces metadata writes).
@@ -126,7 +128,7 @@ Docker **refuses to start** until the pool is mounted — see §6 for why this m
 ```fstab
 UUID=<audio-uuid>   /srv/audio            ext4  noatime               0 2
 UUID=<hot-uuid>     /srv/.disks/ssd-hot   ext4  relatime              0 2
-UUID=<cold-uuid>    /srv/.disks/hdd-cold  xfs   noatime,commit=60     0 2
+UUID=<cold-uuid>    /srv/.disks/hdd-cold  xfs   noatime               0 2
 ```
 
 ```bash
@@ -183,8 +185,7 @@ sudo apt install -y hd-idle smartmontools
   `hdparm -S`, whose firmware APM timer some Exos ignore; hd-idle watches
   `/proc/diskstats`). Configure it to target **only the cold HDD by-id name**.
 - The drive's **write-back cache is on**, so `fsync`/journal FLUSH commands wake a parked
-  drive — this is why writes to the cold tier are *batched* by the mover (§5) and why
-  `commit=60`.
+  drive — this is why writes to the cold tier are *batched* by the mover (§5).
 - **`smartd -n standby`** so SMART polls don't wake it; schedule self-tests off-standby.
 - **`fstrim.timer`** weekly on all three SSDs (do **not** use the `discard` mount option):
   ```bash
