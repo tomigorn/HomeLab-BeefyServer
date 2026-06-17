@@ -319,6 +319,18 @@ A UPS isn't available, so we engineer around power loss:
 
 ---
 
+## 11b. Verifying spin-down (non-waking power-state log)
+
+`scripts/hdd-spinstate.sh` + `scripts/install-hdd-spinlog.sh` install a systemd timer that
+logs the cold HDD's power state every 5 minutes to `/var/log/hdd-spinstate.log` — **without
+waking it**: `hdparm -C` issues ATA *CHECK POWER MODE* (a non-data command that doesn't spin
+a parked drive up) and `/proc/diskstats` is read from memory. Neither touches the platters or
+resets hd-idle's timer. Review over a day or two to confirm the drive reads `standby` whenever
+idle and isn't being woken by background activity. hd-idle's own spindown/spinup *transition*
+events are in `/var/log/hd-idle.log` (made world-readable by the installer).
+
+Install:  `sudo bash ~/Projects/Server/scripts/install-hdd-spinlog.sh`
+
 ## 11. Honest spin-down expectation
 
 Not "untouched for weeks." Realistically: **asleep most of the time between cold-content
