@@ -204,10 +204,32 @@ Portainer server, not just the Pi — just point the Web UI at whichever host is
 - Left sidebar → **Environments** (under "Environment-related").
 - **Add environment** (top right).
 - Select **Docker Standalone** → **Start Wizard**.
-- Note the **agent `docker run` command** it shows. The command below is the equivalent — make
-  sure the **image tag matches your server's version** (see the note under the command).
+- Note the **agent `docker run` command** it shows (Portainer suggests a bare `docker run`).
+  Our Compose project in §2 below is the equivalent — just make sure the **image tag matches the
+  server's version** (see the version-match note in §2).
 
-### 2. On this host — run the Agent
+### 2. On this host — define & run the Agent as a Compose project
+
+The agent runs as a Docker **Compose project** (one directory per project, per our conventions)
+— **not** a bare `docker run`. It lives at `/home/buntu/Projects/Docker/Portainer-Agent/`:
+
+| File | Purpose |
+| --- | --- |
+| `docker-compose.yaml` | the `agent` service: image, port `9001`, the three bind mounts, `restart: always` |
+| `.env` | real values — `COMPOSE_PROJECT_NAME=portainer-agent` (lowercase — Compose rejects uppercase), `PORTAINER_AGENT_TAG=2.33.6` (gitignored) |
+| `.env.example` | committed template of the above |
+| `.gitignore` | ignores `.env` and any secrets |
+
+Bring it up:
+
+```bash
+cd /home/buntu/Projects/Docker/Portainer-Agent
+sudo docker compose up -d
+```
+
+> Run with `sudo` (we don't join the `docker` group on this host — see §5).
+
+<details><summary>Equivalent legacy <code>docker run</code> (superseded by the Compose project)</summary>
 
 ```bash
 sudo docker run -d \
@@ -219,22 +241,32 @@ sudo docker run -d \
   -v /:/host \
   portainer/agent:2.33.6
 ```
+</details>
 
-> Run with `sudo` (we don't join the `docker` group on this host — see §5).
+> **Migrating from a bare container?** If `portainer_agent` is already running as a plain
+> `docker run` container (the old approach), remove it first — it holds the `portainer_agent`
+> name and port `9001` that the Compose service reuses, so `compose up` would otherwise conflict.
+> The agent is **stateless**, so this loses nothing:
+> ```bash
+> sudo docker rm -f portainer_agent     # stop + remove the old bare container
+> cd /home/buntu/Projects/Docker/Portainer-Agent && sudo docker compose up -d
+> ```
 
-> **Pin the agent to your Portainer *server* version.** The tag `2.33.6` here matches the
-> Portainer **server** we attach to (check yours: the Web UI footer, or
-> `curl -sk https://<server>:9443/api/status`). The agent should match (or be compatible with)
-> the server — mismatched major/minor versions can fail to connect, so bump this tag whenever you
-> upgrade the server.
+> **Pin the agent to the Portainer *server* version — here that server runs on `fastpi` (the
+> Pi).** `PORTAINER_AGENT_TAG` in `.env` (here `2.33.6`) **must match** the Portainer **server**
+> on fastpi (check it: the Web UI footer, or `curl -sk https://<server>:9443/api/status`). The
+> agent should match (or be compatible with) the server — mismatched major/minor versions can
+> fail to connect, so bump this value in `.env` and `sudo docker compose up -d` whenever you
+> upgrade Portainer on fastpi.
 >
 > **What this agent can do / security:** the command mounts the Docker socket and `-v /:/host`,
 > i.e. the agent has **full root-level control of this host** by design — that's how Portainer
 > manages it. Therefore:
 > - Port `9001` must stay on the **trusted LAN only** — never expose it to the internet or route
 >   it through the Cloudflare Tunnel.
-> - For defence-in-depth, set a shared secret on both ends: add `-e AGENT_SECRET=<random>` to this
->   `docker run` and enter the same secret when adding the environment in Portainer.
+> - For defence-in-depth, set a shared secret on both ends: set `AGENT_SECRET=<random>` in `.env`,
+>   uncomment the `environment` block in `docker-compose.yaml`, and enter the same secret when
+>   adding the environment in Portainer.
 
 ### 3. Back in the existing Portainer's Web UI — connect
 
