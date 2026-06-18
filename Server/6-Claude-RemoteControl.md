@@ -19,7 +19,7 @@ The session shows up in the session list named **`beefy`** (the `--name`).
 
 > **Hard limit:** beefy must be **powered on and online**. The web/phone cannot wake or
 > reach a powered-off/asleep machine, nor start a session if this service isn't running.
-> See `6-WOL.md` to wake beefy first.
+> See `5-Sleep-and-WOL.md` to wake beefy first (`wakeonlan 74:56:3c:96:79:a3` from fastpi).
 
 ---
 
