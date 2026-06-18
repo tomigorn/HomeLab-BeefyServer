@@ -146,6 +146,16 @@ a key that can do **exactly one thing**:
 recoverable nuisance (just WOL it back), never a shell or other sudo. The admin key (`~/.ssh/beefy`)
 is separate and unrestricted. This is the exact primitive the future Traefik automation (§8) calls.
 
+> **Optional further hardening — NOT applied (deliberate, for now).** The forced-command line above
+> accepts the key from any host on the LAN. Prefixing it with `from="192.168.1.2"` would restrict it
+> to fastpi's IP only:
+> ```
+> from="192.168.1.2",restrict,command="sudo /usr/bin/systemctl poweroff" ssh-ed25519 AAAA…q fastpi-beefy-poweroff
+> ```
+> We're **leaving this off for now** — fastpi's IP isn't a static reservation yet, and the
+> forced-command + narrow sudoers already constrain the key to a single, fully-recoverable action.
+> Revisit (add the `from=`) if/when fastpi gets a pinned IP.
+
 ### 3.6 Post-wake gotcha — exclude `/srv/**` from VS Code server
 
 After a wake, VS Code server re-indexes the storage pools and pins every core (ripgrep/node). Fix —
