@@ -385,6 +385,56 @@ Review over a day or two to confirm the drive reads `SPUN-DOWN` whenever idle an
 woken by background activity. hd-idle's own spindown/spinup *transition* events are in
 `/var/log/hd-idle.log` (made world-readable by the installer).
 
+### 11.1 How to check the log (no sudo needed — both logs are world-readable)
+
+The spin-state log only appends **on a state change**, so the **last line is the current state**.
+
+```bash
+# --- current state (the most recent transition) ---
+tail -n 1 /var/log/hdd-spinstate.log
+
+# --- recent history (last N transitions) ---
+tail -n 20 /var/log/hdd-spinstate.log
+
+# --- watch live: new transitions appear as they happen (Ctrl-C to stop) ---
+tail -f /var/log/hdd-spinstate.log
+
+# --- whole log, paged (q to quit) ---
+less /var/log/hdd-spinstate.log
+
+# --- only the spin-downs (did it actually park, and when?) ---
+grep SPUN-DOWN /var/log/hdd-spinstate.log | tail
+
+# --- just today's transitions ---
+grep "$(date +%F)" /var/log/hdd-spinstate.log
+
+# --- hd-idle's own spindown/spinup events ---
+tail -n 20 /var/log/hd-idle.log
+tail -f     /var/log/hd-idle.log
+```
+
+Is the logger even running, and when did it last/next fire?
+
+```bash
+systemctl status hdd-spinstate.timer --no-pager
+systemctl list-timers hdd-spinstate.timer --no-pager   # last + next trigger times
+```
+
+Force a fresh sample **right now** instead of waiting for the 1-min timer (still non-waking; only
+writes a line if the state actually changed):
+
+```bash
+sudo systemctl start hdd-spinstate.service
+tail -n 1 /var/log/hdd-spinstate.log
+```
+
+**From fastpi (remote, over SSH)** — the logs are world-readable, so no sudo:
+
+```bash
+ssh buntu@beefy 'tail -n 20 /var/log/hdd-spinstate.log'
+ssh buntu@beefy 'tail -f  /var/log/hdd-spinstate.log'   # live follow over SSH
+```
+
 Install:  `sudo bash ~/Projects/Server/3-Storage-Layout-and-Spindown/install-hdd-spinlog.sh`
 
 ## 12. Honest spin-down expectation
@@ -446,7 +496,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313  /srv/.disks/hdd-cold  xfs   noatime  
 | `smartmontools` (smartd) | active (`-n standby` on the HDD) |
 | `fstrim.timer` | enabled (weekly TRIM, all SSDs) |
 | `user_allow_other` in `/etc/fuse.conf` | set |
-| `hdd-spinstate.timer` | **not yet installed** — run `install-hdd-spinlog.sh` to activate |
+| `hdd-spinstate.timer` | **active + enabled** (installed 2026-06-18) — 1-min non-waking power-state logger → `/var/log/hdd-spinstate.log`; see §11.1 for how to read it |
 
 ### Scripts (in `~/Projects/Server/3-Storage-Layout-and-Spindown/`)
 
