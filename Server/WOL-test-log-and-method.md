@@ -44,6 +44,29 @@ on boot, so a full power-off loses nothing.
 - Trade-off accepted: RAM state is **not** preserved, so every container must restart itself on
   boot (verified below) — that's fine for this host.
 
+### 1b. Day-to-day operation (intended end-state — not built yet)
+
+Today, sleep/wake is **manual**: `sudo systemctl poweroff` on beefy, `wakeonlan` from fastpi.
+That manual path is what §4 tests, and it's the foundation everything else builds on.
+
+The **intended end-state** is **Traefik-driven, idle-based auto-power-management**, with Traefik
+running on **fastpi** (the edge box that fronts all of beefy's services):
+
+- **Sleep:** when **no service has been routed to beefy for a couple of minutes/hours**, fastpi
+  issues a power-off command to beefy (the same `poweroff` this test validates).
+- **Wake:** when a request arrives for a beefy-hosted service while beefy is off, fastpi wakes it
+  with the WOL magic packet (`wakeonlan 74:56:3c:96:79:a3`), waits for it to come up, then
+  proxies the request through.
+
+**This is future work and depends on the Pi → beefy routing existing first** (Traefik in front
+of beefy's services). Open design points to resolve when building it: how fastpi triggers beefy's
+`poweroff` remotely (SSH key vs. a tiny authenticated endpoint — note `sudo` on beefy is not
+passwordless), the idle threshold, and how the first request tolerates the cold-boot wake delay
+(measured in §4d) without timing out (e.g. a holding/“warming up” page until healthchecks pass).
+
+The §4 test below validates the **mechanism** (poweroff + WOL works reliably) that this
+automation will sit on top of. Get the manual path green first.
+
 ## 2. Box facts
 
 | Thing | Value |

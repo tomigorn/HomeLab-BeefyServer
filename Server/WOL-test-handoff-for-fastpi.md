@@ -39,12 +39,12 @@ sudo apt update
 sudo apt install -y wakeonlan      # etherwake is an alternative
 ```
 
-**To read these docs on fastpi**, fastpi needs a clone of `tomigorn/HomeLab-BeefyServer`:
+**To read these docs on fastpi**, fastpi needs a clone of `tomigorn/HomeLab-BeefyServer`.
+**There is no clone on fastpi yet — create one first:**
 
 ```bash
-# CONFIRM the path on fastpi — TBD; if no clone exists yet, create one:
 git clone git@github.com:tomigorn/HomeLab-BeefyServer.git
-# thereafter, before each session:  git -C <clone> pull
+# thereafter, before each session:  git -C HomeLab-BeefyServer pull
 ```
 
 **Reaching beefy by name:** commands below use `ssh buntu@beefy`. If `beefy` doesn't resolve
