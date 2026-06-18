@@ -79,6 +79,12 @@ automation will sit on top of. Get the manual path green first.
 
 ## 3. State as of 2026-06-18
 
+> **✅ STATUS: the manual poweroff + WOL (S5) mechanism is VALIDATED end-to-end (2026-06-18).**
+> beefy powers fully off (`sudo systemctl poweroff`) and is reliably woken by a single
+> `wakeonlan 74:56:3c:96:79:a3` magic packet **from fastpi** — a true cold boot, usable in
+> **~50 s**. See the §6 run log for 4a–4d. Remaining items are **optional** (watt-meter numbers)
+> or **future work** (Traefik-driven idle automation, §1b).
+
 **Applied & verified on beefy (reversible parts — all done):**
 
 - ✅ WOL armed persistently via **netplan native** (`wakeonlan: true` on `enp6s0` in
@@ -93,13 +99,20 @@ automation will sit on top of. Get the manual path green first.
 - ✅ Docker `enabled` at boot; only running container is `portainer_agent` (restart policy
   `always`) → self-recovers after a cold boot.
 
-**Pending (firmware / physical / fastpi — cannot be done over SSH):**
+**Firmware / physical / fastpi (done at the keyboard — 2026-06-18):**
 
-- ⏳ **BIOS:** Advanced Mode → `Settings → Platform Power`: **ErP = Disabled** (mandatory — else
-  no S5 standby power → no WOL), **Wake on LAN = Enabled** (if present on F3; otherwise ErP-off
-  + the OS `ethtool wol g` suffices), optional **AC BACK = Always On** for outage auto-recovery.
-- ⏳ `fastpi` needs `wakeonlan` installed.
-- ⏳ Electricity reading needs a physical smart plug / watt meter (not readable in software).
+- ✅ **BIOS ErP = Disabled** (Gigabyte H510M H V2, F3 → `Settings → Platform Power`). This is the
+  change that made **S5 (poweroff) WOL** work — without it the NIC loses standby power when fully
+  off. (Suspend-wake worked even before this; the r8169 caveat is S5-specific.)
+- ✅ `fastpi` has `wakeonlan` installed and is on the same LAN segment (`192.168.1.2`).
+- ✅ Default target set to **`multi-user.target`** (`sudo systemctl set-default multi-user.target`)
+  — headless Docker box, drops the graphical stack so boot no longer stalls on
+  `plymouth-quit-wait` (see the 4c/4d log entry). Takes effect from the next cold boot.
+
+**Still pending (optional — not blocking the mechanism):**
+
+- ⏳ Electricity reading needs a physical smart plug / watt meter (not readable in software) —
+  idle-awake baseline vs S5-off, to quantify the actual saving.
 
 ---
 
@@ -147,6 +160,12 @@ sudo docker ps                                 # -> portainer_agent Up
 If `Wake-on: g` is **not** present after the reboot, the unit isn't doing its job — fix that
 (`6-WOL.md` §systemd unit) before going further. **This step needs no fastpi and no BIOS
 changes**, so it's the cheapest confidence check.
+
+> **As-built (2026-06-18):** running 4a is exactly what exposed that the `wol@enp6s0.service`
+> unit did **not** persist — NetworkManager reset `Wake-on` back to `d` on connection activation.
+> Persistence is now provided by **netplan native** (`wakeonlan: true`), and the systemd unit was
+> retired. So the commands above referencing `wol@enp6s0.service` are historical; see §3 and the
+> 2026-06-18 log entry for the corrected, as-deployed setup.
 
 ### 4b. Wake from suspend (cheap S-state check)
 
@@ -197,15 +216,23 @@ systemd-analyze critical-chain    # critical path to multi-user
   The S5-vs-idle delta over a typical day is the real saving. Wake time does **not** depend on
   how long it slept.
 
+> **As-built (2026-06-18):** measured cold-boot wake ≈ **50 s to ping / 51 s to SSH** after the
+> magic packet, of which ≈ **34 s is firmware POST + bootloader** on the H510M (the dominant term).
+> `systemd-analyze` only prints a total once boot is *finished*; on this box that required setting
+> the default target to **`multi-user.target`** — otherwise `plymouth-quit-wait.service` hangs
+> (graphical target on a headless box) and systemd never declares boot complete, even though SSH
+> and Docker are already `active`. Watt-meter numbers still pending.
+
 ---
 
 ## 5. Resume checklist (when picking this back up after a wake)
 
-- [ ] Did beefy wake from **poweroff** (4c), not just suspend? If only suspend → fix ErP in BIOS.
-- [ ] `Wake-on: g` still present after a plain reboot (4a)? (persistence confirmed)
-- [ ] `systemd-analyze` cold-boot time recorded in the log below.
-- [ ] `sudo docker ps` shows `portainer_agent` running.
-- [ ] Watt-meter readings collected (idle-awake vs off).
+- [x] Did beefy wake from **poweroff** (4c), not just suspend? — ✅ yes, S5 wake works (ErP=Disabled).
+- [x] `Wake-on: g` still present after a plain reboot (4a)? — ✅ yes, via netplan/NM (unit retired).
+- [~] `systemd-analyze` cold-boot time — wake ≈ 50 s ping / 51 s SSH (~34 s firmware POST); clean
+      `systemd-analyze` total available from the next cold boot now that `multi-user.target` is default.
+- [x] `sudo docker ps` shows `portainer_agent` running. — ✅ self-recovers after cold boot.
+- [ ] Watt-meter readings collected (idle-awake vs off). — ⏳ still pending (physical meter).
 - [ ] **`sudo` on beefy needs a TTY** — buntu is intentionally **not** passwordless, so the
       privileged steps are run by tomigorn at the keyboard, not automated by Claude.
 
@@ -274,3 +301,11 @@ systemd-analyze critical-chain    # critical path to multi-user
   - _Mechanism validation **COMPLETE**. Remaining niceties: (optional) `multi-user.target` switch +
     watt-meter numbers. Then the real follow-on is the **Traefik-driven idle auto-poweroff/wake**
     end-state (§1b) — including how fastpi triggers beefy's `poweroff` remotely._
+
+- **2026-06-18 (boot hygiene applied)** — set the default systemd target to `multi-user.target`
+  (`sudo systemctl set-default multi-user.target`; confirmed via `systemctl get-default`). The box
+  is a headless Docker host, so the graphical target was pure overhead and caused
+  `plymouth-quit-wait.service` to hang (boot never reaching "finished"). Effective from the next
+  cold boot. **Net result: the poweroff + WOL setup is complete and proven** — power beefy off,
+  wake it from fastpi, ~50 s to a usable cold boot. Only optional extras remain (watt-meter
+  numbers; the future Traefik auto-power automation in §1b)._

@@ -23,6 +23,10 @@
 
 ## State as of last session (what's already done on beefy)
 
+> **✅ DONE & PROVEN (2026-06-18):** poweroff + WOL (S5) works end-to-end. `sudo systemctl poweroff`
+> on beefy, then `wakeonlan 74:56:3c:96:79:a3` from fastpi → cold boot back in **~50 s**. Tests
+> 4a–4c all passed; details in `WOL-test-log-and-method.md`.
+
 - ✅ WOL armed persistently via **netplan native** (`wakeonlan: true` on `enp6s0` in
   `/etc/netplan/00-installer-config.yaml`) → NetworkManager keeps `Wake-on: g` across reboots.
   Verified 2026-06-18 (survives reboot + NM reactivation).
@@ -31,8 +35,10 @@
   source of truth — see `WOL-test-log-and-method.md` (2026-06-18 log entry).
 - ✅ Docker `enabled` at boot; only running container is `portainer_agent`
   (restart policy `always`) → self-recovers after a cold boot.
-- ⏳ **Firmware not yet confirmed** (needs physical access to BIOS — see below).
-- ⏳ **Electricity reading** needs a physical smart plug / watt meter.
+- ✅ **BIOS ErP = Disabled** (the change that enabled S5 wake), and default target set to
+  `multi-user.target` (headless — avoids the `plymouth-quit-wait` boot hang).
+- ✅ `fastpi` has `wakeonlan` installed, on the same LAN segment (`192.168.1.2`).
+- ⏳ **Electricity reading** still needs a physical smart plug / watt meter (optional).
 
 ## What fastpi needs (do this once, before the test)
 
