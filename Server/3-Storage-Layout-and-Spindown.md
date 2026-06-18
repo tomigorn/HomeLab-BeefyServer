@@ -390,13 +390,31 @@ woken by background activity. hd-idle's own spindown/spinup *transition* events 
 The spin-state log only appends **on a state change**, so the **last line is the current state**.
 
 **Watch it live with a spinner — `hdd-spinwatch`** (the nice way). Shows the current state plus an
-old-school spinner ( `| / - \` ) that advances **each time the minute-checker actually runs** —
-visible proof the checks are happening — with a per-second `last check Ns ago / next ~Ns` countdown
-so you can see it's alive between checks:
+old-school icon ( `| / - \` ) that **spins continuously** (~7 fps) so you can see the monitor is
+live, while the **`checks seen` counter increments and the `last … ago / next ~…` countdown resets
+each time the minute-checker actually runs** — that pair is the proof the checks are happening.
+
+Sample line:
+
+```
+ -  SPUN-DOWN     since 2026-06-18T11:18:45+02:00  |  checks seen: 12  last 7s ago  next ~53s
+```
+
+**Run it** (unprivileged — only reads the world-readable log + queries systemctl; Ctrl-C to stop):
 
 ```bash
-hdd-spinwatch                       # on beefy
-ssh -t buntu@beefy hdd-spinwatch    # from fastpi (the -t is needed for the live redraw)
+hdd-spinwatch                       # on beefy (if installed to /usr/local/bin)
+# or run straight from the repo clone, no install needed:
+bash ~/Projects/Server/3-Storage-Layout-and-Spindown/hdd-spinwatch
+# from fastpi (the -t is required for the live redraw):
+ssh -t buntu@beefy hdd-spinwatch
+```
+
+**Install / update it** (idempotent — also re-run after a `git pull` to update to a new version):
+
+```bash
+git -C ~/Projects/Server pull
+sudo bash ~/Projects/Server/3-Storage-Layout-and-Spindown/install-hdd-spinlog.sh
 ```
 
 It leaves the log **untouched** — `tail -n 1` still shows the true last state — because the
@@ -404,9 +422,7 @@ It leaves the log **untouched** — `tail -n 1` still shows the true last state 
 (`ExecMainStartTimestamp`), not written into the log. (Why not make plain `tail -f` animate a
 spinner? It can't: `tail -f` only reacts to *appended* bytes and `tail -n 1` reads the file's end,
 so you can't have a per-minute in-place spinner there without either growing the file every minute
-or breaking `tail -n 1`. Hence the dedicated viewer.) Installed by `install-hdd-spinlog.sh`
-(re-run to add it), or run straight from the repo:
-`bash ~/Projects/Server/3-Storage-Layout-and-Spindown/hdd-spinwatch`.
+or breaking `tail -n 1`. Hence the dedicated viewer.)
 
 Or read the raw log directly:
 
@@ -524,7 +540,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313  /srv/.disks/hdd-cold  xfs   noatime  
 - `setup-storage.sh` — wipe/partition/format/mount + mergerfs + hd-idle/smartd/fstrim (`--configure` = no-wipe).
 - `hdd-spinstate.sh` — one non-waking power-state sample (`hdparm -C` + `/proc/diskstats`).
 - `install-hdd-spinlog.sh` — installs the 1-min spin-state logger timer + `hdd-spinwatch`.
-- `hdd-spinwatch` — live spinner view of the spin-state (advances each minute a check runs; §11.1). Unprivileged.
+- `hdd-spinwatch` — live view: a constantly-spinning icon + a `checks seen` counter that ticks each minute a check runs (§11.1). Unprivileged.
 
 ### Validation
 

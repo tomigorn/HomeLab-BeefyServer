@@ -43,7 +43,7 @@ systemctl start hdd-spinstate.service   # take one sample immediately
 echo "Installed. Timer:"
 systemctl status hdd-spinstate.timer --no-pager | grep -E "Active|Trigger" || true
 echo
-echo "Live spinner view:      hdd-spinwatch            (advances each minute a check runs)"
+echo "Live spinner view:      hdd-spinwatch            (icon spins constantly; checks-seen ticks each minute)"
 echo "Current state:          tail -n 1 /var/log/hdd-spinstate.log"
 echo "Plain follow:           tail -f /var/log/hdd-spinstate.log"
 echo "hd-idle transitions:    less /var/log/hd-idle.log"

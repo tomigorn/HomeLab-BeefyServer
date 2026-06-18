@@ -2,25 +2,26 @@
 #
 # hdd-spinwatch — live view of the cold-HDD spin-state logger.
 #
-# Shows the current power state plus an old-school spinner ( | / - \ ) that advances
-# once each time the 1-minute checker (hdd-spinstate.timer) actually runs — i.e. visible
-# proof the checks are happening — together with a per-second "last check Ns ago /
-# next ~Ns" countdown so you can see the monitor is live between checks.
+# A continuously-spinning old-school icon ( | / - \ ) shows the monitor is live; the
+# "checks seen" counter increments and the "last / next" countdown resets each time the
+# 1-minute checker (hdd-spinstate.timer) actually runs — i.e. proof the checks happen.
 #
 # The canonical log is left untouched, so `tail -n 1 /var/log/hdd-spinstate.log` still
-# shows the TRUE last state. The "a check just ran" heartbeat is taken from systemd's own
-# record of the timer firing (ExecMainStartTimestamp), so nothing is written to the log
-# merely to prove liveness.
+# shows the TRUE last state. The "a check just ran" heartbeat is read from systemd's own
+# record of the timer firing (ExecMainStartTimestamp); nothing is written to the log to
+# show liveness.
 #
 # Runs unprivileged: it only reads the world-readable log and queries systemctl.
 # Stop with Ctrl-C.   From fastpi:  ssh -t buntu@beefy hdd-spinwatch
 
 LOG="${HDD_SPINSTATE_LOG:-/var/log/hdd-spinstate.log}"
 SVC="${HDD_SPINSTATE_SVC:-hdd-spinstate.service}"
+PERIOD="${HDD_SPINSTATE_PERIOD:-60}"    # checker interval (s), for the "next check" countdown
 FRAMES='|/-\'
-PERIOD="${HDD_SPINSTATE_PERIOD:-60}"   # checker interval (s), for the "next check" countdown
+SPIN_DELAY="${HDD_SPINWATCH_DELAY:-0.15}"   # how fast the icon spins
+POLL_EVERY=7                            # spin frames between state/heartbeat polls (~1s)
 
-f=0 checks=0 last_run="" last_epoch=0
+f=0 iter=0 checks=0 last_run="" last_epoch=0 label="?" ts="?"
 
 restore(){ [ -t 1 ] && printf '\033[?25h'; printf '\n'; exit 0; }   # show cursor + newline
 trap restore INT TERM
@@ -29,26 +30,27 @@ trap restore INT TERM
 printf 'Watching cold-HDD spin-state (%s) — Ctrl-C to stop\n' "$LOG"
 
 while :; do
-  # current state = the last real transition line (this is what `tail -n 1` shows)
-  line="$(tail -n 1 "$LOG" 2>/dev/null)"
-  ts="${line%%  *}"                                  # leading ISO timestamp
-  label="$(printf '%s' "$line" | awk '{print $2}')"
-
-  # heartbeat: when did the checker last run? (advances once per minute)
-  run="$(systemctl show "$SVC" -p ExecMainStartTimestamp --value 2>/dev/null)"
-  if [ -n "$run" ] && [ "$run" != "$last_run" ]; then
-    [ -n "$last_run" ] && checks=$((checks + 1))
-    last_run="$run"
-    last_epoch="$(date -d "$run" +%s 2>/dev/null || echo 0)"
-    f=$(( (f + 1) & 3 ))                             # advance spinner one frame per check
+  # poll the real state + heartbeat about once a second (not every spin frame)
+  if [ $(( iter % POLL_EVERY )) -eq 0 ]; then
+    line="$(tail -n 1 "$LOG" 2>/dev/null)"
+    ts="${line%%  *}"; [ -n "$ts" ] || ts="?"
+    label="$(printf '%s' "$line" | awk '{print $2}')"; [ -n "$label" ] || label="?"
+    run="$(systemctl show "$SVC" -p ExecMainStartTimestamp --value 2>/dev/null)"
+    if [ -n "$run" ] && [ "$run" != "$last_run" ]; then
+      [ -n "$last_run" ] && checks=$(( checks + 1 ))   # a fresh minute-check ran
+      last_run="$run"
+      last_epoch="$(date -d "$run" +%s 2>/dev/null || echo 0)"
+    fi
   fi
 
-  now=$(date +%s)
+  printf -v now '%(%s)T' -1
   ago=0; [ "$last_epoch" -gt 0 ] && ago=$(( now - last_epoch ))
   nxt=$(( PERIOD - ago )); [ "$nxt" -lt 0 ] && nxt=0
 
   printf '\r %s  %-13s since %s  |  checks seen: %-4d last %2ds ago  next ~%2ds   ' \
-    "${FRAMES:$f:1}" "${label:-?}" "${ts:-?}" "$checks" "$ago" "$nxt"
+    "${FRAMES:$f:1}" "$label" "$ts" "$checks" "$ago" "$nxt"
 
-  sleep 1
+  f=$(( (f + 1) & 3 ))          # spin the icon every frame (constant motion)
+  sleep "$SPIN_DELAY"
+  iter=$(( iter + 1 ))
 done
