@@ -39,6 +39,18 @@ sudo apt update
 sudo apt install -y wakeonlan      # etherwake is an alternative
 ```
 
+**To read these docs on fastpi**, fastpi needs a clone of `tomigorn/HomeLab-BeefyServer`:
+
+```bash
+# CONFIRM the path on fastpi — TBD; if no clone exists yet, create one:
+git clone git@github.com:tomigorn/HomeLab-BeefyServer.git
+# thereafter, before each session:  git -C <clone> pull
+```
+
+**Reaching beefy by name:** commands below use `ssh buntu@beefy`. If `beefy` doesn't resolve
+on fastpi (no DNS/mDNS/`/etc/hosts` entry), use the IP directly: `ssh buntu@192.168.1.102`.
+`wakeonlan` always uses the MAC, so it works regardless of name resolution.
+
 ## ⭐ The wake command (run on fastpi)
 
 ```bash

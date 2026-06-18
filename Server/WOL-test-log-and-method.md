@@ -10,6 +10,29 @@
 
 ---
 
+## 0. START HERE — reading order & scope
+
+If you are picking this up cold, **read this file first** — it is the entry point. Then:
+
+1. **This file** — the plan, current state, and the test/verification method. Everything you
+   need to *act* is here.
+2. **`WOL-test-handoff-for-fastpi.md`** — the short fastpi-side quick-start (install
+   `wakeonlan`, the one wake command, real MAC/IP).
+3. **`6-WOL.md`** — full WOL tutorial (how the `ethtool`/systemd-unit config was built). Read
+   only if you need to *change* the WOL setup, not to run the test.
+4. **`5-hibernation.md`** — ⚠️ **mostly NOT the chosen path.** It is a full **S4 hibernate**
+   tutorial (swapfile resize, `resume_offset`, initramfs). We chose **S5 poweroff**, so you can
+   **skip the swapfile/`resume_offset`/initramfs machinery and its §6 `uptime -s`/boot-index
+   proof entirely** — none of that applies to S5. Use it only for background on why S5 won.
+
+**Glossary:** **beefy** = this Ubuntu Docker server (IP `192.168.1.102`). **fastpi** = the
+always-on Raspberry Pi on the same LAN; it sends the wake packet. **ErP / EuP / Deep Sx** =
+a BIOS deep-standby mode that cuts NIC power when off — must be **off** or WOL can't work.
+**Stateless Docker host** = nothing important lives in RAM; all containers restart from disk
+on boot, so a full power-off loses nothing.
+
+---
+
 ## 1. Decision & rationale
 
 - **Chosen strategy: `poweroff` + WOL (S5).** beefy is a **stateless Docker host**, so a full
@@ -57,6 +80,20 @@
 There are **three independent things to verify**, in order. Don't skip to the wake test:
 the OS-side config is worthless if it doesn't *persist*, and a poweroff wake won't work if a
 plain reboot already loses the arming.
+
+> **Do the BIOS change BEFORE the poweroff test (4c).** Because of the `r8169` caveat
+> (§4c), poweroff wake will **almost certainly fail until ErP is disabled in firmware**.
+> So the realistic order is: **4a (reboot persistence, safe, no BIOS) → 4b (suspend) →
+> _physically set BIOS: ErP=Disabled (+ WOL=Enabled)_ → 4c (poweroff)**. Running 4c before
+> the BIOS change is only useful to *demonstrate* the failure; don't read a failed 4c as
+> "WOL is broken" if BIOS hasn't been touched yet.
+>
+> **Cross-machine choreography (the session dies at 4c).** `sudo systemctl poweroff` kills
+> beefy's SSH/Claude session, so plan the two-machine dance up front: tomigorn triggers the
+> poweroff at beefy's keyboard/SSH, then drives `wakeonlan` **from fastpi** (a separate, still-
+> alive session), then re-connects to beefy to read results. A Claude instance on beefy cannot
+> see past the poweroff — hand off to a fastpi session or wait for the human to re-connect.
+> `sudo` on beefy needs a TTY (not passwordless), so tomigorn runs all privileged steps.
 
 ### 4a. Persistence across a normal reboot (do this FIRST, it's safe)
 
