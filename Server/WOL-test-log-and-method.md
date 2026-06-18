@@ -251,3 +251,26 @@ systemd-analyze critical-chain    # critical path to multi-user
   arming is live. BIOS not yet touched (as expected — suspend-wake works without it on r8169).
   _Next: physically set BIOS **ErP=Disabled** (+ WoL/PCIE wake if present), then **4c**
   (poweroff + wake — the real S5 target)._
+
+- **2026-06-18 (4c — poweroff + WOL: PASS — the real S5 target 🎯)** — BIOS **ErP set to
+  Disabled** at the keyboard, then beefy `sudo systemctl poweroff` (full power-off, session
+  dropped). fastpi confirmed sustained S5 (~30 s of no ping) and sent
+  `wakeonlan 74:56:3c:96:79:a3`. **Cold boot returned: ping at +50 s, SSH at +51 s after the
+  packet**; `uptime` reset to 0 (kernel up 09:01:00) → a true cold boot, not a resume. ErP=Disabled
+  was the enabling change (suspend already worked, poweroff did not — the classic r8169 S5 caveat).
+  **The full manual mechanism is now proven: power off on beefy → magic packet from fastpi →
+  cold-boot back in ~50 s.**
+  - **Wake-time breakdown:** packet 09:00:26 → kernel 09:01:00 = **~34 s firmware POST + bootloader**
+    (the bulk; memory training etc. on the H510M), then ~17 s kernel→SSH. Firmware POST dominates,
+    and it does **not** depend on how long the box was off.
+  - **§4d boot-completion note + recommended hygiene fix:** `systemd-analyze` would not print a
+    total — boot never reaches "finished" because **`plymouth-quit-wait.service` stays activating**
+    (default target is `graphical.target`; on a headless Docker host nothing quits the boot splash).
+    `ssh` and `docker` are `active` regardless, so it doesn't affect function or the ~51 s
+    usable-wake figure. **Recommend** `sudo systemctl set-default multi-user.target` to drop the
+    graphical stack on this headless box — removes the hang and trims boot.
+  - **Power draw:** watt-meter readings (idle-awake baseline vs S5-off) still **pending** — needs a
+    physical inline meter, not readable in software.
+  - _Mechanism validation **COMPLETE**. Remaining niceties: (optional) `multi-user.target` switch +
+    watt-meter numbers. Then the real follow-on is the **Traefik-driven idle auto-poweroff/wake**
+    end-state (§1b) — including how fastpi triggers beefy's `poweroff` remotely._
