@@ -242,3 +242,12 @@ systemd-analyze critical-chain    # critical path to multi-user
     already-trusted ED25519.
   - _Next: **4b** (suspend + wake — fastpi sends the magic packet), then physically set BIOS
     **ErP=Disabled**, then **4c** (poweroff + wake, the real S5 target)._
+
+- **2026-06-18 (4b — suspend + wake: PASS)** — first end-to-end wake, driven from fastpi.
+  beefy `sudo systemctl suspend` → watcher on fastpi confirmed sustained ping loss (~16 s, so the
+  packet is provably what wakes it) → fastpi sent `wakeonlan 74:56:3c:96:79:a3` → **first ping
+  reply 8 s after the packet, SSH back at 9 s.** `uptime` was unchanged across it (resumed from
+  S3, not rebooted). Confirms the fastpi→LAN→NIC magic-packet path works and the netplan WOL
+  arming is live. BIOS not yet touched (as expected — suspend-wake works without it on r8169).
+  _Next: physically set BIOS **ErP=Disabled** (+ WoL/PCIE wake if present), then **4c**
+  (poweroff + wake — the real S5 target)._
