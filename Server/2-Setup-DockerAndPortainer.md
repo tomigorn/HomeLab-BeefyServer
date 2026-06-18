@@ -216,7 +216,7 @@ The agent runs as a Docker **Compose project** (one directory per project, per o
 | File | Purpose |
 | --- | --- |
 | `docker-compose.yaml` | the `agent` service: image, port `9001`, the three bind mounts, `restart: always` |
-| `.env` | real values — `COMPOSE_PROJECT_NAME=portainer-agent` (lowercase — Compose rejects uppercase), `PORTAINER_AGENT_TAG=2.33.6` (gitignored) |
+| `.env` | real values — `COMPOSE_PROJECT_NAME=docker` (a deliberate exception for this project — the stack is named `docker`, not the usual folder-derived `portainer-agent`; lowercase since Compose rejects uppercase), `PORTAINER_AGENT_TAG=2.33.6` (gitignored) |
 | `.env.example` | committed template of the above |
 | `.gitignore` | ignores `.env` and any secrets |
 
