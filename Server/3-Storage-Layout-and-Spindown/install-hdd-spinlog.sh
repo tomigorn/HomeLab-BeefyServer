@@ -10,6 +10,7 @@ SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 apt-get install -y -qq hdparm
 
 install -m 0755 "$SRC_DIR/hdd-spinstate.sh" /usr/local/sbin/hdd-spinstate
+install -m 0755 "$SRC_DIR/hdd-spinwatch"    /usr/local/bin/hdd-spinwatch   # live spinner view
 
 # Make both logs world-readable so you can review them without sudo.
 touch /var/log/hdd-spinstate.log && chmod 0644 /var/log/hdd-spinstate.log
@@ -42,7 +43,9 @@ systemctl start hdd-spinstate.service   # take one sample immediately
 echo "Installed. Timer:"
 systemctl status hdd-spinstate.timer --no-pager | grep -E "Active|Trigger" || true
 echo
-echo "Review any time with:   tail -f /var/log/hdd-spinstate.log"
+echo "Live spinner view:      hdd-spinwatch            (advances each minute a check runs)"
+echo "Current state:          tail -n 1 /var/log/hdd-spinstate.log"
+echo "Plain follow:           tail -f /var/log/hdd-spinstate.log"
 echo "hd-idle transitions:    less /var/log/hd-idle.log"
 echo
 echo "Latest sample:"
