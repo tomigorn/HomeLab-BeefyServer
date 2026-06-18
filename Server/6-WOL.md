@@ -1,8 +1,22 @@
-# how to wake the server from hybernation
+# How to wake the server from hibernation
 
 ## option 1: Physical input: press the server’s power button or a keyboard key (if BIOS/firmware supports it). This is the simplest wake method.
 
 ## option 2: Wake-on-LAN (magic packet)
+
+### BIOS/UEFI prerequisites (required for wake from hibernate/poweroff)
+
+WOL set in the OS (`ethtool ... wol g`) only reliably covers wake-from-suspend. To
+wake from **hibernate (S4)** or **power-off (S5)** the firmware must keep the NIC on
+standby power:
+
+- **Enable** "Wake on LAN" / "Power On by PCIe/PCI" / "Resume by PCI-E Device" in the
+  firmware (exact name varies by board).
+- **Disable** "ErP Ready" / "EuP" / "Deep Sleep" / "Deep Sx". These low-standby modes
+  cut power to the NIC in S4/S5 and **silently break WOL** — the OS-side `wol g` is not
+  enough on its own. If WOL works from suspend but not from hibernate/off, this is
+  almost always the cause.
+
 enable WOL on the server
 ```bash
 # find interface and MAC, here it's Nr 2
@@ -43,13 +57,19 @@ $ sudo ethtool enp6s0 | grep -i wake
         Supports Wake-on: pumbg
         Wake-on: g
 ```
-now let's make the configuration persistent across reboots with systemd unit:
+Make it persistent across reboots. We use a **systemd template unit** rather than
+netplan's native `wakeonlan: true`: the systemd approach is renderer-independent and
+applies reliably, whereas netplan's `wakeonlan` has historically been applied
+inconsistently across releases. The unit is bound to the NIC's device unit so it
+runs exactly when the interface appears (more robust than `network-pre.target`):
+
 ```bash
 # write a new systemd unit file
 $ sudo nano /etc/systemd/system/wol@.service
 [Unit]
 Description=Enable Wake-on-LAN on %i
-After=network-pre.target
+Requires=sys-subsystem-net-devices-%i.device
+After=sys-subsystem-net-devices-%i.device
 
 [Service]
 Type=oneshot
@@ -83,6 +103,78 @@ $ sudo ethtool enp6s0 | egrep -i 'Supports Wake-on|Wake-on'
         Wake-on: g
 ```
 
+## ⭐ Recommended strategy: `poweroff` + WOL (S5)
+
+For a **stateless Docker host** this is the recommended sleep model (see the
+comparison table in `5-hibernation.md`): lowest power, most reliable, cleanest wake.
+Instead of hibernating, beefy **fully powers off** and is woken with a WOL magic
+packet from `fastpi`. There is no swap/`resume_offset`/initramfs machinery to break,
+no unencrypted RAM image on disk, and the cold boot comes up with a correct clock.
+
+**Prerequisites**
+
+1. **OS-side WOL enabled and persistent** — the `wol@enp6s0.service` unit above.
+2. **Firmware configured** (see "BIOS/UEFI prerequisites" earlier): WOL / "Power On by
+   PCIe" **enabled**, and **ErP / Deep Sleep disabled** — without this the NIC loses
+   standby power when fully off and **will not wake**. This is mandatory for S5.
+3. **Containers restart on boot** — since RAM state is *not* preserved, every stack
+   must come back by itself after a cold boot:
+
+   ```bash
+   # docker itself must start at boot
+   $ systemctl is-enabled docker
+   enabled
+
+   # every container should have a restart policy (unless-stopped or always)
+   $ docker ps --format '{{.Names}}' \
+       | xargs -r -I{} sh -c 'printf "%-25s %s\n" {} "$(docker inspect -f "{{.HostConfig.RestartPolicy.Name}}" {})"'
+   ```
+
+   Any container showing `no` will **not** come back after poweroff — fix its compose
+   file with `restart: unless-stopped`.
+
+**Sleep (trigger)**
+
+```bash
+# fully powers off; drops your SSH session
+$ sudo systemctl poweroff
+```
+
+**Wake** — send the magic packet from `fastpi` (see "test WOL" below):
+
+```bash
+$ wakeonlan <beefy-mac>
+```
+
+> **Optional — auto-recover after a power outage.** Independently of WOL, set the
+> firmware's "Restore on AC Power Loss" / "AC Back" to **Power On** so beefy boots
+> itself when mains power returns after an outage.
+
+### Measuring wake time & power draw (the test)
+
+**Time until fully awake** — after a WOL cold boot, read the boot breakdown on beefy
+(this includes firmware POST + bootloader + kernel + userspace):
+
+```bash
+$ systemd-analyze
+Startup finished in 8.123s (firmware) + 2.001s (loader) + 4.567s (kernel) + 12.34s (userspace) = 27.0s
+
+$ systemd-analyze blame | head        # what took longest in userspace
+$ systemd-analyze critical-chain      # critical path to multi-user
+```
+
+Add a few extra seconds for the Docker stack to report healthy (`docker ps` /
+healthchecks). Wake time does **not** depend on how long it was asleep.
+
+**Electricity** — this **cannot** be read in software; it needs a physical
+**smart plug / inline watt meter** on beefy's mains. Compare three readings:
+
+- **idle, awake** (baseline),
+- **powered off** (S5 standby — should be the lowest, ~0.5–2 W just for the NIC),
+- (optionally) **hibernated** (S4) for comparison.
+
+The S5-vs-idle delta over a typical day is the actual saving.
+
 ### test WOL
 on the server itself
 ```bash
@@ -99,11 +191,17 @@ $ sudo ethtool enp6s0 | egrep -i 'Supports Wake-on|Wake-on|Link detected'
         Wake-on: g
         Link detected: yes
 
-# send the server to hybernation. it will become non-responsive
+# send the server to hibernation. it will become non-responsive
 $ sudo systemctl hibernate
 ```
 
-on a second machine install a magic-package sender and send the package
+**The magic packet is sent from `fastpi`** — the always-on Raspberry Pi is the natural
+trigger, since beefy is the box that sleeps. (Any machine on the same LAN works for
+ad-hoc testing.) Note WOL is **layer-2 only**: the magic packet is a broadcast on the
+local segment and does **not** route across subnets without a directed-broadcast relay
+— sender and server must share the same LAN.
+
+On `fastpi`, install a magic-packet sender and send the packet:
 ```bash
 $ sudo apt update
 # alternative is etherwake
@@ -153,7 +251,7 @@ rtt min/avg/max/mdev = 0.139/0.178/0.269/0.052 ms
 $ ssh buntu@beefy
 ```
 
-### Troubleshooting high CPU usage after wake up, resulting in very high power usage
+### Troubleshooting high CPU usage after wake-up, resulting in very high power usage
 
 in btop we can nicely see, that all cores are above 95% usage. this is insane.
 
@@ -216,14 +314,18 @@ buntu@beefy:/$ ps -eo pid,ppid,cmd,%cpu,%mem --sort=-%cpu | head -n20
    2700    2682 /home/buntu/.vscode-server/  0.1  0.0
 ```
 
-To make this not recur after waking up from hybernation, we can exclude our very large 8TB & 30TB mount. we can create the file /home/buntu/.vscode-server/data/Machine/settings.json and add this:
-```bash
+To make this not recur after waking up from hibernation, exclude our large storage
+pools from VS Code's file watcher and search indexer. The pools live under `/srv`
+(`/srv/video` mergerfs ~35 TB, `/srv/audio`, and the underlying `/srv/.disks/*`) — **not**
+`/mnt/storage` — so we exclude `/srv/**`. Create
+`/home/buntu/.vscode-server/data/Machine/settings.json`:
+```json
 {
   "files.watcherExclude": {
-    "/mnt/storage/**": true
+    "/srv/**": true
   },
   "search.exclude": {
-    "/mnt/storage": true
+    "/srv/**": true
   },
   "search.followSymlinks": false
 }
@@ -232,4 +334,4 @@ To make this not recur after waking up from hybernation, we can exclude our very
  ```bash
  pkill -f "vscode-server" || true
  ```
- after the next wake up from hybernation the issue will be resolved
+ after the next wake-up from hibernation the issue will be resolved
