@@ -17,7 +17,7 @@ of the time.
 
 ## 0. Status — as-built (2026-06-17)
 
-**LIVE on beefy now** (built via `scripts/setup-storage.sh`; see Appendix A for captured proof):
+**LIVE on beefy now** (built via `3-Storage-Layout-and-Spindown/setup-storage.sh`; see Appendix A for captured proof):
 
 - ✅ Three data drives wiped (incl. old bcache/LVM signatures), GPT-partitioned, formatted:
   ext4 `ssd-hot`, ext4 `audio`, xfs `hdd-cold`.
@@ -85,7 +85,7 @@ Notes:
 
 Nothing references `/dev/sdX` or a SATA port: drives are wiped/partitioned by `by-id`
 serial, mounted by filesystem `UUID`, and hd-idle/smartd target the HDD by serial. See
-`scripts/setup-storage.sh`.
+`3-Storage-Layout-and-Spindown/setup-storage.sh`.
 
 ---
 
@@ -113,9 +113,9 @@ serial, mounted by filesystem `UUID`, and hd-idle/smartd target the HDD by seria
 
 ## 4. Build steps
 
-> **These steps are implemented and automated by `scripts/setup-storage.sh`** (which is how
-> the live system was built). Run it as root: `sudo bash scripts/setup-storage.sh` for a fresh
-> wipe+build, or `sudo bash scripts/setup-storage.sh --configure` to (re)apply mounts/services
+> **These steps are implemented and automated by `3-Storage-Layout-and-Spindown/setup-storage.sh`** (which is how
+> the live system was built). Run it as root: `sudo bash 3-Storage-Layout-and-Spindown/setup-storage.sh` for a fresh
+> wipe+build, or `sudo bash 3-Storage-Layout-and-Spindown/setup-storage.sh --configure` to (re)apply mounts/services
 > without wiping. The drive serial→role assignment and all options are baked into that script.
 > The manual steps below explain what it does and why.
 
@@ -360,7 +360,7 @@ A UPS isn't available, so we engineer around power loss:
 
 ## 11. Verifying spin-down (non-waking power-state log)
 
-`scripts/hdd-spinstate.sh` + `scripts/install-hdd-spinlog.sh` install a systemd timer that
+`3-Storage-Layout-and-Spindown/hdd-spinstate.sh` + `3-Storage-Layout-and-Spindown/install-hdd-spinlog.sh` install a systemd timer that
 checks the cold HDD's power state **every minute** but only appends to
 `/var/log/hdd-spinstate.log` **when the state changes** (so every line is a real
 transition) — and **without waking it**. The log is rotated to the most recent 15,000 lines.
@@ -385,7 +385,7 @@ Review over a day or two to confirm the drive reads `SPUN-DOWN` whenever idle an
 woken by background activity. hd-idle's own spindown/spinup *transition* events are in
 `/var/log/hd-idle.log` (made world-readable by the installer).
 
-Install:  `sudo bash ~/Projects/Server/scripts/install-hdd-spinlog.sh`
+Install:  `sudo bash ~/Projects/Server/3-Storage-Layout-and-Spindown/install-hdd-spinlog.sh`
 
 ## 12. Honest spin-down expectation
 
@@ -448,7 +448,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313  /srv/.disks/hdd-cold  xfs   noatime  
 | `user_allow_other` in `/etc/fuse.conf` | set |
 | `hdd-spinstate.timer` | **not yet installed** — run `install-hdd-spinlog.sh` to activate |
 
-### Scripts (in `~/Projects/Server/scripts/`)
+### Scripts (in `~/Projects/Server/3-Storage-Layout-and-Spindown/`)
 
 - `setup-storage.sh` — wipe/partition/format/mount + mergerfs + hd-idle/smartd/fstrim (`--configure` = no-wipe).
 - `hdd-spinstate.sh` — one non-waking power-state sample (`hdparm -C` + `/proc/diskstats`).
