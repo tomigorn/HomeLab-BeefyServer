@@ -1,0 +1,34 @@
+# =========================================================
+# Services ================================================
+# =========================================================
+services:
+# #########################################################
+# PORTAINER AGENT #########################################
+# #########################################################
+  agent:
+    # IMPORTANT: the agent version MUST match the Portainer SERVER version running on
+    # fastpi (the Pi) — a mismatched major/minor can fail to connect. Set via
+    # PORTAINER_AGENT_TAG in .env, and bump it whenever you upgrade Portainer on fastpi.
+    image: portainer/agent:${PORTAINER_AGENT_TAG}
+    container_name: portainer_agent
+    restart: always
+    ports:
+      - "9001:9001"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+      - /:/host
+    # Optional defence-in-depth: set AGENT_SECRET in .env (and enter the same
+    # value when adding the environment in Portainer), then uncomment below.
+    # environment:
+    #   - AGENT_SECRET=${AGENT_SECRET}
+
+# =========================================================
+# Networks ================================================
+# =========================================================
+# (none — the agent uses the default bridge network)
+
+# =========================================================
+# Volumes =================================================
+# =========================================================
+# (none — the agent is stateless; it only bind-mounts host paths above)
