@@ -67,6 +67,43 @@ passwordless), the idle threshold, and how the first request tolerates the cold-
 The §4 test below validates the **mechanism** (poweroff + WOL works reliably) that this
 automation will sit on top of. Get the manual path green first.
 
+### 1c. Remote poweroff from fastpi — BUILT & verified (2026-06-18)
+
+The wake side was always fastpi's job (`wakeonlan`). This adds the **other half** — fastpi can now
+**power beefy off** too, with **no password prompt and no broad sudo**. It is the first concrete
+building block of the §1b automation (it resolves the "how does fastpi trigger poweroff remotely"
+open design point), but it is **only the mechanism** — the idle-detection/auto-trigger logic is
+still future work.
+
+**Security model — least privilege, a key that can do exactly one thing:**
+
+1. **Dedicated keypair on fastpi:** `~/.ssh/beefy-poweroff` (ed25519, no passphrase; private key
+   never leaves fastpi). Convenience alias `Host beefy-poweroff` in fastpi's `~/.ssh/config`.
+2. **Forced command on beefy** (`~buntu/.ssh/authorized_keys`) — the key is pinned to one command
+   and stripped of pty/forwarding, so whatever the client sends is ignored:
+   ```
+   restrict,command="sudo /usr/bin/systemctl poweroff" ssh-ed25519 AAAA…q fastpi-beefy-poweroff
+   ```
+3. **Narrow sudoers on beefy** (`/etc/sudoers.d/fastpi-poweroff`, mode 440):
+   ```
+   buntu ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff
+   ```
+   buntu may run *only* `systemctl poweroff` without a password — nothing else is NOPASSWD.
+
+**Invoke from fastpi (the primitive Traefik will call):**
+```bash
+ssh beefy-poweroff              # beefy runs `sudo systemctl poweroff` — no prompt
+wakeonlan 74:56:3c:96:79:a3     # wake it back (~51 s to usable)
+```
+
+**Verified — full cycle (2026-06-18):** `ssh beefy-poweroff` powered beefy off (down ~20 s, no
+password), then `wakeonlan` cold-booted it back (ping + SSH at **+51 s**, `uptime` reset). Both
+directions are now driven entirely from fastpi.
+
+**Threat model:** if the fastpi poweroff key leaked, the *only* action it grants is "power beefy
+off" — a recoverable nuisance (just WOL it back), never a shell or other sudo. The admin key
+(`~/.ssh/beefy`) is separate and unrestricted.
+
 ## 2. Box facts
 
 | Thing | Value |
@@ -82,8 +119,10 @@ automation will sit on top of. Get the manual path green first.
 > **✅ STATUS: the manual poweroff + WOL (S5) mechanism is VALIDATED end-to-end (2026-06-18).**
 > beefy powers fully off (`sudo systemctl poweroff`) and is reliably woken by a single
 > `wakeonlan 74:56:3c:96:79:a3` magic packet **from fastpi** — a true cold boot, usable in
-> **~50 s**. See the §6 run log for 4a–4d. Remaining items are **optional** (watt-meter numbers)
-> or **future work** (Traefik-driven idle automation, §1b).
+> **~51 s** (clean `systemd-analyze`: 50.8 s; firmware POST is ~32 s of it). See the §6 run log
+> for 4a–4d. **Both directions are now fastpi-driven:** fastpi can also *trigger* the poweroff with
+> no password via a restricted SSH key (§1c). Remaining items are **optional** (watt-meter numbers)
+> or **future work** (the idle-detection/auto-trigger logic of the Traefik automation, §1b).
 
 **Applied & verified on beefy (reversible parts — all done):**
 
@@ -216,12 +255,14 @@ systemd-analyze critical-chain    # critical path to multi-user
   The S5-vs-idle delta over a typical day is the real saving. Wake time does **not** depend on
   how long it slept.
 
-> **As-built (2026-06-18):** measured cold-boot wake ≈ **50 s to ping / 51 s to SSH** after the
-> magic packet, of which ≈ **34 s is firmware POST + bootloader** on the H510M (the dominant term).
-> `systemd-analyze` only prints a total once boot is *finished*; on this box that required setting
-> the default target to **`multi-user.target`** — otherwise `plymouth-quit-wait.service` hangs
-> (graphical target on a headless box) and systemd never declares boot complete, even though SSH
-> and Docker are already `active`. Watt-meter numbers still pending.
+> **As-built (2026-06-18):** measured cold-boot wake ≈ **50–51 s** from magic packet to ping/SSH.
+> Clean `systemd-analyze` (after `multi-user.target` became default):
+> `31.854 s firmware + 2.435 s loader + 3.915 s kernel + 1.633 s initrd + 10.974 s userspace =
+> 50.8 s`; multi-user reached at 11.0 s of userspace. **Firmware POST dominates (~32 s, ~63%)** and
+> does not depend on how long the box was off. Note: `systemd-analyze` only prints a total once boot
+> is *finished* — before the target switch, `plymouth-quit-wait.service` hung (graphical target on a
+> headless box) and systemd never declared boot complete even though SSH/Docker were already
+> `active`. Watt-meter numbers still pending.
 
 ---
 
@@ -309,3 +350,17 @@ systemd-analyze critical-chain    # critical path to multi-user
   cold boot. **Net result: the poweroff + WOL setup is complete and proven** — power beefy off,
   wake it from fastpi, ~50 s to a usable cold boot. Only optional extras remain (watt-meter
   numbers; the future Traefik auto-power automation in §1b)._
+
+- **2026-06-18 (remote poweroff from fastpi — BUILT & verified, see §1c)** — added the missing half
+  so fastpi can power beefy *off* too, with no password / no broad sudo. Dedicated ed25519 key
+  `~/.ssh/beefy-poweroff` on fastpi → **forced command** in beefy's `authorized_keys`
+  (`restrict,command="sudo /usr/bin/systemctl poweroff"`) → **narrow sudoers**
+  `/etc/sudoers.d/fastpi-poweroff` (`buntu … NOPASSWD: /usr/bin/systemctl poweroff`). Verified the
+  **full fastpi-driven cycle**: `ssh beefy-poweroff` powered beefy off (~20 s, no prompt), then
+  `wakeonlan` cold-booted it back (ping/SSH +51 s, uptime reset).
+  - **Clean cold-boot number** (now that `multi-user.target` is default — plymouth hang gone):
+    `systemd-analyze` = **50.8 s** (`31.854 firmware + 2.435 loader + 3.915 kernel + 1.633 initrd +
+    10.974 userspace`); firmware POST ~32 s is ~63% of it.
+  - _§1b automation **mechanism is now fully in place** (both off + on driven from fastpi).
+    Remaining = the Traefik idle-detect / auto-trigger + wake-on-request "warming-up" glue, plus
+    (optional) watt-meter numbers._

@@ -60,14 +60,22 @@ git clone git@github.com:tomigorn/HomeLab-BeefyServer.git
 on fastpi (no DNS/mDNS/`/etc/hosts` entry), use the IP directly: `ssh buntu@192.168.1.102`.
 `wakeonlan` always uses the MAC, so it works regardless of name resolution.
 
-## ⭐ The wake command (run on fastpi)
+## ⭐ The two commands (run on fastpi) — power OFF and wake ON
 
 ```bash
-wakeonlan 74:56:3c:96:79:a3
+ssh beefy-poweroff            # power beefy OFF — restricted key, no password, no broad sudo
+wakeonlan 74:56:3c:96:79:a3   # wake it back ON (~51 s to usable)
 ```
 
 > WOL is **layer-2 only** — the magic packet is a LAN broadcast and does **not** route
 > across subnets. fastpi and beefy must be on the same LAN segment (they are: `192.168.1.x`).
+
+**How `ssh beefy-poweroff` works (set up & verified 2026-06-18 — see §1c of
+`WOL-test-log-and-method.md`):** a dedicated fastpi key (`~/.ssh/beefy-poweroff`, alias
+`Host beefy-poweroff`) is pinned by a **forced command** in beefy's `authorized_keys`
+(`restrict,command="sudo /usr/bin/systemctl poweroff"`) and a **narrow sudoers** rule
+(`buntu … NOPASSWD: /usr/bin/systemctl poweroff`). The key can do nothing but power beefy off.
+This is the exact primitive the future Traefik idle-automation will call.
 
 ## Test sequence
 
