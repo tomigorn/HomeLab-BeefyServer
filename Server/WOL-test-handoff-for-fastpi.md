@@ -23,9 +23,12 @@
 
 ## State as of last session (what's already done on beefy)
 
-- ✅ WOL enabled on `enp6s0` → `Wake-on: g`.
-- ✅ Persistent unit `/etc/systemd/system/wol@.service` enabled as `wol@enp6s0.service`
-  (re-arms `ethtool -s enp6s0 wol g` at every boot, bound to the NIC device unit).
+- ✅ WOL armed persistently via **netplan native** (`wakeonlan: true` on `enp6s0` in
+  `/etc/netplan/00-installer-config.yaml`) → NetworkManager keeps `Wake-on: g` across reboots.
+  Verified 2026-06-18 (survives reboot + NM reactivation).
+- ⚠️ The old `wol@enp6s0.service` systemd unit was **retired** (disabled): NetworkManager was
+  resetting its `wol g` back to `d` on every connection activation. netplan/NM is now the single
+  source of truth — see `WOL-test-log-and-method.md` (2026-06-18 log entry).
 - ✅ Docker `enabled` at boot; only running container is `portainer_agent`
   (restart policy `always`) → self-recovers after a cold boot.
 - ⏳ **Firmware not yet confirmed** (needs physical access to BIOS — see below).

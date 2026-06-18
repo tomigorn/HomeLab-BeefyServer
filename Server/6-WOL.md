@@ -57,6 +57,9 @@ $ sudo ethtool enp6s0 | grep -i wake
         Supports Wake-on: pumbg
         Wake-on: g
 ```
+> **⚠️ 2026-06-18 — on this box the systemd-unit approach below was the WRONG choice; use
+> netplan native instead. See the "On a NetworkManager-managed NIC" note right after it.**
+
 Make it persistent across reboots. We use a **systemd template unit** rather than
 netplan's native `wakeonlan: true`: the systemd approach is renderer-independent and
 applies reliably, whereas netplan's `wakeonlan` has historically been applied
@@ -101,6 +104,51 @@ Sep 16 00:17:42 beefy systemd[1]: Finished wol@enp6s0.service - Enable Wake-on-L
 $ sudo ethtool enp6s0 | egrep -i 'Supports Wake-on|Wake-on'
         Supports Wake-on: pumbg
         Wake-on: g
+```
+
+### ⚠️ On a NetworkManager-managed NIC, the systemd unit above is NOT enough (what actually happened on beefy)
+
+beefy's `enp6s0` is managed by **NetworkManager** (connection `netplan-enp6s0`;
+`systemd-networkd` is inactive). The `wol@` unit set `wol g` when the *device* appeared, but
+**NetworkManager reset it back to `d`** when it *activated the connection* a moment later. Net
+result: `wol@enp6s0.service` reported `active (exited)`/success, yet `ethtool` showed
+`Wake-on: d` — WOL silently disabled. This reproduced on every boot, and was provable on the
+fly: `sudo ethtool -s enp6s0 wol g` → `g`, then `sudo nmcli connection up netplan-enp6s0` → `d`.
+
+**Fix — let NetworkManager own WOL via netplan (the renderer that manages the NIC):**
+
+```bash
+# add wakeonlan: true to the enp6s0 ethernet block, e.g. in /etc/netplan/00-installer-config.yaml
+#   ethernets:
+#     enp6s0:
+#       dhcp4: true
+#       wakeonlan: true        # <-- add this
+#       match: { macaddress: 74:56:3c:96:79:a3 }
+#       set-name: enp6s0
+
+sudo netplan generate
+# verify it actually reached the NM keyfile (historically flaky — so check, don't trust):
+sudo grep -i wake-on-lan /run/NetworkManager/system-connections/netplan-enp6s0.nmconnection
+#   want a line like:  wake-on-lan=1   (NM then applies magic-packet WOL)
+sudo netplan apply
+
+# confirm it now survives the very thing that broke it, and a reboot:
+sudo ethtool enp6s0 | grep -i 'Wake-on:'        # -> Wake-on: g
+sudo nmcli connection up netplan-enp6s0
+sudo ethtool enp6s0 | grep -i 'Wake-on:'        # -> still Wake-on: g
+
+# then retire the now-redundant unit (single source of truth):
+sudo systemctl disable --now wol@enp6s0.service
+```
+
+If `netplan generate` does **not** write a `wake-on-lan` line into the NM keyfile (older netplan),
+use an explicit NM passthrough in netplan instead:
+
+```yaml
+    enp6s0:
+      networkmanager:
+        passthrough:
+          ethernet.wake-on-lan: "64"   # 64 = magic
 ```
 
 ## ⭐ Recommended strategy: `poweroff` + WOL (S5)

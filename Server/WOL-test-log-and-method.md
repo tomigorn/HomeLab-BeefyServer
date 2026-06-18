@@ -81,10 +81,15 @@ automation will sit on top of. Get the manual path green first.
 
 **Applied & verified on beefy (reversible parts — all done):**
 
-- ✅ WOL enabled on `enp6s0` → `Wake-on: g`.
-- ✅ Persistent systemd unit `/etc/systemd/system/wol@.service`, enabled as
-  `wol@enp6s0.service`, re-arms `ethtool -s enp6s0 wol g` at every boot (bound to the NIC
-  device unit, so it fires exactly when the interface appears).
+- ✅ WOL armed persistently via **netplan native** (`wakeonlan: true` on `enp6s0` in
+  `/etc/netplan/00-installer-config.yaml`) → NetworkManager maintains `Wake-on: g` on every
+  connection activation. **Verified to survive both an NM connection reactivation and a full
+  reboot** (2026-06-18 — see log entry below).
+- ⚠️ **Superseded mechanism:** the original `wol@enp6s0.service` systemd unit set `wol g` early
+  at boot but **NetworkManager reset it back to `d`** when it activated the `netplan-enp6s0`
+  connection a moment later — so steady-state `Wake-on` was actually `d`, *not* `g`, despite the
+  unit reporting `active (exited)` / success. The unit has been **disabled**
+  (`systemctl disable --now wol@enp6s0.service`); netplan/NM is now the single source of truth.
 - ✅ Docker `enabled` at boot; only running container is `portainer_agent` (restart policy
   `always`) → self-recovers after a cold boot.
 
@@ -213,3 +218,27 @@ systemd-analyze critical-chain    # critical path to multi-user
 - **2026-06-18** — Setup applied & verified (§3 ✅ items). Docs written and pushed. BIOS,
   fastpi `wakeonlan`, and watt meter still pending. No wake test run yet — _next: 4a (reboot
   persistence), then 4b (suspend), then 4c (poweroff)._
+
+- **2026-06-18 (later, driven from fastpi)** — Ran §4a. It **surfaced a real bug, now fixed.**
+  - **Symptom:** after a plain reboot, `sudo ethtool enp6s0` showed `Wake-on: d` (disabled),
+    *not* `g` — and it was already `d` *before* the reboot too — even though
+    `wol@enp6s0.service` reported `active (exited)` with ExecStart `status=0/SUCCESS`.
+  - **Root cause (proven, not guessed):** `enp6s0` is managed by **NetworkManager** (connection
+    `netplan-enp6s0`; `systemd-networkd` inactive). The `wol@` unit set `wol g` when the *device*
+    unit appeared, then NM *activated the connection* a moment later and **reset the NIC's
+    Wake-on flag back to `d`**. Confirmed with one isolating test:
+    `sudo ethtool -s enp6s0 wol g` → `Wake-on: g`, then `sudo nmcli connection up netplan-enp6s0`
+    → `Wake-on: d`. (Also ruled out the r8169-refuses-`g` alternative: the manual set *did* take.)
+  - **Fix (standard, renderer-aware — no bespoke unit):** added `wakeonlan: true` to the `enp6s0`
+    block of `/etc/netplan/00-installer-config.yaml`, then `sudo netplan generate` (wrote
+    `wake-on-lan=1` into the NM keyfile `/run/NetworkManager/system-connections/netplan-enp6s0.nmconnection`)
+    and `sudo netplan apply`. NM now keeps `Wake-on: g` itself.
+  - **Verified:** `g` holds (a) after `nmcli connection up` — the exact action that broke it — and
+    (b) after a **full reboot with `wol@enp6s0.service` disabled**, so netplan/NM alone persists
+    it. The redundant systemd unit was retired via `systemctl disable --now`. §4a ✅.
+  - **Bonus:** reboot downtime ≈ **20 s** ping-loss measured from fastpi (rough; proper
+    `systemd-analyze` numbers belong to §4d). Also cleared stale pre-26.04-reinstall host keys for
+    `192.168.1.102` from fastpi's `known_hosts` after verifying the live key matched beefy's
+    already-trusted ED25519.
+  - _Next: **4b** (suspend + wake — fastpi sends the magic packet), then physically set BIOS
+    **ErP=Disabled**, then **4c** (poweroff + wake, the real S5 target)._
