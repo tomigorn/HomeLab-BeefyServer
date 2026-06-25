@@ -1,0 +1,14 @@
+[Unit]
+Description=Beefy idle watcher (self-monitored sleep)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/beefy-idle.conf
+ExecStart=/usr/local/sbin/beefy_idle_watcher.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
