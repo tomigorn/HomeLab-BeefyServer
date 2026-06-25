@@ -132,7 +132,9 @@ server that's a cheap, worthwhile trade.
 > untrusted container or over the network.**
 >
 > If you later want rootless operation without `sudo`, the right answer is **rootless Docker**
-> (daemon runs as your unprivileged user) — *not* joining the `docker` group.
+> (daemon runs as your unprivileged user) — *not* joining the `docker` group. See
+> [`7-Unprivileged-User-and-Rootless-Docker.md`](./7-Unprivileged-User-and-Rootless-Docker.md)
+> for a worked setup (a no-sudo, key-only user that runs Docker rootless).
 
 ### Verify (with `sudo`)
 
