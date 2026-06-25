@@ -257,18 +257,30 @@ ssh beefy-poweroff ; sleep 30 ; wakeonlan 74:56:3c:96:79:a3
 
 ---
 
-## 8. Future — Traefik-driven idle automation
+## 8. Idle automation — BUILT (wake live; sleep in dry-run)
 
-The intended end-state (not built yet) is **idle-based auto power management** with Traefik on
-fastpi fronting beefy's services:
+Idle-based auto power management is implemented as **two independent halves**. The original plan
+here assumed a single Traefik-driven controller; in practice it split cleanly: **fastpi wakes**
+(it fronts the services), and **beefy decides when to sleep** (it has the ground truth about its
+own activity).
 
-- **Sleep:** no traffic routed to beefy for N minutes → fastpi calls `ssh beefy-poweroff`.
-- **Wake:** a request arrives for a beefy service while it's off → fastpi sends the WOL packet, holds
-  the request behind a "warming up" page (~51 s, the §4 cold-boot time) until healthchecks pass,
-  then proxies through.
+### Wake — fastpi, LIVE
+Project **`Docker/Beefy-Waker`** in the `HomeLab-FastPi` repo. A tiny stdlib gate (host network,
+:9001) that Traefik calls via a native **`forwardAuth`** middleware (`beefy-wake`,
+`Traefik/.../dynamic/beefy-wake.yml`): beefy up → 200 (proxy through); beefy asleep → send the WOL
+magic packet to `192.168.1.255:9` and return a 503 auto-refreshing "waking up" page. Exactly the
+"custom forward-auth that fires WOL and waits for readiness" predicted here — no Traefik restart,
+no third-party WOL package. Verified end-to-end (power-off → request → WOL → boot → proxy). Not yet
+attached to a router (no beefy service routed yet); attach `beefy-wake` as services migrate.
 
-This **mechanism** is fully in place (both off and on are driven from fastpi). What remains is the
-*glue*: it depends on Pi→beefy Traefik routing existing first, plus idle-detection and the
-wake-on-request hold (Traefik can't do WOL-on-demand natively — typically a small helper such as a
-Sablier-style on-demand middleware, or a custom forward-auth/proxy that fires the WOL and waits for
-readiness).
+### Sleep — beefy, BUILT (dry-run, pending arming)
+**NOT Traefik-driven.** beefy self-monitors via the **`beefy-idle-watcher`** systemd service — see
+**[`8-Idle-Watcher.md`](8-Idle-Watcher.md)** and `Server/8-Idle-Watcher/`. Four probes (inbound
+service conns, interactive SSH **and VS Code Remote**, CPU/net, disk I/O) + a `/run/beefy-keep-awake`
+inhibit; when all idle 15 min → `systemctl poweroff` (WOL stays armed → fastpi's Beefy-Waker wakes
+it). Ships **dry-run** (logs `WOULD power off`); arm by setting `DRY_RUN=0` in `/etc/beefy-idle.conf`
+after observing the journal.
+
+### Note: SSH does not wake beefy
+Only an **HTTP request to a beefy service** (through Traefik/Beefy-Waker) wakes it. Plain `ssh beefy`
+to a sleeping box just times out — wake it first with `wakeonlan 74:56:3c:96:79:a3` from fastpi.
