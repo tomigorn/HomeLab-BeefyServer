@@ -60,13 +60,20 @@ Each is small and independent; a probe answers exactly "is *this* signal busy?"
    listening-port set means no per-app config and it ignores beefy's *outbound*
    connections (e.g. apt, telemetry to `:443`) and its automation SSH.
 
-2. **Interactive SSH** — count of OpenSSH per-session process titles
-   `sshd-session: <user>@pts/N` in `ps -eo args`. (`who`/utmp is **empty** on this
-   systemd box — utmp is deprecated — so the obvious `who` probe is blind; verified.)
-   `@pts/N` is an interactive pty login; non-interactive automation (`ssh host 'cmd'`,
-   fastpi's poweroff key, VS Code Remote's server) is `@notty` and correctly ignored.
-   `loginctl` was rejected: it labels automation SSH and `manager` sessions the same
-   as real logins, so it over-counts and would never sleep.
+2. **Interactive presence** — busy if EITHER:
+   - an interactive SSH login exists: an OpenSSH per-session title
+     `sshd-session: <user>@pts/N` in `ps -eo args` (a real pty shell), OR
+   - **VS Code Remote** is attached: a `.vscode-server/.../out/server-main.js` node
+     process is running.
+
+   (`who`/utmp is **empty** on this systemd box — utmp is deprecated — so the obvious
+   `who` probe is blind; verified. `loginctl` was also rejected: it labels automation
+   SSH and `manager` sessions the same as real logins, so it over-counts.)
+   Non-interactive automation (`ssh host 'cmd'`, fastpi's poweroff key) is `@notty`
+   with no VS Code server, so it is correctly ignored. **VS Code Remote counts as
+   in-use by policy** (the primary way the box is operated); VS Code's own
+   `--enable-remote-auto-shutdown` drops the connection when the user is away, which
+   then lets beefy sleep. Logged as separate `ssh=` and `vscode=` fields.
 
 3. **Background jobs** — CPU utilisation across the interval > `CPU_BUSY_PCT`, OR
    LAN throughput (`/proc/net/dev` delta on the primary NIC) > `NET_BUSY_KBPS`.

@@ -76,6 +76,21 @@ def count_interactive_ssh(ps_text):
     return sum(1 for ln in ps_text.splitlines() if _PTS_RE.search(ln))
 
 
+_VSCODE_RE = re.compile(r"\.vscode-server/.*server-main\.js")
+
+
+def vscode_remote_active(ps_text):
+    """True if a VS Code Remote-SSH server is running (user connected via VS Code).
+
+    VS Code connects over SSH non-interactively (`@notty`, missed by the @pts
+    probe) and runs a node server `.vscode-server/.../out/server-main.js`. Its
+    presence means the IDE is attached; treat that as in-use. VS Code's own
+    `--enable-remote-auto-shutdown` exits this server when the user is away,
+    releasing beefy to sleep.
+    """
+    return any(_VSCODE_RE.search(ln) for ln in ps_text.splitlines())
+
+
 def _cpu_idle_total(stat_text):
     for line in stat_text.splitlines():
         parts = line.split()
@@ -261,12 +276,15 @@ def main():
         listen = parse_listen_ports(_run(["ss", "-ltnH"]))
         conns = count_inbound(_run(["ss", "-tnH", "state", "established"]),
                               listen, cfg["EXCLUDE_PORTS"])
-        ssh = count_interactive_ssh(_run(["ps", "-eo", "args"]))
+        ps = _run(["ps", "-eo", "args"])
+        ssh = count_interactive_ssh(ps)
+        vscode = vscode_remote_active(ps)
         inhibit = os.path.exists(cfg["INHIBIT_FILE"])
 
         probes = {
             "conns": conns > 0,
             "ssh": ssh > 0,
+            "vscode": vscode,
             "cpu": cpu > cfg["CPU_BUSY_PCT"],
             "net": net > cfg["NET_BUSY_KBPS"],
             "disk": disk > cfg["DISK_BUSY_KBPS"],
@@ -275,9 +293,9 @@ def main():
         idle_since = update_idle(busy, idle_since, now)
         idle_min = (now - idle_since) / 60.0
 
-        log("idle=%4.1fm conns=%d ssh=%d cpu=%2.0f%% net=%.0fkB/s disk=%.0fkB/s "
-            "inhibit=%d -> %s%s"
-            % (idle_min, conns, ssh, cpu, net, disk, int(inhibit),
+        log("idle=%4.1fm conns=%d ssh=%d vscode=%d cpu=%2.0f%% net=%.0fkB/s "
+            "disk=%.0fkB/s inhibit=%d -> %s%s"
+            % (idle_min, conns, ssh, int(vscode), cpu, net, disk, int(inhibit),
                "BUSY" if busy else "idle",
                (" (" + ",".join(reasons) + ")") if reasons else ""))
 

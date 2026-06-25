@@ -6,7 +6,7 @@ Fixtures are real samples captured from beefy (2026-06-25). Run:
 import unittest
 
 from beefy_idle_watcher import (
-    parse_listen_ports, count_inbound, count_interactive_ssh,
+    parse_listen_ports, count_inbound, count_interactive_ssh, vscode_remote_active,
     cpu_busy_pct, net_kbps, disk_kbps,
     evaluate, update_idle, should_sleep, load_config,
 )
@@ -49,6 +49,24 @@ class TestSessions(unittest.TestCase):
     def test_no_interactive(self):
         self.assertEqual(count_interactive_ssh(""), 0)
         self.assertEqual(count_interactive_ssh("sshd-session: buntu@notty\n-bash\n"), 0)
+
+
+class TestVSCode(unittest.TestCase):
+    # Real `.vscode-server` node server line captured from beefy.
+    SERVER = ("/home/buntu/.vscode-server/cli/servers/Stable-7e7950df/server/node "
+              "/home/buntu/.vscode-server/cli/servers/Stable-7e7950df/server/out/"
+              "server-main.js --connection-token=remotessh --start-server\n")
+
+    def test_detects_running_server(self):
+        ps = ("sshd-session: buntu@notty\n" + self.SERVER + "-bash\n")
+        self.assertTrue(vscode_remote_active(ps))
+
+    def test_absent_when_not_connected(self):
+        # The CLI/agent processes alone (no running server-main.js) do not count.
+        ps = ("sshd-session: buntu@notty\n"
+              "/home/buntu/.vscode-server/code-93cfdd48 --cli-data-dir x agent host\n"
+              "-bash\n")
+        self.assertFalse(vscode_remote_active(ps))
 
 
 class TestRates(unittest.TestCase):
