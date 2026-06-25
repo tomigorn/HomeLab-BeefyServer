@@ -190,9 +190,17 @@ TriggeredBy: ● ssh.socket
 ```
 
 > Note the `TriggeredBy: ssh.socket` line — on Ubuntu 22.04+ SSH is **socket-activated**.
-> Auth changes apply to new connections automatically, but if you ever change the listening
-> **Port**, you must also restart the socket:
-> `sudo systemctl restart ssh.socket`.
+>
+> **Important — `restart`, not `reload`, and restart the socket too (OpenSSH 9.8+ / Ubuntu
+> 24.04+26.04).** Since OpenSSH 9.8 the listener parses `sshd_config` **once at startup** and
+> hands it to each per-connection `sshd-session` — it does **not** re-read the file on every
+> connection like older versions did. On a socket-activated host a plain `sudo systemctl reload
+> ssh` can therefore leave the *running* daemon on the **old** config. Always:
+> `sudo systemctl restart ssh.socket ssh.service`, then confirm the change is live with
+> `sudo sshd -T | grep -i <option>`. (Symptom of getting this wrong: a freshly-added
+> `AllowUsers` user gets `Permission denied (publickey)` and the auth log says *"not allowed
+> because not listed in AllowUsers"* even though the file is correct — see §6.) The same applies
+> if you ever change the listening **Port**.
 
 ## 6. Optional: Restrict which users or keys can connect
 
@@ -200,12 +208,18 @@ Limit who may log in with `AllowUsers` (or `AllowGroups`) — add it to your dro
 
 ```bash
 echo "AllowUsers buntu" | sudo tee -a /etc/ssh/sshd_config.d/10-hardening.conf
-sudo sshd -t && sudo systemctl restart ssh
+sudo sshd -t && sudo systemctl restart ssh.socket ssh.service
+sudo sshd -T | grep -i allowusers     # confirm the RUNNING daemon loaded it
 ```
 
 > **Note:** `AllowUsers buntu` is a whitelist — once set, **only** `buntu` may log in over SSH;
 > every other account (including `root`) is refused regardless of keys. List multiple users
 > space-separated (`AllowUsers buntu alice`) if you need more.
+
+> **Use `restart` (socket + service), not `reload`** — and verify with `sudo sshd -T | grep -i
+> allowusers`. On OpenSSH 9.8+ a `reload` can silently leave the running daemon on the old
+> whitelist, so the new user keeps getting `Permission denied (publickey)` even though the file
+> is right. See the socket-activation note in §5.
 
 ## 7. Test the connection
 
