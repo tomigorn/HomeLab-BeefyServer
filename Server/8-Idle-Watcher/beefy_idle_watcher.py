@@ -57,9 +57,23 @@ def count_inbound(ss_estab_text, listen_ports, exclude_ports):
     return n
 
 
-def interactive_sessions(who_text):
-    """Number of interactive login sessions (`who` lines)."""
-    return sum(1 for ln in who_text.splitlines() if ln.strip())
+import re
+
+_PTS_RE = re.compile(r"sshd[\w-]*:.*@pts/\d+")
+
+
+def count_interactive_ssh(ps_text):
+    """Number of interactive SSH logins, from `ps -eo args`.
+
+    This box has no utmp (systemd), so `who` is always empty. OpenSSH sets each
+    per-session process title to `sshd-session: <user>@pts/N` for an interactive
+    (pty) login and `<user>@notty` for non-interactive automation. Counting the
+    `@pts/N` titles tracks real interactive sessions exactly and ignores
+    automation SSH (`ssh host 'cmd'`), the systemd `manager` sessions, and
+    non-interactive tools like VS Code Remote's server — all of which `loginctl`
+    fails to distinguish on this system.
+    """
+    return sum(1 for ln in ps_text.splitlines() if _PTS_RE.search(ln))
 
 
 def _cpu_idle_total(stat_text):
@@ -247,7 +261,7 @@ def main():
         listen = parse_listen_ports(_run(["ss", "-ltnH"]))
         conns = count_inbound(_run(["ss", "-tnH", "state", "established"]),
                               listen, cfg["EXCLUDE_PORTS"])
-        ssh = interactive_sessions(_run(["who"]))
+        ssh = count_interactive_ssh(_run(["ps", "-eo", "args"]))
         inhibit = os.path.exists(cfg["INHIBIT_FILE"])
 
         probes = {

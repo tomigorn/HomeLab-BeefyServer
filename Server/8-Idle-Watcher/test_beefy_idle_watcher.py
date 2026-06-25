@@ -6,7 +6,7 @@ Fixtures are real samples captured from beefy (2026-06-25). Run:
 import unittest
 
 from beefy_idle_watcher import (
-    parse_listen_ports, count_inbound, interactive_sessions,
+    parse_listen_ports, count_inbound, count_interactive_ssh,
     cpu_busy_pct, net_kbps, disk_kbps,
     evaluate, update_idle, should_sleep, load_config,
 )
@@ -33,11 +33,22 @@ class TestConnections(unittest.TestCase):
 
 
 class TestSessions(unittest.TestCase):
-    def test_interactive_sessions(self):
-        self.assertEqual(interactive_sessions(""), 0)
-        self.assertEqual(interactive_sessions("\n  \n"), 0)
-        self.assertEqual(
-            interactive_sessions("buntu pts/0 2026-06-25 22:10 (192.168.1.50)\n"), 1)
+    # Real `ps -eo args` titles captured from beefy: @pts = interactive,
+    # @notty = automation, [priv] = the parent, plus unrelated processes.
+    PS = ("sshd-session: buntu@pts/0\n"
+          "sshd-session: buntu@notty\n"
+          "sshd-session: buntu [priv]\n"
+          "sshd-session: root@pts/3\n"
+          "-bash\n"
+          "/usr/lib/systemd/systemd --user\n"
+          "python3 -m http.server 8080\n")
+
+    def test_counts_only_interactive_pts(self):
+        self.assertEqual(count_interactive_ssh(self.PS), 2)   # buntu@pts/0, root@pts/3
+
+    def test_no_interactive(self):
+        self.assertEqual(count_interactive_ssh(""), 0)
+        self.assertEqual(count_interactive_ssh("sshd-session: buntu@notty\n-bash\n"), 0)
 
 
 class TestRates(unittest.TestCase):
