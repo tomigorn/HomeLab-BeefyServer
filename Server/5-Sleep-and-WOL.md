@@ -166,6 +166,26 @@ After a wake, VS Code server re-indexes the storage pools and pins every core (r
   "search.followSymlinks": false }
 ```
 
+### 3.7 Read-only history key (wake page's "beefy history" panel)
+
+fastpi's Beefy-Waker also serves a manual wake page (`https://beefy-wol.fastpi.homelab/`) with a
+collapsed **"beefy history"** panel — this machine's boot/sleep timeline. It reads that over a
+second locked-down key, same least-privilege idea as §3.5 but **read-only**:
+
+1. **Dedicated keypair on fastpi:** `Docker/Beefy-Waker/secrets/beefy-history` (ed25519, gitignored;
+   mounted read-only into the waker container).
+2. **Forced command on beefy** (`~buntu/.ssh/authorized_keys`) — pinned to one read-only command,
+   pty/forwarding stripped:
+   ```
+   command="journalctl --list-boots -o json --no-pager",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding ssh-ed25519 AAAA…  beefy-history
+   ```
+3. **No sudo** — `buntu` is in `adm`, so it reads the journal without privilege.
+
+**Threat model:** if the key leaked it can do *exactly one thing* — list boot timestamps. No shell,
+no sudo, no other access. (Re)create it with the snippet in the Beefy-Waker README. The panel
+filters to a `BEEFY_HISTORY_SINCE` cutoff (set on fastpi) so old experimental boots don't show;
+nothing is deleted from this machine's journal.
+
 ---
 
 ## 4. Power & timing measurements (inline meter, 2026-06-18)
