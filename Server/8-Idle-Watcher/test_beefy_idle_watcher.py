@@ -120,6 +120,22 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg["DATA_DISKS"], ["sda", "sdb"])
         self.assertEqual(cfg["EXCLUDE_PORTS"], {22, 9001})
 
+    def test_tolerates_inline_comments_and_quotes(self):
+        # systemd EnvironmentFile keeps inline '# comments' and quotes literal —
+        # the parser must survive them (regression: ValueError on int()).
+        cfg = load_config({
+            "SAMPLE_INTERVAL": "60        # seconds between samples",
+            "CPU_BUSY_PCT": "15           # percent",
+            "DATA_DISKS": '"sda sdb sdc"  # data disks, not the OS nvme',
+            "EXCLUDE_PORTS": '"22"        # ssh',
+            "DRY_RUN": "1                 # log only",
+        })
+        self.assertEqual(cfg["SAMPLE_INTERVAL"], 60)
+        self.assertEqual(cfg["CPU_BUSY_PCT"], 15.0)
+        self.assertEqual(cfg["DATA_DISKS"], ["sda", "sdb", "sdc"])
+        self.assertEqual(cfg["EXCLUDE_PORTS"], {22})
+        self.assertEqual(cfg["DRY_RUN"], True)
+
 
 if __name__ == "__main__":
     unittest.main()

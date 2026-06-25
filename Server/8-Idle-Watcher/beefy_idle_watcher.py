@@ -157,25 +157,37 @@ _DEFAULTS = {
 }
 
 
+def _clean(raw):
+    """Normalise an EnvironmentFile value.
+
+    systemd keeps an inline `# comment` and surrounding quotes as part of the
+    literal value, so strip a trailing comment, whitespace, and wrapping quotes.
+    """
+    v = raw.split("#", 1)[0].strip()
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        v = v[1:-1].strip()
+    return v
+
+
 def load_config(env):
     """Merge environment (systemd EnvironmentFile) over defaults, typed."""
     cfg = dict(_DEFAULTS)
     if "DRY_RUN" in env:
-        cfg["DRY_RUN"] = env["DRY_RUN"].strip() not in ("0", "false", "False", "")
+        cfg["DRY_RUN"] = _clean(env["DRY_RUN"]) not in ("0", "false", "False", "")
     for key in ("IDLE_MINUTES", "SAMPLE_INTERVAL"):
         if key in env:
-            cfg[key] = int(env[key])
+            cfg[key] = int(_clean(env[key]))
     for key in ("CPU_BUSY_PCT", "NET_BUSY_KBPS", "DISK_BUSY_KBPS"):
         if key in env:
-            cfg[key] = float(env[key])
+            cfg[key] = float(_clean(env[key]))
     if "PRIMARY_NIC" in env:
-        cfg["PRIMARY_NIC"] = env["PRIMARY_NIC"].strip()
+        cfg["PRIMARY_NIC"] = _clean(env["PRIMARY_NIC"])
     if "DATA_DISKS" in env:
-        cfg["DATA_DISKS"] = env["DATA_DISKS"].split()
+        cfg["DATA_DISKS"] = _clean(env["DATA_DISKS"]).split()
     if "EXCLUDE_PORTS" in env:
-        cfg["EXCLUDE_PORTS"] = {int(p) for p in env["EXCLUDE_PORTS"].split()}
+        cfg["EXCLUDE_PORTS"] = {int(p) for p in _clean(env["EXCLUDE_PORTS"]).split()}
     if "INHIBIT_FILE" in env:
-        cfg["INHIBIT_FILE"] = env["INHIBIT_FILE"].strip()
+        cfg["INHIBIT_FILE"] = _clean(env["INHIBIT_FILE"])
     return cfg
 
 
