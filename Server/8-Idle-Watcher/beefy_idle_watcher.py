@@ -127,7 +127,8 @@ def net_kbps(dev_a, dev_b, nic, secs):
         return 0.0
     rx_a, tx_a = _nic_rx_tx(dev_a, nic)
     rx_b, tx_b = _nic_rx_tx(dev_b, nic)
-    return ((rx_b - rx_a) + (tx_b - tx_a)) / 1000.0 / secs
+    delta = (rx_b - rx_a) + (tx_b - tx_a)
+    return max(0, delta) / 1000.0 / secs   # clamp counter reset/re-init (negative) to 0
 
 
 def _disk_sectors(ds_text, disks):
@@ -148,7 +149,7 @@ def disk_kbps(ds_a, ds_b, disks, secs):
     if secs <= 0:
         return 0.0
     delta = _disk_sectors(ds_b, disks) - _disk_sectors(ds_a, disks)
-    return delta * 512 / 1000.0 / secs
+    return max(0, delta) * 512 / 1000.0 / secs   # clamp counter reset (negative) to 0
 
 
 def evaluate(probes, inhibit):
@@ -227,9 +228,12 @@ def load_config(env):
 def _run(cmd):
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
-    except Exception as e:                       # never let a probe crash the loop
+    except Exception as e:
+        # Return None (NOT "") so a failed probe propagates an error and the cycle
+        # fails BUSY, rather than silently parsing to "idle" (fail-open -> could
+        # sleep while in use, e.g. if ss/ps fails under fork pressure).
         log("WARN: %s failed: %s" % (" ".join(cmd), e))
-        return ""
+        return None
 
 
 def _read(path):
@@ -270,33 +274,39 @@ def main():
         cur = _snapshot()
         secs = cur["t"] - prev["t"]
 
-        cpu = cpu_busy_pct(prev["stat"], cur["stat"])
-        net = net_kbps(prev["dev"], cur["dev"], cfg["PRIMARY_NIC"], secs)
-        disk = disk_kbps(prev["ds"], cur["ds"], cfg["DATA_DISKS"], secs)
-        listen = parse_listen_ports(_run(["ss", "-ltnH"]))
-        conns = count_inbound(_run(["ss", "-tnH", "state", "established"]),
-                              listen, cfg["EXCLUDE_PORTS"])
-        ps = _run(["ps", "-eo", "args"])
-        ssh = count_interactive_ssh(ps)
-        vscode = vscode_remote_active(ps)
-        inhibit = os.path.exists(cfg["INHIBIT_FILE"])
+        # Any failure computing the probes (a failed ss/ps -> None, a malformed
+        # /proc line -> ValueError, etc.) must fail BUSY, never silently idle.
+        try:
+            cpu = cpu_busy_pct(prev["stat"], cur["stat"])
+            net = net_kbps(prev["dev"], cur["dev"], cfg["PRIMARY_NIC"], secs)
+            disk = disk_kbps(prev["ds"], cur["ds"], cfg["DATA_DISKS"], secs)
+            listen = parse_listen_ports(_run(["ss", "-ltnH"]))
+            conns = count_inbound(_run(["ss", "-tnH", "state", "established"]),
+                                  listen, cfg["EXCLUDE_PORTS"])
+            ps = _run(["ps", "-eo", "args"])
+            ssh = count_interactive_ssh(ps)
+            vscode = vscode_remote_active(ps)
+            inhibit = os.path.exists(cfg["INHIBIT_FILE"])
+            probes = {
+                "conns": conns > 0,
+                "ssh": ssh > 0,
+                "vscode": vscode,
+                "cpu": cpu > cfg["CPU_BUSY_PCT"],
+                "net": net > cfg["NET_BUSY_KBPS"],
+                "disk": disk > cfg["DISK_BUSY_KBPS"],
+            }
+            busy, reasons = evaluate(probes, inhibit)
+            stats = ("conns=%d ssh=%d vscode=%d cpu=%2.0f%% net=%.0fkB/s "
+                     "disk=%.0fkB/s inhibit=%d"
+                     % (conns, ssh, int(vscode), cpu, net, disk, int(inhibit)))
+        except Exception as e:
+            log("WARN probe cycle failed (%s) -> treating as BUSY" % e)
+            busy, reasons, stats = True, ["probe_error"], "probe error"
 
-        probes = {
-            "conns": conns > 0,
-            "ssh": ssh > 0,
-            "vscode": vscode,
-            "cpu": cpu > cfg["CPU_BUSY_PCT"],
-            "net": net > cfg["NET_BUSY_KBPS"],
-            "disk": disk > cfg["DISK_BUSY_KBPS"],
-        }
-        busy, reasons = evaluate(probes, inhibit)
         idle_since = update_idle(busy, idle_since, now)
         idle_min = (now - idle_since) / 60.0
-
-        log("idle=%4.1fm conns=%d ssh=%d vscode=%d cpu=%2.0f%% net=%.0fkB/s "
-            "disk=%.0fkB/s inhibit=%d -> %s%s"
-            % (idle_min, conns, ssh, int(vscode), cpu, net, disk, int(inhibit),
-               "BUSY" if busy else "idle",
+        log("idle=%4.1fm %s -> %s%s"
+            % (idle_min, stats, "BUSY" if busy else "idle",
                (" (" + ",".join(reasons) + ")") if reasons else ""))
 
         if not busy and should_sleep(idle_since, now, cfg["IDLE_MINUTES"]):
@@ -304,8 +314,12 @@ def main():
                 log("WOULD power off now (idle %d min, dry-run)" % cfg["IDLE_MINUTES"])
             else:
                 log("idle %d min -> systemctl poweroff" % cfg["IDLE_MINUTES"])
-                subprocess.run(["systemctl", "poweroff"])
-                return
+                res = subprocess.run(["systemctl", "poweroff"])
+                if res.returncode == 0:
+                    return
+                # poweroff failed: don't exit (Restart=on-failure won't fire on a
+                # clean exit) -- log and retry on the next cycle.
+                log("poweroff FAILED rc=%d -- will retry next cycle" % res.returncode)
 
         prev = cur
         time.sleep(cfg["SAMPLE_INTERVAL"])

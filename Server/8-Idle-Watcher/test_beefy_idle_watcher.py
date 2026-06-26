@@ -100,6 +100,17 @@ class TestRates(unittest.TestCase):
         self.assertAlmostEqual(disk_kbps(a, b, ["sda", "sdb"], 10),
                                300 * 512 / 1000.0 / 10, places=2)
 
+    def test_net_clamps_counter_reset(self):
+        # b < a (NIC removed/re-added resets the counter) must read 0, not negative
+        a = "enp6s0: 9000 0 0 0 0 0 0 0 9000 0\n"
+        b = "enp6s0: 100 0 0 0 0 0 0 0 100 0\n"
+        self.assertEqual(net_kbps(a, b, "enp6s0", 10), 0.0)
+
+    def test_disk_clamps_counter_reset(self):
+        a = "8 0 sda 0 0 9000 0 0 0 9000 0 0\n"
+        b = "8 0 sda 0 0 100 0 0 0 100 0 0\n"
+        self.assertEqual(disk_kbps(a, b, ["sda"], 10), 0.0)
+
 
 class TestDecision(unittest.TestCase):
     def test_evaluate_inhibit_forces_busy(self):

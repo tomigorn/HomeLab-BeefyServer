@@ -10,5 +10,20 @@ ExecStart=/usr/local/sbin/beefy_idle_watcher.py
 Restart=on-failure
 RestartSec=10
 
+# Hardening — safe for a root daemon that only reads /proc, runs ss/ps, and calls
+# `systemctl poweroff`. (FS/privilege restrictions only; syscall/address-family
+# filters are deliberately omitted so they can't break the poweroff path. Verify a
+# real idle->poweroff still works when you flip DRY_RUN=0.)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
 [Install]
 WantedBy=multi-user.target
