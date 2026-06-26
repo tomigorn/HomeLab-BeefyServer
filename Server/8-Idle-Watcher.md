@@ -43,7 +43,7 @@ Every `SAMPLE_INTERVAL` (default 60 s):
 1. Evaluate the four probes below; each returns **busy** or **idle**.
 2. If **any** probe is busy → reset `idle_since = now`.
 3. If **all** probes have been idle continuously for ≥ `IDLE_MINUTES` (15) →
-   log the verdict, re-evaluate once more, and if still idle:
+   log the verdict, and:
    - **dry-run on (default):** log `WOULD power off (idle 15m)` and keep running.
    - **dry-run off (armed):** `systemctl poweroff`.
 
@@ -161,3 +161,29 @@ never clobbers tuned values), then `systemctl daemon-reload && enable --now`.
 3. Once confident, set `DRY_RUN=0`, restart, verify a real idle → poweroff, and
    that a request wakes it back (closes the loop with `Beefy-Waker`).
 4. Update 5-Sleep-and-WOL.md §8 to "done" (and the project's working notes).
+
+## Operations & known limitations
+
+**Current state:** ARMED — `DRY_RUN=0` in `/etc/beefy-idle.conf`, `IDLE_MINUTES=15`, daemon
+**v1.1.0** (monotonic idle clock). beefy powers off (S5) after 15 min fully idle; WoL wakes it.
+
+**Controls**
+- **Logs:** `journalctl -u beefy-idle-watcher -f` (live) or `-b | grep start:` (version banners).
+- **Keep awake** (unattended job): `sudo touch /run/beefy-keep-awake`; release: `sudo rm` it (clears on reboot).
+- **Disarm:** `DRY_RUN=1` in `/etc/beefy-idle.conf` + `sudo systemctl restart beefy-idle-watcher`.
+- **Tune:** change `IDLE_MINUTES` / thresholds in the same file + restart.
+
+**Known limitations** (full cross-system review on fastpi:
+`HomeLab-FastPi` -> `Docker/Beefy-Waker/docs/2026-06-26-power-management-review.md`)
+- **Sleeps mid-job** if a detached job is below all thresholds (CPU<15% / net<200kB/s /
+  disk<2000kB/s) with no SSH and no inbound conn — including a paused `apt`/`dpkg` (can corrupt
+  the package DB). Mitigation: `touch /run/beefy-keep-awake`; recommended: an apt
+  `DPkg::Pre-Invoke`/`Post-Invoke` hook.
+- **Never sleeps** if a persistent connection to a service port lingers (keepalive monitor,
+  left-open browser tab, idle WebSocket).
+- **`DATA_DISKS=sda,sdb,sdc`** are hardcoded basenames — verify they match beefy's real data
+  disks (`lsblk`); a mismatch silently blinds the disk probe.
+- **Probe regexes** (`@pts/N`, `server-main.js`) can break silently across OpenSSH / VS Code
+  upgrades — re-verify after major updates.
+- **No second confirmation** before poweroff (the 15-min *continuous*-idle requirement is the
+  safety). A confirmation re-check is a possible future hardening.
