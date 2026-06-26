@@ -5,6 +5,7 @@ Fixtures are real samples captured from beefy (2026-06-25). Run:
 """
 import unittest
 
+import beefy_idle_watcher as biw
 from beefy_idle_watcher import (
     parse_listen_ports, count_inbound, count_interactive_ssh, vscode_remote_active,
     cpu_busy_pct, net_kbps, disk_kbps,
@@ -175,6 +176,17 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg["DATA_DISKS"], ["sda", "sdb", "sdc"])
         self.assertEqual(cfg["EXCLUDE_PORTS"], {22})
         self.assertEqual(cfg["DRY_RUN"], True)
+
+
+class TestVersion(unittest.TestCase):
+    def test_version_is_set(self):
+        self.assertTrue(biw.VERSION and biw.VERSION[0].isdigit())
+
+    def test_start_banner_includes_version_and_config(self):
+        banner = biw.start_banner("9.9.9", load_config({}))
+        self.assertIn("v9.9.9", banner)
+        self.assertIn("dry_run", banner)
+        self.assertIn("idle=15m", banner)
 
 
 if __name__ == "__main__":

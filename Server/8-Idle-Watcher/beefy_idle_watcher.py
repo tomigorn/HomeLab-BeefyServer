@@ -169,6 +169,16 @@ def should_sleep(idle_since, now, idle_minutes):
     return (now - idle_since) >= idle_minutes * 60
 
 
+def start_banner(version, cfg):
+    """One-line startup banner (pure) — logged once at boot so journald records
+    which version + thresholds the running daemon has."""
+    return ("beefy-idle-watcher v%s start: dry_run=%s idle=%dm interval=%ds "
+            "cpu>%.0f%% net>%.0fkB/s disk>%.0fkB/s disks=%s nic=%s"
+            % (version, cfg["DRY_RUN"], cfg["IDLE_MINUTES"], cfg["SAMPLE_INTERVAL"],
+               cfg["CPU_BUSY_PCT"], cfg["NET_BUSY_KBPS"], cfg["DISK_BUSY_KBPS"],
+               ",".join(cfg["DATA_DISKS"]), cfg["PRIMARY_NIC"]))
+
+
 # ----------------------------------------------------------------------------
 # Config
 # ----------------------------------------------------------------------------
@@ -248,6 +258,9 @@ def log(msg):
     print(msg, flush=True)
 
 
+VERSION = "1.0.0"   # bump on each release; logged at startup so journald records it
+
+
 def _snapshot():
     return {
         "t": time.time(),
@@ -259,11 +272,7 @@ def _snapshot():
 
 def main():
     cfg = load_config(os.environ)
-    log("beefy-idle-watcher start: dry_run=%s idle=%dm interval=%ds "
-        "cpu>%.0f%% net>%.0fkB/s disk>%.0fkB/s disks=%s nic=%s"
-        % (cfg["DRY_RUN"], cfg["IDLE_MINUTES"], cfg["SAMPLE_INTERVAL"],
-           cfg["CPU_BUSY_PCT"], cfg["NET_BUSY_KBPS"], cfg["DISK_BUSY_KBPS"],
-           ",".join(cfg["DATA_DISKS"]), cfg["PRIMARY_NIC"]))
+    log(start_banner(VERSION, cfg))
 
     prev = _snapshot()
     idle_since = time.time()
