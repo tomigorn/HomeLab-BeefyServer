@@ -258,12 +258,18 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.0.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.1.0"   # bump on each release; logged at startup so journald records it
+
+
+# Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
+# a manual `timedatectl set-time` must not change how long beefy has been idle (else
+# the daemon could power off early or late). All idle/rate deltas derive from this.
+_now = time.monotonic
 
 
 def _snapshot():
     return {
-        "t": time.time(),
+        "t": _now(),
         "stat": _read("/proc/stat"),
         "dev": _read("/proc/net/dev"),
         "ds": _read("/proc/diskstats"),
@@ -275,11 +281,11 @@ def main():
     log(start_banner(VERSION, cfg))
 
     prev = _snapshot()
-    idle_since = time.time()
+    idle_since = _now()
     time.sleep(cfg["SAMPLE_INTERVAL"])
 
     while True:
-        now = time.time()
+        now = _now()
         cur = _snapshot()
         secs = cur["t"] - prev["t"]
 

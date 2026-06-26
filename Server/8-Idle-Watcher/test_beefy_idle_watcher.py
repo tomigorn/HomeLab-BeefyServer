@@ -189,5 +189,22 @@ class TestVersion(unittest.TestCase):
         self.assertIn("idle=15m", banner)
 
 
+class TestClock(unittest.TestCase):
+    def test_elapsed_clock_is_monotonic(self):
+        # Idle timing must use a monotonic clock so a wall-clock step (NTP / manual
+        # set-time) can't shorten or extend how long beefy is considered idle.
+        self.assertIs(biw._now, biw.time.monotonic)
+
+    def test_snapshot_time_comes_from_the_elapsed_clock(self):
+        # _snapshot()["t"] (the rate-math denominator) must read the monotonic seam,
+        # not the wall clock.
+        real = biw._now
+        try:
+            biw._now = lambda: 4242.0
+            self.assertEqual(biw._snapshot()["t"], 4242.0)
+        finally:
+            biw._now = real
+
+
 if __name__ == "__main__":
     unittest.main()
