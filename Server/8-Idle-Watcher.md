@@ -177,8 +177,8 @@ never clobbers tuned values), then `systemctl daemon-reload && enable --now`.
 `HomeLab-FastPi` -> `Docker/Beefy-Waker/docs/2026-06-26-power-management-review.md`)
 - **Sleeps mid-job** if a detached job is below all thresholds (CPU<15% / net<200kB/s /
   disk<2000kB/s) with no SSH and no inbound conn — including a paused `apt`/`dpkg` (can corrupt
-  the package DB). Mitigation: `touch /run/beefy-keep-awake`; recommended: an apt
-  `DPkg::Pre-Invoke`/`Post-Invoke` hook.
+  the package DB). Mitigation: `touch /run/beefy-keep-awake`; **installed** via an apt `DPkg::Pre-Invoke`/`Post-Invoke` hook
+  (`/etc/apt/apt.conf.d/99-beefy-keep-awake`; copy in `8-Idle-Watcher/apt-99-beefy-keep-awake.conf`).
 - **Never sleeps** if a persistent connection to a service port lingers (keepalive monitor,
   left-open browser tab, idle WebSocket).
 - **`DATA_DISKS=sda,sdb,sdc`** are hardcoded basenames — verify they match beefy's real data
