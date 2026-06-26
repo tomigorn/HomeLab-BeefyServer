@@ -172,6 +172,7 @@ never clobbers tuned values), then `systemctl daemon-reload && enable --now`.
 - **Keep awake** (unattended job): `sudo touch /run/beefy-keep-awake`; release: `sudo rm` it (clears on reboot).
 - **Disarm:** `DRY_RUN=1` in `/etc/beefy-idle.conf` + `sudo systemctl restart beefy-idle-watcher`.
 - **Tune:** change `IDLE_MINUTES` / thresholds in the same file + restart.
+- **SSH in (auto-wake):** `ssh beefy` (scp/rsync/git too) auto-wakes the box if it's asleep — see the client `~/.ssh/config` block in the Beefy-Waker README (`HomeLab-FastPi` -> `Docker/Beefy-Waker/README.md`, section "SSH wake").
 
 **Known limitations** (full cross-system review on fastpi:
 `HomeLab-FastPi` -> `Docker/Beefy-Waker/docs/2026-06-26-power-management-review.md`)
