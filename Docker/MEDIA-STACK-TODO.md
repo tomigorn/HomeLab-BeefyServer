@@ -1,9 +1,9 @@
 # Media stack — outstanding work
 
 Tracking for the Jellyfin + Movie-Downloads build on beefy. Started 2026-10-05.
-Scaffolding is committed; **nothing is deployed**.
+Scaffolding is committed and reconciled with the storage doc; **nothing is deployed**.
 
-Legend: 🔴 blocker · 🟡 needed before real use · ⚪ later / optional
+Legend: 🔴 blocker · 🟡 needed before real use · ⚪ later / optional · ✅ done
 
 ---
 
@@ -12,49 +12,23 @@ Legend: 🔴 blocker · 🟡 needed before real use · ⚪ later / optional
 - [ ] **Docker boot-order drop-in** (storage doc §6 / §14.2-F). If Docker starts
       before mergerfs is mounted, a container bind-mounts an **empty** `/srv/video`
       and an arr can mark the whole library missing and **delete it**. The doc calls
-      this "a hard prerequisite, not optional".
-      ```ini
-      # /etc/systemd/system/docker.service.d/10-require-srv-video.conf
-      [Unit]
-      RequiresMountsFor=/srv/video
-      After=srv-video.mount
-      Requires=srv-video.mount
-      ```
-      `sudo systemctl daemon-reload && sudo systemctl restart docker`
-      (Drop the `/srv/audio` references from the doc's snippet — that tier was
-      retired 2026-07-03.) Do **not** add `nofail`; failing closed is correct.
-
-- [ ] **Reconcile container identity.** Storage doc §14.0 says *"use these verbatim:
-      `PUID=1000`/`PGID=1000` (buntu), `UMASK=002`"*. The scaffolded `.env` files
-      currently say `PUID=1101`/`PGID=1100` and have **no UMASK**. The doc was
-      written with beefy in mind and `/srv/audio` was already chowned `1000:1000`
-      under it. Decide, then make both `.env` files and the README prerequisites
-      agree. See "Known conflict" below.
+      this "a hard prerequisite, not optional". The exact snippet is now in
+      `Movie-Downloads/README.md` → Prerequisites → step 0. Needs sudo.
 
 - [ ] **`sudo usermod -aG docker buntu`** — the `docker` group has no members, so
       `buntu` can currently reach no daemon at all. Log out/in afterwards.
+      (Verified still pending 2026-10-06.)
 
-- [ ] **Pool ownership + umask** once identity is settled:
-      `sudo chown -R <uid>:<gid> /srv/video` (and `chmod -R 2775` for setgid).
+- [ ] **Create the pool tree + take ownership** (commands in either README):
+      `chown -R 1000:1000 /srv/video /srv/appdata` and `chmod -R 2775`.
 
-- [ ] **Align the on-pool directory layout to storage doc §13.2** (see conflict below).
+- [ ] **`sudo apt install psmisc attr`** — `fuser` is what gives `tier-move` its
+      open-file guard, and `getfattr` answers "which tier is this file on".
 
----
-
-## 🔴 Known conflicts between the scaffolding and the storage doc
-
-These exist because the scaffolding was authored while beefy was asleep and the
-storage doc could not be read. Resolve before deploying.
-
-| Thing | Storage doc §13.2/§14.0 | Scaffolded | Action |
-|---|---|---|---|
-| Identity | `1000:1000` + `UMASK=002` | `1101:1100`, no UMASK | decide |
-| Torrent path | `/srv/video/torrents/movies` | `/srv/video/downloads/torrents/...` | decide |
-| Usenet path | `/srv/video/usenet/{incomplete,complete/movies}` | `/srv/video/downloads/usenet/...` | decide |
-| Library path | `/srv/video/media/movies` | same ✅ | none |
-
-The doc's layout is referenced by §13.3–§13.10 for every app, so diverging means
-those sections no longer describe reality.
+- ✅ ~~Reconcile container identity~~ — now `PUID=1000`/`PGID=1000` + `UMASK=002`
+      per storage doc §14.0, in both projects.
+- ✅ ~~Align the on-pool layout to §13.2~~ — now `torrents/movies`,
+      `usenet/{incomplete,complete/movies}`, `media/movies`, `.recyclebin`.
 
 ---
 
@@ -69,14 +43,15 @@ those sections no longer describe reality.
       port is silently never applied, which looks exactly like a dead tracker.
 - [ ] **qBittorrent seed limits: ratio 2.0 OR 30 days, then stop** (§14.0). This is
       what makes a torrent demotable and keeps the hot SSD from filling.
+- [ ] **Radarr: enable "Use Hardlinks instead of Copy"** (§13.6). Without it every
+      import is a full copy even though the paths are right.
 - [ ] **Per-category disk-space limits** in qBittorrent and SABnzbd (§14.2-B) so a
       large pack cannot start without room and spill to the cold HDD.
-- [ ] **arr Recycle Bin → `/srv/video/.recyclebin`, 7-day cleanup** (§14.2-D). Keeps
-      deletes and upgrades off the HDD. Never point it at a cold-branch path.
-- [ ] **Radarr: import-and-keep** — do not hard-delete a download on upgrade while it
-      may still be seeding (§14.2-C).
-- [ ] Prowlarr → Radarr indexer sync; Radarr download clients `gluetun:8080` (qBit)
-      and `sabnzbd:8080`.
+- [ ] **arr Recycle Bin → `/data/.recyclebin`, 7-day cleanup** (§14.2-D).
+- [ ] **Radarr: import-and-keep** — do not hard-delete a download on upgrade while
+      it may still be seeding (§14.2-C).
+- [ ] Prowlarr → Radarr indexer sync. **Prowlarr gets no `/srv` mount** (§13.5).
+- [ ] Radarr download clients: `gluetun:8080` (qBit) and `sabnzbd:8080`.
 
 ## 🟡 Jellyfin
 
@@ -86,6 +61,8 @@ those sections no longer describe reality.
 - [ ] Disable extract-on-play/scan for cold content; schedule trickplay/BIF,
       embedded-subtitle extraction and Intro-Skipper into the **04:00–06:00** window
       or run them on import while the file is still on SSD (§14.2-I).
+- [ ] Turn off aggressive periodic library rescans, or schedule them into the mover
+      window — they `stat` cold files and wake the HDD (§13.6).
 - [ ] Strong admin password; disable remote connections without authentication.
 
 ## 🟡 fastpi side (HomeLab-FastPi repo, not this one)
@@ -102,29 +79,38 @@ those sections no longer describe reality.
 
 ---
 
-## ⚪ Storage tiering — the largest unbuilt piece
+## ⚪ Storage tiering
 
-The mover (§5) and promoter (§7) are **designed but not built**. Until they exist:
+✅ **Manual tooling exists** — `Server/3-Storage-Layout-and-Spindown/`:
+  - `tier-report` — what is on which tier, spill risk vs `minfreespace`, HDD power
+    state. Never wakes the cold HDD by default (verified: drive stayed `SPUN-DOWN`
+    across a full run). `--cold` opts in to walking the cold branch.
+  - `tier-move demote|promote <relpath>` — guarded copy → fsync → verify-by-content
+    → delete. Dry-run by default. Refuses open or hardlinked (still-seeding) files;
+    leaves sidecars hot. 35 tests in `test-tier-move`, green on beefy.
 
-- [ ] **Interim: keep the hot SSD manually below `minfreespace=50G`.** At that point
-      `moveonenospc=true` starts putting new writes **directly on the cold HDD** and
-      nothing moves them back. The doc's warning: *"Don't run the download stack
-      unattended at scale before the mover exists."*
-- [ ] **Install `attr`** (`getfattr`) and optionally `mergerfs-tools` — needed to ask
-      "which tier is this file on" without guessing.
-- [ ] Build the **mover** (§5): demote cold video SSD→HDD nightly in the 04:00–06:00
-      window. Copy→fsync→verify→delete (never rename: cross-branch rename is
-      `EXDEV`). Skip open/seeding files, never demote sidecars, honour a pin list.
+Still open:
+
+- [ ] **Interim discipline: keep the hot SSD above `minfreespace=50G`.** Below it,
+      `moveonenospc=true` puts new writes **directly on the cold HDD** and nothing
+      moves them back. The doc's warning: *"Don't run the download stack unattended
+      at scale before the mover exists."* Check with `tier-report`.
+- [ ] Build the **nightly mover** (§5): automate what `tier-move` does by hand —
+      demote cold video in the 04:00–06:00 window, honour a pin list, skip
+      open/seeding files. `tier-move` is the reference implementation of the safety
+      contract; the daemon mostly adds selection policy and scheduling.
 - [ ] Build the **promoter** (§7): pre-promote on Jellyfin detail-view so playback
-      never binds to the HDD.
-- [ ] Consider an **NVMe scratch dir for SABnzbd `incomplete/`** (§13.4) — unpack
-      writes are heavy and do not belong on the media pool.
+      never binds to the HDD mid-session.
+- [ ] Consider an **NVMe scratch dir for SABnzbd `incomplete/`** (§13.4) — optional
+      optimisation, not required.
+- [ ] Note for the mover's design: the hot SSD uses `relatime`, so "recently
+      watched" is **day-granular, not true LRU** (§14.2-J).
 
 ## ⚪ Later / open
 
-- [ ] Push the two beefy scaffolding commits (`3a540cb`, `5d26dcb`) — local only.
+- [ ] Push the beefy commits — all local so far.
 - [ ] Samba shares for `/srv/video` (never raw branches) — none defined yet.
-- [ ] Sonarr/TV: out of scope for now; layout already reserves `tv/` paths.
+- [ ] Sonarr/TV: out of scope for now; the §13.2 layout already reserves `tv/` paths.
 - [ ] `Specs/specs.md` has an unrelated uncommitted local edit — not ours.
 
 ## ⚪ Carried over from the m4b work (2026-10-05)
@@ -136,3 +122,4 @@ The mover (§5) and promoter (§7) are **designed but not built**. Until they ex
 - [ ] Design abort-safe shutdown for the merge orchestrator: SIGTERM currently skips
       the `finally` that releases `/run/beefy-keep-awake`, so a `docker stop`
       mid-merge leaves beefy awake forever. Needs a way to cancel in-flight books.
+- ✅ ~~Install `beefy-keep-awake`~~ — done 2026-10-05 07:35, verified working.
