@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+# tier-move — move media between the hot SSD and cold HDD branches of /srv/video.
+#
+# The manual stand-in for the nightly mover (storage doc §5), which is designed
+# but not built. It implements the same safety contract:
+#
+#   * copy -> fsync -> VERIFY BY CONTENT -> only then delete the source.
+#     beefy has no UPS, so a power cut mid-move must leave the original intact.
+#   * never `rename` across branches - mergerfs returns EXDEV for that.
+#   * refuse to touch a file that is open (playing) or hardlinked (seeding).
+#   * leave sidecars on the SSD, so the directory skeleton stays hot and
+#     browsing the library does not wake the HDD.
+#
+# WHY THIS SCRIPT HAS TO EXIST: `mv` inside /srv/video cannot change a file's
+# tier. mergerfs keeps renames path-preserving within one branch, so a mv just
+# shuffles names on whichever disk already holds the data. Changing tier means
+# operating on the branch paths underneath the union, which is what this does.
+#
+#   tier-move demote  media/movies/Dune          # dry run (default)
+#   tier-move demote  media/movies/Dune --apply
+#   tier-move promote media/movies/Dune --apply
+#
+# PATH is relative to the pool root. Needs root: the branch roots are root-owned.
+set -uo pipefail
+
+POOL=${POOL:-/srv/video}
+HOT=${HOT:-/srv/.disks/ssd-hot}
+COLD=${COLD:-/srv/.disks/hdd-cold}
+WINDOW_START=${WINDOW_START:-4}      # the decided mover window, 04:00-06:00
+WINDOW_END=${WINDOW_END:-6}
+
+# Only these get moved by default. An allowlist, not a sidecar denylist: a new
+# kind of small metadata file must never accidentally be demoted onto the HDD.
+MEDIA_EXT='mkv|mp4|avi|m4v|ts|m2ts|mov|wmv|flv|webm|iso|mpg|mpeg'
+
+APPLY=0; FORCE_LINKS=0; ALL_FILES=0; QUIET_WINDOW=0
+ACTION=""; REL=""
+
+die()  { printf 'tier-move: %s\n' "$*" >&2; exit 1; }
+note() { printf '  %s\n' "$*"; }
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        demote|promote) ACTION=$1; shift ;;
+        --apply)        APPLY=1; shift ;;
+        --force-links)  FORCE_LINKS=1; shift ;;
+        --all)          ALL_FILES=1; shift ;;
+        --any-time)     QUIET_WINDOW=1; shift ;;
+        -h|--help)      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -*)             die "unknown option '$1' (try --help)" ;;
+        *)              [ -z "$REL" ] || die "unexpected extra argument '$1'"
+                        REL=$1; shift ;;
+    esac
+done
+
+[ -n "$ACTION" ] || die "first argument must be 'demote' or 'promote' (try --help)"
+[ -n "$REL" ]    || die "give a path relative to $POOL, e.g. media/movies/Dune"
+
+REL=${REL#"$POOL"/}; REL=${REL#/}; REL=${REL%/}
+case "$REL" in
+    ""|.|..|*/../*|../*|*/..) die "refusing suspicious path '$REL'" ;;
+esac
+
+if [ "$ACTION" = demote ]; then SRCB=$HOT; DSTB=$COLD; else SRCB=$COLD; DSTB=$HOT; fi
+SRC="$SRCB/$REL"; DST="$DSTB/$REL"
+
+[ -e "$SRC" ] || die "$REL is not on the $( [ "$ACTION" = demote ] && echo hot || echo cold ) branch ($SRC)"
+
+# Writability, not uid: that IS the real requirement, and checking it directly
+# means the script is testable against scratch branches without root.
+[ -w "$DSTB" ] || die "cannot write to $DSTB - the branch roots are root-owned, so use sudo"
+
+echo "tier-move $ACTION  $REL"
+echo "  from : $SRC"
+echo "  to   : $DST"
+[ "$APPLY" -eq 1 ] && echo "  mode : APPLY (will delete the source after verifying)" \
+                   || echo "  mode : DRY RUN (nothing will be changed; pass --apply to act)"
+
+# ------------------------------------------------------------ mover window ----
+hour=$(date +%-H)
+if [ "$QUIET_WINDOW" -eq 0 ] && { [ "$hour" -lt "$WINDOW_START" ] || [ "$hour" -ge "$WINDOW_END" ]; }; then
+    echo
+    echo "  NOTE: outside the ${WINDOW_START}:00-${WINDOW_END}:00 mover window. The window exists so the"
+    echo "        cold HDD wakes once a night instead of being trickle-woken all day."
+    echo "        Proceeding anyway (--any-time silences this)."
+fi
+
+# ----------------------------------------------------------- select files -----
+# -x keeps the walk on this one branch's filesystem; it can never wander across.
+if [ "$ALL_FILES" -eq 1 ]; then
+    mapfile -d '' FILES < <(find "$SRC" -xdev -type f -print0 2>/dev/null)
+    echo; echo "  selecting ALL regular files (--all)"
+else
+    mapfile -d '' FILES < <(find "$SRC" -xdev -type f -regextype posix-extended \
+                                 -iregex ".*\.($MEDIA_EXT)$" -print0 2>/dev/null)
+    echo; echo "  selecting media files only; sidecars stay on the SSD (storage doc §5)"
+fi
+
+[ "${#FILES[@]}" -gt 0 ] || die "nothing to move under $REL (no matching files)"
+
+total=0
+for f in "${FILES[@]}"; do
+    total=$(( total + $(stat -c %s "$f") ))
+done
+printf '  %d file(s), %s\n' "${#FILES[@]}" \
+    "$(awk -v b="$total" 'BEGIN{printf "%.2f GiB", b/1073741824}')"
+
+# ---------------------------------------------------------------- guards ------
+echo
+echo "  guards:"
+
+open_hits=0
+if command -v fuser >/dev/null 2>&1; then
+    for f in "${FILES[@]}"; do
+        if fuser -s "$f" 2>/dev/null; then
+            note "OPEN       $f"
+            open_hits=$(( open_hits + 1 ))
+        fi
+    done
+    [ "$open_hits" -eq 0 ] && note "no file is open"
+else
+    note "fuser not installed - CANNOT check for open files (install psmisc)"
+fi
+[ "$open_hits" -eq 0 ] || die "$open_hits file(s) are in use (playback or seeding). Refusing."
+
+link_hits=0
+for f in "${FILES[@]}"; do
+    n=$(stat -c %h "$f")
+    if [ "$n" -gt 1 ]; then
+        note "HARDLINKED ($n) $f"
+        link_hits=$(( link_hits + 1 ))
+    fi
+done
+if [ "$link_hits" -eq 0 ]; then
+    note "no file is hardlinked"
+elif [ "$FORCE_LINKS" -eq 1 ]; then
+    note "proceeding despite $link_hits hardlinked file(s) (--force-links)"
+    note "the link WILL break: a hardlink cannot span ext4 and xfs, so you end"
+    note "up with two independent full copies, one per tier."
+else
+    echo
+    echo "  REFUSING: $link_hits file(s) have more than one link, which normally means"
+    echo "  a torrent is still seeding them. A hardlink cannot span the ext4 hot tier"
+    echo "  and the xfs cold tier, so moving one would silently turn a single file"
+    echo "  into two full copies and qBittorrent would keep seeding the old one."
+    echo "  Let the seed limits retire the torrent first (ratio 2.0 / 30 days), or"
+    echo "  pass --force-links if you genuinely want two copies."
+    exit 1
+fi
+
+# ------------------------------------------------------------------ plan ------
+if [ "$APPLY" -eq 0 ]; then
+    echo
+    echo "  would copy, verify, then delete:"
+    for f in "${FILES[@]}"; do
+        printf '    %s\n' "${f#"$SRCB"/}"
+    done
+    echo
+    echo "  dry run complete - nothing changed. Re-run with --apply to do it."
+    exit 0
+fi
+
+# ------------------------------------------------------------------ move ------
+echo
+echo "  copying:"
+moved=0
+for f in "${FILES[@]}"; do
+    rel=${f#"$SRCB"/}
+    out="$DSTB/$rel"
+    mkdir -p "$(dirname "$out")" || die "could not create $(dirname "$out")"
+
+    # -H preserves hardlinks within the transfer, -AX acls/xattrs, --inplace off
+    # so a crash leaves a partial temp rather than a corrupt destination.
+    if ! rsync -aHAX --partial --info=progress2 "$f" "$out"; then
+        die "copy FAILED for $rel - source left untouched"
+    fi
+    sync -f "$out" 2>/dev/null || sync
+
+    # VERIFY BY CONTENT before anything is deleted. cmp reads both sides and
+    # bails at the first difference; this is the step that makes the delete safe.
+    if ! cmp -s "$f" "$out"; then
+        rm -f "$out"
+        die "VERIFY FAILED for $rel - destination removed, source left untouched"
+    fi
+
+    rm -f "$f" || die "copy+verify succeeded but could not remove source $rel"
+    note "ok  $rel"
+    moved=$(( moved + 1 ))
+done
+
+# Prune directories that are now empty on the source branch. Directories holding
+# sidecars are left alone on purpose - that skeleton is what keeps browsing hot.
+find "$SRC" -xdev -depth -type d -empty -delete 2>/dev/null || true
+
+echo
+echo "  moved $moved file(s)."
+echo "  $POOL/$REL now resolves to the $( [ "$ACTION" = demote ] && echo cold || echo hot ) tier."
+echo "  No app reconfiguration or library rescan is needed - the path did not change."

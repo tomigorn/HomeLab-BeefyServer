@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# tier-report — show what lives on which tier of the /srv/video pool.
+#
+# /srv/video is a mergerfs union whose whole purpose is to HIDE which disk a file
+# is on, so the only way to answer "what is where" is to look at the branches
+# underneath it. This does that, and reports spill risk against minfreespace.
+#
+# DESIGN RULE: the default report never wakes the cold HDD. `df` reads cached
+# statfs and the spin state comes from a log file, not the drive. Anything that
+# must walk the cold branch is opt-in behind --cold, because an `ls` there spins
+# the disk up and defeats the point of the whole tiering design.
+#
+#   tier-report                 # safe summary; does NOT wake the HDD
+#   tier-report --top 20        # + biggest things on the hot SSD
+#   tier-report --cold          # + walk the cold HDD (WAKES IT)
+#   tier-report --locate PATH   # which tier holds PATH (may wake the HDD)
+#
+# PATH is relative to the pool root, e.g. media/movies/Dune
+set -uo pipefail
+
+POOL=${POOL:-/srv/video}
+HOT=${HOT:-/srv/.disks/ssd-hot}
+COLD=${COLD:-/srv/.disks/hdd-cold}
+SPINLOG=${SPINLOG:-/var/log/hdd-spinstate.log}
+# Must match `minfreespace` in the fstab mergerfs line. Below this, mergerfs
+# moveonenospc=true starts writing NEW files straight onto the cold HDD.
+MINFREE_GIB=${MINFREE_GIB:-50}
+
+TOP=0; SHOW_COLD=0; LOCATE=""
+
+die() { printf 'tier-report: %s\n' "$*" >&2; exit 1; }
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --top)    TOP=${2:?--top needs a number}; shift 2 ;;
+        --cold)   SHOW_COLD=1; shift ;;
+        --locate) LOCATE=${2:?--locate needs a path}; shift 2 ;;
+        -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) die "unknown argument '$1' (try --help)" ;;
+    esac
+done
+
+for d in "$POOL" "$HOT" "$COLD"; do
+    [ -d "$d" ] || die "$d does not exist - is the pool mounted?"
+done
+
+hr() { printf '%s\n' "------------------------------------------------------------"; }
+gib() { awk -v b="$1" 'BEGIN{printf "%.1f", b/1048576}'; }   # KiB blocks -> GiB
+
+# ---------------------------------------------------------------- capacity ----
+echo "POOL $POOL"
+hr
+printf '%-10s %8s %8s %8s %6s\n' TIER SIZE USED AVAIL USE%
+for pair in "hot:$HOT" "cold:$COLD" "union:$POOL"; do
+    name=${pair%%:*}; path=${pair#*:}
+    # -P for POSIX single-line output; -k for consistent KiB blocks
+    read -r _ size used avail pct _ < <(df -Pk "$path" | tail -1)
+    printf '%-10s %7sG %7sG %7sG %6s\n' \
+        "$name" "$(gib "$size")" "$(gib "$used")" "$(gib "$avail")" "$pct"
+done
+
+# ------------------------------------------------------------- spill risk ----
+read -r _ _ _ hot_avail _ _ < <(df -Pk "$HOT" | tail -1)
+hot_avail_gib=$(gib "$hot_avail")
+headroom=$(awk -v a="$hot_avail_gib" -v m="$MINFREE_GIB" 'BEGIN{printf "%.1f", a-m}')
+hr
+printf 'minfreespace      %sG\n' "$MINFREE_GIB"
+printf 'hot headroom      %sG above it\n' "$headroom"
+if awk -v h="$headroom" 'BEGIN{exit !(h <= 0)}'; then
+    echo "STATUS            SPILLING - new files are landing on the COLD HDD."
+    echo "                  mergerfs moveonenospc=true is active and nothing"
+    echo "                  moves them back. Demote something now."
+elif awk -v h="$headroom" -v m="$MINFREE_GIB" 'BEGIN{exit !(h < m)}'; then
+    echo "STATUS            WARNING - less than ${MINFREE_GIB}G of headroom left."
+    echo "                  Demote cold titles before the pool starts spilling."
+else
+    echo "STATUS            ok - new writes are landing on the hot SSD."
+fi
+
+# ------------------------------------------------------------- HDD state -----
+hr
+if [ -r "$SPINLOG" ]; then
+    echo "COLD HDD POWER STATE   (from $SPINLOG - reading this does not wake it)"
+    tail -3 "$SPINLOG" | sed 's/^/  /'
+else
+    echo "COLD HDD POWER STATE   $SPINLOG not readable - skipped"
+fi
+
+# --------------------------------------------------------------- locate ------
+if [ -n "$LOCATE" ]; then
+    rel=${LOCATE#"$POOL"/}; rel=${rel#/}
+    hr
+    echo "LOCATE $rel"
+    echo "  (a lookup on the cold branch can spin the HDD up)"
+    found=0
+    for pair in "hot:$HOT" "cold:$COLD"; do
+        name=${pair%%:*}; path=${pair#*:}
+        if [ -e "$path/$rel" ]; then
+            found=1
+            if [ -d "$path/$rel" ]; then
+                n=$(find "$path/$rel" -type f 2>/dev/null | wc -l)
+                sz=$(du -sh "$path/$rel" 2>/dev/null | cut -f1)
+                printf '  %-6s present  (%s files, %s)\n' "$name" "$n" "$sz"
+            else
+                sz=$(du -h "$path/$rel" 2>/dev/null | cut -f1)
+                lnk=$(stat -c %h "$path/$rel" 2>/dev/null)
+                printf '  %-6s present  (%s, %s hardlink(s))\n' "$name" "$sz" "$lnk"
+            fi
+        else
+            printf '  %-6s -\n' "$name"
+        fi
+    done
+    [ "$found" -eq 1 ] || echo "  NOT FOUND on either branch"
+fi
+
+# ----------------------------------------------------------------- top -------
+if [ "$TOP" -gt 0 ]; then
+    hr
+    echo "LARGEST ON HOT SSD (top $TOP)"
+    # -x stays on this one filesystem, so it cannot wander into the other branch
+    du -xh --max-depth=3 "$HOT" 2>/dev/null \
+        | grep -v '/lost+found$' | sort -rh | head -n "$TOP" | sed 's/^/  /'
+fi
+
+if [ "$SHOW_COLD" -eq 1 ]; then
+    hr
+    echo "LARGEST ON COLD HDD -- this walk SPUN THE DRIVE UP"
+    du -xh --max-depth=3 "$COLD" 2>/dev/null \
+        | grep -v '/lost+found$' | sort -rh | head -n "${TOP:-20}" | sed 's/^/  /'
+fi

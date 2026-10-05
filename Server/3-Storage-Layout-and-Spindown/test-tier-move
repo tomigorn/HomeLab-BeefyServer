@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# Tests for tier-move, against scratch branches in a temp dir.
+#
+# tier-move deletes files. It is not going anywhere near the real pool until the
+# guards are proven to actually fire, in particular:
+#   * a dry run changes NOTHING
+#   * sidecars are left on the hot branch (or browsing wakes the HDD)
+#   * a hardlinked file (= still seeding) is REFUSED
+#   * the source survives a failed copy/verify
+#
+# Run: ./test-tier-move
+set -uo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+SUT="$HERE/tier-move"
+PASS=0; FAIL=0
+
+ok()   { printf '  ok   %s\n' "$1"; PASS=$((PASS+1)); }
+bad()  { printf '  FAIL %s\n' "$1"; FAIL=$((FAIL+1)); }
+check(){ if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (expected '$2', got '$1')"; fi; }
+
+setup() {
+    TMP=$(mktemp -d)
+    export POOL="$TMP/pool" HOT="$TMP/hot" COLD="$TMP/cold"
+    mkdir -p "$POOL" "$HOT/media/movies/Dune" "$COLD"
+    # a movie plus the sidecars that must stay hot
+    head -c 300000 /dev/urandom > "$HOT/media/movies/Dune/Dune.mkv"
+    head -c 2000   /dev/urandom > "$HOT/media/movies/Dune/Dune.nfo"
+    head -c 5000   /dev/urandom > "$HOT/media/movies/Dune/poster.jpg"
+    head -c 1000   /dev/urandom > "$HOT/media/movies/Dune/Dune.en.srt"
+}
+teardown() { rm -rf "$TMP"; }
+
+run() { "$SUT" "$@" --any-time 2>&1; }
+
+# ---------------------------------------------------------------------------
+echo "1. dry run must change nothing"
+setup
+before=$(find "$HOT" "$COLD" -type f | sort | md5sum)
+out=$(run demote media/movies/Dune); rc=$?
+after=$(find "$HOT" "$COLD" -type f | sort | md5sum)
+check "$rc" "0" "dry run exits 0"
+check "$after" "$before" "dry run left the filesystem untouched"
+case "$out" in *"DRY RUN"*) ok "says it is a dry run" ;; *) bad "did not announce dry run" ;; esac
+teardown
+
+# ---------------------------------------------------------------------------
+echo "2. demote moves media, leaves sidecars hot"
+setup
+mkv_sum=$(md5sum < "$HOT/media/movies/Dune/Dune.mkv")
+out=$(run demote media/movies/Dune --apply); rc=$?
+check "$rc" "0" "demote exits 0"
+[ -f "$COLD/media/movies/Dune/Dune.mkv" ] && ok "movie is on the cold branch" || bad "movie not on cold branch"
+[ ! -e "$HOT/media/movies/Dune/Dune.mkv" ] && ok "movie removed from hot branch" || bad "movie still on hot branch"
+check "$(md5sum < "$COLD/media/movies/Dune/Dune.mkv")" "$mkv_sum" "content identical after move"
+for s in Dune.nfo poster.jpg Dune.en.srt; do
+    [ -f "$HOT/media/movies/Dune/$s" ] && ok "sidecar $s stayed hot" || bad "sidecar $s was moved"
+    [ ! -e "$COLD/media/movies/Dune/$s" ] && ok "sidecar $s absent from cold" || bad "sidecar $s leaked to cold"
+done
+teardown
+
+# ---------------------------------------------------------------------------
+echo "3. promote moves it back"
+setup
+mkv_sum=$(md5sum < "$HOT/media/movies/Dune/Dune.mkv")
+run demote media/movies/Dune --apply >/dev/null
+out=$(run promote media/movies/Dune --apply); rc=$?
+check "$rc" "0" "promote exits 0"
+[ -f "$HOT/media/movies/Dune/Dune.mkv" ] && ok "movie back on hot branch" || bad "movie not back on hot"
+[ ! -e "$COLD/media/movies/Dune/Dune.mkv" ] && ok "movie gone from cold branch" || bad "movie still on cold"
+check "$(md5sum < "$HOT/media/movies/Dune/Dune.mkv")" "$mkv_sum" "content survived the round trip"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "4. a hardlinked (still seeding) file is refused"
+setup
+mkdir -p "$HOT/torrents/movies"
+ln "$HOT/media/movies/Dune/Dune.mkv" "$HOT/torrents/movies/Dune.mkv"   # the seeding link
+out=$(run demote media/movies/Dune --apply); rc=$?
+check "$rc" "1" "refuses with exit 1"
+case "$out" in *REFUSING*) ok "explains why it refused" ;; *) bad "no REFUSING message" ;; esac
+case "$out" in *"hardlink cannot span"*) ok "explains the ext4/xfs consequence" ;; *) bad "did not explain consequence" ;; esac
+[ -f "$HOT/media/movies/Dune/Dune.mkv" ] && ok "left the file alone" || bad "touched the file anyway"
+[ ! -e "$COLD/media/movies/Dune/Dune.mkv" ] && ok "wrote nothing to cold" || bad "wrote to cold anyway"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "5. --force-links overrides, with the copies warning"
+setup
+mkdir -p "$HOT/torrents/movies"
+ln "$HOT/media/movies/Dune/Dune.mkv" "$HOT/torrents/movies/Dune.mkv"
+out=$(run demote media/movies/Dune --apply --force-links); rc=$?
+check "$rc" "0" "exits 0 with --force-links"
+[ -f "$COLD/media/movies/Dune/Dune.mkv" ] && ok "moved the library copy" || bad "did not move"
+[ -f "$HOT/torrents/movies/Dune.mkv" ] && ok "seeding copy still on hot (now independent)" || bad "seeding copy vanished"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "6. --all includes sidecars"
+setup
+out=$(run demote media/movies/Dune --apply --all); rc=$?
+check "$rc" "0" "exits 0"
+[ -f "$COLD/media/movies/Dune/Dune.nfo" ] && ok "sidecar moved with --all" || bad "sidecar not moved"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "7. the source survives a failed copy"
+setup
+# Make the destination branch undeletable-but-present so mkdir -p fails inside it
+mkdir -p "$COLD/media"
+chmod 500 "$COLD/media"
+out=$(run demote media/movies/Dune --apply); rc=$?
+chmod 700 "$COLD/media"
+[ "$rc" -ne 0 ] && ok "fails loudly (exit $rc)" || bad "reported success despite being unable to write"
+[ -f "$HOT/media/movies/Dune/Dune.mkv" ] && ok "SOURCE INTACT after failure" || bad "SOURCE LOST after failure"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "8. bad input is rejected"
+setup
+out=$(run demote "../../etc/passwd" --apply); rc=$?
+check "$rc" "1" "rejects a traversal path"
+out=$(run demote "media/movies/DoesNotExist" --apply); rc=$?
+check "$rc" "1" "rejects a path that is not on the source branch"
+out=$(run promote media/movies/Dune --apply); rc=$?
+check "$rc" "1" "rejects promoting something that is not on the cold branch"
+out=$("$SUT" media/movies/Dune 2>&1); rc=$?
+check "$rc" "1" "rejects a missing action argument"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "9. empty dirs are pruned, dirs with sidecars are kept"
+setup
+mkdir -p "$HOT/media/movies/OnlyMovie"
+head -c 1000 /dev/urandom > "$HOT/media/movies/OnlyMovie/OnlyMovie.mkv"
+run demote media/movies/OnlyMovie --apply >/dev/null
+[ ! -d "$HOT/media/movies/OnlyMovie" ] && ok "emptied dir was pruned from hot" || bad "empty dir left behind"
+run demote media/movies/Dune --apply >/dev/null
+[ -d "$HOT/media/movies/Dune" ] && ok "dir holding sidecars was kept hot" || bad "dir with sidecars was pruned"
+teardown
+
+echo
+echo "passed $PASS, failed $FAIL"
+[ "$FAIL" -eq 0 ] || exit 1
