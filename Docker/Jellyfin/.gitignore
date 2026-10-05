@@ -1,0 +1,30 @@
+# Environment files (contain secrets) — keep .env.example tracked
+.env
+.env.*
+!.env.example
+
+# Keys & certificates
+*.key
+*.pem
+*.crt
+*.cert
+*.csr
+*.p12
+*.pfx
+
+# Credentials, secrets & tokens
+secrets/
+*.secret
+*.token
+credentials.json
+auth.json
+
+# Logs (may leak sensitive data)
+*.log
+
+# Project data/config dirs that may hold secrets — uncomment as needed
+# data/
+# config/
+
+# This project keeps all container state OUTSIDE the repo (APPDATA_ROOT, DATA_ROOT),
+# so there is no config/ or data/ dir here to ignore.

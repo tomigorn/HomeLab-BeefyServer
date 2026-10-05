@@ -1,0 +1,58 @@
+# =========================================================
+# Services ================================================
+# =========================================================
+services:
+# #########################################################
+# JELLYFIN ################################################
+# #########################################################
+# Deliberately its own compose project, separate from Movie-Downloads: the
+# library it serves should outlive any particular download stack, and a restart
+# of the downloaders has no business interrupting playback.
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:12.1ubu2604-ls51
+    container_name: jellyfin
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      # Only needed so Jellyfin builds correct absolute URLs behind Traefik.
+      - JELLYFIN_PublishedServerUrl=${PUBLISHED_SERVER_URL}
+    volumes:
+      - ${APPDATA_ROOT}/jellyfin:/config
+      # READ-ONLY. Jellyfin is a player, not a library manager - Radarr owns the
+      # tree. :ro means a misconfigured metadata setting cannot rewrite or delete
+      # a movie file.
+      - ${MEDIA_ROOT}:/media:ro
+    devices:
+      # Intel UHD 730 on the i5-11400. QuickSync handles transcoding in hardware,
+      # which keeps CPU near idle - and on a host that sleeps when idle, that is
+      # the difference between "sleeps after a stream" and "never sleeps".
+      - /dev/dri:/dev/dri
+    group_add:
+      # beefy's `render` group. Without it the container cannot open
+      # /dev/dri/renderD128 and silently falls back to software transcoding.
+      - "${RENDER_GID}"
+    ports:
+      - "${JELLYFIN_PORT}:8096"
+    networks:
+      - jellyfin
+
+# =========================================================
+# Networks ================================================
+# =========================================================
+networks:
+  jellyfin:
+    name: jellyfin
+    driver: bridge
+    ipam:
+      config:
+        # A /24, not Docker's default /16. 172.17/16 and 172.18/16 are already
+        # taken on beefy, and Movie-Downloads uses 172.28.10.0/24.
+        - subnet: 172.28.11.0/24
+
+# =========================================================
+# Volumes =================================================
+# =========================================================
+# None. Config is a bind mount under APPDATA_ROOT so it is visible on the host
+# and easy to back up; the media tree is a read-only bind mount.
