@@ -20,24 +20,48 @@ few sudo commands first.
 
 ## Prerequisites (sudo — these are the only steps that need root)
 
+### 0. The one that can destroy the library — do this FIRST
+
+Storage doc §6 / §14.2-F. If Docker starts **before** mergerfs is mounted, a
+container bind-mounts an **empty** `/srv/video`, and an arr will conclude the whole
+library is missing and delete its entries. The doc calls this *"a hard
+prerequisite, not optional"*.
+
 ```bash
-# 1. Let buntu talk to the Docker daemon. The `docker` group currently has no
-#    members, which is why `docker info` fails. Log out and back in afterwards.
+sudo install -d /etc/systemd/system/docker.service.d
+sudo tee /etc/systemd/system/docker.service.d/10-require-srv-video.conf >/dev/null <<'EOF'
+[Unit]
+RequiresMountsFor=/srv/video
+After=srv-video.mount
+Requires=srv-video.mount
+EOF
+sudo systemctl daemon-reload && sudo systemctl restart docker
+```
+
+Do **not** add `nofail` to the merged mount — failing closed is correct here. (The
+doc's original snippet also referenced `/srv/audio`; that tier was retired
+2026-07-03, so it is left out.)
+
+### 1. The rest
+
+```bash
+# Let buntu talk to the Docker daemon. The `docker` group currently has no
+# members, which is why `docker info` fails. Log out and back in afterwards.
 sudo usermod -aG docker buntu
 
-# 2. The media identity. Deliberately the same uid/gid that `mouse` uses on
-#    fastpi, so ownership survives a file moving between boxes.
-sudo groupadd -g 1100 media
-sudo useradd -u 1101 -g 1100 -M -s /usr/sbin/nologin media
-
-# 3. The directory tree. downloads/ and media/ MUST share one parent so Radarr
-#    can hardlink across them (see "Storage" below).
-sudo mkdir -p /srv/video/downloads/torrents/{incomplete,complete} \
-             /srv/video/downloads/usenet/{incomplete,complete} \
+# Identity is 1000:1000 = the existing `buntu` user (storage doc §14.0), so there
+# is no user to create. setgid (2775) so new dirs inherit the group.
+sudo mkdir -p /srv/video/torrents/movies \
+             /srv/video/usenet/incomplete \
+             /srv/video/usenet/complete/movies \
              /srv/video/media/movies \
+             /srv/video/.recyclebin \
              /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,bazarr}
-sudo chown -R 1101:1100 /srv/video /srv/appdata
-sudo chmod -R 775 /srv/video /srv/appdata
+sudo chown -R 1000:1000 /srv/video /srv/appdata
+sudo chmod -R 2775 /srv/video /srv/appdata
+
+# psmisc gives tier-move its open-file guard; attr gives getfattr for tier queries
+sudo apt install -y psmisc attr
 ```
 
 Then fill in `.env` — at minimum `PROTONVPN_PRIVATE_KEY`, which must be a **second,
@@ -65,28 +89,45 @@ docker exec movie-gluetun wget -qO- https://ipinfo.io/ip   # must NOT be your WA
 Every container that touches media gets the **same** `/data` mount
 (`/srv/video`), and all paths live underneath it:
 
+The layout is storage doc §13.2 — that doc describes every app in terms of these
+paths, so don't improvise alternatives:
+
 ```
 /srv/video/                     -> /data in every container
-├── downloads/
-│   ├── torrents/{incomplete,complete}
-│   └── usenet/{incomplete,complete}
-└── media/movies/               <- Radarr's root folder; Jellyfin reads this :ro
+├── torrents/movies/            qBittorrent save path (radarr category)
+├── usenet/
+│   ├── incomplete/             SABnzbd scratch + unpack
+│   └── complete/movies/        SABnzbd finished, pre-import
+├── media/movies/               <- Radarr root folder; Jellyfin reads this :ro
+└── .recyclebin/                arr recycle bin — stays on SSD, so deletes and
+                                upgrades never wake the HDD (§14.2-D)
 ```
 
-Separate `/downloads` and `/movies` mounts are the classic mistake: Radarr sees
-two unrelated filesystems and every import becomes a full byte-for-byte copy
-rather than an instant hardlink. Configure the apps with these **container**
-paths:
+Separate `/downloads` and `/movies` mounts are the classic mistake: Radarr sees two
+unrelated filesystems and every import becomes a full byte-for-byte copy rather
+than an instant hardlink. Configure the apps with these **container** paths:
 
 | App | Setting | Value |
 |---|---|---|
-| qBittorrent | incomplete / complete | `/data/downloads/torrents/incomplete` / `/data/downloads/torrents/complete` |
-| SABnzbd | incomplete / complete | `/data/downloads/usenet/incomplete` / `/data/downloads/usenet/complete` |
+| qBittorrent | category `radarr` save path | `/data/torrents/movies` |
+| qBittorrent | seed limits | **ratio 2.0 OR 30 days, then stop** (§14.0) |
+| SABnzbd | incomplete / complete | `/data/usenet/incomplete` / `/data/usenet/complete/movies` |
 | Radarr | root folder | `/data/media/movies` |
+| Radarr | **Use Hardlinks instead of Copy** | **on** (§13.6) |
+| Radarr | Recycle Bin | `/data/.recyclebin`, 7-day cleanup |
 | Radarr | qBittorrent client | host `gluetun`, port `8080` |
 | Radarr | SABnzbd client | host `sabnzbd`, port `8080` |
+| **Prowlarr** | storage volumes | **none — it gets no `/srv` mount at all** (§13.5) |
 
 No remote-path mapping is needed — every container sees the identical tree.
+
+Two behaviours to set deliberately, both from §14.2:
+
+- **Don't auto-delete the download on import** (`import-and-keep`). A seeding
+  torrent holds the second hardlink; deleting the library link early doesn't free
+  the SSD anyway, and force-deleting a seeding torrent's data is worse.
+- **Per-category disk-space limits** in qBittorrent and SABnzbd, so a large pack
+  can't start without room and spill onto the cold HDD.
 
 ### The mergerfs catch, and why it matters here
 
@@ -99,6 +140,24 @@ library start life on the same filesystem. Hardlinks work.
 for two full copies. Set qBittorrent to remove torrents at a seed ratio or time
 limit so the download side is gone before demotion, or expect the hot tier to
 fill with orphans.
+
+**Nothing demotes automatically yet.** The nightly mover (§5) and the
+promote-on-detail-view daemon (§7) are designed but unbuilt, so the hot SSD only
+ever fills. When it drops below `minfreespace=50G`, mergerfs `moveonenospc=true`
+starts writing **new downloads straight onto the cold HDD** and nothing brings
+them back. Until the mover exists you are the mover:
+
+```bash
+# Where is everything, and how close to spilling am I? (does not wake the HDD)
+~/Projects/Server/3-Storage-Layout-and-Spindown/tier-report --top 20
+
+# Demote a title once its torrent has stopped seeding (dry run by default)
+sudo ~/Projects/Server/3-Storage-Layout-and-Spindown/tier-move demote media/movies/Dune
+sudo ~/Projects/Server/3-Storage-Layout-and-Spindown/tier-move demote media/movies/Dune --apply
+```
+
+`tier-move` refuses any file that is open or still hardlinked, so it will not break
+a seeding torrent by accident.
 
 ## Network topology
 

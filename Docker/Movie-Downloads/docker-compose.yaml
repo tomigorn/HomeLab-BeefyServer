@@ -62,6 +62,7 @@ services:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
+      - UMASK=${UMASK}
       - WEBUI_PORT=8080
       # The real listening port is set by gluetun's port-forward hook at runtime.
       - TORRENTING_PORT=6881
@@ -88,6 +89,7 @@ services:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
+      - UMASK=${UMASK}
     volumes:
       - ${APPDATA_ROOT}/prowlarr:/config
 
@@ -105,6 +107,7 @@ services:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
+      - UMASK=${UMASK}
     volumes:
       - ${APPDATA_ROOT}/sabnzbd:/config
       - ${DATA_ROOT}:/data
@@ -125,6 +128,7 @@ services:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
+      - UMASK=${UMASK}
     volumes:
       - ${APPDATA_ROOT}/radarr:/config
       - ${DATA_ROOT}:/data
@@ -146,6 +150,7 @@ services:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
+      - UMASK=${UMASK}
     volumes:
       - ${APPDATA_ROOT}/bazarr:/config
       - ${DATA_ROOT}:/data
