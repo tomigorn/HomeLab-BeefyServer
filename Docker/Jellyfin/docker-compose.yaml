@@ -16,6 +16,7 @@ services:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
+      - UMASK=${UMASK}
       # Only needed so Jellyfin builds correct absolute URLs behind Traefik.
       - JELLYFIN_PublishedServerUrl=${PUBLISHED_SERVER_URL}
     volumes:
