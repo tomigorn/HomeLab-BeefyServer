@@ -65,10 +65,48 @@ Legend: 🔴 blocker · 🟡 needed before real use · ⚪ later / optional · �
       window — they `stat` cold files and wake the HDD (§13.6).
 - [ ] Strong admin password; disable remote connections without authentication.
 
+## 🔴 Authentik SSO — YOUR steps (cannot be done from the repo)
+
+Authentik keeps its config in PostgreSQL, not in files, so none of this is
+scriptable from here. Full checklist with exact field values:
+`HomeLab-FastPi` → `Docker/Traefik/docs/2026-10-06-authentik-sso.md`.
+
+- [ ] **Cloudflare DNS for 6 new hostnames** — radarr, prowlarr, bazarr,
+      qbittorrent, sabnzbd, jellyfin (all `.holy-grail.ch`). The tunnel is
+      token/dashboard-managed, so ingress rules are in the Cloudflare UI, not the
+      repo. If a wildcard `*.holy-grail.ch` → Traefik ingress already exists, only
+      the DNS records are needed.
+- [ ] **Per arr app: a Proxy Provider (Forward auth, SINGLE application) + an
+      Application + a group binding**, in Authentik. Five of them.
+- [ ] **Assign each new application to the `authentik Embedded Outpost`.** This is
+      the step everyone forgets; without it `/outpost.goauthentik.io/auth/traefik`
+      returns 404 and the route is simply dead. Verified 404 today, since no
+      provider exists yet.
+- [ ] **Jellyfin: an OAuth2/OpenID provider** (not a proxy provider) + the
+      `jellyfin-plugin-sso` plugin inside Jellyfin. Jellyfin CANNOT use forward
+      auth — its native TV/mobile clients cannot follow an interactive redirect.
+- [ ] **Then, and only then**, rename each `dynamic/<app>.yml.disabled` → `.yml` on
+      fastpi, one at a time. Doing it before DNS exists makes Traefik fail ACME in a
+      loop and risks Let's Encrypt's failed-validation rate limit.
+- [ ] **App-side: turn the local logins off** — Radarr/Prowlarr auth = `External`,
+      Bazarr = `None`, SABnzbd username/password empty + host whitelist, qBittorrent
+      bypass-auth for `172.24.0.0/16`. Post-deploy UI work.
+- [ ] **Consider dropping the host port publications** from the beefy compose files
+      once the Traefik routes are live — otherwise every app keeps an
+      unauthenticated LAN back door that bypasses Authentik entirely.
+- [ ] Decide: keep these arr UIs **public behind Authentik** (as built), or make
+      them **LAN + WireGuard only** (more conservative, and the usual advice for arr
+      admin interfaces). One-line change per service; the doc has it.
+- [ ] Optional, now unblocked: gate `cup.holy-grail.ch` behind Authentik. It is
+      currently public with **no authentication at all**.
+
 ## 🟡 fastpi side (HomeLab-FastPi repo, not this one)
 
-- [ ] Traefik dynamic config: `jellyfin.holy-grail.ch` → `http://192.168.1.102:8096`.
-- [ ] Attach the existing **`beefy-wake` forwardAuth** with **`?port=8096`** so the
+- ✅ ~~Traefik dynamic config for Jellyfin~~ — written, parked as
+      `dynamic/jellyfin.yml.disabled` pending DNS.
+- ✅ ~~Attach `beefy-wake` with `?port=8096`~~ — done in that file. Also done for
+      all five arr routes with their own ports.
+- [ ] (was) Attach the existing **`beefy-wake` forwardAuth** with **`?port=8096`** so the
       gate waits for Jellyfin rather than merely for sshd (otherwise a cold boot
       answers 502 in the gap). This middleware has existed since June 2026 and has
       never been attached to any router — Jellyfin is its first consumer.
