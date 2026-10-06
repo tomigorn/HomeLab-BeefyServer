@@ -33,7 +33,11 @@ WINDOW_END=${WINDOW_END:-6}
 # kind of small metadata file must never accidentally be demoted onto the HDD.
 MEDIA_EXT='mkv|mp4|avi|m4v|ts|m2ts|mov|wmv|flv|webm|iso|mpg|mpeg'
 
-APPLY=0; FORCE_LINKS=0; ALL_FILES=0; QUIET_WINDOW=0
+# Indirection purely so the "fuser is missing" path is testable; a seam, not a
+# knob. Same idea as the idle-watcher's centralized _now seam.
+FUSER_BIN=${FUSER_BIN:-fuser}
+
+APPLY=0; FORCE_LINKS=0; ALL_FILES=0; QUIET_WINDOW=0; SKIP_OPEN=0
 ACTION=""; REL=""
 
 die()  { printf 'tier-move: %s\n' "$*" >&2; exit 1; }
@@ -46,6 +50,7 @@ while [ $# -gt 0 ]; do
         --force-links)  FORCE_LINKS=1; shift ;;
         --all)          ALL_FILES=1; shift ;;
         --any-time)     QUIET_WINDOW=1; shift ;;
+        --skip-open-check) SKIP_OPEN=1; shift ;;
         -h|--help)      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*)             die "unknown option '$1' (try --help)" ;;
         *)              [ -z "$REL" ] || die "unexpected extra argument '$1'"
@@ -110,16 +115,24 @@ echo
 echo "  guards:"
 
 open_hits=0
-if command -v fuser >/dev/null 2>&1; then
+if [ "$SKIP_OPEN" -eq 1 ]; then
+    note "open-file check SKIPPED by request (--skip-open-check)"
+elif command -v "$FUSER_BIN" >/dev/null 2>&1; then
     for f in "${FILES[@]}"; do
-        if fuser -s "$f" 2>/dev/null; then
+        if "$FUSER_BIN" -s "$f" 2>/dev/null; then
             note "OPEN       $f"
             open_hits=$(( open_hits + 1 ))
         fi
     done
     [ "$open_hits" -eq 0 ] && note "no file is open"
 else
-    note "fuser not installed - CANNOT check for open files (install psmisc)"
+    # FAIL CLOSED, not open. Without fuser there is no way to tell whether a file
+    # is being played or seeded, and this deletes the source after copying. The
+    # idle-watcher was hardened the same way ("fail-busy, not fail-open") for the
+    # same reason: an unavailable probe must never read as "all clear".
+    die "fuser is not installed, so the open-file guard cannot run. Install it
+       (sudo apt install psmisc), or re-run with --skip-open-check if you are
+       certain nothing is reading these files."
 fi
 [ "$open_hits" -eq 0 ] || die "$open_hits file(s) are in use (playback or seeding). Refusing."
 
@@ -135,8 +148,8 @@ if [ "$link_hits" -eq 0 ]; then
     note "no file is hardlinked"
 elif [ "$FORCE_LINKS" -eq 1 ]; then
     note "proceeding despite $link_hits hardlinked file(s) (--force-links)"
-    note "the link WILL break: a hardlink cannot span ext4 and xfs, so you end"
-    note "up with two independent full copies, one per tier."
+    note "the link WILL break: a hardlink cannot span the two branches, so you"
+    note "end up with two independent full copies, one per tier."
 else
     echo
     echo "  REFUSING: $link_hits file(s) have more than one link, which normally means"

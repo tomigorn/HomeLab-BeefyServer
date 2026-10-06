@@ -60,8 +60,14 @@ sudo mkdir -p /srv/video/torrents/movies \
 sudo chown -R 1000:1000 /srv/video /srv/appdata
 sudo chmod -R 2775 /srv/video /srv/appdata
 
-# psmisc gives tier-move its open-file guard; attr gives getfattr for tier queries
+# psmisc gives tier-move its open-file guard (it REFUSES to run without it, since
+# it deletes the source after copying); attr gives getfattr for tier queries
 sudo apt install -y psmisc attr
+
+# Reclaim ext4's 5% root reserve on the hot SSD. It exists to stop a full disk
+# locking out a ROOT filesystem; on a pure media volume it is ~372G of nothing.
+# Online, instant, no data touched.
+sudo tune2fs -m 1 /dev/sda1
 ```
 
 Then fill in `.env` — at minimum `PROTONVPN_PRIVATE_KEY`, which must be a **second,
@@ -135,9 +141,12 @@ Two behaviours to set deliberately, both from §14.2:
 xfs) with `category.create=ff`, so new files land on the SSD and downloads and
 library start life on the same filesystem. Hardlinks work.
 
-**A hardlink cannot span ext4 and xfs.** The moment a movie is demoted to
-`hdd-cold`, its hardlink to the still-seeding download breaks and you are paying
-for two full copies. Set qBittorrent to remove torrents at a seed ratio or time
+**A hardlink cannot span the two branches** — they are separate filesystems on
+separate disks. This has nothing to do with ext4 vs xfs and would **not** change if
+both were reformatted to match: two ext4 filesystems cannot share hardlinks either.
+Do not reach for `mkfs` over this. The moment a movie is demoted to `hdd-cold`, its
+hardlink to the still-seeding download breaks and you are paying for two full
+copies. Set qBittorrent to remove torrents at a seed ratio or time
 limit so the download side is gone before demotion, or expect the hot tier to
 fill with orphans.
 

@@ -79,7 +79,7 @@ ln "$HOT/media/movies/Dune/Dune.mkv" "$HOT/torrents/movies/Dune.mkv"   # the see
 out=$(run demote media/movies/Dune --apply); rc=$?
 check "$rc" "1" "refuses with exit 1"
 case "$out" in *REFUSING*) ok "explains why it refused" ;; *) bad "no REFUSING message" ;; esac
-case "$out" in *"hardlink cannot span"*) ok "explains the ext4/xfs consequence" ;; *) bad "did not explain consequence" ;; esac
+case "$out" in *"hardlink cannot span"*) ok "explains the separate-filesystems consequence" ;; *) bad "did not explain consequence" ;; esac
 [ -f "$HOT/media/movies/Dune/Dune.mkv" ] && ok "left the file alone" || bad "touched the file anyway"
 [ ! -e "$COLD/media/movies/Dune/Dune.mkv" ] && ok "wrote nothing to cold" || bad "wrote to cold anyway"
 teardown
@@ -137,6 +137,20 @@ run demote media/movies/OnlyMovie --apply >/dev/null
 [ ! -d "$HOT/media/movies/OnlyMovie" ] && ok "emptied dir was pruned from hot" || bad "empty dir left behind"
 run demote media/movies/Dune --apply >/dev/null
 [ -d "$HOT/media/movies/Dune" ] && ok "dir holding sidecars was kept hot" || bad "dir with sidecars was pruned"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "10. a missing fuser FAILS CLOSED (it deletes the source, so it must not guess)"
+setup
+out=$(FUSER_BIN=definitely-no-such-binary "$SUT" demote media/movies/Dune --apply --any-time 2>&1); rc=$?
+check "$rc" "1" "refuses when fuser is unavailable"
+case "$out" in *"fuser is not installed"*) ok "says why it refused" ;; *) bad "no explanation given" ;; esac
+[ -f "$HOT/media/movies/Dune/Dune.mkv" ] && ok "SOURCE UNTOUCHED" || bad "deleted the source with no open-file guard"
+[ ! -e "$COLD/media/movies/Dune/Dune.mkv" ] && ok "wrote nothing to cold" || bad "wrote to cold anyway"
+# the documented escape hatch must still work
+out=$(FUSER_BIN=definitely-no-such-binary "$SUT" demote media/movies/Dune --apply --any-time --skip-open-check 2>&1); rc=$?
+check "$rc" "0" "--skip-open-check overrides it"
+[ -f "$COLD/media/movies/Dune/Dune.mkv" ] && ok "and then it moves" || bad "did not move with the override"
 teardown
 
 echo
