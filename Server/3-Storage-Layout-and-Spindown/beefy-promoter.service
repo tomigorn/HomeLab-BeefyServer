@@ -1,0 +1,35 @@
+[Unit]
+Description=Beefy promoter (pull cold titles to SSD before playback)
+Documentation=file:///home/buntu/Projects/Server/3-Storage-Layout-and-Spindown.md
+RequiresMountsFor=/srv/video
+After=srv-video.mount network-online.target
+Requires=srv-video.mount
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/beefy-promoter.conf
+ExecStart=/usr/local/sbin/beefy_promoter.py
+Restart=on-failure
+RestartSec=10
+Nice=5
+IOSchedulingClass=idle
+
+# Runs as root because tier-move must write to the branch ROOTS (/srv/.disks/*),
+# which are root-owned. That makes the listener a root service, so it defaults to
+# LOOPBACK ONLY (see /etc/beefy-promoter.conf) and is hardened below.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/srv/video /srv/.disks /run
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
