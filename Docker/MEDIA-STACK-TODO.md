@@ -113,29 +113,27 @@ scriptable from here. Full checklist with exact field values:
 - [ ] Optional, now unblocked: gate `cup.holy-grail.ch` behind Authentik. It is
       currently public with **no authentication at all**.
 
-## 🟡 Alerting — Telegram is the only piece left
+## ✅ Alerting — DONE and verified (2026-10-06)
 
-Email alerting is **live and verified** (Alertmanager via the Brevo relay; a test
-alert was delivered 2026-10-06). Telegram is staged but commented out, because
-`chat_id` is mandatory and a placeholder fails `amtool check-config`.
+Both channels live and proven by sending synthetic alerts, not by assumption:
 
-- [ ] **Create the Telegram bot and group:** message `@BotFather` → `/newbot` → copy
-      the token into `grafana/alertmanager/secrets/telegram_bot_token` on fastpi.
-      Create the group chat, add the bot, post any message, then get the (negative)
-      chat id:
-      ```bash
-      curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" \
-        | python3 -c 'import sys,json;print([u["message"]["chat"]["id"] for u in json.load(sys.stdin)["result"]])'
-      ```
-- [ ] **Uncomment the TELEGRAM-marked blocks** in `grafana/alertmanager/alertmanager.yml`
-      (fastpi, gitignored), insert the chat id, validate with `amtool check-config`,
-      then `docker compose up -d alertmanager`. Cup's container-update notices are
-      already routed `severity=info` → Telegram-only, so they stop emailing you the
-      moment this is on.
+- **Email** via the Brevo relay Authentik uses — delivered 07:59 FIRING / 08:04 RESOLVED.
+- **Telegram** → group `holy grail alerts` (`@holy_grail_alerts_bot`) — delivered.
+- **Routing proven:** `severity=critical` reaches BOTH; `severity=info` reaches
+  Telegram ONLY, so Cup's weekly container-update notices never touch the inbox.
+- Alertmanager state (silences + notification log) persists across restarts —
+  verified by creating a silence, restarting, and confirming it survived.
+
+Remaining, optional:
 - [ ] **Create the Authentik admin group** (e.g. `media-admins`) and decide the alert
-      recipients. NOTE: Alertmanager cannot query Authentik for group membership, so
-      the `to:` list in `alertmanager.yml` is maintained by hand — or point it at one
-      alias that fans out. Currently it is just your own address.
+      recipient list. NOTE Alertmanager cannot query Authentik for group membership,
+      so the `to:` list in `alertmanager.yml` is maintained by hand — or point it at
+      one alias that fans out. It is currently just your own address.
+- [ ] Optional hygiene: the bot token was pasted into a chat transcript. `/revoke` in
+      BotFather issues a fresh one; drop it into
+      `grafana/alertmanager/secrets/telegram_bot_token` and restart alertmanager.
+- [ ] Add the six new media hostnames to the blackbox probe list once their routes
+      go live (`grafana/prometheus/prometheus.yml`, `blackbox-public` job).
 
 ## 🟡 fastpi side (HomeLab-FastPi repo, not this one)
 
