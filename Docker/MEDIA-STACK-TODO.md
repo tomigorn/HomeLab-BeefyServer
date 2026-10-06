@@ -37,7 +37,10 @@ Legend: 🔴 blocker · 🟡 needed before real use · ⚪ later / optional · �
 - [ ] **Second ProtonVPN WireGuard key** for beefy (NOT fastpi's — two tunnels on
       one key fight over the session and both drop). Must be a **port-forward
       capable** server. Goes in `Movie-Downloads/.env` → `PROTONVPN_PRIVATE_KEY`.
-- [ ] **Usenet provider credentials** in SABnzbd (host/port/user/pass, SSL).
+- [ ] **Usenet provider: sign up / choose one, then fill credentials in SABnzbd**
+      (host, port, SSL, username, password). Confirmed 2026-10-06 that this is still
+      outstanding — SABnzbd is deployed-but-useless until it has a provider. Radarr
+      will simply never find usenet releases; torrents are unaffected.
 - [ ] **qBittorrent → Options → WebUI → "Bypass authentication for clients on
       localhost"** — without it `scripts/qbit-port.sh` gets a 403 and the forwarded
       port is silently never applied, which looks exactly like a dead tracker.
@@ -85,20 +88,54 @@ scriptable from here. Full checklist with exact field values:
 - [ ] **Jellyfin: an OAuth2/OpenID provider** (not a proxy provider) + the
       `jellyfin-plugin-sso` plugin inside Jellyfin. Jellyfin CANNOT use forward
       auth — its native TV/mobile clients cannot follow an interactive redirect.
+      ACCEPTED 2026-10-06: OIDC for all humans, plus one break-glass local admin
+      with a long random password kept offline.
 - [ ] **Then, and only then**, rename each `dynamic/<app>.yml.disabled` → `.yml` on
       fastpi, one at a time. Doing it before DNS exists makes Traefik fail ACME in a
       loop and risks Let's Encrypt's failed-validation rate limit.
 - [ ] **App-side: turn the local logins off** — Radarr/Prowlarr auth = `External`,
       Bazarr = `None`, SABnzbd username/password empty + host whitelist, qBittorrent
       bypass-auth for `172.24.0.0/16`. Post-deploy UI work.
-- [ ] **Consider dropping the host port publications** from the beefy compose files
-      once the Traefik routes are live — otherwise every app keeps an
-      unauthenticated LAN back door that bypasses Authentik entirely.
-- [ ] Decide: keep these arr UIs **public behind Authentik** (as built), or make
-      them **LAN + WireGuard only** (more conservative, and the usual advice for arr
-      admin interfaces). One-line change per service; the doc has it.
+- [ ] **Close the LAN back door — but do NOT remove the host port publications.**
+      CORRECTION to earlier advice: Traefik runs on fastpi and reaches these apps at
+      `192.168.1.102:<port>`, so removing the publications would break every route.
+      The LAN bypass has to be closed with a host firewall instead. ufw is installed
+      on beefy; once the stack is deployed:
+      ```bash
+      sudo ufw allow from 192.168.1.2 to any port 7878,9696,6767,8080,8081,8096 proto tcp
+      sudo ufw deny  to any port 7878,9696,6767,8080,8081,8096 proto tcp
+      sudo ufw status numbered      # confirm the allow sits BEFORE the deny
+      ```
+      Check `sudo ufw status` first — if ufw is inactive, enabling it needs care so
+      SSH (22) and WoL are not cut off. Keep port 22 allowed from the LAN.
+- ✅ ~~Decide public vs LAN-only for the arr UIs~~ — DECIDED 2026-10-06: **public
+      behind Authentik**, as built. No change needed.
 - [ ] Optional, now unblocked: gate `cup.holy-grail.ch` behind Authentik. It is
       currently public with **no authentication at all**.
+
+## 🟡 Alerting — Telegram is the only piece left
+
+Email alerting is **live and verified** (Alertmanager via the Brevo relay; a test
+alert was delivered 2026-10-06). Telegram is staged but commented out, because
+`chat_id` is mandatory and a placeholder fails `amtool check-config`.
+
+- [ ] **Create the Telegram bot and group:** message `@BotFather` → `/newbot` → copy
+      the token into `grafana/alertmanager/secrets/telegram_bot_token` on fastpi.
+      Create the group chat, add the bot, post any message, then get the (negative)
+      chat id:
+      ```bash
+      curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" \
+        | python3 -c 'import sys,json;print([u["message"]["chat"]["id"] for u in json.load(sys.stdin)["result"]])'
+      ```
+- [ ] **Uncomment the TELEGRAM-marked blocks** in `grafana/alertmanager/alertmanager.yml`
+      (fastpi, gitignored), insert the chat id, validate with `amtool check-config`,
+      then `docker compose up -d alertmanager`. Cup's container-update notices are
+      already routed `severity=info` → Telegram-only, so they stop emailing you the
+      moment this is on.
+- [ ] **Create the Authentik admin group** (e.g. `media-admins`) and decide the alert
+      recipients. NOTE: Alertmanager cannot query Authentik for group membership, so
+      the `to:` list in `alertmanager.yml` is maintained by hand — or point it at one
+      alias that fans out. Currently it is just your own address.
 
 ## 🟡 fastpi side (HomeLab-FastPi repo, not this one)
 
@@ -146,7 +183,7 @@ Still open:
 
 ## ⚪ Later / open
 
-- [ ] Push the beefy commits — all local so far.
+- ✅ ~~Push~~ — fastpi pushed through e369990; beefy pushed 2026-10-06.
 - [ ] Samba shares for `/srv/video` (never raw branches) — none defined yet.
 - [ ] Sonarr/TV: out of scope for now; the §13.2 layout already reserves `tv/` paths.
 - [ ] `Specs/specs.md` has an unrelated uncommitted local edit — not ours.

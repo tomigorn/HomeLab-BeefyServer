@@ -194,6 +194,27 @@ and no docker.sock**, unlike the older `mouse` stack on fastpi.
 localhost"**, or the hook gets a 403 and the forwarded port is never applied —
 which looks exactly like a dead tracker.
 
+## Auth: Authentik is the only login
+
+Every UI in this stack sits behind Authentik forward auth on fastpi's Traefik, and the
+apps' own logins are turned off — Radarr/Prowlarr auth = `External`, Bazarr = `None`,
+SABnzbd username/password empty, qBittorrent bypassed for the proxy subnet. Full
+setup, including the Authentik objects that must be created by hand, is in
+`HomeLab-FastPi` → `Docker/Traefik/docs/2026-10-06-authentik-sso.md`.
+
+⚠️ **The host ports below are an unauthenticated bypass of all that.** Traefik reaches
+these apps at `192.168.1.102:<port>`, so the publications cannot simply be removed —
+without them every route breaks. Close the LAN bypass with ufw instead, allowing only
+fastpi:
+
+```bash
+sudo ufw allow from 192.168.1.2 to any port 7878,9696,6767,8080,8081,8096 proto tcp
+sudo ufw deny  to any port 7878,9696,6767,8080,8081,8096 proto tcp
+```
+
+Until that is in place, anyone on the LAN can reach every one of these apps with no
+login at all.
+
 ## Known trade-off: seeding on a host that sleeps
 
 beefy powers itself off after 15 idle minutes. An **active** transfer keeps it
