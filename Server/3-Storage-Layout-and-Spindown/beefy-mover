@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# beefy-mover — nightly SSD -> HDD demotion for the /srv/video pool.
+#
+# Storage doc §5. Runs inside the decided 04:00-06:00 mover window, which is the one
+# slot the cold HDD is allowed to wake, so it spins up ONCE a night instead of being
+# trickle-woken all day.
+#
+# WHAT THIS DELIBERATELY DOES NOT DO: move any bytes itself. The copy -> fsync ->
+# verify -> delete contract, the open-file guard and the hardlink guard all live in
+# `tier-move`, which has 41 tests behind it. Reimplementing that here would mean two
+# copies of the only code in this repo that calls rm on a media file. This script is
+# therefore selection policy and scheduling, nothing more.
+#
+# Policy, in order:
+#   * do nothing at all unless the hot SSD has dropped below START_FREE_GIB. The
+#     common case is that the pool is fine, and then the HDD is never touched.
+#   * demote COLDEST-FIRST by atime, stopping the moment free space reaches
+#     TARGET_FREE_GIB. The gap between the two is hysteresis: without it the mover
+#     would demote a trickle every single night forever.
+#   * only ever from media/. torrents/ and usenet/ are either seeding or waiting to
+#     be imported; demoting those breaks hardlinks or races the arrs.
+#   * skip anything pinned, hardlinked (still seeding) or open (being played).
+#   * hold the idle-watcher inhibit for the whole run, so beefy cannot power itself
+#     off in the middle of a 50 GB copy.
+#
+# atime is day-granular: the hot SSD mounts `relatime`, so "recently watched" means
+# "within about a day", not true LRU (§14.2-J). The policy is built around that
+# rather than pretending to finer resolution.
+set -uo pipefail
+
+CONF=${CONF:-/etc/beefy-mover.conf}
+# shellcheck disable=SC1090
+[ -r "$CONF" ] && . "$CONF"
+
+POOL=${POOL:-/srv/video}
+HOT=${HOT:-/srv/.disks/ssd-hot}
+COLD=${COLD:-/srv/.disks/hdd-cold}
+# Only this subtree is ever demoted. See the policy note above.
+MEDIA_SUBDIR=${MEDIA_SUBDIR:-media}
+
+# Start demoting below this; stop once above this. TARGET > START = hysteresis.
+START_FREE_GIB=${START_FREE_GIB:-300}
+TARGET_FREE_GIB=${TARGET_FREE_GIB:-500}
+
+# Safety rail: never move more than this in one night. A runaway policy bug then
+# costs one night of churn, not the whole library.
+MAX_MOVE_GIB=${MAX_MOVE_GIB:-2000}
+
+PINS=${PINS:-/etc/beefy-mover-pins}
+TIER_MOVE=${TIER_MOVE:-/usr/local/sbin/tier-move}
+KEEP_AWAKE=${KEEP_AWAKE:-/usr/local/sbin/beefy-keep-awake}
+MEDIA_EXT=${MEDIA_EXT:-'mkv|mp4|avi|m4v|ts|m2ts|mov|wmv|flv|webm|iso|mpg|mpeg'}
+DRY_RUN=${DRY_RUN:-0}
+
+log() { printf '%s\n' "$*"; }
+die() { printf 'beefy-mover: %s\n' "$*" >&2; exit 1; }
+
+# Seam: a command whose stdout is the hot tier's free space in GiB. Overridable so
+# the policy can be tested against simulated disk pressure without a 7 TB disk —
+# same idea as tier-move's FUSER_BIN seam. Ops can also point it at something else
+# if df ever stops being the right answer.
+FREE_GIB_CMD=${FREE_GIB_CMD:-}
+free_gib() {
+    if [ -n "$FREE_GIB_CMD" ]; then eval "$FREE_GIB_CMD"
+    else df -Pk "$HOT" | awk 'NR==2 {printf "%.1f", $4/1048576}'; fi
+}
+# bc is not installed by default; awk does the comparison instead.
+lt() { awk -v a="$1" -v b="$2" 'BEGIN{exit !(a<b)}'; }
+
+for d in "$POOL" "$HOT" "$COLD"; do
+    [ -d "$d" ] || die "$d does not exist - is the pool mounted?"
+done
+[ -x "$TIER_MOVE" ] || die "$TIER_MOVE not found or not executable"
+
+# --------------------------------------------------------------- decide --------
+avail=$(free_gib)
+log "beefy-mover: hot SSD has ${avail}G free (start <${START_FREE_GIB}G, target ${TARGET_FREE_GIB}G)"
+
+if ! lt "$avail" "$START_FREE_GIB"; then
+    log "beefy-mover: above the start threshold - nothing to do, cold HDD not touched"
+    exit 0
+fi
+
+# ------------------------------------------------------------- candidates ------
+# Coldest first. %A@ is atime as an epoch, so sort -n gives least-recently-accessed
+# first. -xdev keeps the walk on the hot branch; it can never wander onto the cold
+# one and "demote" something that is already there.
+mapfile -t CANDIDATES < <(
+    find "$HOT/$MEDIA_SUBDIR" -xdev -type f -regextype posix-extended \
+         -iregex ".*\.($MEDIA_EXT)$" -printf '%A@\t%p\n' 2>/dev/null \
+    | sort -n | cut -f2-
+)
+
+[ "${#CANDIDATES[@]}" -gt 0 ] || { log "beefy-mover: no media files on the hot tier"; exit 0; }
+log "beefy-mover: ${#CANDIDATES[@]} candidate file(s) on the hot tier"
+
+# Map each file to its containing folder and dedupe, preserving coldest-first order.
+# tier-move works on a folder so it moves the video and leaves the sidecars hot,
+# which is what keeps browsing off the HDD.
+declare -A SEEN=()
+DIRS=()
+for f in "${CANDIDATES[@]}"; do
+    rel=${f#"$HOT"/}
+    dir=$(dirname "$rel")
+    [ -n "${SEEN[$dir]:-}" ] && continue
+    SEEN[$dir]=1
+    DIRS+=("$dir")
+done
+
+pinned() {
+    [ -r "$PINS" ] || return 1
+    local rel=$1 line
+    while IFS= read -r line; do
+        line=${line%%#*}; line=${line#"${line%%[![:space:]]*}"}; line=${line%"${line##*[![:space:]]}"}
+        [ -z "$line" ] && continue
+        case "$rel/" in "$line"/*|"$line"*) return 0 ;; esac
+    done < "$PINS"
+    return 1
+}
+
+# ------------------------------------------------------------------ move -------
+# Hold beefy awake for the whole run. Without this the idle watcher can power the
+# machine off mid-copy: a 50 GB title is ~10 minutes at the QVO's sustained write
+# speed, and a demote that dies halfway leaves the source intact but wastes the work.
+released=0
+release() {
+    [ "$released" -eq 1 ] && return
+    released=1
+    [ -x "$KEEP_AWAKE" ] && "$KEEP_AWAKE" off >/dev/null 2>&1
+}
+if [ -x "$KEEP_AWAKE" ]; then
+    "$KEEP_AWAKE" on >/dev/null 2>&1 && log "beefy-mover: holding beefy awake for the run"
+else
+    log "beefy-mover: WARNING $KEEP_AWAKE missing - beefy may power off mid-move"
+fi
+trap release EXIT INT TERM
+
+moved=0; skipped=0; failed=0; moved_gib=0
+for rel in "${DIRS[@]}"; do
+    avail=$(free_gib)
+    if ! lt "$avail" "$TARGET_FREE_GIB"; then
+        log "beefy-mover: reached ${avail}G free (target ${TARGET_FREE_GIB}G) - stopping"
+        break
+    fi
+    # A true ceiling: stop once the accumulated total REACHES the cap, so
+    # MAX_MOVE_GIB=0 is an unambiguous kill switch rather than "one free move".
+    if ! lt "$moved_gib" "$MAX_MOVE_GIB"; then
+        log "beefy-mover: reached the ${MAX_MOVE_GIB}G per-run cap after ${moved_gib}G - stopping early"
+        break
+    fi
+    if pinned "$rel"; then
+        log "  pinned, keeping hot: $rel"
+        skipped=$((skipped+1)); continue
+    fi
+
+    sz=$(du -sk --apparent-size "$HOT/$rel" 2>/dev/null | cut -f1)
+    sz_gib=$(awk -v k="${sz:-0}" 'BEGIN{printf "%.2f", k/1048576}')
+
+    if [ "$DRY_RUN" = "1" ]; then
+        log "  WOULD demote (${sz_gib}G): $rel"
+        moved=$((moved+1))
+        moved_gib=$(awk -v a="$moved_gib" -v b="$sz_gib" 'BEGIN{printf "%.2f", a+b}')
+        continue
+    fi
+
+    # --any-time because the mover enforces the window itself via its timer; the
+    # interactive warning would just be noise in the journal.
+    if out=$("$TIER_MOVE" demote "$rel" --apply --any-time 2>&1); then
+        log "  demoted (${sz_gib}G): $rel"
+        moved=$((moved+1))
+        moved_gib=$(awk -v a="$moved_gib" -v b="$sz_gib" 'BEGIN{printf "%.2f", a+b}')
+    else
+        # Expected and harmless for anything still seeding or being played -
+        # tier-move refuses those by design. Logged at one line so a genuine
+        # failure is still visible without burying the journal.
+        reason=$(printf '%s' "$out" | grep -iE "REFUSING|in use|hardlink|FAILED" | head -1)
+        log "  skipped: $rel  (${reason:-see tier-move output})"
+        skipped=$((skipped+1))
+        printf '%s' "$out" | grep -qiE "VERIFY FAILED|copy FAILED" && failed=$((failed+1))
+    fi
+done
+
+release
+# One sync then stop touching the disks, so the HDD can park instead of being held
+# awake by trailing journal/FLUSH activity.
+sync
+log "beefy-mover: done - ${moved} demoted (${moved_gib}G), ${skipped} skipped, ${failed} failed, $(free_gib)G free"
+[ "$failed" -eq 0 ] || exit 1

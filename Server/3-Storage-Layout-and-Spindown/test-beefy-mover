@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# Tests for beefy-mover's SELECTION POLICY.
+#
+# The dangerous half (copy, verify, delete) belongs to tier-move and is covered by
+# test-tier-move. Here tier-move is STUBBED, so these tests are about the decisions:
+# when to act at all, what to pick, what to leave alone, and when to stop.
+#
+# The one that matters most is case 1. If the mover ever demotes while the pool is
+# healthy, it spins the cold HDD up for nothing, every night — which defeats the
+# entire spin-down design the storage layout exists to serve.
+#
+# Run: ./test-beefy-mover
+set -uo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+SUT="$HERE/beefy-mover"
+PASS=0; FAIL=0
+ok()  { printf '  ok   %s\n' "$1"; PASS=$((PASS+1)); }
+bad() { printf '  FAIL %s\n' "$1"; FAIL=$((FAIL+1)); }
+chk() { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (expected '$2', got '$1')"; fi; }
+
+setup() {
+    TMP=$(mktemp -d)
+    mkdir -p "$TMP/hot/media/movies" "$TMP/cold" "$TMP/hot/torrents/movies"
+    # Three movies, aged so the sort order is unambiguous: Old < Mid < New.
+    for n in Old Mid New; do mkdir -p "$TMP/hot/media/movies/$n"; done
+    for n in Old Mid New; do
+        head -c 2000 /dev/urandom > "$TMP/hot/media/movies/$n/$n.mkv"
+        head -c 100  /dev/urandom > "$TMP/hot/media/movies/$n/$n.nfo"
+    done
+    touch -a -d '2020-01-01' "$TMP/hot/media/movies/Old/Old.mkv"
+    touch -a -d '2023-01-01' "$TMP/hot/media/movies/Mid/Mid.mkv"
+    touch -a -d '2026-01-01' "$TMP/hot/media/movies/New/New.mkv"
+    # A seeding torrent: must never be picked, it is outside media/.
+    head -c 2000 /dev/urandom > "$TMP/hot/torrents/movies/Seeding.mkv"
+
+    # Stub tier-move: records what it was asked to move, and "frees" space so the
+    # mover's stop condition can actually be reached.
+    cat > "$TMP/tier-move" <<'EOS'
+#!/usr/bin/env bash
+# args: demote <rel> --apply --any-time
+echo "$2" >> "$TMPDIR_FOR_STUB/moved.log"
+cur=$(cat "$TMPDIR_FOR_STUB/free")
+echo "$((cur + 100))" > "$TMPDIR_FOR_STUB/free"
+exit 0
+EOS
+    chmod +x "$TMP/tier-move"
+    echo 0 > "$TMP/free"
+    : > "$TMP/moved.log"
+    export TMPDIR_FOR_STUB="$TMP"
+}
+teardown() { rm -rf "$TMP"; }
+
+run() {
+    env POOL="$TMP/hot" HOT="$TMP/hot" COLD="$TMP/cold" \
+        CONF=/nonexistent PINS="$TMP/pins" \
+        TIER_MOVE="$TMP/tier-move" KEEP_AWAKE=/nonexistent \
+        FREE_GIB_CMD="cat $TMP/free" \
+        TMPDIR_FOR_STUB="$TMP" "$@" "$SUT"
+}
+moved_list() { tr '\n' ' ' < "$TMP/moved.log"; }
+
+# ---------------------------------------------------------------------------
+echo "1. healthy pool -> does NOTHING (must not wake the cold HDD)"
+setup; echo 900 > "$TMP/free"
+out=$(run START_FREE_GIB=300 TARGET_FREE_GIB=500); chk "$?" "0" "exits 0"
+chk "$(wc -l < "$TMP/moved.log")" "0" "moved nothing at all"
+case "$out" in *"nothing to do"*) ok "says why it stood down" ;; *) bad "no explanation" ;; esac
+teardown
+
+# ---------------------------------------------------------------------------
+echo "2. under pressure -> demotes COLDEST first"
+setup; echo 100 > "$TMP/free"
+run START_FREE_GIB=300 TARGET_FREE_GIB=150 >/dev/null
+first=$(head -1 "$TMP/moved.log")
+chk "$first" "media/movies/Old" "picked the least-recently-accessed first"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "3. stops as soon as the target is reached (hysteresis)"
+setup; echo 100 > "$TMP/free"      # stub adds 100G per move -> one move suffices
+run START_FREE_GIB=300 TARGET_FREE_GIB=150 >/dev/null
+chk "$(wc -l < "$TMP/moved.log")" "1" "stopped after one move, did not drain the tier"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "4. never touches torrents/ or usenet/ — only media/"
+setup; echo 0 > "$TMP/free"
+run START_FREE_GIB=300 TARGET_FREE_GIB=99999 >/dev/null
+case "$(moved_list)" in
+  *torrents*) bad "demoted something from torrents/ - would break a seeding hardlink" ;;
+  *) ok "left torrents/ alone" ;;
+esac
+chk "$(wc -l < "$TMP/moved.log")" "3" "considered exactly the three media folders"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "5. honours the pin list"
+setup; echo 0 > "$TMP/free"
+printf '# keep my favourite hot\nmedia/movies/Old\n' > "$TMP/pins"
+out=$(run START_FREE_GIB=300 TARGET_FREE_GIB=99999)
+case "$(moved_list)" in
+  *"media/movies/Old"*) bad "demoted a pinned folder" ;;
+  *) ok "pinned folder kept hot" ;;
+esac
+case "$out" in *"pinned, keeping hot"*) ok "logs that it skipped a pin" ;; *) bad "pin skip not logged" ;; esac
+teardown
+
+# ---------------------------------------------------------------------------
+echo "6. dry run changes nothing"
+setup; echo 0 > "$TMP/free"
+out=$(run DRY_RUN=1 START_FREE_GIB=300 TARGET_FREE_GIB=99999)
+chk "$(wc -l < "$TMP/moved.log")" "0" "tier-move was never invoked"
+case "$out" in *"WOULD demote"*) ok "reports what it would have done" ;; *) bad "no dry-run output" ;; esac
+teardown
+
+# ---------------------------------------------------------------------------
+echo "7. a tier-move refusal is survived, not fatal"
+setup; echo 0 > "$TMP/free"
+cat > "$TMP/tier-move" <<'EOS'
+#!/usr/bin/env bash
+echo "  REFUSING: 1 file(s) have more than one link"   # i.e. still seeding
+exit 1
+EOS
+chmod +x "$TMP/tier-move"
+out=$(run START_FREE_GIB=300 TARGET_FREE_GIB=99999); rc=$?
+chk "$rc" "0" "exits 0 - a refusal is expected, not a failure"
+case "$out" in *"skipped:"*) ok "logs the skip with a reason" ;; *) bad "skip not logged" ;; esac
+case "$out" in *"3 skipped"*|*"skipped, 0 failed"*) ok "counts it as skipped, not failed" ;; *) bad "miscounted" ;; esac
+teardown
+
+# ---------------------------------------------------------------------------
+echo "8. a real verify failure IS reported as a failure"
+setup; echo 0 > "$TMP/free"
+cat > "$TMP/tier-move" <<'EOS'
+#!/usr/bin/env bash
+echo "VERIFY FAILED for x - destination removed, source left untouched"
+exit 1
+EOS
+chmod +x "$TMP/tier-move"
+out=$(run START_FREE_GIB=300 TARGET_FREE_GIB=99999); rc=$?
+chk "$rc" "1" "exits non-zero so the systemd unit goes red"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "9. the per-run cap bounds the damage from a policy bug"
+setup; echo 0 > "$TMP/free"
+cat > "$TMP/tier-move" <<'EOS'
+#!/usr/bin/env bash
+echo "$2" >> "$TMPDIR_FOR_STUB/moved.log"
+exit 0
+EOS
+chmod +x "$TMP/tier-move"
+# free never rises, so only the cap can stop it. MAX_MOVE_GIB=0 is the kill switch.
+out=$(run START_FREE_GIB=300 TARGET_FREE_GIB=99999 MAX_MOVE_GIB=0)
+chk "$(wc -l < "$TMP/moved.log")" "0" "cap of 0 moves nothing at all"
+case "$out" in *"per-run cap"*) ok "says the cap stopped it" ;; *) bad "cap stop not logged" ;; esac
+# And a generous cap must NOT get in the way of normal operation.
+: > "$TMP/moved.log"
+run START_FREE_GIB=300 TARGET_FREE_GIB=99999 MAX_MOVE_GIB=2000 >/dev/null
+chk "$(wc -l < "$TMP/moved.log")" "3" "a generous cap does not block normal work"
+teardown
+
+echo
+echo "passed $PASS, failed $FAIL"
+[ "$FAIL" -eq 0 ] || exit 1

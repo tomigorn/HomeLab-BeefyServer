@@ -1,0 +1,41 @@
+[Unit]
+Description=Beefy tiering mover (demote cold video SSD -> HDD)
+Documentation=file:///home/buntu/Projects/Server/3-Storage-Layout-and-Spindown.md
+# The pool must be up, or the mover would walk an empty directory and conclude
+# there is nothing to demote.
+RequiresMountsFor=/srv/video
+After=srv-video.mount
+Requires=srv-video.mount
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/beefy-mover.conf
+ExecStart=/usr/local/sbin/beefy-mover
+# The decided window is 04:00-06:00. Hard-stop at two hours so a pathological run
+# cannot hold the cold HDD awake into the morning. Being killed is SAFE: tier-move
+# only deletes a source after the copy has been verified, so a kill mid-move leaves
+# the original intact and wastes at most one file's worth of work.
+#
+# TimeoutStartSec, not RuntimeMaxSec: for Type=oneshot the whole ExecStart is the
+# "start" phase, and systemd-analyze verify flags RuntimeMaxSec as having no effect
+# here. It would have silently done nothing.
+TimeoutStartSec=7200
+Nice=10
+IOSchedulingClass=idle
+
+# Hardening. Needs real write access to /srv, so ProtectSystem=full rather than
+# strict, and ReadWritePaths for the pool.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/srv/video /srv/.disks /run
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

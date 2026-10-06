@@ -1,0 +1,29 @@
+[Unit]
+Description=Nightly beefy tiering mover (04:00 window)
+Documentation=file:///home/buntu/Projects/Server/3-Storage-Layout-and-Spindown.md
+
+[Timer]
+# The decided mover window: the ONE slot the cold HDD is allowed to wake, so it
+# spins up once a night instead of being trickle-woken all day.
+OnCalendar=*-*-* 04:00:00
+RandomizedDelaySec=300
+
+# ---------------------------------------------------------------------------
+# Persistent=true is load-bearing here, and it is a compromise. beefy powers
+# itself off after 15 idle minutes, so at 04:00 it is usually OFF and a plain
+# calendar timer would simply never fire — the mover would be dead on arrival.
+#
+# Persistent=true runs the missed job shortly after the next boot instead. That
+# can put a demotion outside the 04:00-06:00 window, which the storage doc would
+# rather avoid. It is tolerable only because beefy-mover's FIRST action is a free
+# space check: when the pool is healthy it exits without touching the cold HDD at
+# all, so an out-of-window run is almost always a no-op.
+#
+# The alternative — having fastpi send a WoL packet at 04:00 so the real window is
+# honoured — costs a nightly wake whether or not there is work to do. Not chosen;
+# see the "open decision" note in 3-Storage-Layout-and-Spindown.md.
+# ---------------------------------------------------------------------------
+Persistent=true
+
+[Install]
+WantedBy=timers.target
