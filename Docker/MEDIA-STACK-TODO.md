@@ -65,7 +65,12 @@ Authentik keeps its config in PostgreSQL, not in files, so none of this is
 scriptable from here. Full checklist with exact field values:
 `HomeLab-FastPi` → `Docker/Traefik/docs/2026-10-06-authentik-sso.md`.
 
-- [ ] **Cloudflare DNS for 6 new hostnames** — radarr, prowlarr, bazarr,
+- ✅ ~~Cloudflare DNS for 6 new hostnames~~ — DONE 2026-10-09, all six verified
+      resolving to the Cloudflare proxy IPs with a valid edge cert. NOTE: prowlarr
+      and sabnzbd came with a **Cloudflare Access** application attached that the
+      other four do not have — decide whether to remove it (Authentik is the SSO) or
+      add it everywhere. Do NOT put Access on jellyfin; it breaks native clients.
+- [ ] ~~(superseded)~~ radarr, prowlarr, bazarr,
       qbittorrent, sabnzbd, jellyfin (all `.holy-grail.ch`). The tunnel is
       token/dashboard-managed, so ingress rules are in the Cloudflare UI, not the
       repo. If a wildcard `*.holy-grail.ch` → Traefik ingress already exists, only
@@ -132,11 +137,7 @@ Remaining, optional:
       `dynamic/jellyfin.yml.disabled` pending DNS.
 - ✅ ~~Attach `beefy-wake` with `?port=8096`~~ — done in that file. Also done for
       all five arr routes with their own ports.
-- [ ] (was) Attach the existing **`beefy-wake` forwardAuth** with **`?port=8096`** so the
-      gate waits for Jellyfin rather than merely for sshd (otherwise a cold boot
-      answers 502 in the gap). This middleware has existed since June 2026 and has
-      never been attached to any router — Jellyfin is its first consumer.
-- [ ] Cloudflare DNS record + tunnel ingress for the hostname.
+- ✅ ~~Cloudflare DNS + tunnel ingress for jellyfin~~ — DONE 2026-10-09, verified.
 - [ ] **Decided: no Authentik forwardAuth** on this route (breaks native TV/mobile
       clients). CrowdSec + rate limiting + Jellyfin's own auth instead.
 - [ ] Accepted risk on record: Cloudflare TOS discourages proxying video (§2.8).
@@ -159,12 +160,21 @@ Still open:
       `moveonenospc=true` puts new writes **directly on the cold HDD** and nothing
       moves them back. The doc's warning: *"Don't run the download stack unattended
       at scale before the mover exists."* Check with `tier-report`.
-- [ ] Build the **nightly mover** (§5): automate what `tier-move` does by hand —
-      demote cold video in the 04:00–06:00 window, honour a pin list, skip
-      open/seeding files. `tier-move` is the reference implementation of the safety
-      contract; the daemon mostly adds selection policy and scheduling.
-- [ ] Build the **promoter** (§7): pre-promote on Jellyfin detail-view so playback
-      never binds to the HDD mid-session.
+- ✅ ~~Build the nightly mover (§5)~~ — BUILT 2026-10-06, 18 tests.
+      `Server/3-Storage-Layout-and-Spindown/beefy-mover` + timer. Ships DRY_RUN=1.
+      - [ ] **Install it:** `sudo ./install-mover.sh` on beefy (needs sudo)
+      - [ ] **DECIDE: schedule vs. sleep.** The 04:00 window assumes the host is up,
+            but beefy powers off when idle and is usually OFF at 04:00. Currently
+            `Persistent=true` (runs after next boot, possibly outside the window;
+            harmless because the free-space check no-ops when the pool is fine).
+            Alternative: fastpi WoLs beefy at 04:00 — honours the window, costs a
+            nightly wake. **Your call.**
+- ✅ ~~Build the promoter engine (§7)~~ — BUILT 2026-10-06, 19 tests + live HTTP
+      smoke test. `beefy_promoter.py`. Ships DRY_RUN=1, binds loopback only.
+      - [ ] **Install it:** `sudo ./install-promoter.sh` on beefy (needs sudo)
+      - [ ] **Trigger still deferred** — the detail-view detector needs tuning against
+            Jellyfin's real read behaviour, and Jellyfin is not deployed. Wire it
+            once Jellyfin runs. `POST /promote` works by hand meanwhile.
 - [ ] Consider an **NVMe scratch dir for SABnzbd `incomplete/`** (§13.4) — optional
       optimisation, not required.
 - [ ] Note for the mover's design: the hot SSD uses `relatime`, so "recently
