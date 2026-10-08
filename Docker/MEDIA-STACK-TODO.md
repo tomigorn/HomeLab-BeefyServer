@@ -7,30 +7,21 @@ Legend: 🔴 blocker · 🟡 needed before real use · ⚪ later / optional · �
 
 ---
 
-## 🔴 Blockers — must be done BEFORE the first arr container ever starts
+## ✅ Blockers — ALL CLEARED 2026-10-09
 
-- [ ] **Docker boot-order drop-in** (storage doc §6 / §14.2-F). If Docker starts
-      before mergerfs is mounted, a container bind-mounts an **empty** `/srv/video`
-      and an arr can mark the whole library missing and **delete it**. The doc calls
-      this "a hard prerequisite, not optional". The exact snippet is now in
-      `Movie-Downloads/README.md` → Prerequisites → step 0. Needs sudo.
-
-- [ ] **`sudo usermod -aG docker buntu`** — the `docker` group has no members, so
-      `buntu` can currently reach no daemon at all. Log out/in afterwards.
-      (Verified still pending 2026-10-06.)
-
-- [ ] **Create the pool tree + take ownership** (commands in either README):
-      `chown -R 1000:1000 /srv/video /srv/appdata` and `chmod -R 2775`.
-
-- [ ] **`sudo apt install psmisc attr`** — `fuser` is what gives `tier-move` its
-      open-file guard, and `getfattr` answers "which tier is this file on".
-
-- ✅ ~~Reconcile container identity~~ — now `PUID=1000`/`PGID=1000` + `UMASK=002`
-      per storage doc §14.0, in both projects.
-- ✅ ~~Align the on-pool layout to §13.2~~ — now `torrents/movies`,
-      `usenet/{incomplete,complete/movies}`, `media/movies`, `.recyclebin`.
-
----
+- ✅ **Docker boot-order drop-in** — `/etc/systemd/system/docker.service.d/10-require-srv-video.conf`.
+      Verified three ways: `DropInPaths` loaded, `Requires=`/`After=srv-video.mount`
+      both present, and `docker.service` appears under `systemctl list-dependencies
+      --reverse srv-video.mount`. Then PROVEN by masking the mount and watching
+      Docker refuse: `Failed to start docker.service: Unit srv-video.mount is masked`.
+      (Note for future testing: merely *stopping* the mount proves nothing —
+      `Requires=` pulls it back up. The dependency must be made unsatisfiable.)
+- ✅ **`buntu` in the `docker` group** — `docker ps` works.
+- ✅ **Pool tree + ownership** — §13.2 layout, `1000:1000`, `2775` with the setgid
+      bit set (that bit is what makes cross-container hardlinks work).
+- ✅ **psmisc + attr installed** — `tier-move`'s open-file guard can run.
+- ✅ **`tune2fs -m 1 /dev/sda1`** — reclaimed 298G of ext4 root reserve
+      (7019.6G → 7317.7G available).
 
 ## 🟡 Secrets and app configuration
 
