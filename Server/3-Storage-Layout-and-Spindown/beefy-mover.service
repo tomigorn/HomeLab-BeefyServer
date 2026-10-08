@@ -37,5 +37,8 @@ RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
 
-[Install]
-WantedBy=multi-user.target
+# Deliberately NO [Install] section. This is a oneshot activated by
+# beefy-mover.timer, and the timer does not need the service to be enabled. Having
+# WantedBy=multi-user.target here would invite someone to `systemctl enable
+# beefy-mover.service`, which makes it run on EVERY boot - outside the mover window
+# and without the timer's randomised delay. Enable the TIMER, never the service.
