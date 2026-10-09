@@ -23,29 +23,54 @@ Legend: 🔴 blocker · 🟡 needed before real use · ⚪ later / optional · �
 - ✅ **`tune2fs -m 1 /dev/sda1`** — reclaimed 298G of ext4 root reserve
       (7019.6G → 7317.7G available).
 
-## 🟡 Secrets and app configuration
+## ✅ Deployed and configured 2026-10-09
 
-- [ ] **Second ProtonVPN WireGuard key** for beefy (NOT fastpi's — two tunnels on
-      one key fight over the session and both drop). Must be a **port-forward
-      capable** server. Goes in `Movie-Downloads/.env` → `PROTONVPN_PRIVATE_KEY`.
-- [ ] **Usenet provider: sign up / choose one, then fill credentials in SABnzbd**
-      (host, port, SSL, username, password). Confirmed 2026-10-06 that this is still
-      outstanding — SABnzbd is deployed-but-useless until it has a provider. Radarr
-      will simply never find usenet releases; torrents are unaffected.
-- [ ] **qBittorrent → Options → WebUI → "Bypass authentication for clients on
-      localhost"** — without it `scripts/qbit-port.sh` gets a 403 and the forwarded
-      port is silently never applied, which looks exactly like a dead tracker.
-- [ ] **qBittorrent seed limits: ratio 2.0 OR 30 days, then stop** (§14.0). This is
-      what makes a torrent demotable and keeps the hot SSD from filling.
-- [ ] **Radarr: enable "Use Hardlinks instead of Copy"** (§13.6). Without it every
-      import is a full copy even though the paths are right.
-- [ ] **Per-category disk-space limits** in qBittorrent and SABnzbd (§14.2-B) so a
-      large pack cannot start without room and spill to the cold HDD.
-- [ ] **arr Recycle Bin → `/data/.recyclebin`, 7-day cleanup** (§14.2-D).
-- [ ] **Radarr: import-and-keep** — do not hard-delete a download on upgrade while
-      it may still be seeding (§14.2-C).
-- [ ] Prowlarr → Radarr indexer sync. **Prowlarr gets no `/srv` mount** (§13.5).
-- [ ] Radarr download clients: `gluetun:8080` (qBit) and `sabnzbd:8080`.
+Both stacks are live on beefy. All six hostnames serve through Traefik, gated by
+Authentik, and are covered by the blackbox probes (10/10 up).
+
+Done automatically via each app's REST API — the keys live in /srv/appdata and are
+readable as buntu, so almost none of this needed doing by hand:
+
+- ✅ **ProtonVPN** — key valid, tunnel up, exit IP confirmed different from WAN,
+      port forwarding live. `qbit-port.sh` now applies new ports automatically
+      (observed it move 54998 -> 63440 on a reconnect with no intervention).
+- ✅ **qBittorrent** — save path `/data/torrents/movies`, seed limits ratio 2.0 /
+      30 days then pause, bypass-auth for localhost + `172.28.10.0/24`.
+- ✅ **Radarr** — root folder `/data/media/movies` (sees 37.3 TB), recycle bin
+      `/data/.recyclebin` 7-day, hardlinks ON, both download clients added and
+      connection-tested OK.
+- ✅ **SABnzbd** — folders set, `movies` category created, host whitelist fixed.
+      The whitelist was the blocker: Radarr got 403 because SABnzbd only accepted
+      its own container-ID hostname.
+- ✅ **Prowlarr** — Radarr linked, fullSync. Note the URL that works is
+      `http://gluetun:9696`, not `http://prowlarr:9696` — Prowlarr shares gluetun's
+      network namespace, same as qBittorrent.
+- ✅ **Bazarr** — connected to Radarr, SignalR feed live.
+- ✅ **Hardlinks PROVEN** — a test file linked from `torrents/` into `media/` shared
+      one inode with link count 2, both on `ssd-hot`. The storage design holds.
+
+## 🔴 YOUR TASKS — needs sudo or credentials I do not have
+
+- [ ] **ufw rules — do this first.** Radarr and Prowlarr currently run with
+      `authenticationMethod=none`, so the LAN ports are open with NO login at all.
+      Authentik only protects the Traefik path. This is live right now, not a
+      future risk:
+      ```bash
+      sudo ufw status                     # check it is active first
+      sudo ufw allow from 192.168.1.2 to any port 7878,9696,6767,8080,8081,8096 proto tcp
+      sudo ufw deny  to any port 7878,9696,6767,8080,8081,8096 proto tcp
+      sudo ufw status numbered            # allow MUST sit before deny
+      ```
+- [ ] **Prowlarr indexers** — needs your tracker accounts. Prowlarr UI → Indexers →
+      Add. They sync to Radarr automatically once added.
+- [ ] **SABnzbd usenet provider** — needs your provider credentials.
+      Config → Servers. Until then usenet finds nothing; torrents are unaffected.
+- [ ] **Jellyfin setup wizard** — create the admin account (long random password,
+      this is the break-glass credential), add library `/media/movies`, enable
+      QSV under Playback → Transcoding.
+- [ ] **Jellyfin SSO plugin** — after the wizard. Repo
+      `https://raw.githubusercontent.com/9p4/jellyfin-plugin-sso/manifest-release/manifest.json`
+      then configure with the Authentik Client ID/Secret you saved.
 
 ## 🟡 Jellyfin
 
