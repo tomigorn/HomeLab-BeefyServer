@@ -1,0 +1,106 @@
+# gitleaks configuration for this repository.
+#
+# WHY A CUSTOM CONFIG AT ALL: the default rule set, run over this repo's full
+# history on 2026-10-09, produced 7 findings and ALL 7 were false positives
+# (upstream plugin test fixtures, a literal "<password>" placeholder, shell
+# variable references, and Authentik UUID *object references*). A scanner whose
+# output is 100% noise gets ignored within a week, and then the one real finding
+# scrolls past unread. The allowlists below exist to make a non-empty report mean
+# something.
+#
+# At the same time the defaults MISS what this repo actually risks leaking:
+# `client_secret` is not in gitleaks' default keyword list at all (verified), and
+# an Authentik config export is full of them. So the extra rules below cover the
+# specific secret shapes this homelab handles.
+#
+# Both HomeLab-FastPi and HomeLab-BeefyServer are PUBLIC repositories. Every
+# commit is world-readable the moment it is pushed, and rewriting history does
+# not un-publish anything already fetched or cached. Prevention at commit time is
+# therefore the only control that actually works - see the pre-commit hook in
+# Server/4-Security-Monitoring/.
+
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Extra rules: secret shapes this homelab handles that the defaults do not.
+#
+# Deliberately NOT added: a Telegram bot-token rule. gitleaks' built-in
+# telegram-bot-api-token already catches it (verified with a planted token), and a
+# second rule of my own just reports the same leak twice.
+# ---------------------------------------------------------------------------
+
+[[rules]]
+id = "oidc-client-secret"
+description = "OIDC/OAuth2 client secret (Authentik, Nextcloud, Jellyfin)"
+# Deliberately requires a long alphanumeric value, which excludes the three
+# shapes that legitimately appear in this repo: YAML tags (!Env, !Context),
+# shell/compose variable references ($VAR, ${VAR}), and the sanitiser's
+# "<redacted-by-...>" placeholder.
+regex = '''(?i)client_?secret["'`]?\s*[:=]\s*["'`]?([A-Za-z0-9_\-]{30,})["'`]?'''
+keywords = ["client_secret", "clientsecret", "clientSecret"]
+entropy = 3.5
+
+[[rules]]
+id = "cloudflare-tunnel-token"
+description = "Cloudflare tunnel token (base64 JSON, grants tunnel control)"
+regex = '''eyJhIjoi[A-Za-z0-9+/=_-]{60,}'''
+keywords = ["eyjhijoi"]
+
+[[rules]]
+id = "brevo-smtp-key"
+description = "Brevo (Sendinblue) SMTP or API key"
+regex = '''x(?:smtpsib|keysib)-[A-Za-z0-9]{40,}'''
+keywords = ["xsmtpsib", "xkeysib"]
+
+[[rules]]
+id = "authentik-api-token"
+description = "Authentik API token"
+regex = '''(?i)ak_[A-Za-z0-9]{32,}'''
+keywords = ["ak_"]
+
+[[rules]]
+id = "bcrypt-hash"
+description = "bcrypt hash (offline-crackable once public - treat as a secret)"
+# Basic-auth hashes for Traefik/Caddy belong in .env, never in a tracked file.
+regex = '''\$2[aby]\$[0-9]{2}\$[A-Za-z0-9./]{53}'''
+keywords = ["$2a$", "$2b$", "$2y$"]
+
+# ---------------------------------------------------------------------------
+# Allowlists. Each entry names the finding it suppresses and why, so a future
+# reader can tell "triaged as noise" from "nobody looked".
+# ---------------------------------------------------------------------------
+
+[[allowlists]]
+description = "Vendored third-party plugin source - upstream's own test fixtures and docs"
+# plugins-local/ holds the CrowdSec bouncer plugin, vendored verbatim after the
+# 2026-10-04 outage. Its .traefik.yml carries upstream's testData LAPI key and
+# its README a sample RSA key. Both are upstream's published examples, not ours,
+# and editing vendored code to appease a scanner would make the next version
+# bump conflict for no benefit.
+paths = ['''Docker/Traefik/traefik/plugins-local/''']
+
+[[allowlists]]
+description = "Committed .example templates - deliberately secret-free, verified 2026-10-09"
+# These are instruction files. They are checked for real values by
+# check-secret-hygiene, which is the right place for that - an allowlist here
+# should not also become the thing that hides a mistake in them.
+paths = ['''\.example$''', '''(^|/)secrets\.example/''', '''\.env\.example$''']
+
+[[allowlists]]
+description = "Placeholders and variable references, not values"
+regexes = [
+  '''<[a-z-]*(password|secret|token|key|redacted)[a-z-]*>''',  # <password>, <redacted-by-export-sanitiser>
+  '''\$\$?\{?[A-Z_]*(PASS|SECRET|TOKEN|KEY)[A-Z_]*\}?''',      # $VAR, $$VAR, ${VAR} in compose
+  '''![A-Z][a-zA-Z]+ ''',                                       # YAML tags: !Env, !Context
+  '''(github|google|example)_client_secret''',                  # commented-out ReactiveResume samples
+]
+
+[[allowlists]]
+description = "Authentik export: UUIDs are object references, never key material"
+# signing_key / flow_authentication / etc. hold the UUID of a certificate or
+# flow object stored in Authentik's database. Publishing the UUID discloses
+# nothing - the key itself never leaves PostgreSQL. Scoped to this path so a
+# genuine high-entropy value elsewhere is still caught.
+paths = ['''Docker/Authentik/authentik-config-export\.yaml$''']
+regexes = ['''[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}''']

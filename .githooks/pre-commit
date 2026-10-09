@@ -1,0 +1,102 @@
+#!/bin/sh
+# Block secrets from reaching a PUBLIC repository.
+#
+# This repo and HomeLab-BeefyServer are both public. A push is not reversible:
+# rewriting history does not recall what GitHub has already served, cached or
+# indexed, so once a secret is pushed the only real remedy is rotation. That
+# makes commit time the only point where this is cheap to fix, which is why this
+# runs here rather than only in the nightly scan.
+#
+# Version-controlled via core.hooksPath (see install.sh) rather than copied into
+# .git/hooks, so it cannot silently go missing on a fresh clone - a hook that is
+# not installed looks exactly like a hook that found nothing.
+#
+# Two independent checks, because they fail differently:
+#   1. gitleaks scans staged CONTENT  - catches a high-entropy value anywhere
+#   2. a filename guard               - catches a .env whose values happen to be
+#                                        low-entropy, which content scanning
+#                                        would wave through
+#
+# Deliberate override, when you have actually looked:  git commit --no-verify
+set -eu
+
+REPO=$(git rev-parse --show-toplevel)
+FAILED=0
+
+# --- 1. content -----------------------------------------------------------
+# Several candidate paths: $PATH during a commit from an IDE or GUI client is
+# often not the login shell's, so relying on `command -v` alone makes the hook
+# work in the terminal and silently refuse elsewhere.
+GITLEAKS=""
+for c in "$(command -v gitleaks 2>/dev/null || true)" \
+         /usr/local/bin/gitleaks "$HOME/.local/bin/gitleaks" /opt/homebrew/bin/gitleaks; do
+    [ -n "$c" ] && [ -x "$c" ] && { GITLEAKS=$c; break; }
+done
+if [ -n "$GITLEAKS" ]; then
+    if ! "$GITLEAKS" git "$REPO" --staged -c "$REPO/.gitleaks.toml" \
+            --redact --no-banner --log-level error; then
+        echo ""
+        echo "  ^ gitleaks found a secret in the STAGED changes."
+        echo "    This repo is PUBLIC. Remove the value, then rotate it if it"
+        echo "    was ever pushed - history rewriting does not un-publish."
+        FAILED=1
+    fi
+else
+    # Refuse rather than wave through. A missing scanner that silently passes is
+    # worse than no scanner, because it still reads as "checked and clean".
+    echo "pre-commit: gitleaks not found - cannot verify staged changes." >&2
+    echo "  install it, or bypass deliberately with: git commit --no-verify" >&2
+    exit 1
+fi
+
+# --- 2. filenames ---------------------------------------------------------
+# A deliberately simple subset of the logic in
+# Server/4-Security-Monitoring/security_scan.py, which is the tested and
+# authoritative version used by the nightly scan. Kept short and inline so the
+# hook stays self-contained and identical in both repositories.
+SECRET_COMPONENTS='env|secret|secrets|key|pem|der|p12|pfx|p8|pkcs8|jks|keystore|ppk|kdbx|gpg|asc|ovpn'
+SECRET_BASENAMES='secrets|secrets.yaml|secrets.yml|secrets.json|id_rsa|id_dsa|id_ecdsa|id_ed25519|.netrc|netrc|.htpasswd|htpasswd|.pgpass'
+
+for path in $(git diff --cached --name-only --diff-filter=ACMR); do
+    base=$(basename "$path" | tr '[:upper:]' '[:lower:]')
+
+    # A deliberate template is fine; it is checked for real values by the scan.
+    case "$base" in
+        *.example|*.sample|*.template|*.dist) continue ;;
+    esac
+    # A public key or certificate is public by definition.
+    case "$base" in
+        *.pub|*.crt|*.cer) continue ;;
+    esac
+
+    # Peel backup/derivative suffixes: .gitignore rules for `.env` do NOT match
+    # `.env.bak`, so a copy made while debugging is genuinely committable.
+    stripped=$base
+    while :; do
+        new=$(printf '%s' "$stripped" | sed -E 's/(\.bak|\.backup|\.old|\.orig|\.save|\.saved|\.copy|\.tmp|\.swp|\.swo|\.rej|\.new|~)$//')
+        [ "$new" = "$stripped" ] && break
+        stripped=$new
+    done
+
+    hit=0
+    printf '%s' "$stripped" | grep -qxE "($SECRET_BASENAMES)" && hit=1
+    # Component-wise, not substring: a substring test flags keyboard-layout.md.
+    if [ "$hit" -eq 0 ]; then
+        for part in $(printf '%s' "$stripped" | tr '.' ' '); do
+            printf '%s' "$part" | grep -qxE "($SECRET_COMPONENTS)" && { hit=1; break; }
+        done
+    fi
+
+    if [ "$hit" -eq 1 ]; then
+        echo "pre-commit: refusing to commit secret-bearing file: $path" >&2
+        FAILED=1
+    fi
+done
+
+if [ "$FAILED" -ne 0 ]; then
+    echo "" >&2
+    echo "Commit aborted. If a flagged file is genuinely safe, either rename it" >&2
+    echo "to *.example or add a scoped allowlist entry to .gitleaks.toml -" >&2
+    echo "both leave a record of the decision, unlike --no-verify." >&2
+    exit 1
+fi
