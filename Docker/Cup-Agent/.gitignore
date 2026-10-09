@@ -1,0 +1,27 @@
+# Environment files (contain secrets) — keep .env.example tracked
+.env
+.env.*
+!.env.example
+
+# Keys & certificates
+*.key
+*.pem
+*.crt
+*.cert
+*.csr
+*.p12
+*.pfx
+
+# Credentials, secrets & tokens
+secrets/
+*.secret
+*.token
+credentials.json
+auth.json
+
+# Logs (may leak sensitive data)
+*.log
+
+# Project data/config dirs that may hold secrets — uncomment as needed
+# data/
+# config/

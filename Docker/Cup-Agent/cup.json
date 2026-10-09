@@ -1,0 +1,11 @@
+{
+  "$schema": "https://raw.githubusercontent.com/sergi0g/cup/main/cup.schema.json",
+  "version": 3,
+  "agent": true,
+  "refresh_interval": "0 0 4 * * Sun",
+  "ignore_update_type": "none",
+  "images": {
+    "exclude": [],
+    "extra": []
+  }
+}

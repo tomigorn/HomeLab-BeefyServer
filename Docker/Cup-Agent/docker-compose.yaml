@@ -1,0 +1,128 @@
+# =========================================================
+# Services ================================================
+# =========================================================
+# Cup AGENT for beefy.
+#
+# fastpi runs the Cup web UI; this exposes beefy's containers to it so both hosts
+# appear in one dashboard at https://cup.holy-grail.ch. Agent mode serves ONLY the
+# API — there is no second web UI to secure or remember.
+#
+# Why not just point fastpi's Cup at beefy's Docker socket: that would mean exposing
+# the Docker API across the network, and the Docker API is root on the host. The
+# agent reads beefy's socket LOCALLY and publishes update metadata instead, which is
+# the only thing fastpi actually needs.
+#
+# The socket-proxy pair below mirrors fastpi's Docker-Socket-Proxy project rather
+# than mounting /var/run/docker.sock into Cup. Mounting it :ro protects the socket
+# FILE, not the API behind it — see that project's comments for the full reasoning.
+services:
+# #########################################################
+# SOCKET PROXY - READ ONLY ################################
+# #########################################################
+  socket-proxy-ro:
+    image: ghcr.io/tecnativa/docker-socket-proxy:0.3.0
+    container_name: cup-socket-proxy-ro
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1      # list/inspect containers
+      IMAGES: 1          # compare local image digests against registries
+      INFO: 1
+      VERSION: 1
+      POST: 0            # no create/start/stop/exec — read-only means read-only
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - cup_socket
+    # /var/run must stay writable (the proxy writes its generated haproxy config
+    # there) and tmpfs-ing it would MASK the template shipped in the image.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 64m
+
+# #########################################################
+# UNIX BRIDGE #############################################
+# #########################################################
+# Cup only accepts a UNIX socket path and ignores DOCKER_HOST, so the read-only
+# TCP endpoint is bridged back onto a unix socket it can use.
+  socket-proxy-unix:
+    image: alpine/socat:latest
+    container_name: cup-socket-proxy-unix
+    restart: unless-stopped
+    command: >-
+      UNIX-LISTEN:/sock/docker.sock,fork,unlink-early,mode=666
+      TCP:socket-proxy-ro:2375
+    volumes:
+      - cup_socket_bridge:/sock
+    networks:
+      - cup_socket
+    depends_on:
+      - socket-proxy-ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 32m
+
+# #########################################################
+# CUP AGENT ###############################################
+# #########################################################
+  cup-agent:
+    image: ghcr.io/sergi0g/cup:${CUP_IMAGE_TAG:-v3.5.1}
+    container_name: cup-agent
+    command: -c /config/cup.json serve
+    restart: unless-stopped
+    volumes:
+      # Mounted at Cup's DEFAULT socket path rather than passed via --socket: its
+      # -s flag does not work with this bridged socket (fails with "client error
+      # (Connect)" even though curl and the docker CLI use it happily).
+      - cup_socket_bridge:/var/run
+      - ./cup.json:/config/cup.json:ro
+    # Without this the agent starts before the bridge exists and logs
+    # "Socket not found: /var/run/docker.sock", then only recovers on its retry.
+    # Observed on first deploy — harmless but it makes a clean start look broken.
+    depends_on:
+      - socket-proxy-unix
+    ports:
+      # LAN-published because fastpi must reach it, but the DOCKER-USER rule on this
+      # host restricts these ports to 192.168.1.2 only. If that rule is ever removed,
+      # this port leaks an inventory of everything running on beefy.
+      - "${AGENT_PORT:-8000}:8000"
+    networks:
+      - cup_socket      # to reach the bridged socket
+      - default         # and the internet, to query registries
+    mem_limit: 128m
+    # No healthcheck: this image is distroless — no shell, no wget — so any CMD
+    # probe can only ever report unhealthy. Same reasoning as fastpi's Cup.
+    security_opt:
+      - no-new-privileges:true
+
+# =========================================================
+# Networks ================================================
+# =========================================================
+networks:
+  cup_socket:
+    name: cup_socket
+    driver: bridge
+    # Internal: nothing on this network has any reason to reach the internet.
+    internal: true
+  default:
+    name: cup-agent
+    driver: bridge
+    ipam:
+      config:
+        # Explicit /24. 172.17/16, 172.18/16 and 172.28.10/24 are already in use.
+        - subnet: 172.28.12.0/24
+
+# =========================================================
+# Volumes =================================================
+# =========================================================
+volumes:
+  cup_socket_bridge:
+    name: cup_socket_bridge
