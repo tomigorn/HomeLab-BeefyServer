@@ -24,6 +24,12 @@ services:
       - UMASK=${UMASK}
       # Only needed so Jellyfin builds correct absolute URLs behind Traefik.
       - JELLYFIN_PublishedServerUrl=${PUBLISHED_SERVER_URL}
+      # Intel OpenCL runtime (the LSIO image ships none). QSV decode/encode and VPP
+      # tone mapping work without it; OpenCL is the tone-mapping fallback for what
+      # VPP cannot do (Dolby Vision P5/P8, HLG). Installed on container *create*,
+      # pulled from ghcr - if that fails the container still starts, just without
+      # OpenCL. See README "Hardware transcoding".
+      - DOCKER_MODS=linuxserver/mods:jellyfin-opencl-intel
     volumes:
       - ${APPDATA_ROOT}/jellyfin:/config
       # READ-ONLY. Jellyfin is a player, not a library manager - Radarr owns the

@@ -55,9 +55,10 @@ Dead-man's switch every 28 days. Rules that fire when the alerting itself breaks
 
 ## 🟡 Open — Jellyfin tuning, after the wizard
 
-- [ ] **Verify QSV is genuinely active**, not silently software: `intel_gpu_top`'s
-      Video Engine must move during a transcode. `RENDER_GID=990` is assigned
-      dynamically — recheck after OS upgrades.
+- [x] **Verify QSV is genuinely active** — done 2026-10-18: QSV + VPP tone mapping
+      + low-power encode (HuC via `i915.enable_guc=2`), 2× 4K HDR→1080p at 57 fps
+      each. See `Jellyfin/README.md` "Hardware transcoding". `RENDER_GID=990` is
+      assigned dynamically — recheck after OS upgrades.
 - [ ] Disable extract-on-play/scan for cold content; schedule trickplay/BIF,
       embedded-subtitle extraction and Intro-Skipper into 04:00–06:00, or run them
       on import while the file is still hot (§14.2-I).
