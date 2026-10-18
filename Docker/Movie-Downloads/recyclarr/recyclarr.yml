@@ -1,0 +1,103 @@
+# yaml-language-server: $schema=https://schemas.recyclarr.dev/v8/config-schema.json
+################################################################################
+## Recyclarr -> Radarr (beefy). Syncs TRaSH Guides custom formats, scores,
+## quality profiles, quality sizes and the Jellyfin naming scheme into Radarr.
+##
+## Edit HERE, never in the Radarr UI: anything Recyclarr manages is overwritten
+## on the next sync. Settings Recyclarr does not manage (download clients, root
+## folder, Connect, ...) are untouched.
+##
+## Based on the official templates `uhd-bluray-web` + `hd-bluray-web`
+## (`recyclarr config list templates`). See README "Download -> library pipeline".
+################################################################################
+
+radarr:
+  movies:
+    base_url: http://radarr:7878
+    # From .env (RADARR_API_KEY) - never commit the key.
+    api_key: !env_var RADARR_API_KEY
+
+    # TRaSH file-size limits per quality (min/preferred/max MB per minute).
+    quality_definition:
+      type: movie
+
+    # TRaSH: with the Repack/Proper custom format doing the work, Radarr's own
+    # "prefer and upgrade" must be off or it fights the scores.
+    media_management:
+      propers_and_repacks: do_not_prefer
+
+    # TRaSH "Jellyfin" scheme, TMDB flavour: Radarr is TMDB-native, so every movie
+    # has a TMDB id (not every one has an IMDb id). Jellyfin matches on
+    # [tmdbid-...] in the folder name, so identification never guesses.
+    media_naming:
+      folder: jellyfin-tmdb
+      movie:
+        rename: true
+        standard: jellyfin-tmdb
+
+    quality_profiles:
+      # DEFAULT profile. TRaSH "UHD Bluray + WEB" (2160p encodes, 20-60 GB) with
+      # TRaSH's documented "combine profiles" option: 1080p Bluray/WEB as a lower
+      # tier, so a movie that has no 4K release (yet) still gets 1080p and is
+      # upgraded to 4K automatically once one appears.
+      - trash_id: 64fb5f9858489bdac2af690e27c8f42f  # UHD Bluray + WEB
+        name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+        reset_unmatched_scores:
+          enabled: true
+        upgrade:
+          allowed: true
+          until_quality: Bluray-2160p
+          until_score: 10000
+        min_format_score: 0
+        qualities:
+          - name: Bluray-2160p
+          - name: WEB 2160p
+            qualities: [WEBRip-2160p, WEBDL-2160p]
+          - name: Bluray-1080p
+          - name: WEB 1080p
+            qualities: [WEBRip-1080p, WEBDL-1080p]
+
+      # Space saver, picked per movie: plain TRaSH "HD Bluray + WEB" (6-15 GB).
+      - trash_id: d1d67249d3890e49bc12e275d989a7e9  # HD Bluray + WEB
+        reset_unmatched_scores:
+          enabled: true
+
+    # The 1080p fallback tier needs the HD group-tier scores that the plain UHD
+    # profile has no use for, so a good 1080p Bluray encode beats a poor one.
+    # (Quality always ranks first in Radarr: any allowed 2160p beats any 1080p.)
+    custom_formats:
+      - trash_ids:
+          - ed27ebfef2f323e964fb1f61391bcb35  # HD Bluray Tier 01
+          - c20c8647f2746a1f4c4262b0fbbeeeae  # HD Bluray Tier 02
+          - 5608c71bcebba0a5e666223bae8c9227  # HD Bluray Tier 03
+        assign_scores_to:
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+
+    custom_format_groups:
+      add:
+        # x265 only where it earns its keep (HDR/DV 4K); 1080p stays x264, which
+        # direct-plays everywhere. TRaSH "Golden Rule", one variant per profile.
+        - trash_id: ff204bbcecdd487d1cefcefdbf0c278d  # [Optional] Golden Rule UHD
+          assign_scores_to:
+            - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+        - trash_id: f8bf8eab4617f12dfdbd16303d8da245  # [Optional] Golden Rule HD
+          assign_scores_to:
+            - trash_id: d1d67249d3890e49bc12e275d989a7e9
+        # 3D, BR-DISK, LQ groups, upscales, fake "generated" HDR, extras, ...
+        - trash_id: a3ac6af01d78e4f21fcb75f601ac96df  # [Unwanted] Unwanted Formats
+        # Dolby Vision WITHOUT an HDR10 base layer (Profile 5) is rejected: on a
+        # non-DV client it plays with green/purple colours, and Jellyfin's tone
+        # mapping of P5 (OpenCL path) is untested here. DV *with* HDR10 fallback
+        # (P7/P8) is fine and scores like any other HDR release.
+        - trash_id: 7fc2751eef7e6bdc70b74136e5e35c76  # [HDR Formats] DV (w/o HDR fallback)
+          assign_scores_to:
+            - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+        # "4K HDR wherever possible": a 2160p release without HDR is rejected, so
+        # an SDR-only 4K (usually an upscale) loses to the 1080p tier instead.
+        - trash_id: 47f0d69750de9e16855915fa73bb7b08  # [HDR Formats] SDR
+          select:
+            - 9c38ebb7384dada637be8899efa68e6f  # SDR
+          assign_scores_to:
+            - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+      # Default groups that stay ON: [Audio] Audio Formats, [HDR Formats] HDR,
+      # [Streaming Services] General.
