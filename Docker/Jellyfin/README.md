@@ -237,6 +237,13 @@ Set via the API (they live in /config, not in this repo):
 - **Trickplay (seek previews):** hardware decode + hardware MJPEG encode, key frames only,
   generated **during library scans** (non-blocking). The default nightly 03:00 task would
   never run because beefy sleeps at night.
+- **Scheduled tasks moved into the 04:00–06:00 mover window (2026-10-19)** so the cold
+  HDD wakes once a night, not every 12 h (storage doc §13.10): Scan Media Library daily
+  04:10 (was every 12 h), Generate Trickplay Images 04:25, Extract Chapter Images 04:40,
+  Media Segment Scan 04:50 (was every 12 h). New movies do not wait for these: Radarr
+  Connect triggers a refresh of the new folder on import (see
+  `../Movie-Downloads/README.md` "Download → library pipeline"), and real-time
+  monitoring stays on.
 - **Subtitle fallback font:** `/config/fonts/NotoSansJP-Regular.otf` (Noto Sans JP subset,
   SIL OFL) for ASS/SSA subtitles with CJK glyphs; `EnableFallbackFont` on.
 
