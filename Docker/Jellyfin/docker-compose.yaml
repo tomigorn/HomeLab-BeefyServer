@@ -12,6 +12,11 @@ services:
     image: lscr.io/linuxserver/jellyfin:12.1ubu2604-ls51
     container_name: jellyfin
     restart: unless-stopped
+    # Reach the IdP over the LAN: avatar images on sso.holy-grail.ch/avatar-img are
+    # served to LAN/VPN only (Traefik local-networks); beefy's router DNS would send
+    # the plugin via Cloudflare (403). Also keeps OIDC logins off the tunnel.
+    extra_hosts:
+      - "sso.holy-grail.ch:192.168.1.2"
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
