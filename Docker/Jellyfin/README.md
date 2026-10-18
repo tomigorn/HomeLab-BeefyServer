@@ -239,3 +239,77 @@ Set via the API (they live in /config, not in this repo):
   never run because beefy sleeps at night.
 - **Subtitle fallback font:** `/config/fonts/NotoSansJP-Regular.otf` (Noto Sans JP subset,
   SIL OFL) for ASS/SSA subtitles with CJK glyphs; `EnableFallbackFont` on.
+
+## SSO only: "Sign In with Holy Grail" (2026-10-18)
+
+Jellyfin has **no password login for anyone**, like every other homelab app. Users
+sign in through Authentik; TV/phone apps use **Quick Connect**. There is deliberately
+**no break-glass login over the web**, not even from the LAN or VPN.
+
+Plugin: **OIDC Authentication 0.3.4.0** (`edmogeor/jellyfin-plugin-oidc`, repo
+`https://raw.githubusercontent.com/edmogeor/jellyfin-plugin-oidc/manifest-release/manifest.json`),
+config in `/config/data/plugins/configurations/Jellyfin.Plugin.Oidc.xml` (holds the
+client secret; not in this repo). Authentik app `jellyfin`, groups `streaming-users`
+(sign in) and `streaming-admins` (Jellyfin administrator, re-evaluated at every sign-in).
+
+| Setting (Dashboard -> Plugins -> OIDC Authentication) | Value | Why |
+|---|---|---|
+| Provider / Provider name | **Other** / **Holy Grail** | Button reads "Sign In with Holy Grail", matching the Authentik brand and Audiobookshelf. A named provider (Authentik) forces its own name and ignores Provider name |
+| Local password sign-in | **Disable for all users** | Server-side: every user, incl. `admin`, is switched to `Jellyfin.Plugin.Oidc.Identity.OidcPasswordDisabledProvider`, so even a correct password is refused. The plugin also hides the password form, user tiles, "Manual login" and "Forgot Password"; "Use Quick Connect" stays |
+| Redirect sign-in page to provider | off | Keeps the Jellyfin sign-in page so "Use Quick Connect" stays reachable |
+| Automatic linking | Match email to Jellyfin username | New SSO users are provisioned on first sign-in |
+
+No Branding custom CSS is needed: in "Disable for all users" mode the plugin does the
+hiding itself (it is the plugin's documented SSO-only mode).
+
+**Second layer, in Traefik on fastpi** (`HomeLab-FastPi` ->
+`Docker/Traefik/traefik/dynamic/jellyfin.yml`, router `jellyfin-password-login-block`):
+`/Users/AuthenticateByName`, `/Users/{id}/Authenticate` and `/Users/ForgotPassword*`
+answer **403 for every client** (any case, `/emby` prefix, trailing slash). Quick
+Connect (`/QuickConnect/*`, `/Users/AuthenticateWithQuickConnect`) is not matched.
+
+Users at the switch: only `admin` (local, administrator, last used 2026-10-14) - it
+is now password-disabled too. The first Authentik sign-in by a `streaming-admins`
+member creates that person's own Jellyfin administrator account.
+
+Automation still works: the API key in `secrets/api-key` is a token, not a password
+login, and is unaffected.
+
+### Recovery when Authentik is down (server shell only)
+
+Playback with existing sessions and Quick Connect approvals from an already
+signed-in browser keep working; only *new* sign-ins need Authentik. If you really
+need a password login, use the plugin's documented emergency recovery on beefy and
+reach Jellyfin **directly, not through Traefik** (Traefik refuses password logins):
+
+```bash
+cd ~/Projects/Docker/Jellyfin && docker compose stop jellyfin
+C=/srv/appdata/jellyfin/data
+sudo cp -a $C/plugins/configurations/Jellyfin.Plugin.Oidc.xml{,.bak-recovery}
+sudo sed -i 's#<Enabled>true</Enabled>#<Enabled>false</Enabled>#' $C/plugins/configurations/Jellyfin.Plugin.Oidc.xml
+sudo sqlite3 $C/data/jellyfin.db ".backup $C/data/jellyfin.db.bak-recovery"
+sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Name='admin' AND AuthenticationProviderId='Jellyfin.Plugin.Oidc.Identity.OidcPasswordDisabledProvider';"
+docker compose start jellyfin
+```
+
+Then, from your PC: `ssh -L 8096:127.0.0.1:8096 beefy` and open
+`http://localhost:8096` (the LAN address is firewalled to fastpi only). Sign in as
+`admin` with its password (password manager; SSO users have random passwords that
+cannot be recovered). Fix the problem, then put it back: Plugins -> OIDC
+Authentication -> enable, "Local password sign-in" = **Disable for all users**, save
+(the plugin switches `admin` back to the disabled provider). Check with
+`GET /Users` that every user shows `OidcPasswordDisabledProvider`.
+
+Backups taken at the switch: `Jellyfin.Plugin.Oidc.xml.bak-2026-10-18-pre-oidc-only`
+and `data/data/jellyfin.db.bak-2026-10-18-pre-oidc-only`.
+
+### Direct port 8096
+
+Published on `0.0.0.0:8096` because Traefik on fastpi connects over the LAN. The
+`DOCKER-USER` rule (`! -s 192.168.1.2 -i enp6s0 ... --dports ...,8096,... -j DROP`,
+see `../Cup-Agent/README.md`) limits IPv4 to fastpi. **Open issue (2026-10-18):**
+docker-proxy also listens on `[::]:8096`, and beefy's IPv6 link-local address
+(`fe80::7656:3cff:fe96:79a3`) reaches it from any LAN host, bypassing that IPv4 rule
+(same for the arr ports). Since password login is refused server-side this no longer
+exposes a password path, but it should be closed with an `ip6tables` INPUT DROP on
+`enp6s0` for the same port list, persisted with `netfilter-persistent save`.
