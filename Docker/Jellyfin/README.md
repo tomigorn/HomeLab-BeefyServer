@@ -225,3 +225,17 @@ otherwise keep the media disks spinning.
 - `../Movie-Downloads` — fills `/srv/video/media/movies`
 - `../../Server/8-Idle-Watcher.md` — what keeps beefy awake
 - `HomeLab-FastPi` → `Docker/Beefy-Waker/` — the wake gate and its README
+
+## Network, previews and subtitle font (2026-10-18)
+
+Set via the API (they live in /config, not in this repo):
+
+- **Networking:** Known proxies `192.168.1.2` (Traefik on fastpi), LAN networks
+  `192.168.1.0/24` + `172.24.0.5/32` (the wg-easy VPN NAT address). Without this every
+  client looked like fastpi, so internet viewers counted as "local". No remote bitrate
+  limit on purpose: most viewers are remote.
+- **Trickplay (seek previews):** hardware decode + hardware MJPEG encode, key frames only,
+  generated **during library scans** (non-blocking). The default nightly 03:00 task would
+  never run because beefy sleeps at night.
+- **Subtitle fallback font:** `/config/fonts/NotoSansJP-Regular.otf` (Noto Sans JP subset,
+  SIL OFL) for ASS/SSA subtitles with CJK glyphs; `EnableFallbackFont` on.
