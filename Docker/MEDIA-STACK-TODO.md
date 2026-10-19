@@ -72,7 +72,7 @@ Dead-man's switch every 28 days. Rules that fire when the alerting itself breaks
       outage. Still Authentik-gated, still a valid cert.
 - [ ] **Gate `cup.holy-grail.ch` behind Authentik** — currently public with no auth
       at all. The middleware exists; needs an Authentik application.
-- [ ] **Revoke the Telegram bot token** — it passed through a chat transcript.
+- [x] ~~**Revoke the Telegram bot token**~~ WON'T FIX (user decision 2026-10-17). — it passed through a chat transcript.
       `/revoke` in BotFather, drop the new one in
       `grafana/alertmanager/secrets/telegram_bot_token`, restart alertmanager.
 - [ ] **NVMe scratch dir for SABnzbd `incomplete/`** (§13.4) — unpack writes are
