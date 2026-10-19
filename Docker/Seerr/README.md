@@ -55,6 +55,8 @@ sudo sqlite3 /srv/appdata/seerr/db/db.sqlite3 "SELECT l.userId, l.provider, l.us
 
 A duplicate account (signed in before linking): delete it under Users as admin, then link.
 
+Avatar of a Jellyfin-type user (the owner): Seerr refreshes it only on a Jellyfin login, which no longer happens, so `avatarVersion` stays empty and the proxy serves the grey fallback. One-time fix applied 2026-10-19: `sqlite3 db/db.sqlite3 "UPDATE user SET avatarVersion=1 WHERE id=1"`; the proxy then serves Jellyfin's current image (the Holy Grail avatar via the OIDC picture claim). After changing the avatar: hard-refresh; if it stays old, delete `cache/images/avatar`. Holy Grail-created users get the `picture` claim directly.
+
 ### Preview image (temporary)
 
 Seerr 3.5.0 has no OIDC. It lives in the open PR seerr-team/seerr#2715, published as `ghcr.io/seerr-team/seerr:preview-new-oidc`; Authentik's Seerr guide uses the same tag.
