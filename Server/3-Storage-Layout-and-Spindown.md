@@ -182,19 +182,19 @@ sudo mkfs.xfs  -L hdd-cold /dev/disk/by-id/<cold-hdd>-part1
 
 ### 4.4 Mount via systemd (ordering is safety-critical)
 
-Mount by **UUID**. Use systemd `.mount` units (or `x-systemd.*` in `/etc/fstab`) so that
-Docker **refuses to start** until the pool is mounted — see §6 for why this matters.
+Mount by **UUID** via `/etc/fstab` (systemd turns every line into a `.mount` unit). The branches
+carry `nofail` and a device timeout so a missing disk never drops the headless box into emergency
+mode; Docker is gated on the pool by a drop-in instead — see §6 for why this matters.
 
 `/etc/fstab` example:
 
 ```fstab
-UUID=<audio-uuid>   /srv/audio            ext4  noatime               0 2
-UUID=<hot-uuid>     /srv/.disks/ssd-hot   ext4  relatime              0 2
-UUID=<cold-uuid>    /srv/.disks/hdd-cold  xfs   noatime               0 2
+UUID=<hot-uuid>     /srv/.disks/ssd-hot   ext4  relatime,nofail,x-systemd.device-timeout=10s   0 2
+UUID=<cold-uuid>    /srv/.disks/hdd-cold  xfs   noatime,nofail,x-systemd.device-timeout=10s    0 2
 ```
 
 ```bash
-sudo mkdir -p /srv/audio /srv/.disks/ssd-hot /srv/.disks/hdd-cold /srv/video
+sudo mkdir -p /srv/.disks/ssd-hot /srv/.disks/hdd-cold /srv/video
 sudo systemctl daemon-reload
 sudo mount -a
 ```
@@ -209,7 +209,7 @@ sudo apt install -y mergerfs
 
 ```fstab
 /srv/.disks/ssd-hot:/srv/.disks/hdd-cold  /srv/video  fuse.mergerfs  \
-  defaults,allow_other,use_ino,cache.files=partial,dropcacheonclose=true,\
+  defaults,nofail,allow_other,use_ino,cache.files=partial,dropcacheonclose=true,\
 category.create=ff,minfreespace=50G,moveonenospc=true,statfs=base,\
 fsname=mergerfs,x-systemd.requires=/srv/.disks/ssd-hot,\
 x-systemd.requires=/srv/.disks/hdd-cold  0 0
@@ -297,10 +297,13 @@ If Docker starts **before** mergerfs is mounted, a container bind-mounts an **em
 `/srv/video` — and an *arr app can then mark the entire library "missing" and delete
 entries. Prevent it:
 
-- systemd `.mount` units + a `docker.service` drop-in with
-  `Requires=srv-video.mount` and `After=srv-video.mount`, so **Docker refuses to start**
-  if the pool isn't up.
-- Do **not** use `nofail`-and-proceed on the merged mount — failing closed is correct here.
+- A `docker.service` drop-in (`10-require-srv-video.conf`, spec in §14.2-F) with
+  `RequiresMountsFor=/srv/video`, `Requires=srv-video.mount` and `After=srv-video.mount`, so
+  **Docker refuses to start** ("dependency failed") if the pool isn't up.
+- The fstab lines carry `nofail` + `x-systemd.device-timeout` (§4.4, §4.5): a missing disk no
+  longer blocks the boot in emergency mode (no ssh on a headless box). That is safe **only**
+  because of the drop-in; never use `nofail` on these mounts without it.
+- Recovery after a failed boot: fix the disk, `sudo mount -a`, `sudo systemctl start docker`.
 
 ---
 
@@ -667,8 +670,8 @@ library. The import step is where storage matters.)
   branch so the directory skeleton is SSD-represented and browsing avoids the HDD. No config
   needed; just don't relocate metadata off the library tree.
 - **Boot-order / mass-delete safety (§6):** an arr on an empty mount can mark the whole library
-  "missing" and delete DB entries. The Docker-after-pool ordering prevents it — keep it, and do
-  **not** set the merged mount to `nofail`-and-proceed.
+  "missing" and delete DB entries. The Docker-after-pool drop-in prevents it — keep it; the
+  `nofail` on the mounts is safe only while that drop-in exists.
 
 ### 13.7 The hardlink rule, stated once (applies to all arrs)
 
@@ -971,16 +974,18 @@ container can never bind an empty `/srv/video` and mass-delete a library:
 ```ini
 # /etc/systemd/system/docker.service.d/10-require-srv-video.conf
 [Unit]
-RequiresMountsFor=/srv/video /srv/audio
-After=srv-video.mount srv-audio.mount
+RequiresMountsFor=/srv/video
+After=srv-video.mount
 Requires=srv-video.mount
 ```
 
 ```bash
 sudo systemctl daemon-reload && sudo systemctl restart docker
+systemctl show docker -p Requires -p RequiresMountsFor -p After   # must list srv-video.mount
 ```
 
-Do **not** add `nofail` to the merged mount — failing closed is correct (§6). Build this **before**
+The mounts carry `nofail` so a missing disk does not block the boot; this drop-in is what makes
+that safe (§6). It is the only drop-in needed; `/srv/audio` is retired (§0). Build this **before**
 the first arr container.
 
 **G. Season packs / multi-file torrents.** A pack seeds as a unit: the arr hardlinks each episode
@@ -1071,9 +1076,9 @@ mergerfs       fuse.mergerfs   35T  535G   34T   2%  /srv/video
 
 ```
 # >>> beefy-storage (managed by setup-storage.sh) >>>
-UUID=5e19e1fd-ce5c-4c1d-80ba-d87983494e46  /srv/.disks/ssd-hot   ext4  relatime   0 2
-UUID=b805bc03-6217-41ea-9161-2b55281e0313  /srv/.disks/hdd-cold  xfs   noatime    0 2
-/srv/.disks/ssd-hot:/srv/.disks/hdd-cold  /srv/video  fuse.mergerfs  defaults,allow_other,use_ino,cache.files=partial,dropcacheonclose=true,category.create=ff,minfreespace=50G,moveonenospc=true,statfs=base,fsname=mergerfs,x-systemd.requires=/srv/.disks/ssd-hot,x-systemd.requires=/srv/.disks/hdd-cold  0 0
+UUID=5e19e1fd-ce5c-4c1d-80ba-d87983494e46    /srv/.disks/ssd-hot   ext4  relatime,nofail,x-systemd.device-timeout=10s   0 2
+UUID=b805bc03-6217-41ea-9161-2b55281e0313   /srv/.disks/hdd-cold  xfs   noatime,nofail,x-systemd.device-timeout=10s    0 2
+/srv/.disks/ssd-hot:/srv/.disks/hdd-cold  /srv/video  fuse.mergerfs  defaults,nofail,allow_other,use_ino,cache.files=partial,dropcacheonclose=true,category.create=ff,minfreespace=50G,moveonenospc=true,statfs=base,fsname=mergerfs,x-systemd.requires=/srv/.disks/ssd-hot,x-systemd.requires=/srv/.disks/hdd-cold  0 0
 # <<< beefy-storage (managed by setup-storage.sh) <<<
 # (audio line removed 2026-07-03 — audio tier retired; SSD …909892P is now an unused spare)
 ```
