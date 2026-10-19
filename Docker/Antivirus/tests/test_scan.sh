@@ -32,7 +32,8 @@ for a; do
     *) printf '%s\n' "$a" >> "$targets" ;;
   esac
 done
-files=$(mktemp)
+files=$(mktemp); denied=0
+[ -n "$FAKE_VANISH" ] && rm -f "$FAKE_VANISH"
 while IFS= read -r t; do
   if [ -d "$t" ]; then find "$t" -type f >> "$files"
   elif [ -f "$t" ]; then printf '%s\n' "$t" >> "$files"
@@ -44,6 +45,7 @@ if [ -s "$targets.excl" ]; then
 fi
 while IFS= read -r f; do
   [ -n "$(find "$f" -size +2000k)" ] && continue
+  [ "$f" = "$FAKE_DENY" ] && { denied=$((denied+1)); errors=$((errors+1)); continue; }
   scanned=$((scanned+1))
   if grep -q EICAR-STANDARD-ANTIVIRUS-TEST-FILE "$f"; then
     infected=$((infected+1)); echo "$f: Eicar-Test-Signature FOUND"
@@ -52,6 +54,7 @@ while IFS= read -r f; do
 done < "$files"
 [ -n "$FAKE_FAIL" ] && { echo "ERROR: fake failure"; errors=$((errors+1)); }
 printf '\n----------- SCAN SUMMARY -----------\nKnown viruses: 1\nEngine version: 1.4.6\nScanned directories: 0\nScanned files: %s\nInfected files: %s\nData scanned: 0.00 MB\n' "$scanned" "$infected"
+[ "$denied" -gt 0 ] && echo "Total errors: $denied"
 rm -f "$targets" "$targets.excl" "$files"
 [ "$errors" -gt 0 ] && exit 2
 [ "$infected" -gt 0 ] && exit 1
@@ -107,7 +110,7 @@ assert_eq "files_listed 0" 0 "$(metric clamav_files_listed new)"
 
 echo "== new: excludes"
 reset; marker
-for p in antivirus-quarantine/x.exe some/quarantine/x.exe .snapshots/s1/x.exe qbittorrent/incomplete/x.exe movies/a.part movies/b.!qB; do fresh "$T/red/$p"; done
+for p in antivirus-quarantine/x.exe some/quarantine/x.exe .snapshots/s1/x.exe qbittorrent/incomplete/x.exe movies/a.part movies/b.!qB sonarr/logs.db-wal sonarr/logs.db-shm sonarr/logs.db-journal; do fresh "$T/red/$p"; done
 fresh "$T/red/movies/keep.mkv"
 run new > /dev/null
 assert_eq "only keep.mkv listed" "$T/red/movies/keep.mkv" "$(cat "$STATE/new.list")"
@@ -119,6 +122,26 @@ kept "marker kept"
 assert_eq "scan_errors 1" 1 "$(metric clamav_scan_errors new)"
 assert_eq "retry picks the file again" 0 "$(run new)"
 assert_grep "file listed on retry" new.mkv "$STATE/new.list"
+
+echo "== new: a file vanishing before the scan is not an error"
+reset; marker; fresh "$T/red/movies/a.mkv"; fresh "$T/red/movies/gone.mkv"
+assert_eq "exits 0" 0 "$(FAKE_VANISH="$T/red/movies/gone.mkv" run new)"
+assert_eq "files_vanished 1" 1 "$(metric clamav_files_vanished new)"
+assert_eq "scan_errors 0" 0 "$(metric clamav_scan_errors new)"
+assert_eq "files_scanned 1" 1 "$(metric clamav_files_scanned new)"
+advanced "marker advanced"
+
+echo "== new: an unreadable file stays an error"
+reset; marker; fresh "$T/red/movies/a.mkv"; fresh "$T/red/movies/secret.mkv"
+assert_eq "exits 2" 2 "$(FAKE_DENY="$T/red/movies/secret.mkv" run new)"
+assert_eq "scan_errors 1" 1 "$(metric clamav_scan_errors new)"
+assert_eq "files_vanished 0" 0 "$(metric clamav_files_vanished new)"
+kept "marker kept"
+
+echo "== path/all: vanished files are counted, not errors"
+reset; fresh "$T/red/movies/a.mkv"; fresh "$T/red/movies/gone.mkv"
+assert_eq "path exits 0" 0 "$(FAKE_VANISH="$T/red/movies/gone.mkv" run "$T/red/movies/a.mkv" "$T/red/movies/gone.mkv")"
+assert_eq "path vanished 1" 1 "$(metric clamav_files_vanished path)"
 
 echo "== new: infected file goes to quarantine"
 reset; marker
@@ -148,7 +171,7 @@ assert_grep "duration" '^clamav_run_duration_seconds{host="testhost",mode="new"}
 assert_grep "signature age" '^clamav_signature_age_seconds{host="testhost"} [0-9]' "$P"
 assert_grep "db version" '^clamav_db_version{host="testhost"} 28158$' "$P"
 assert_grep "infected_total" '^clamav_infected_total{host="testhost"} 0$' "$P"
-assert_eq "one TYPE line per metric" 10 "$(grep -c '^# TYPE clamav_' "$P")"
+assert_eq "one TYPE line per metric" 11 "$(grep -c '^# TYPE clamav_' "$P")"
 assert_eq "no temp files left" "clamav.prom" "$(ls -A "$TEXTFILE")"
 sig_age=$(metric clamav_signature_age_seconds)
 exp=$(( $(date +%s) - 1792391160 ))
@@ -192,7 +215,8 @@ assert_eq "index only lists the moved file" 1 "$(wc -l < "$QUARANTINE/index.txt"
 assert_eq "infected_last_run path" 2 "$(metric clamav_infected_last_run path)"
 assert_eq "scanned all three" 3 "$(metric clamav_files_scanned path)"
 assert_eq "clean path exits 0" 0 "$(run "$T/black/books")"
-assert_eq "missing path exits 2" 2 "$(run "$T/nope")"
+assert_eq "missing path given by hand exits 2" 2 "$(run "$T/nope")"
+assert_eq "it is an error, not vanished" "1 0" "$(metric clamav_scan_errors path) $(metric clamav_files_vanished path)"
 
 echo "== missing quarantine (disk not mounted) is an error"
 reset; marker; fresh "$T/red/movies/new.mkv"; rmdir "$QUARANTINE"

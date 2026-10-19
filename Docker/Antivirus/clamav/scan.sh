@@ -80,9 +80,12 @@ list_find() {
 	if [ -e "$STATE/last-run" ]; then since=$(stat -c %Y "$STATE/last-run"); else since=$(( $(date +%s) - 86400 )); fi
 	find $SCAN_ROOTS -xdev \
 		\( -path "$QUARANTINE" -o -path '*/quarantine' -o -path '*/.snapshots' -o -path '*/incomplete' \) -prune -o \
-		-type f ! -name '*.part' ! -name '*.!qB' \
-		-exec stat -c '%Z %Y %n' {} + > "$STATE/find.out" 2>> "$LOG" || return 1
+		-type f ! -name '*.part' ! -name '*.!qB' ! -name '*-wal' ! -name '*-shm' ! -name '*-journal' \
+		-exec stat -c '%Z %Y %n' {} + > "$STATE/find.out" 2> "$STATE/find.err"
+	VANISHED=$((VANISHED + $(grep -c 'No such file or directory$' "$STATE/find.err")))
 	awk -v s="$since" '$1 > s || $2 > s { sub(/^[0-9]+ [0-9]+ /, ""); print }' "$STATE/find.out"
+	grep -v 'No such file or directory$' "$STATE/find.err" | sed 's/^/ERROR: /' >> "$LOG"
+	! grep -qv 'No such file or directory$' "$STATE/find.err"
 }
 
 count_large() {
@@ -100,7 +103,7 @@ list_btrfs() {
 	done
 	sort -u "$STATE/find-new.list" | while IFS= read -r f; do
 		case $f in
-			"$QUARANTINE"/* | */quarantine/* | */.snapshots/* | */incomplete/* | *.part | *.!qB) ;;
+			"$QUARANTINE"/* | */quarantine/* | */.snapshots/* | */incomplete/* | *.part | *.!qB | *-wal | *-shm | *-journal) ;;
 			*) [ -f "$f" ] && printf '%s\n' "$f" ;;
 		esac
 	done
@@ -117,6 +120,10 @@ run_new() {
 	else
 		mv "$list.all" "$list"
 	fi
+	while IFS= read -r f; do
+		if [ -e "$f" ]; then printf '%s\n' "$f"; else VANISHED=$((VANISHED + 1)); fi
+	done < "$list" > "$list.x"
+	mv "$list.x" "$list"
 	LISTED=$(wc -l < "$list" | tr -d ' ')
 	SKIPPED=$(while IFS= read -r f; do stat -c %s "$f"; done < "$list" 2>/dev/null | awk -v m="$MAXBYTES" '$1 > m { n++ } END { print n + 0 }')
 	[ "$LISTED" -gt 0 ] && clam --file-list="$list" -i --move="$QUARANTINE" $LIMITS
@@ -134,7 +141,10 @@ run_paths() {
 	: > "$STATE/path-move.list"
 	: > "$STATE/path-report.list"
 	for p in "$@"; do
-		if under_roots "$p"; then
+		if [ ! -e "$p" ]; then
+			echo "ERROR: $p: No such file or directory" >> "$LOG"
+			RC=2
+		elif under_roots "$p"; then
 			printf '%s\n' "$p" >> "$STATE/path-move.list"
 		else
 			printf '%s\n' "$p" >> "$STATE/path-report.list"
@@ -146,6 +156,7 @@ run_paths() {
 
 LISTED=
 SKIPPED=0
+VANISHED=0
 if [ ! -d "$QUARANTINE" ]; then
 	echo "ERROR: $QUARANTINE missing (disk not mounted?)" >> "$LOG"
 	RC=2
@@ -164,10 +175,18 @@ awk '/ FOUND$/ { sub(/ FOUND$/, ""); i = match($0, /: [^:]*$/); print substr($0,
 INFECTED=$(wc -l < "$HITS" | tr -d ' ')
 SCANNED=$(awk -F': ' '/^Scanned files:/ { s += $2 } END { print s + 0 }' "$LOG")
 [ -n "$LISTED" ] || LISTED=$SCANNED
+set -- $(awk '
+	/^ERROR: / { e++; next }
+	/: No such file or directory$/ { p = $0; sub(/: No such file or directory$/, "", p); gone[p] = 1; next }
+	/^WARNING: .*: Can.t access file$/ { q = $0; sub(/^WARNING: /, "", q); sub(/: Can.t access file$/, "", q); if (q in gone) v++; else e++; next }
+	/^WARNING: / { e++ }
+	/^Total errors:/ { e += $3 }
+	END { print v + 0, e + 0 }' "$LOG")
+VANISHED=$((VANISHED + $1))
 ERRORS=0
 if [ "$RC" -ge 2 ]; then
-	ERRORS=$(grep -cE '^(ERROR|WARNING): ' "$LOG")
-	[ "$ERRORS" -gt 0 ] || ERRORS=1
+	ERRORS=$2
+	[ "$ERRORS" -gt 0 ] || [ "$1" -gt 0 ] || ERRORS=1
 fi
 
 if [ "$INFECTED" -gt 0 ]; then
@@ -192,6 +211,7 @@ clamav_run_duration_seconds{$L} $(( $(date +%s) - START ))
 clamav_files_listed{$L} $LISTED
 clamav_files_scanned{$L} $SCANNED
 clamav_scan_errors{$L} $ERRORS
+clamav_files_vanished{$L} $VANISHED
 clamav_infected_last_run{$L} $INFECTED
 clamav_files_skipped_large{$L} $SKIPPED
 EOF
@@ -216,7 +236,7 @@ fi
 	{ print }' > "$TEXTFILE/.clamav.prom.tmp"
 mv "$TEXTFILE/.clamav.prom.tmp" "$TEXTFILE/clamav.prom"
 
-echo "scan.sh $MODE: listed=$LISTED scanned=$SCANNED infected=$INFECTED errors=$ERRORS"
+echo "scan.sh $MODE: listed=$LISTED scanned=$SCANNED infected=$INFECTED errors=$ERRORS vanished=$VANISHED"
 [ "$ERRORS" -gt 0 ] && exit 2
 [ "$INFECTED" -gt 0 ] && exit 1
 exit 0
