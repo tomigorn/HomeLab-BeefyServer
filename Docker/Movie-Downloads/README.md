@@ -325,6 +325,9 @@ Lives in three places: `recyclarr/recyclarr.yml` (scores), `scripts/language-pol
   (quality itself still ranks first: any allowed 2160p beats any 1080p). Rejects are
   −50000 rather than TRaSH's −10000 so the best possible sum (28000 + 7200) stays
   below the minimum score of 0.
+- Known gap: `Language: Original + English` cannot tell whether the original *is* English (a custom format only sees the release languages and the original). On an English title every extra dub fires it: Knives Out `…x265-hallowed.DUAL-wastaken` (English + Portuguese, from the indexer) scores 10250 vs 3950 for the same encode without the dub. It never beats `German DL` (20000).
+- No German release for a title usually means the indexers do not carry one, not a filter: check with Prowlarr's search first.
+- 2160p German scene releases often omit `HDR` in the name (`GERMAN.DL.2160P.UHD.BLURAY.HEVC-UNDERTAKERS`): `SDR` (2160p without an HDR marker) rejects them (Radarr parse of such a Knives Out title: −22000).
 - Upgrade until score 20000 = German dual audio reached. A release that also has
   English wins at grab time but is not chased afterwards.
 - The TRaSH German guide uses profile language `Any` and accepts `German` dub-only
