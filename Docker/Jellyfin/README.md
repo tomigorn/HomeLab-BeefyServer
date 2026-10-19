@@ -329,3 +329,32 @@ docker-proxy also listens on `[::]:8096`, and beefy's IPv6 link-local address
 (same for the arr ports). Since password login is refused server-side this no longer
 exposes a password path, but it should be closed with an `ip6tables` INPUT DROP on
 `enp6s0` for the same port list, persisted with `netfilter-persistent save`.
+
+## Tracker (Ryot): watch history per member (2026-10-20)
+Jellyfin posts each member's playback to their own Ryot account on fastpi (`HomeLab-FastPi` → `Docker/Ryot/`). One webhook per Jellyfin user, bound by `UserId`, so one member's playback never lands in another member's Tracker.
+
+| Plugin | Repo | Version | Config |
+|---|---|---|---|
+| Webhooks (shemanaev) | `https://raw.githubusercontent.com/shemanaev/jellyfin-plugin-repo/master/manifest.json` | 3.10.0.120000 (Jellyfin shows 3.10.0.0) | `/config/data/plugins/configurations/Jellyfin.Webhooks.xml`, holds the secret integration URLs, not in git |
+
+- Not the official "Webhook" plugin: its payload has only the episode's own ids, and 12.1 episodes have no TMDB id. shemanaev's "Default" format nests the series with its TMDB id, so episodes land on their show.
+- Route: `extra_hosts` sends `tracker.holy-grail.ch` to fastpi over the LAN; `/_i/` is LAN-only (403 via Cloudflare).
+- Hook per member: name `Tracker <user>`, format Default, events Play, Pause, Resume, Stop, Progress, MarkPlayed.
+
+### Add a household member
+1. Member is in Holy Grail (`streaming-users`, automatic on invite) and has signed in to Jellyfin once (creates the Jellyfin user).
+2. Member signs in to the Tracker tile once (creates the Ryot account).
+3. Member in Ryot: Settings → Integrations → Add → **Jellyfin Sink**, provider **TMDB**, username filter empty, "auto-pause on errors" **off** (items without TMDB id would pause it after 5 failures). Copy the URL, send it to the owner privately: it is a secret.
+4. Owner on beefy, paste the URL, Enter, Ctrl-D:
+   ```bash
+   cd ~/Projects/Docker/Jellyfin/scripts && python3 tracker-webhook.py add <jellyfin-user>
+   ```
+5. Test: member plays something for 3 min → it shows in their Ryot history.
+
+| Task | Command (in `scripts/`) |
+|---|---|
+| List hooks (URLs masked) | `python3 tracker-webhook.py list` |
+| New URL (regenerated in Ryot) | `python3 tracker-webhook.py add <user>` again, replaces the hook |
+| Remove a member | `python3 tracker-webhook.py remove <user>` |
+| Tests | `python3 -m unittest -v` |
+| Not arriving | `sudo docker logs jellyfin 2>&1 \| grep -i webhook \| tail` here, `docker logs ryot \| grep -i integration \| tail` on fastpi |
