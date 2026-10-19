@@ -63,7 +63,9 @@ curl -H "Authorization: MediaBrowser Token=$JK" -H 'Content-Type: application/js
 Then `https://requests.holy-grail.ch/setup`: media server **Jellyfin**, hostname
 `jellyfin`, port `8096`, your Jellyfin username + the temporary password. Finish
 the wizard or stop after the login and run `scripts/configure.sh` (Jellyfin
-libraries, Radarr and Sonarr entries, app URL, initialize - it reads the keys from
+libraries, Radarr and Sonarr entries incl. the Sonarr anime profile (`Anime - Bluray +
+WEB 1080p`, series type `anime`, same root `/data/media/tv`; see `../Movie-Downloads/README.md`
+"Languages"), app URL, initialize - it reads the keys from
 `/srv/appdata`). Finally close the window:
 
 ```bash

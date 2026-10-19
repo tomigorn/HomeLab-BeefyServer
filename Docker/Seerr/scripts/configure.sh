@@ -31,8 +31,9 @@ if [ -n "$RID" ]; then j -X PUT "$A/settings/radarr/$RID" -d "$RADARR" >/dev/nul
 
 echo "== Sonarr"
 SP=$(curl -sf -H "X-Api-Key: $SK" http://127.0.0.1:8989/api/v3/qualityprofile | python3 -c 'import json,sys; print([p["id"] for p in json.load(sys.stdin) if p["name"].startswith("4K HDR")][0])')
+AP=$(curl -sf -H "X-Api-Key: $SK" http://127.0.0.1:8989/api/v3/qualityprofile | python3 -c 'import json,sys; print([p["id"] for p in json.load(sys.stdin) if p["name"].startswith("Anime")][0])')
 SONARR=$(cat <<JSON
-{"name":"Sonarr","hostname":"sonarr","port":8989,"apiKey":"$SK","useSsl":false,"baseUrl":"","activeProfileId":$SP,"activeProfileName":"4K HDR - WEB-2160p (1080p fallback)","activeDirectory":"/data/media/tv","activeLanguageProfileId":1,"is4k":false,"enableSeasonFolders":true,"isDefault":true,"externalUrl":"https://sonarr.holy-grail.ch","syncEnabled":true,"preventSearch":false,"tagRequests":false,"tags":[],"animeTags":[],"seriesType":"standard","animeSeriesType":"anime"}
+{"name":"Sonarr","hostname":"sonarr","port":8989,"apiKey":"$SK","useSsl":false,"baseUrl":"","activeProfileId":$SP,"activeProfileName":"4K HDR - WEB-2160p (1080p fallback)","activeDirectory":"/data/media/tv","activeLanguageProfileId":1,"activeAnimeProfileId":$AP,"activeAnimeProfileName":"Anime - Bluray + WEB 1080p","activeAnimeDirectory":"/data/media/tv","activeAnimeLanguageProfileId":1,"is4k":false,"enableSeasonFolders":true,"isDefault":true,"externalUrl":"https://sonarr.holy-grail.ch","syncEnabled":true,"preventSearch":false,"tagRequests":false,"tags":[],"animeTags":[],"seriesType":"standard","animeSeriesType":"anime"}
 JSON
 )
 j -X POST "$A/settings/sonarr/test" -d "$SONARR" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("   test ok: roots", [r["path"] for r in d["rootFolders"]])'
