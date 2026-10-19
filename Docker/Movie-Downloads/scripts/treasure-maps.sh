@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Adds or updates the Newznab indexer "Treasure Maps" in Prowlarr; Prowlarr syncs it to Radarr and Sonarr. Idempotent.
 #   ~/Projects/Docker/Movie-Downloads/scripts/treasure-maps.sh
-# API key: secrets/treasure-maps.apikey (gitignored, 600). Free tier: 100 API calls + 5 grabs per 24 h, so RSS is off (app profile "Search only").
+# API key: secrets/treasure-maps.apikey (gitignored, 600), read on every run: replace the file and re-run to switch keys. Free tier: 100 API calls + 5 grabs per 24 h, so RSS is off (app profile "Search only").
 set -euo pipefail
 
 DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -37,9 +37,9 @@ print(json.dumps(ix))
 
 id=$(p /indexer | NAME=$NAME python3 -c 'import json,os,sys; print(next((i["id"] for i in json.load(sys.stdin) if i["name"]==os.environ["NAME"]), ""))')
 if [ -n "$id" ]; then
-  p "/indexer/$id" -X PUT -d @- <<<"$body" >/dev/null
+  p "/indexer/$id" -X PUT -d @- <<<"$body" >/dev/null || { echo "$NAME: Prowlarr rejected the indexer (connection test failed: key invalid or account blocked?), nothing changed" >&2; exit 1; }
 else
-  id=$(p /indexer -X POST -d @- <<<"$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+  id=$(p /indexer -X POST -d @- <<<"$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])') || { echo "$NAME: Prowlarr rejected the indexer (connection test failed: key invalid or account blocked?), nothing changed" >&2; exit 1; }
 fi
 echo "$NAME: Prowlarr indexer $id, app profile $PROFILE ($profile_id)"
 p /command -X POST -d '{"name":"ApplicationIndexerSync"}' >/dev/null
