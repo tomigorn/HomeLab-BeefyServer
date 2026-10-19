@@ -287,21 +287,28 @@ Why this shape:
   automatically when one appears. Radarr always ranks **quality before score**, so
   any acceptable 2160p beats any 1080p. The HD Bluray tier scores are added so the
   fallback picks a good 1080p group.
-- **HDR**: `SDR` (−10000) rejects 2160p releases without HDR (usually upscales), so
+- **HDR**: `SDR` (−35000) rejects 2160p releases without HDR (usually upscales), so
   "4K" here always means 4K HDR; without an HDR 4K the 1080p tier wins.
-  `DV (w/o HDR fallback)` (−10000) rejects Dolby Vision Profile 5 (no HDR10 base
+  `DV (w/o HDR fallback)` (−35000) rejects Dolby Vision Profile 5 (no HDR10 base
   layer → green/purple on non-DV clients, and Jellyfin's tone mapping of P5 is
   untested here). DV *with* HDR10 fallback (P7/P8, "DV HDR10") scores like HDR10.
   DV Boost / HDR10+ Boost are **not** enabled — turn on `DV Boost` if every TV in
   the house does Dolby Vision.
-- **Golden Rule**: x265 only for HDR/4K (`x265 (no HDR/DV)` −10000); 1080p stays x264,
+- **Golden Rule**: x265 only for HDR/4K (`x265 (no HDR/DV)` −35000); 1080p stays x264,
   which direct-plays everywhere.
-- **Unwanted**: BR-DISK, LQ groups, 3D, AV1, upscaled, extras, generated HDR, … −10000.
-- **Language**: profile language `Original` (TRaSH default). English audio for an
-  English film; a German-DL release (German + original) is accepted, a German-only dub
-  is not. German comes from subtitles (Bazarr).
-- The six stock Radarr profiles (Any, SD, HD-720p, …) are unused and can be deleted
-  in the UI. The new profile sorts first, so it is the default in the Add dialog.
+- **Unwanted**: BR-DISK, LQ groups, 3D, AV1, upscaled, extras, generated HDR, … −35000.
+- **Language: German dual audio preferred** (TRaSH German scoring, since 2026-10-19).
+  Profile language stays `Original`, so original audio is always acceptable.
+  `German DL` (German + original audio) scores +11000, more than any audio + HDR +
+  group-tier sum (~7200), so it outranks an English-only release of the same
+  quality and is picked up as an upgrade later. `German` (dub only) is −35000 and
+  the `Original` filter rejects it anyway. Every reject is −35000, not TRaSH's
+  default −10000, because +11000 would otherwise lift a rejected release (SDR 4K,
+  DV without fallback, LQ, …) above the minimum score. Subtitles unchanged
+  (Bazarr, English + German).
+- The six stock Radarr profiles (Any, SD, HD-720p, …) cannot be disabled (the
+  API has no such flag), so they are renamed with a `zz ` prefix to sort last;
+  Recyclarr does not touch them. Delete them in the UI if they are in the way.
 
 ### Subtitles (Bazarr)
 
@@ -406,9 +413,11 @@ Quality profiles (Recyclarr, `recyclarr/recyclarr.yml` section `sonarr`):
 | **4K HDR - WEB-2160p (1080p fallback)** — default | everything | WEB 2160p › WEB 1080p | TRaSH "WEB-2160p (Combined)": the TV counterpart of the movie profile. WEB, not Bluray: series are released on WEB first and TV Bluray encodes are rare. `SDR` and `DV (w/o HDR fallback)` rejected like the movies, Golden Rule UHD (x265 only for HDR) |
 | WEB-1080p | space saver, per series | WEB 1080p | plain TRaSH WEB-1080p, Golden Rule HD (x264) |
 
-Shared with both: `[Optional] Language Profiles` (original audio, German via
-subtitles), `[Streaming Services] HD/UHD boost` + `General`, `[Unwanted] Unwanted
-Formats`, TRaSH series size limits. The six stock Sonarr profiles are unused.
+Shared with both: `[Optional] Language Profiles` (`Language: Not Original` −10000),
+German dual audio preferred exactly like the movies (`German DL` +11000, `German`
+dub −35000, every reject −35000), `[Streaming Services] HD/UHD boost` + `General`,
+`[Unwanted] Unwanted Formats`, TRaSH series size limits. The six stock Sonarr
+profiles are renamed `zz …` (no disable exists); Recyclarr ignores them.
 
 Verified 2026-10-19 with *Pioneer One* (2010, CC BY-NC-SA, TVDB 170551), the
 archive.org `S01E01 ... 720p.x264-VODO` mp4 placed in `/data/usenet/complete/tv/<release>/`:

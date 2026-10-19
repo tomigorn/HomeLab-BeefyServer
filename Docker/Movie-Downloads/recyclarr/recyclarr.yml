@@ -74,6 +74,52 @@ radarr:
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
 
+      # German dual audio preferred, TRaSH "German" scoring: German DL (German +
+      # original audio) 11000 beats any English-only release of the same quality
+      # (best audio + HDR + tier sum is ~7200). A German-only dub is rejected
+      # (profile language `Original` filters it too). Because 11000 would lift a
+      # -10000 reject above the minimum score, every reject is -35000 as in the
+      # TRaSH German profiles; the SDR / DV rules below stay hard rejects.
+      - trash_ids:
+          - f845be10da4f442654c13e1f2c3d6cd5  # German DL
+          - 6aad77771dabe9d3e9d7be86f310b867  # German DL (undefined)
+        assign_scores_to:
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            score: 11000
+          - name: HD Bluray + WEB
+            score: 11000
+      - trash_ids:
+          - 86bc3115eb4e9873ac96904a4a68e19e  # German
+          - b8cd450cbfa689c0259a01d9e29ba3d6  # 3D
+          - cae4ca30163749b891686f95532519bd  # AV1
+          - b6832f586342ef70d9c128d40c07b872  # Bad Dual Groups
+          - cc444569854e9de0b084ab2b8b1532b2  # Black and White Editions
+          - ed38b889b31be83fda192888e2286d83  # BR-DISK
+          - 0a3f082873eb454bde444150b70253cc  # Extras
+          - e6886871085226c3da1830830146846c  # Generated Dynamic HDR
+          - c465ccc73923871b3eb1802042331306  # Line/Mic Dubbed
+          - 90a6f9a284dff5103f6346090e6280c8  # LQ
+          - e204b80c87be9497a8a6eaff48f72905  # LQ (Release Title)
+          - 712d74cd88bceb883ee32f773656b1f5  # Sing-Along Versions
+          - bfd8eb01832d646a0a89c4deb46f8564  # Upscaled
+        assign_scores_to:
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            score: -35000
+          - name: HD Bluray + WEB
+            score: -35000
+      - trash_ids:
+          - 839bea857ed2c0a8e084f3cbdbd65ecb  # x265 (no HDR/DV)
+          - 923b6abef9b17f937fab56cfcf89e1f1  # DV (w/o HDR fallback)
+          - 9c38ebb7384dada637be8899efa68e6f  # SDR
+        assign_scores_to:
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            score: -35000
+      - trash_ids:
+          - dc98083864ea246d05a42df0d05f81cc  # x265 (HD)
+        assign_scores_to:
+          - name: HD Bluray + WEB
+            score: -35000
+
     custom_format_groups:
       add:
         # x265 only where it earns its keep (HDR/DV 4K); 1080p stays x264, which
@@ -144,6 +190,44 @@ sonarr:
         reset_unmatched_scores:
           enabled: true
 
+    # German dual audio preferred, same scoring as the movies: German DL 11000,
+    # German-only dub and every reject -35000 (see the Radarr comment).
+    custom_formats:
+      - trash_ids:
+          - ed51973a811f51985f14e2f6f290e47a  # German DL
+          - c5dd0fd675f85487ad5bdf97159180bd  # German DL (undefined)
+        assign_scores_to:
+          - name: 4K HDR - WEB-2160p (1080p fallback)
+            score: 11000
+          - name: WEB-1080p
+            score: 11000
+      - trash_ids:
+          - 8a9fcdbb445f2add0505926df3bb7b8a  # German
+          - 15a05bc7c1a36e2b57fd628f8977e2fc  # AV1
+          - 32b367365729d530ca1c124a0b180c64  # Bad Dual Groups
+          - 85c61753df5da1fb2aab6f2a47426b09  # BR-DISK
+          - fbcb31d8dabd2a319072b84fc0b7249c  # Extras
+          - 9c11cd3f07101cdba90a2d81cf0e56b4  # LQ
+          - e2315f990da2e2cbfc9fa5b7a6fcfe48  # LQ (Release Title)
+          - 23297a736ca77c0fc8e70f8edd7ee56c  # Upscaled
+        assign_scores_to:
+          - name: 4K HDR - WEB-2160p (1080p fallback)
+            score: -35000
+          - name: WEB-1080p
+            score: -35000
+      - trash_ids:
+          - 9b64dff695c2115facf1b6ea59c9bd07  # x265 (no HDR/DV)
+          - 9b27ab6498ec0f31a3353992e19434ca  # DV (w/o HDR fallback)
+          - 2016d1676f5ee13a5b7257ff86ac9a93  # SDR
+        assign_scores_to:
+          - name: 4K HDR - WEB-2160p (1080p fallback)
+            score: -35000
+      - trash_ids:
+          - 47435ece6b99a0b477caf360e79ba0bb  # x265 (HD)
+        assign_scores_to:
+          - name: WEB-1080p
+            score: -35000
+
     custom_format_groups:
       add:
         # x265 only for HDR/4K; 1080p stays x264 (direct-plays everywhere).
@@ -153,7 +237,7 @@ sonarr:
         - trash_id: 158188097a58d7687dee647e04af0da3  # [Optional] Golden Rule HD
           assign_scores_to:
             - trash_id: 72dae194fc92bf828f32cde7744e51a1
-        # Original-language audio only, same as the movies (German via Bazarr subs).
+        # Original audio required (German DL passes: it carries the original track).
         - trash_id: 74aff4168620ed49dcc67e92b2c2a5b4  # [Optional] Language Profiles
         # Boosts the better streaming-service encodes (AMZN, ATVP, DSNP, ...).
         - trash_id: 85fae4a2294965b75710ef2989c850eb  # [Streaming Services] HD/UHD boost
