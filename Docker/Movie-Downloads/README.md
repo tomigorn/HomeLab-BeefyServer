@@ -291,6 +291,7 @@ docker compose run --rm recyclarr config list templates   # TRaSH templates
 |---|---|---|---|
 | **4K HDR - UHD Bluray + WEB (1080p fallback)** — default | everything | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p | Bluray-2160p, CF score 20000 |
 | 4K HDR - … (1080p fallback) - English original | English-original titles, set by `scripts/language-policy.sh` | same | same; `Language: Original + English` 0 (see [Languages](#languages)) |
+| Any quality - old & rare (upgrades to 4K) | old/rare titles with no 1080p release, pick per request ([Old and rare titles](#old-and-rare-titles)) | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p › HDTV-1080p › Bluray-720p › WEB-720p › HDTV-720p › Bluray-576p › Bluray-480p › WEB-480p › DVD › SDTV | Bluray-2160p, 20000; scores identical to the default |
 | HD Bluray + WEB | space saver, pick per movie | Bluray-1080p › WEB-1080p › Bluray-720p | Bluray-1080p, 20000 |
 | Anime - Remux + WEB 1080p | anime films, pick per movie (Seerr has no anime profile for movies) | Remux/Bluray-1080p › WEB-1080p › 720p … | Remux-1080p, 20000; TRaSH `[Anime] Remux-1080p`: anime group tiers, no Golden Rule (anime is x265 10-bit by default), minimum score 100 |
 
@@ -315,6 +316,9 @@ Why this shape:
   which direct-plays everywhere. Not applied to the anime profile.
 - **Unwanted**: BR-DISK, LQ groups, 3D, AV1, upscaled, extras, generated HDR, … −50000.
 - **Languages**: see [Languages](#languages) — the same scores in every profile.
+- **Old and rare titles**<a id="old-and-rare-titles"></a>: the 4K profiles allow nothing below 1080p, so a film that only exists on DVD (e.g. *The Ring Thing*, 2004) is rejected. `Any quality - old & rare (upgrades to 4K)` (Radarr and Sonarr) has every custom format and score of the default (languages, rejects, HDR rules, Golden Rule), but allows SDTV/DVD up to 2160p and upgrades until Bluray-2160p / WEB 2160p. Not allowed: CAM/TS/screener, DVD-R/BR-DISK images, remuxes, Raw-HD. Pick it in Seerr (request -> Advanced -> Quality Profile, `../Seerr/README.md`) or set it in Radarr/Sonarr and search. `language-policy.sh` and the hook leave it alone (they only swap the default and its twin); `Language: Original + English` is 8000 there, on English titles too.
+  - Golden Rule applies: an x265 SD/HD encode without HDR is rejected (−50000), as in the 1080p tier.
+  - Verified 2026-10-20: *The Ring Thing* (TMDB 10248) on this profile grabbed `The.Ring.Thing.Das.Ding.mit.dem.Ring.German.2004.AC3.DVDRiP.x264-IND` (DVD, score 20750, 0.96 GB, SABnzbd); the DVD9 image was rejected (DVD-R not wanted).
 - The six stock Radarr profiles (Any, SD, HD-720p, …) cannot be disabled (the
   API has no such flag), so they are renamed with a `zz ` prefix to sort last;
   Recyclarr does not touch them. Delete them in the UI if they are in the way.
@@ -513,6 +517,7 @@ Quality profiles (Recyclarr, `recyclarr/recyclarr.yml` section `sonarr`):
 |---|---|---|---|
 | **4K HDR - WEB-2160p (1080p fallback)** — default | everything | WEB 2160p › WEB 1080p | TRaSH "WEB-2160p (Combined)": the TV counterpart of the movie profile. WEB, not Bluray: series are released on WEB first and TV Bluray encodes are rare. `SDR` and `DV (w/o HDR fallback)` rejected like the movies, Golden Rule UHD (x265 only for HDR) |
 | WEB-1080p | space saver, per series | WEB 1080p | plain TRaSH WEB-1080p, Golden Rule HD (x264) |
+| Any quality - old & rare (upgrades to 4K) | old/rare series with no 1080p release, pick per request | WEB 2160p › Bluray-2160p › WEB 1080p › Bluray-1080p › HDTV-1080p › WEB 720p › Bluray-720p › HDTV-720p › Bluray-576p › WEB 480p › Bluray-480p › DVD › SDTV, upgrade until WEB 2160p | same scores as the default; see the movie [Old and rare titles](#old-and-rare-titles) note |
 | Anime - Bluray + WEB 1080p | anime, set by Seerr (series type `anime`) | Bluray-1080p (remux or encode) › WEB 1080p › 720p … | TRaSH `[Anime] Remux-1080p`: anime group tiers, `[Streaming Services] Anime`, Anime Raws / LQ groups / Dubs Only rejected, no Golden Rule, minimum score 100 |
 
 Shared by all: the [Languages](#languages) scores (`German DL` 20000, `Language:
