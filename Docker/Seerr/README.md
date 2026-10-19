@@ -83,7 +83,7 @@ sudo docker compose pull && sudo docker compose up -d
 
 Linked accounts stay in the DB. If the release configures OIDC differently (UI/API), adapt `configure.sh`. Back to plain v3.5.0 instead: same steps with `v3.5.0`; the Holy Grail button disappears, Quick Connect remains.
 
-## First login (one-time, by hand) — done 2026-10-19, owner is tomigorn; friends auto-approve (defaultPermissions 160)
+## First login (one-time, by hand) — done 2026-10-19, owner is tomigorn; friends auto-approve + advanced requests (defaultPermissions 8352)
 
 Seerr's **first** user becomes the owner and must sign in with a Jellyfin
 **username + password** (Quick Connect is refused until a user exists, and the
@@ -133,10 +133,26 @@ password), and Seerr created its own Jellyfin API key ("Seerr") during the login
 | Login | Holy Grail OIDC (`oidcLogin: true`, provider `holy-grail`, new users allowed, logo `holy-grail-logo.png`), Jellyfin login on (`mediaServerLogin: true`, Quick Connect), local login off (`localLogin: false`) |
 | Network | `trustProxy: true` (Traefik on fastpi in front; Authentik's guide asks for it) |
 
-Permissions: the owner (you) is admin, own requests are auto-approved. New users get
-`Request` only, so a friend's request waits for your approval (Seerr -> Requests).
-Change under Settings -> Users -> Default Permissions. Notifications (Telegram,
+Permissions: the owner (you) is admin (implies every permission). `configure.sh` adds to the default permissions of new users, keeping what is set:
+
+| Bit | Permission | Effect |
+|---|---|---|
+| 32 | `REQUEST` | may request |
+| 128 | `AUTO_APPROVE` | requests go straight to Radarr/Sonarr |
+| 8192 | `REQUEST_ADVANCED` | advanced options in the request dialog (profile, root folder) |
+
+Applies to users created afterwards; an existing user: Settings -> Users -> edit -> Advanced Requests. Change the defaults under Settings -> Users -> Default Permissions. Notifications (Telegram,
 email) are not set up: Settings -> Notifications.
+
+## Old or rare titles: pick the profile
+
+The default 4K profiles allow nothing below 1080p, so a title that only exists on DVD is never grabbed. Request it with the **Any quality** profile instead:
+
+1. Film or series -> **Request** -> **Advanced** (needs `REQUEST_ADVANCED`, above).
+2. Quality Profile: **Any quality - old & rare (upgrades to 4K)**.
+3. Request.
+
+Same scores and rejects as the 4K default, SDTV/DVD up to 2160p allowed, upgraded to 4K when a better release appears (`../Movie-Downloads/README.md`, "Old and rare titles"). Already requested: change the profile in Radarr/Sonarr and search.
 
 ## Related
 
