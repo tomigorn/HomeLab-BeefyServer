@@ -1,0 +1,9 @@
+[Unit]
+Description=Ryot database dump daily at 04:10 (inside the 03:55 maintenance wake)
+
+[Timer]
+OnCalendar=*-*-* 04:10
+Persistent=true
+
+[Install]
+WantedBy=timers.target
