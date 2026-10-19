@@ -1,0 +1,75 @@
+# =========================================================
+# Services ================================================
+# =========================================================
+services:
+# #########################################################
+# CLAMAV ##################################################
+# #########################################################
+# freshclam + clamd (port 3310 on movie-downloads, for the SABnzbd/qBittorrent completion hook) + scan.sh for the nightly and manual scans.
+  clamav:
+    build: ./clamav
+    image: clamav-local:latest
+    container_name: clamav
+    # clamd and a nightly clamscan each hold the signatures (~1.5G), twice that while clamd reloads them.
+    mem_limit: 4g
+    restart: unless-stopped
+    environment:
+      - HOST=beefy
+      - SCAN_ROOTS=/scan/ssd-hot /scan/appdata
+      - QUARANTINE=/scan/ssd-hot/quarantine
+      - STATE=/state
+      - TEXTFILE=/textfile
+    volumes:
+      - clamav-db:/var/lib/clamav
+      # The SSD branch, not the /srv/video union: every new file lands here and the cold HDD never spins up.
+      - type: bind
+        source: /srv/.disks/ssd-hot
+        target: /scan/ssd-hot
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/appdata
+        target: /scan/appdata
+        bind:
+          create_host_path: false
+      # Host root for "scan.sh all", report only.
+      - type: bind
+        source: /
+        target: /host
+        read_only: true
+      - type: bind
+        source: /var/lib/clamav-scan
+        target: /state
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/lib/clamav-scan/textfile
+        target: /textfile
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep freshclam >/dev/null && clamdscan --ping 1 >/dev/null || exit 1"]
+      interval: 60s
+      retries: 3
+      start_period: 180s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - movie-downloads
+
+# =========================================================
+# Networks ================================================
+# =========================================================
+# Movie-Downloads' bridge: SABnzbd and qBittorrent (in gluetun's namespace, whose firewall allows this subnet) reach clamd as clamav:3310. Start Movie-Downloads first.
+networks:
+  movie-downloads:
+    external: true
+
+# =========================================================
+# Volumes =================================================
+# =========================================================
+volumes:
+  clamav-db:

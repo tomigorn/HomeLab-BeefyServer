@@ -1,0 +1,14 @@
+[Unit]
+Description=ClamAV scan of new files on ssd-hot and appdata
+Documentation=file:///home/buntu/Projects/Docker/Antivirus/README.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec clamav /scan.sh new
+# Exit 1 = infected files found and quarantined; the alert reports those, the unit only fails on scan errors.
+SuccessExitStatus=1
+TimeoutStartSec=6h
+NoNewPrivileges=true
+PrivateTmp=true

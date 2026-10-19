@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly ClamAV scan of new files
+Documentation=file:///home/buntu/Projects/Docker/Antivirus/README.md
+
+[Timer]
+# Inside the maintenance window: fastpi wakes beefy at 03:55 and it powers off about 04:25 when idle. A night asleep is skipped; the marker stays, so the next run catches up.
+OnCalendar=*-*-* 04:05
+
+[Install]
+WantedBy=timers.target
