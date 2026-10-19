@@ -527,6 +527,19 @@ with QSV to HEVC Main10, BT.2020/PQ, E-AC3 5.1, 1.4 GB — a legal derivative.
 | Bazarr | SignalR event → search at import; YIFY: 404 "No subtitles found" (no provider has this short). Official English CC subtitles (EBU STL from Netflix) converted to SRT and placed as `<movie>.en.srt`; Bazarr indexed it, Jellyfin shows it as external `subrip` `eng` |
 | Transcode | HLS 1080p/8 Mbps: VA-API decode → `scale_vaapi` → `tonemap_vaapi` (HDR10→BT.709) → `h264_qsv -low_power 1`, 119 fps (2× real time for 4K60); stopped via `DELETE /Videos/ActiveEncodings` |
 
+## Completion scan
+
+Every finished download is scanned by ClamAV before Radarr/Sonarr import it: SABnzbd post-processing script and qBittorrent "run on torrent finished" call `../Antivirus/hook/clamav-hook.py`, which streams each file to `clamav:3310` (the `clamav` container from `../Antivirus` joins this bridge).
+
+| | |
+|---|---|
+| Setup | `scripts/clamav-hooks.sh` (SABnzbd + qBittorrent APIs, idempotent); compose mounts `../Antivirus/hook` → `/clamav-hook:ro` and `/var/lib/clamav-scan/textfile` → `/clamav` in `sabnzbd` and `qbittorrent` |
+| Hit | file → `/data/quarantine` (`/srv/.disks/ssd-hot/quarantine`), SABnzbd job failed (no import), torrent stopped + tagged `infected` |
+| clamd down | job passes, the nightly scan covers it |
+| Test | `docker exec -u abc movie-sabnzbd /clamav-hook/clamav-hook.py /data/usenet/complete/movies/<job>` |
+
+Details, restore and metrics: `../Antivirus/README.md`.
+
 ## Network topology
 
 ```
@@ -590,5 +603,6 @@ on fastpi's always-on `mouse` stack — that split is deliberate, not an oversig
 
 - `../Jellyfin` — playback, reads `/srv/video/media` read-only
 - `../Seerr` — requests from users, talks to Radarr and Sonarr over this bridge
+- `../Antivirus` — ClamAV: completion scan (clamd on this bridge) and nightly scan
 - `../../Server/3-Storage-Layout-and-Spindown.md` — mergerfs tiers, demotion
 - `../../Server/8-Idle-Watcher.md` — what counts as idle, and `beefy-keep-awake`

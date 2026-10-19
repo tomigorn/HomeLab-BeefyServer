@@ -72,6 +72,9 @@ services:
       # the classic mistake: they look like different filesystems to Radarr, so
       # every import becomes a full copy instead of a hardlink.
       - ${DATA_ROOT}:/data
+      # Completion scan (README "Completion scan"): the hook script and its metrics file.
+      - ../Antivirus/hook:/clamav-hook:ro
+      - /var/lib/clamav-scan/textfile:/clamav
 
 # #########################################################
 # PROWLARR ################################################
@@ -111,6 +114,9 @@ services:
     volumes:
       - ${APPDATA_ROOT}/sabnzbd:/config
       - ${DATA_ROOT}:/data
+      # Completion scan (README "Completion scan"): the hook script and its metrics file.
+      - ../Antivirus/hook:/clamav-hook:ro
+      - /var/lib/clamav-scan/textfile:/clamav
     ports:
       - "${SABNZBD_PORT}:8080"
     networks:
