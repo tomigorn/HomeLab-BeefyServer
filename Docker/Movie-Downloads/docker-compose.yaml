@@ -138,6 +138,8 @@ services:
     volumes:
       - ${APPDATA_ROOT}/radarr:/config
       - ${DATA_ROOT}:/data
+      # Connect script that sets the profile of a new title (README "Languages").
+      - ./scripts:/scripts:ro
     ports:
       - "${RADARR_PORT}:7878"
     networks:
@@ -182,6 +184,8 @@ services:
     volumes:
       - ${APPDATA_ROOT}/sonarr:/config
       - ${DATA_ROOT}:/data
+      # Connect script that sets the profile of a new title (README "Languages").
+      - ./scripts:/scripts:ro
     ports:
       - "${SONARR_PORT}:8989"
     networks:
