@@ -228,6 +228,20 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
 - Identity: every container runs as `1000:1000`, `UMASK=002`; folders are
   `2775` setgid `buntu`. Radarr's own "Set Permissions" is off (not needed).
 
+### Indexers (Prowlarr)
+
+All Newznab, priority 25, synced by Prowlarr to Radarr (movie categories 2000-2090) and Sonarr (TV 5000-5090, anime 5070).
+
+| Indexer | Base URL | App profile | Limits | Added by |
+|---|---|---|---|---|
+| NZBgeek | `https://api.nzbgeek.info` | Standard (RSS + search) | none | UI |
+| NzbPlanet | `https://api.nzbplanet.net` | Standard (RSS + search) | none | UI |
+| Treasure Maps | `https://treasure-maps.com` | **Search only** (no RSS) | free tier: 100 API calls + 5 downloads per rolling 24 h, set as Prowlarr query/grab limit; API trial until ~2026-11-19 | `scripts/treasure-maps.sh` |
+
+- Treasure Maps is the German source: tags German releases with the standard category too (`2040` + `Movies - DE/HD`), so the normal sync categories find them. Knives Out 2019: 31 `German.DL` releases, the other two indexers 0.
+- RSS off because Radarr (every 30 min) + Sonarr (every 15 min) would use ~144 calls/day. Search costs ~3 calls per movie search.
+- `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) and is idempotent.
+
 ### Radarr settings that matter here
 
 | Setting | Value | Why |
