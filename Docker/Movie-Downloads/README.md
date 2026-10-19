@@ -240,7 +240,8 @@ All Newznab, priority 25, synced by Prowlarr to Radarr (movie categories 2000-20
 
 - Treasure Maps is the German source: tags German releases with the standard category too (`2040` + `Movies - DE/HD`), so the normal sync categories find them. Knives Out 2019: 31 `German.DL` releases, the other two indexers 0.
 - RSS off because Radarr (every 30 min) + Sonarr (every 15 min) would use ~144 calls/day. Search costs ~3 calls per movie search.
-- `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) and is idempotent.
+- `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) on every run, enables the indexer and is idempotent. New key: replace the file, re-run the script. A rejected key makes it exit 1 and change nothing.
+- **Disabled since 2026-10-19:** the first account was blocked (duplicate after the site migration). Re-enable by running the script with the new account's key.
 
 ### Radarr settings that matter here
 
