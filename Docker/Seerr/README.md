@@ -6,14 +6,16 @@ go to Radarr/Sonarr (`../Movie-Downloads`), availability comes from Jellyfin.
 Public at `https://requests.holy-grail.ch` (wakes beefy, ~45 s).
 
 Jellyseerr itself is frozen at 2.7.3 (`fallenbagel/jellyseerr:2.7.3-deprecated`); the
-successor image is `ghcr.io/seerr-team/seerr`, pinned to `v3.5.0` here.
+successor image is `ghcr.io/seerr-team/seerr`. **Temporarily** this runs the
+`preview-new-oidc` build for the Holy Grail login, pinned by digest (see
+[Preview image](#preview-image-temporary)).
 
 ## Deploy
 
 ```bash
 sudo mkdir -p /srv/appdata/seerr && sudo chown 1000:1000 /srv/appdata/seerr && sudo chmod 2775 /srv/appdata/seerr
 cd ~/Projects/Docker/Seerr && sudo docker compose up -d
-curl -s http://127.0.0.1:5055/api/v1/status     # {"version":"3.5.0",...}
+curl -s http://127.0.0.1:5055/api/v1/status     # preview: {"version":"develop-2d1a2ed...",...}
 ```
 
 | | |
@@ -21,31 +23,62 @@ curl -s http://127.0.0.1:5055/api/v1/status     # {"version":"3.5.0",...}
 | Port | `5055` on beefy, reachable from fastpi only (DOCKER-USER rule) |
 | Networks | joins `movie-downloads` and `jellyfin` (external): `radarr:7878`, `sonarr:8989`, `jellyfin:8096` |
 | Config | `/srv/appdata/seerr` (`settings.json` holds the API key and the Jellyfin token; `db/db.sqlite3`) |
-| Traefik / Authentik | `HomeLab-FastPi` -> `Traefik/traefik/dynamic/requests.yml`; Authentik app `requests`, group **`streaming-users`** (`Authentik/scripts/provision-media-sso.py`) |
+| Traefik / Authentik | `HomeLab-FastPi` -> `Traefik/traefik/dynamic/requests.yml`; Authentik apps `requests` (forward auth) and `requests-login` (OIDC, hidden tile), group **`streaming-users`** (`Authentik/scripts/provision-media-sso.py`) |
+| OIDC client | `SEERR_OIDC_CLIENT_ID` / `SEERR_OIDC_CLIENT_SECRET` in `.env` (gitignored), written from fastpi by the provisioning run (`HomeLab-FastPi` `Authentik/README.md`); `scripts/configure.sh` puts them into `settings.json` |
 
 ## How the login works
 
-Seerr 3.5.0 has no OIDC (an `preview-new-oidc` branch exists upstream, not released),
-so Holy Grail cannot sign the user into Seerr itself. Two layers:
-
-1. **Holy Grail gate** (Traefik forward auth, group `streaming-users`): nobody who is
-   not a streaming user reaches the app at all. Browsers only; Seerr has no native
-   apps that would need to bypass it.
-2. **Seerr's own session**: sign in with **Jellyfin Quick Connect** (Seerr 3.4+). The
-   Seerr login page shows a 6-digit code; approve it in Jellyfin (web or app, already
-   signed in with Holy Grail) under *Profile -> Quick Connect*. Passwords are not
-   needed anywhere - Jellyfin passwords are disabled. "Enable New Jellyfin Sign-In" is
-   on, so a Jellyfin user who was never imported gets a Seerr account with the
-   default permissions (`Request`) on first sign-in.
-
-Local (email + password) login is off (`localLogin: false`), so the login page has no "Or sign in with / Requests" button. Recovery is shell-only: re-enable it via the API key. Both sessions are long-lived, so the double login is rare.
-
-Login page limits in 3.5.0 (no setting for these, open upstream PRs):
-
-| Wanted | Status |
+| Layer | What |
 |---|---|
-| "Sign in with Holy Grail" button | no OIDC in Seerr (PR #2715) |
-| hide the Jellyfin username/password form | not possible; it always fails (passwords disabled), use **Quick Connect** (PR #3315) |
+| 1. Holy Grail gate | Traefik forward auth, Authentik app `requests`, group `streaming-users`. Nobody else reaches Seerr. Stays on. |
+| 2. Seerr session | **Holy Grail** button (OIDC, provider slug `holy-grail`, Authentik app `requests-login`). Passes silently: the gate already holds the Holy Grail session. |
+| Fallback | **Quick Connect**: Seerr shows a 6-digit code, approve it in Jellyfin under *Profile -> Quick Connect*. |
+
+- New Holy Grail users get a Seerr account on first sign-in (`newUserLogin: true`, default permissions).
+- An existing Seerr user (e.g. the owner, a Jellyfin-type user) must **link** first, see below. Signing in with Holy Grail before linking creates a second, separate account (Jellyfin users have no real email in Seerr, so nothing matches); if the Holy Grail email already belongs to a Seerr user, the sign-in is refused ("You do not have permission").
+- The Jellyfin username/password form stays: in Seerr it is one block with Quick Connect (`mediaServerLogin`), so hiding it also removes Quick Connect. Passwords never work there anyway (Jellyfin is SSO-only).
+- Local (email + password) login is off (`localLogin: false`). Recovery is shell-only via the API key.
+
+### Link an existing account (owner: once)
+
+1. `https://requests.holy-grail.ch` -> sign in with **Quick Connect** as before.
+2. Avatar (top right) -> **Settings** -> **Linked Accounts** (`/profile/settings/linked-accounts`) -> **Link Account** -> **Holy Grail**.
+3. Back on Linked Accounts, "Holy Grail" is listed.
+4. Sign out, then **Holy Grail** on the login page: same user (admin, your requests).
+
+Check from the shell:
+
+```bash
+sudo sqlite3 /srv/appdata/seerr/db/db.sqlite3 "SELECT l.userId, l.provider, l.username FROM linked_accounts l;"
+```
+
+A duplicate account (signed in before linking): delete it under Users as admin, then link.
+
+### Preview image (temporary)
+
+Seerr 3.5.0 has no OIDC. It lives in the open PR seerr-team/seerr#2715, published as `ghcr.io/seerr-team/seerr:preview-new-oidc`; Authentik's Seerr guide uses the same tag.
+
+| | |
+|---|---|
+| Image | `preview-new-oidc@sha256:28744b1ced522beb7af8e5c966b73c6e46b1dc2c4c8cb497ad2f12d3139699a3` (commit `2d1a2ed`, built 2026-09-08) |
+| Base | older than v3.5.0 (~v3.4.1 + OIDC): v3.5.0 fixes are missing until OIDC ships in a release |
+| DB | adds the `linked_accounts` table; v3.5.0's migrations stay applied |
+| Config | OIDC exists only in `settings.json` (no UI, no API): `main.oidcLogin`, `oidc.providers[]`, `network.trustProxy`, written by `scripts/configure.sh` with Seerr stopped |
+| Backup before the switch | `~/backups/seerr-2026-10-19.tgz` (`/srv/appdata/seerr`, v3.5.0 state) |
+| Cup | lists `preview-new-oidc` (flags a rebuilt preview) and still `v3.5.0` (flags new releases). Keep the unused `v3.5.0` image for that. `preview-new-oidc` is a local tag on the pinned image; redo after a re-pin: `sudo docker tag ghcr.io/seerr-team/seerr@sha256:<digest> ghcr.io/seerr-team/seerr:preview-new-oidc` |
+
+### Back to stable
+
+When a release's notes include OIDC (PR #2715 merged):
+
+```bash
+cd ~/Projects/Docker/Seerr
+# docker-compose.yaml: image: ghcr.io/seerr-team/seerr:vX.Y.Z, drop the "Temporary" comment
+sudo docker compose pull && sudo docker compose up -d
+./scripts/configure.sh          # re-applies OIDC, Radarr/Sonarr, main settings
+```
+
+Linked accounts stay in the DB. If the release configures OIDC differently (UI/API), adapt `configure.sh`. Back to plain v3.5.0 instead: same steps with `v3.5.0`; the Holy Grail button disappears, Quick Connect remains.
 
 ## First login (one-time, by hand) — done 2026-10-19, owner is tomigorn; friends auto-approve (defaultPermissions 160)
 
@@ -94,7 +127,8 @@ password), and Seerr created its own Jellyfin API key ("Seerr") during the login
 | Radarr | `radarr:7878`, profile **4K HDR - UHD Bluray + WEB (1080p fallback)**, root `/data/media/movies`, min availability released, default |
 | Sonarr | `sonarr:8989`, profile **4K HDR - WEB-2160p (1080p fallback)**, root `/data/media/tv`, season folders, default |
 | App | URL `https://requests.holy-grail.ch`, title "Requests" |
-| Login | Jellyfin login on (`mediaServerLogin: true`, Quick Connect), local login off (`localLogin: false`) |
+| Login | Holy Grail OIDC (`oidcLogin: true`, provider `holy-grail`, new users allowed, logo `holy-grail-logo.png`), Jellyfin login on (`mediaServerLogin: true`, Quick Connect), local login off (`localLogin: false`) |
+| Network | `trustProxy: true` (Traefik on fastpi in front; Authentik's guide asks for it) |
 
 Permissions: the owner (you) is admin, own requests are auto-approved. New users get
 `Request` only, so a friend's request waits for your approval (Seerr -> Requests).

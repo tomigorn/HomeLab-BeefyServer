@@ -11,7 +11,9 @@ services:
 # from Jellyfin over its bridge. Public at https://requests.holy-grail.ch behind
 # Authentik (group streaming-users); see README for how the login works.
   seerr:
-    image: ghcr.io/seerr-team/seerr:v3.5.0
+    # Temporary until OIDC ships in a release: the preview-new-oidc build of PR #2715
+    # (README "Preview image"), pinned by digest. Back to stable: README "Back to stable".
+    image: ghcr.io/seerr-team/seerr:preview-new-oidc@sha256:28744b1ced522beb7af8e5c966b73c6e46b1dc2c4c8cb497ad2f12d3139699a3
     container_name: seerr
     restart: unless-stopped
     # The image ships no init process and runs as `node` (1000:1000), which is

@@ -4,6 +4,49 @@
 #   ~/Projects/Docker/Seerr/scripts/configure.sh
 set -euo pipefail
 A=http://127.0.0.1:5055/api/v1
+D=$(cd "$(dirname "$0")/.." && pwd)
+CFG=/srv/appdata/seerr/settings.json
+
+# OIDC has no API in the preview image, only settings.json, which Seerr overwrites from
+# memory: edit it with Seerr stopped, and only when something changed.
+echo "== Holy Grail OIDC"
+SEERR_OIDC_CLIENT_ID=$(grep -oP "(?<=^SEERR_OIDC_CLIENT_ID=).+" "$D/.env" || true)
+SEERR_OIDC_CLIENT_SECRET=$(grep -oP "(?<=^SEERR_OIDC_CLIENT_SECRET=).+" "$D/.env" || true)
+[ -n "$SEERR_OIDC_CLIENT_ID" ] && [ -n "$SEERR_OIDC_CLIENT_SECRET" ] || { echo "SEERR_OIDC_CLIENT_ID/SECRET missing in .env: run provision-media-sso.py on fastpi (README)"; exit 1; }
+export SEERR_OIDC_CLIENT_ID SEERR_OIDC_CLIENT_SECRET CFG LOGO="$D/holy-grail-logo.png"
+oidc_settings() {
+  python3 - "$1" <<\PY
+import base64, json, os, sys
+cfg = os.environ["CFG"]
+d = json.load(open(cfg))
+want = {"slug": "holy-grail", "name": "Holy Grail",
+        "issuerUrl": "https://sso.holy-grail.ch/application/o/requests-login/",
+        "clientId": os.environ["SEERR_OIDC_CLIENT_ID"],
+        "clientSecret": os.environ["SEERR_OIDC_CLIENT_SECRET"],
+        "logo": "data:image/png;base64," + base64.b64encode(open(os.environ["LOGO"], "rb").read()).decode(),
+        "newUserLogin": True}
+others = [p for p in d.get("oidc", {}).get("providers", []) if p.get("slug") != want["slug"]]
+new = dict(d, oidc=dict(d.get("oidc", {}), providers=others + [want]),
+           main=dict(d["main"], oidcLogin=True), network=dict(d["network"], trustProxy=True))
+if sys.argv[1] == "check":
+    sys.exit(0 if new == d else 1)
+tmp = cfg + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(new, f, indent=1)
+os.chmod(tmp, os.stat(cfg).st_mode & 0o777)
+os.replace(tmp, cfg)
+PY
+}
+if oidc_settings check; then
+  echo "   unchanged"
+else
+  (cd "$D" && sudo docker compose stop seerr >/dev/null 2>&1)
+  oidc_settings write
+  (cd "$D" && sudo docker compose up -d seerr >/dev/null 2>&1)
+  echo "   written, Seerr restarted"
+fi
+for _ in $(seq 60); do curl -sf "$A/status" >/dev/null && break; sleep 2; done
+
 KEY=$(python3 -c 'import json; print(json.load(open("/srv/appdata/seerr/settings.json"))["main"]["apiKey"])')
 RK=$(grep -oP '(?<=<ApiKey>)[^<]+' /srv/appdata/radarr/config.xml)
 SK=$(grep -oP '(?<=<ApiKey>)[^<]+' /srv/appdata/sonarr/config.xml)
@@ -44,6 +87,6 @@ echo "== Main settings"
 j -X POST "$A/settings/main" -d "$(j "$A/settings/main" | python3 -c 'import json,sys; d=json.load(sys.stdin); d.pop("apiKey", None); d.update(applicationUrl="https://requests.holy-grail.ch", applicationTitle="Requests", localLogin=False, mediaServerLogin=True); d["defaultPermissions"] |= 128; print(json.dumps(d))')" >/dev/null
 j -X POST "$A/settings/initialize" | python3 -c 'import json,sys; print("   initialized:", json.load(sys.stdin)["initialized"])'
 
-install -d -m 700 "$(dirname "$0")/../secrets"
-printf '%s\n' "$KEY" > "$(dirname "$0")/../secrets/api-key"; chmod 600 "$(dirname "$0")/../secrets/api-key"
+install -d -m 700 "$D/secrets"
+printf '%s\n' "$KEY" > "$D/secrets/api-key"; chmod 600 "$D/secrets/api-key"
 echo "done - API key saved to secrets/api-key"
