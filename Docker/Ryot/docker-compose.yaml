@@ -3,8 +3,8 @@
 # =========================================================
 # Ryot (watch history & ratings), public at https://tracker.holy-grail.ch through
 # fastpi's Traefik (HomeLab-FastPi Docker/Traefik/traefik/dynamic/tracker.yml),
-# which reaches it at 192.168.1.102:${RYOT_PORT}; the DOCKER-USER rule drops that
-# port for everyone but fastpi.
+# which reaches it at 192.168.1.102:${RYOT_PORT} (ryot-go: ${RYOT_GO_PORT}); the
+# DOCKER-USER rule drops those ports for everyone but fastpi.
 services:
 # #########################################################
 # POSTGRES ################################################
@@ -51,6 +51,36 @@ services:
       interval: 30s
       retries: 5
       timeout: 10s
+    depends_on:
+      ryot-db:
+        condition: service_healthy
+    networks:
+      - ryot
+
+# #########################################################
+# RYOT-GO #################################################
+# #########################################################
+# /go/tmdb/<movie|show>/<id> -> /media/item/<met_id> (the Jellyfin "Rate in Tracker" link); read-only DB role ryot_go, see README.
+  ryot-go:
+    build: ./go
+    image: ryot-go:local
+    container_name: ryot-go
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      RYOT_GO_DSN: postgres://ryot_go:${RYOT_GO_DB_PASSWORD:?ryot_go password required}@ryot-db:5432/ryot
+    ports:
+      - "${RYOT_GO_PORT}:8080"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      start_period: 10s
+      interval: 30s
+      retries: 3
+      timeout: 5s
     depends_on:
       ryot-db:
         condition: service_healthy
