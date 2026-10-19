@@ -215,14 +215,21 @@ working VPN access from outside.
 | Library | `/srv/video/media` → `/media` | **read-only** |
 | Config, DB, artwork cache | `/srv/appdata/jellyfin` → `/config` | read-write |
 
-The library is read-only on purpose: Radarr owns that tree, and `:ro` means no
-metadata misconfiguration can rewrite or delete a movie. Config sits on the NVMe
+| Library | Path | Filled by |
+|---|---|---|
+| Movies | `/media/movies` | Radarr (`../Movie-Downloads`) |
+| Shows (added 2026-10-19 via `POST /Library/VirtualFolders`, same options as Movies: real-time monitor, trickplay during scan, `en`/`CH` metadata) | `/media/tv` | Sonarr |
+
+The library is read-only on purpose: Radarr and Sonarr own that tree, and `:ro` means no
+metadata misconfiguration can rewrite or delete a file. A new, empty library is not
+watched until its first full scan (see the gotcha in `../Movie-Downloads/README.md`). Config sits on the NVMe
 rather than `/srv/video` because it is small, written constantly, and would
 otherwise keep the media disks spinning.
 
 ## Related
 
-- `../Movie-Downloads` — fills `/srv/video/media/movies`
+- `../Movie-Downloads` — fills `/srv/video/media/movies` and `/srv/video/media/tv`
+- `../Seerr` — requests, reads availability from this server
 - `../../Server/8-Idle-Watcher.md` — what keeps beefy awake
 - `HomeLab-FastPi` → `Docker/Beefy-Waker/` — the wake gate and its README
 
