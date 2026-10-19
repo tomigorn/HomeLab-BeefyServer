@@ -32,16 +32,17 @@ curl -s http://127.0.0.1:5055/api/v1/status     # preview: {"version":"develop-2
 |---|---|
 | 1. Holy Grail gate | Traefik forward auth, Authentik app `requests`, group `streaming-users`. Nobody else reaches Seerr. Stays on. |
 | 2. Seerr session | **Holy Grail** button (OIDC, provider slug `holy-grail`, Authentik app `requests-login`). Passes silently: the gate already holds the Holy Grail session. |
-| Fallback | **Quick Connect**: Seerr shows a 6-digit code, approve it in Jellyfin under *Profile -> Quick Connect*. |
+| Fallback | none since 2026-10-19: `mediaServerLogin=false` hides the Jellyfin form and Quick Connect, Holy Grail is the only button. Recovery: set it back to true in `settings.json` with Seerr stopped. |
 
 - New Holy Grail users get a Seerr account on first sign-in (`newUserLogin: true`, default permissions).
 - An existing Seerr user (e.g. the owner, a Jellyfin-type user) must **link** first, see below. Signing in with Holy Grail before linking creates a second, separate account (Jellyfin users have no real email in Seerr, so nothing matches); if the Holy Grail email already belongs to a Seerr user, the sign-in is refused ("You do not have permission").
-- The Jellyfin username/password form stays: in Seerr it is one block with Quick Connect (`mediaServerLogin`), so hiding it also removes Quick Connect. Passwords never work there anyway (Jellyfin is SSO-only).
+- The Jellyfin form and Quick Connect are hidden (`mediaServerLogin=false`, done after the owner was linked). Linking a further pre-existing user needs it on temporarily: edit `settings.json` with Seerr stopped, link, set it back.
 - Local (email + password) login is off (`localLogin: false`). Recovery is shell-only via the API key.
 
 ### Link an existing account (owner: once)
 
-1. `https://requests.holy-grail.ch` -> sign in with **Quick Connect** as before.
+1. With `mediaServerLogin=true` (temporarily, see above): `https://requests.holy-grail.ch` -> **Quick Connect**, approve the code in Jellyfin as that user.
+   While linking, set the provider's `newUserLogin` to false too, otherwise a Holy Grail press from a tab without a Seerr session creates a duplicate account (happened twice on 2026-10-19).
 2. Avatar (top right) -> **Settings** -> **Linked Accounts** (`/profile/settings/linked-accounts`) -> **Link Account** -> **Holy Grail**.
 3. Back on Linked Accounts, "Holy Grail" is listed.
 4. Sign out, then **Holy Grail** on the login page: same user (admin, your requests).
