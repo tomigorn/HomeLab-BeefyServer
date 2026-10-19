@@ -76,6 +76,25 @@ radarr:
           - name: WEB 1080p
             qualities: [WEBRip-1080p, WEBDL-1080p]
 
+      # Same profile for English-original titles (scripts/language-policy.sh switches them).
+      # `Language: Original + English` stays 0: on an English title it fires on any extra dub.
+      - trash_id: 64fb5f9858489bdac2af690e27c8f42f  # UHD Bluray + WEB
+        name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
+        reset_unmatched_scores:
+          enabled: true
+        upgrade:
+          allowed: true
+          until_quality: Bluray-2160p
+          until_score: 20000
+        min_format_score: 0
+        qualities:
+          - name: Bluray-2160p
+          - name: WEB 2160p
+            qualities: [WEBRip-2160p, WEBDL-2160p]
+          - name: Bluray-1080p
+          - name: WEB 1080p
+            qualities: [WEBRip-1080p, WEBDL-1080p]
+
       # Space saver, picked per movie: plain TRaSH "HD Bluray + WEB" (6-15 GB).
       - trash_id: d1d67249d3890e49bc12e275d989a7e9  # HD Bluray + WEB
         reset_unmatched_scores:
@@ -112,6 +131,7 @@ radarr:
           - 5608c71bcebba0a5e666223bae8c9227  # HD Bluray Tier 03
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
 
       # German + original audio (TRaSH "German DL"): 20000 beats any English-only
       # release of the same quality (best audio + HDR + tier sum is ~7200) and any
@@ -123,6 +143,8 @@ radarr:
           - 6aad77771dabe9d3e9d7be86f310b867  # German DL (undefined)
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            score: 20000
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: 20000
           - name: HD Bluray + WEB
             score: 20000
@@ -154,6 +176,8 @@ radarr:
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             score: -50000
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
+            score: -50000
           - name: HD Bluray + WEB
             score: -50000
           - name: Anime - Remux + WEB 1080p
@@ -174,6 +198,8 @@ radarr:
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             score: -50000
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
+            score: -50000
       - trash_ids:
           - dc98083864ea246d05a42df0d05f81cc  # x265 (HD)
         assign_scores_to:
@@ -187,6 +213,7 @@ radarr:
         - trash_id: ff204bbcecdd487d1cefcefdbf0c278d  # [Optional] Golden Rule UHD
           assign_scores_to:
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
         - trash_id: f8bf8eab4617f12dfdbd16303d8da245  # [Optional] Golden Rule HD
           assign_scores_to:
             - trash_id: d1d67249d3890e49bc12e275d989a7e9
@@ -199,6 +226,7 @@ radarr:
         - trash_id: 7fc2751eef7e6bdc70b74136e5e35c76  # [HDR Formats] DV (w/o HDR fallback)
           assign_scores_to:
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
         # "4K HDR wherever possible": a 2160p release without HDR is rejected, so
         # an SDR-only 4K (usually an upscale) loses to the 1080p tier instead.
         - trash_id: 47f0d69750de9e16855915fa73bb7b08  # [HDR Formats] SDR
@@ -206,6 +234,7 @@ radarr:
             - 9c38ebb7384dada637be8899efa68e6f  # SDR
           assign_scores_to:
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
       # Default groups that stay ON: [Audio] Audio Formats, [HDR Formats] HDR,
       # [Streaming Services] General, and for the anime profile its own groups
       # ([Release Groups] Anime, [Required] Anime Versions).
@@ -256,6 +285,17 @@ sonarr:
           until_quality: WEB 2160p
           until_score: 20000
 
+      # Same profile for English-original titles (scripts/language-policy.sh switches them).
+      # `Language: Original + English` stays 0: on an English title it fires on any extra dub.
+      - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7  # WEB-2160p (Combined)
+        name: 4K HDR - WEB-2160p (1080p fallback) - English original
+        reset_unmatched_scores:
+          enabled: true
+        upgrade:
+          allowed: true
+          until_quality: WEB 2160p
+          until_score: 20000
+
       # Space saver, picked per series: plain TRaSH "WEB-1080p".
       - trash_id: 72dae194fc92bf828f32cde7744e51a1  # WEB-1080p
         reset_unmatched_scores:
@@ -291,6 +331,8 @@ sonarr:
         assign_scores_to:
           - name: 4K HDR - WEB-2160p (1080p fallback)
             score: 20000
+          - name: 4K HDR - WEB-2160p (1080p fallback) - English original
+            score: 20000
           - name: WEB-1080p
             score: 20000
           - name: Anime - Bluray + WEB 1080p
@@ -313,6 +355,8 @@ sonarr:
         assign_scores_to:
           - name: 4K HDR - WEB-2160p (1080p fallback)
             score: -50000
+          - name: 4K HDR - WEB-2160p (1080p fallback) - English original
+            score: -50000
           - name: WEB-1080p
             score: -50000
           - name: Anime - Bluray + WEB 1080p
@@ -331,6 +375,8 @@ sonarr:
         assign_scores_to:
           - name: 4K HDR - WEB-2160p (1080p fallback)
             score: -50000
+          - name: 4K HDR - WEB-2160p (1080p fallback) - English original
+            score: -50000
       - trash_ids:
           - 47435ece6b99a0b477caf360e79ba0bb  # x265 (HD)
         assign_scores_to:
@@ -343,6 +389,7 @@ sonarr:
         - trash_id: e3f37512790f00d0e89e54fe5e790d1c  # [Optional] Golden Rule UHD
           assign_scores_to:
             - name: 4K HDR - WEB-2160p (1080p fallback)
+            - name: 4K HDR - WEB-2160p (1080p fallback) - English original
         - trash_id: 158188097a58d7687dee647e04af0da3  # [Optional] Golden Rule HD
           assign_scores_to:
             - trash_id: 72dae194fc92bf828f32cde7744e51a1
@@ -362,11 +409,13 @@ sonarr:
         - trash_id: d776a1ea912a117d66d83b880ff2055d  # [HDR Formats] DV (w/o HDR fallback)
           assign_scores_to:
             - name: 4K HDR - WEB-2160p (1080p fallback)
+            - name: 4K HDR - WEB-2160p (1080p fallback) - English original
         - trash_id: e1053c0ef622df3749fa43c22865663a  # [HDR Formats] SDR
           select:
             - 2016d1676f5ee13a5b7257ff86ac9a93  # SDR
           assign_scores_to:
             - name: 4K HDR - WEB-2160p (1080p fallback)
+            - name: 4K HDR - WEB-2160p (1080p fallback) - English original
       # Default groups that stay ON: [HDR Formats] HDR, [Streaming Services] General,
       # and for the anime profile its own groups ([Release Groups] Anime,
       # [Required] Anime Versions).

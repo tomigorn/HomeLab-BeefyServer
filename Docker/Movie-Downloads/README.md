@@ -275,6 +275,7 @@ docker compose run --rm recyclarr config list templates   # TRaSH templates
 | Profile | Use | Qualities (top wins) | Upgrade until |
 |---|---|---|---|
 | **4K HDR - UHD Bluray + WEB (1080p fallback)** — default | everything | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p | Bluray-2160p, CF score 20000 |
+| 4K HDR - … (1080p fallback) - English original | English-original titles, set by `scripts/language-policy.sh` | same | same; `Language: Original + English` 0 (see [Languages](#languages)) |
 | HD Bluray + WEB | space saver, pick per movie | Bluray-1080p › WEB-1080p › Bluray-720p | Bluray-1080p, 20000 |
 | Anime - Remux + WEB 1080p | anime films, pick per movie (Seerr has no anime profile for movies) | Remux/Bluray-1080p › WEB-1080p › 720p … | Remux-1080p, 20000; TRaSH `[Anime] Remux-1080p`: anime group tiers, no Golden Rule (anime is x265 10-bit by default), minimum score 100 |
 
@@ -316,7 +317,7 @@ Lives in three places: `recyclarr/recyclarr.yml` (scores), `scripts/language-pol
 |---|---|---|---|
 | 1 | original + German + English | 28000 | `German DL` + `Language: Original + English` |
 | 2 | original + German | 20000 | TRaSH `German DL` (German + original audio), `German DL (undefined)` |
-| 3 | original + English (non-English title) | 8000 | `Language: Original + English` (own CF: English, the original, and a language other than the original all present); anime also `Anime Dual Audio` 8000 (title says "Dual Audio") |
+| 3 | original + English (non-English title) | 8000 | `Language: Original + English` (own CF: English, the original, and a language other than the original all present); anime also `Anime Dual Audio` 8000 (title says "Dual Audio"); 0 in the English-original profiles |
 | 4 | original only | 0 | untagged releases count as the original language |
 | rejected | dub only (`German`, `Dubs Only`), no original track (`Language: Not Original`), every unwanted format | −50000 | Radarr additionally keeps profile language `Original` (rejects a release without the original audio, source-checked in Radarr 6: a multi-language release passes if the original is among its languages); Sonarr has no profile language, the CF does it |
 
@@ -325,7 +326,8 @@ Lives in three places: `recyclarr/recyclarr.yml` (scores), `scripts/language-pol
   (quality itself still ranks first: any allowed 2160p beats any 1080p). Rejects are
   −50000 rather than TRaSH's −10000 so the best possible sum (28000 + 7200) stays
   below the minimum score of 0.
-- Known gap: `Language: Original + English` cannot tell whether the original *is* English (a custom format only sees the release languages and the original). On an English title every extra dub fires it: Knives Out `…x265-hallowed.DUAL-wastaken` (English + Portuguese, from the indexer) scores 10250 vs 3950 for the same encode without the dub. It never beats `German DL` (20000).
+- English originals: a custom format cannot see that the original *is* English, so `Language: Original + English` fires on any extra dub (English + Portuguese got 8000). English-original titles therefore use the twin profile `… - English original` (Radarr and Sonarr, 4K default only), identical except that CF at 0: English + German 20000 › English (+ any dub) 0.
+  - `scripts/language-policy.sh` moves English originals on the main 4K profile to the twin and others back. A title added later starts on the main profile: re-run the script after adding one.
 - No German release for a title usually means the indexers do not carry one, not a filter: check with Prowlarr's search first.
 - 2160p German scene releases often omit `HDR` in the name (`GERMAN.DL.2160P.UHD.BLURAY.HEVC-UNDERTAKERS`): `SDR` (2160p without an HDR marker) rejects them (Radarr parse of such a Knives Out title: −22000).
 - Upgrade until score 20000 = German dual audio reached. A release that also has
@@ -364,6 +366,15 @@ language tag is parsed as the original language):
 | `English.Spanish` / `Dual.Audio` | — | 8075 | 8000 |
 | `German` only | −99500 (`German`, `Not Original`) | −99925 | −100000 |
 | `English` only (non-English title) / `English.Dubbed` | — | −49925 | −100000 (`Dubs Only`) |
+
+English-original profile, Knives Out (2160p Bluray, same encode):
+
+| Title | Main profile | English original |
+|---|---|---|
+| `German.DL` | 30200 | 22200 |
+| `English.Portuguese` | 11950 | 3950 |
+| untagged | 3950 | 3950 |
+| `German` only | −97800 | −97800 |
 
 Bazarr after the sync: Pioneer One (English) → profile `English + German`; Money
 Heist (Spanish, tag `lang-es`) → `English + German + Spanish`; Frieren (Japanese,

@@ -5,8 +5,10 @@
 #   ~/Projects/Docker/Movie-Downloads/scripts/language-policy.sh
 #
 # Radarr + Sonarr: custom format "Language: Original + English" (8000 in every
-#   profile), one `lang-xx` tag per language and an auto-tagging rule that sets it
-#   from the title's original language.
+#   profile, 0 in the "- English original" ones), one `lang-xx` tag per language and
+#   an auto-tagging rule that sets it from the title's original language.
+#   English-original titles on the main 4K profile move to its "- English original"
+#   twin, others move back. New titles: re-run the script after adding them.
 # Bazarr: one subtitle profile per language ("English + German + <Language>",
 #   bound to the `lang-xx` tag), tag-based profile selection, OpenSubtitles.com
 #   without AI/machine translations.
@@ -22,6 +24,7 @@ BK=$(grep -oP '(?<=apikey: ).*' /srv/appdata/bazarr/config/config.yaml | head -1
 LANGS="es:Spanish fr:French it:Italian pt:Portuguese ja:Japanese ko:Korean zh:Chinese da:Danish sv:Swedish nb:Norwegian nl:Dutch ru:Russian"
 CF_NAME="Language: Original + English"
 CF_SCORE=8000
+ENG_SUFFIX=" - English original"
 
 api() { # api <radarr|sonarr> <path> [curl args...]
   local app=$1 path=$2; shift 2
@@ -47,14 +50,26 @@ print(json.dumps({"name":sys.argv[1],"includeCustomFormatWhenRenaming":False,"sp
   fi
   echo "   custom format '$CF_NAME' id $CF_ID"
 
-  # Score it in every profile Recyclarr manages (the stock ones are named zz ...).
+  # Score it in every profile Recyclarr manages (the stock ones are named zz ...);
+  # 0 in the English-original ones, where it would fire on any extra dub.
   for PID in $(api $app /qualityprofile | py 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin) if not p["name"].startswith("zz ")))'); do
     api $app "/qualityprofile/$PID" | py 'import json,sys
-p=json.load(sys.stdin); cid=int(sys.argv[1]); score=int(sys.argv[2])
+p=json.load(sys.stdin); cid=int(sys.argv[1]); score=0 if p["name"].endswith(sys.argv[3]) else int(sys.argv[2])
 for f in p["formatItems"]:
     if f["format"]==cid: f["score"]=score
-print(json.dumps(p))' "$CF_ID" "$CF_SCORE" | api $app "/qualityprofile/$PID" -X PUT -d @- | py 'import json,sys; p=json.load(sys.stdin); print("   profile", p["name"], "->", [f["score"] for f in p["formatItems"] if f["format"]==int(sys.argv[1])][0])' "$CF_ID"
+print(json.dumps(p))' "$CF_ID" "$CF_SCORE" "$ENG_SUFFIX" | api $app "/qualityprofile/$PID" -X PUT -d @- | py 'import json,sys; p=json.load(sys.stdin); print("   profile", p["name"], "->", [f["score"] for f in p["formatItems"] if f["format"]==int(sys.argv[1])][0])' "$CF_ID"
   done
+
+  # English originals on the main 4K profile -> its English-original twin, and back.
+  case $app in radarr) MAIN="4K HDR - UHD Bluray + WEB (1080p fallback)"; kind=movie; ids=movieIds;; sonarr) MAIN="4K HDR - WEB-2160p (1080p fallback)"; kind=series; ids=seriesIds;; esac
+  read -r MID EID < <(api $app /qualityprofile | py 'import json,sys; n={p["name"]:p["id"] for p in json.load(sys.stdin)}; print(n[sys.argv[1]], n[sys.argv[1]+sys.argv[2]])' "$MAIN" "$ENG_SUFFIX")
+  read -r TO_ENG TO_MAIN < <(api $app "/$kind" | py 'import json,sys
+items=json.load(sys.stdin); m,e=int(sys.argv[1]),int(sys.argv[2])
+eng=lambda t: (t.get("originalLanguage") or {}).get("name")=="English"
+print(",".join(str(t["id"]) for t in items if t["qualityProfileId"]==m and eng(t)) or "-", ",".join(str(t["id"]) for t in items if t["qualityProfileId"]==e and not eng(t)) or "-")' "$MID" "$EID")
+  [ "$TO_ENG" = - ] || api $app "/$kind/editor" -X PUT -d "{\"$ids\":[$TO_ENG],\"qualityProfileId\":$EID}" >/dev/null
+  [ "$TO_MAIN" = - ] || api $app "/$kind/editor" -X PUT -d "{\"$ids\":[$TO_MAIN],\"qualityProfileId\":$MID}" >/dev/null
+  echo "   English original -> profile $EID: ${TO_ENG/-/none}; back to main $MID: ${TO_MAIN/-/none}"
 
   # One tag per language, set automatically from the original language. Radarr
   # and Sonarr apply auto tags on add and on every refresh.
