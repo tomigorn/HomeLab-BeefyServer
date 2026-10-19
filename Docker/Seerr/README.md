@@ -38,8 +38,14 @@ so Holy Grail cannot sign the user into Seerr itself. Two layers:
    on, so a Jellyfin user who was never imported gets a Seerr account with the
    default permissions (`Request`) on first sign-in.
 
-Local (email + password) accounts stay possible for an emergency admin, nothing
-else. Both sessions are long-lived, so the double login is rare.
+Local (email + password) login is off (`localLogin: false`), so the login page has no "Or sign in with / Requests" button. Recovery is shell-only: re-enable it via the API key. Both sessions are long-lived, so the double login is rare.
+
+Login page limits in 3.5.0 (no setting for these, open upstream PRs):
+
+| Wanted | Status |
+|---|---|
+| "Sign in with Holy Grail" button | no OIDC in Seerr (PR #2715) |
+| hide the Jellyfin username/password form | not possible; it always fails (passwords disabled), use **Quick Connect** (PR #3315) |
 
 ## First login (one-time, by hand) — done 2026-10-19, owner is tomigorn; friends auto-approve (defaultPermissions 160)
 
@@ -88,6 +94,7 @@ password), and Seerr created its own Jellyfin API key ("Seerr") during the login
 | Radarr | `radarr:7878`, profile **4K HDR - UHD Bluray + WEB (1080p fallback)**, root `/data/media/movies`, min availability released, default |
 | Sonarr | `sonarr:8989`, profile **4K HDR - WEB-2160p (1080p fallback)**, root `/data/media/tv`, season folders, default |
 | App | URL `https://requests.holy-grail.ch`, title "Requests" |
+| Login | Jellyfin login on (`mediaServerLogin: true`, Quick Connect), local login off (`localLogin: false`) |
 
 Permissions: the owner (you) is admin, own requests are auto-approved. New users get
 `Request` only, so a friend's request waits for your approval (Seerr -> Requests).
