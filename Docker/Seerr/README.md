@@ -130,7 +130,7 @@ password), and Seerr created its own Jellyfin API key ("Seerr") during the login
 | Radarr | `radarr:7878`, profile **4K HDR - UHD Bluray + WEB (1080p fallback)**, root `/data/media/movies`, min availability released, default |
 | Sonarr | `sonarr:8989`, profile **4K HDR - WEB-2160p (1080p fallback)**, root `/data/media/tv`, season folders, default |
 | App | URL `https://requests.holy-grail.ch`, title "Requests" |
-| Login | Holy Grail OIDC (`oidcLogin: true`, provider `holy-grail`, new users allowed, logo `holy-grail-logo.png`), Jellyfin login on (`mediaServerLogin: true`, Quick Connect), local login off (`localLogin: false`) |
+| Login | Holy Grail OIDC (`oidcLogin: true`, provider `holy-grail`, new users allowed, logo `holy-grail-logo.png`), Jellyfin form and Quick Connect off (`mediaServerLogin: false`), local login off (`localLogin: false`) |
 | Network | `trustProxy: true` (Traefik on fastpi in front; Authentik's guide asks for it) |
 
 Permissions: the owner (you) is admin (implies every permission). `configure.sh` adds to the default permissions of new users, keeping what is set:
