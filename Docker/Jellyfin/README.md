@@ -269,7 +269,7 @@ client secret; not in this repo). Authentik app `jellyfin`, groups `streaming-us
 | Setting (Dashboard -> Plugins -> OIDC Authentication) | Value | Why |
 |---|---|---|
 | Provider / Provider name | **Other** / **Holy Grail** | Button reads "Sign In with Holy Grail", matching the Authentik brand and Audiobookshelf. A named provider (Authentik) forces its own name and ignores Provider name |
-| Local password sign-in | **Disable for all users** | Server-side: every user, incl. `admin`, is switched to `Jellyfin.Plugin.Oidc.Identity.OidcPasswordDisabledProvider`, so even a correct password is refused. The plugin also hides the password form, user tiles, "Manual login" and "Forgot Password"; "Use Quick Connect" stays |
+| Local password sign-in | **Disable for all users** | Server-side: every user is switched to `Jellyfin.Plugin.Oidc.Identity.OidcPasswordDisabledProvider`, so even a correct password is refused. The plugin also hides the password form, user tiles, "Manual login" and "Forgot Password"; "Use Quick Connect" stays |
 | Redirect sign-in page to provider | off | Keeps the Jellyfin sign-in page so "Use Quick Connect" stays reachable |
 | Automatic linking | Match email to Jellyfin username | New SSO users are provisioned on first sign-in |
 
@@ -302,16 +302,18 @@ C=/srv/appdata/jellyfin/data
 sudo cp -a $C/plugins/configurations/Jellyfin.Plugin.Oidc.xml{,.bak-recovery}
 sudo sed -i 's#<Enabled>true</Enabled>#<Enabled>false</Enabled>#' $C/plugins/configurations/Jellyfin.Plugin.Oidc.xml
 sudo sqlite3 $C/data/jellyfin.db ".backup $C/data/jellyfin.db.bak-recovery"
-sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Name='admin' AND AuthenticationProviderId='Jellyfin.Plugin.Oidc.Identity.OidcPasswordDisabledProvider';"
+sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Name='tomigorn' AND AuthenticationProviderId='Jellyfin.Plugin.Oidc.Identity.OidcPasswordDisabledProvider';"
 docker compose start jellyfin
 ```
 
 Then, from your PC: `ssh -L 8096:127.0.0.1:8096 beefy` and open
-`http://localhost:8096` (the LAN address is firewalled to fastpi only). Sign in as
-`admin` with its password (password manager; SSO users have random passwords that
-cannot be recovered). Fix the problem, then put it back: Plugins -> OIDC
-Authentication -> enable, "Local password sign-in" = **Disable for all users**, save
-(the plugin switches `admin` back to the disabled provider). Check with
+`http://localhost:8096` (the LAN address is firewalled to fastpi only). The local `admin` user was deleted on
+2026-10-19 (Holy Grail is the only login), so first give `tomigorn` a password:
+`sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET Password=NULL WHERE Name='tomigorn';"`
+(empty password, set a new one right after signing in). Sign in as `tomigorn`. Fix
+the problem, then put it back: Plugins -> OIDC Authentication -> enable, "Local
+password sign-in" = **Disable for all users**, save (the plugin switches the user
+back to the disabled provider). Check with
 `GET /Users` that every user shows `OidcPasswordDisabledProvider`.
 
 Backups taken at the switch: `Jellyfin.Plugin.Oidc.xml.bak-2026-10-18-pre-oidc-only`
