@@ -41,7 +41,7 @@ so Holy Grail cannot sign the user into Seerr itself. Two layers:
 Local (email + password) accounts stay possible for an emergency admin, nothing
 else. Both sessions are long-lived, so the double login is rare.
 
-## First login (one-time, by hand)
+## First login (one-time, by hand) — done 2026-10-19, owner is tomigorn; friends auto-approve (defaultPermissions 160)
 
 Seerr's **first** user becomes the owner and must sign in with a Jellyfin
 **username + password** (Quick Connect is refused until a user exists, and the
