@@ -61,7 +61,7 @@ Thumbs.db
 *~
 
 # AI working files (global rule, see ~/.claude/CLAUDE.md): never committed
-docs/superpowers/
-.claude/settings.local.json
+**/docs/superpowers/
+**/.claude/settings.local.json
 CLAUDE.local.md
 AGENTS.md
