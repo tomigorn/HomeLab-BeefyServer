@@ -342,7 +342,17 @@ Lives in three places: `recyclarr/recyclarr.yml` (scores), `scripts/language-pol
   −50000 rather than TRaSH's −10000 so the best possible sum (28000 + 7200) stays
   below the minimum score of 0.
 - English originals: a custom format cannot see that the original *is* English, so `Language: Original + English` fires on any extra dub (English + Portuguese got 8000). English-original titles therefore use the twin profile `… - English original` (Radarr and Sonarr, 4K default only), identical except that CF at 0: English + German 20000 › English (+ any dub) 0.
-  - `scripts/language-policy.sh` moves English originals on the main 4K profile to the twin and others back. A title added later starts on the main profile: re-run the script after adding one.
+  - `scripts/language-policy.sh` moves English originals on the main 4K profile to the twin and others back (existing titles).
+  - Titles added later (Seerr, Radarr/Sonarr UI, import lists): Connect → Custom Script **Language policy** runs `scripts/language-policy-hook.sh` (mounted at `/scripts:ro` in both containers, registered by `language-policy.sh`) and does the same move for that one title, before its first search.
+
+    | App | Trigger | Env | Runs |
+    |---|---|---|---|
+    | Radarr | On Movie Added | `radarr_eventtype=MovieAdded`, `radarr_movie_id` | inside the add (`POST /movie`), before the refresh that queues the search |
+    | Sonarr | On Series Add | `sonarr_eventtype=SeriesAdd`, `sonarr_series_id` | after the first refresh, right before the search is queued |
+
+    Both apps run the script synchronously, so there is no race: the search always sees the new profile, no re-search needed. A failed hook (exit ≠ 0, e.g. API unreachable) leaves the title on the profile it was added with; the apps ignore the exit code outside the Test button, so it shows only in the debug log (`Executed external script: … Status: 1`); `language-policy.sh` fixes it.
+  - Check: add a film in Seerr or Radarr, open its page: an English original shows `… - English original` within seconds; log: `grep language-policy-hook /srv/appdata/radarr/logs/radarr.debug.txt`.
+  - Tests: `tests/test_language_policy_hook.sh` (fake API, needs bash, curl, jq, python3).
 - No German release for a title usually means the indexers do not carry one, not a filter: check with Prowlarr's search first.
 - 2160p German scene releases often omit `HDR` in the name (`GERMAN.DL.2160P.UHD.BLURAY.HEVC-UNDERTAKERS`): `SDR` (2160p without an HDR marker) rejects them (Radarr parse of such a Knives Out title: −22000).
 - Upgrade until score 20000 = German dual audio reached. A release that also has
