@@ -274,8 +274,9 @@ docker compose run --rm recyclarr config list templates   # TRaSH templates
 
 | Profile | Use | Qualities (top wins) | Upgrade until |
 |---|---|---|---|
-| **4K HDR - UHD Bluray + WEB (1080p fallback)** — default | everything | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p | Bluray-2160p, CF score 10000 |
-| HD Bluray + WEB | space saver, pick per movie | Bluray-1080p › WEB-1080p › Bluray-720p | Bluray-1080p |
+| **4K HDR - UHD Bluray + WEB (1080p fallback)** — default | everything | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p | Bluray-2160p, CF score 20000 |
+| HD Bluray + WEB | space saver, pick per movie | Bluray-1080p › WEB-1080p › Bluray-720p | Bluray-1080p, 20000 |
+| Anime - Remux + WEB 1080p | anime films, pick per movie (Seerr has no anime profile for movies) | Remux/Bluray-1080p › WEB-1080p › 720p … | Remux-1080p, 20000; TRaSH `[Anime] Remux-1080p`: anime group tiers, no Golden Rule (anime is x265 10-bit by default), minimum score 100 |
 
 Why this shape:
 
@@ -287,28 +288,84 @@ Why this shape:
   automatically when one appears. Radarr always ranks **quality before score**, so
   any acceptable 2160p beats any 1080p. The HD Bluray tier scores are added so the
   fallback picks a good 1080p group.
-- **HDR**: `SDR` (−35000) rejects 2160p releases without HDR (usually upscales), so
+- **HDR**: `SDR` (−50000) rejects 2160p releases without HDR (usually upscales), so
   "4K" here always means 4K HDR; without an HDR 4K the 1080p tier wins.
-  `DV (w/o HDR fallback)` (−35000) rejects Dolby Vision Profile 5 (no HDR10 base
+  `DV (w/o HDR fallback)` (−50000) rejects Dolby Vision Profile 5 (no HDR10 base
   layer → green/purple on non-DV clients, and Jellyfin's tone mapping of P5 is
   untested here). DV *with* HDR10 fallback (P7/P8, "DV HDR10") scores like HDR10.
   DV Boost / HDR10+ Boost are **not** enabled — turn on `DV Boost` if every TV in
   the house does Dolby Vision.
-- **Golden Rule**: x265 only for HDR/4K (`x265 (no HDR/DV)` −35000); 1080p stays x264,
-  which direct-plays everywhere.
-- **Unwanted**: BR-DISK, LQ groups, 3D, AV1, upscaled, extras, generated HDR, … −35000.
-- **Language: German dual audio preferred** (TRaSH German scoring, since 2026-10-19).
-  Profile language stays `Original`, so original audio is always acceptable.
-  `German DL` (German + original audio) scores +11000, more than any audio + HDR +
-  group-tier sum (~7200), so it outranks an English-only release of the same
-  quality and is picked up as an upgrade later. `German` (dub only) is −35000 and
-  the `Original` filter rejects it anyway. Every reject is −35000, not TRaSH's
-  default −10000, because +11000 would otherwise lift a rejected release (SDR 4K,
-  DV without fallback, LQ, …) above the minimum score. Subtitles unchanged
-  (Bazarr, English + German).
+- **Golden Rule**: x265 only for HDR/4K (`x265 (no HDR/DV)` −50000); 1080p stays x264,
+  which direct-plays everywhere. Not applied to the anime profile.
+- **Unwanted**: BR-DISK, LQ groups, 3D, AV1, upscaled, extras, generated HDR, … −50000.
+- **Languages**: see [Languages](#languages) — the same scores in every profile.
 - The six stock Radarr profiles (Any, SD, HD-720p, …) cannot be disabled (the
   API has no such flag), so they are renamed with a `zz ` prefix to sort last;
   Recyclarr does not touch them. Delete them in the UI if they are in the way.
+
+### Languages
+
+Policy (2026-10-19): audio = the original language plus German plus English; if
+that does not exist, drop one (German first choice, English second); never a dub
+without the original track. Subtitles = English + German + the original language.
+Lives in three places: `recyclarr/recyclarr.yml` (scores), `scripts/language-policy.sh`
+(what Recyclarr cannot express: one native custom format, tags, Bazarr profiles),
+`../Seerr/scripts/configure.sh` (anime profile).
+
+| Rung | Audio | Score | How it is detected |
+|---|---|---|---|
+| 1 | original + German + English | 28000 | `German DL` + `Language: Original + English` |
+| 2 | original + German | 20000 | TRaSH `German DL` (German + original audio), `German DL (undefined)` |
+| 3 | original + English (non-English title) | 8000 | `Language: Original + English` (own CF: English, the original, and a language other than the original all present); anime also `Anime Dual Audio` 8000 (title says "Dual Audio") |
+| 4 | original only | 0 | untagged releases count as the original language |
+| rejected | dub only (`German`, `Dubs Only`), no original track (`Language: Not Original`), every unwanted format | −50000 | Radarr additionally keeps profile language `Original` (rejects a release without the original audio, source-checked in Radarr 6: a multi-language release passes if the original is among its languages); Sonarr has no profile language, the CF does it |
+
+- Rungs are ≥ 8000 apart and the audio + HDR + group-tier sum of a release is
+  ≤ ~7200, so language always wins over quality *within* the same quality tier
+  (quality itself still ranks first: any allowed 2160p beats any 1080p). Rejects are
+  −50000 rather than TRaSH's −10000 so the best possible sum (28000 + 7200) stays
+  below the minimum score of 0.
+- Upgrade until score 20000 = German dual audio reached. A release that also has
+  English wins at grab time but is not chased afterwards.
+- The TRaSH German guide uses profile language `Any` and accepts `German` dub-only
+  (+10000); this setup deliberately does not.
+- Anime: Seerr sends everything TMDB calls anime to the Sonarr profile
+  **Anime - Bluray + WEB 1080p** with series type `anime`, same root folder `/data/media/tv`
+  (one Jellyfin **Shows** library; a separate anime root would mean a second library
+  for no gain). TRaSH `[Anime] Remux-1080p` qualities and group tiers, `[Streaming
+  Services] Anime` (CR, HIDIVE, …), Anime Raws / LQ groups / `Dubs Only` rejected,
+  TRaSH's minimum score 100 (no-name groups are skipped). Anime films: pick the Radarr
+  anime profile by hand.
+- Tags: Radarr and Sonarr auto-tagging sets `lang-xx` (es, fr, it, pt, ja, ko, zh, da,
+  sv, nb, nl, ru) from the title's original language on add and on every refresh;
+  Bazarr maps the tag to the matching subtitle profile. English originals carry no
+  tag and keep **English + German**. New language: add it to `LANGS` in the script
+  and re-run it.
+- Not built: **extra audio tracks by merging two downloads** (download EN+DE and
+  EN+ES, copy the Spanish track into the first file). No maintained tool does this
+  (Tdarr/Unmanic transcode, they do not add languages); it would be a bespoke
+  mkvmerge pipeline with two grabs per title, audio offsets that differ between
+  releases (different cuts, intros, frame rates), double disk and usenet use, and
+  a file Radarr cannot account for. Multi-audio releases (`German DL`, `MULTi`,
+  `Dual Audio`) are the standard way to get the extra lanes, and the scores above
+  grab them whenever they exist.
+
+Verified 2026-10-19 (`GET /api/v3/parse?title=…`, never grabs; a title without a
+language tag is parsed as the original language):
+
+| Title | Radarr (Knives Out, English) | Sonarr (Money Heist, Spanish) | Sonarr (Frieren, anime, Japanese) |
+|---|---|---|---|
+| untagged `1080p.NF.WEB-DL` / `CR.WEB-DL` | 0 (English) | 75 (Spanish) | 306 (Japanese, Anime Web Tier 04 + CR) |
+| `German.DL` | 28500 (German + English = both rungs) | 20075 | 20000 |
+| `German.ML` (German + original + English) | 28500 | **28075** | — |
+| `English.Spanish` / `Dual.Audio` | — | 8075 | 8000 |
+| `German` only | −99500 (`German`, `Not Original`) | −99925 | −100000 |
+| `English` only (non-English title) / `English.Dubbed` | — | −49925 | −100000 (`Dubs Only`) |
+
+Bazarr after the sync: Pioneer One (English) → profile `English + German`; Money
+Heist (Spanish, tag `lang-es`) → `English + German + Spanish`; Frieren (Japanese,
+`lang-ja`) → `English + German + Japanese`. Money Heist and Frieren are in Sonarr
+unmonitored, nothing was grabbed.
 
 ### Subtitles (Bazarr)
 
@@ -320,15 +377,20 @@ Why this shape:
   the same instant as the import, before Bazarr knows the new file id, so Bazarr
   answers 200 "nothing to do" and never searches (twice in a row). SignalR does not
   have that race.
-- Language profile **English + German** (en, de, en forced, de forced), applied
-  automatically to every new movie (`movie_default_profile`).
+- Language profiles: **English + German** (en, de, en forced, de forced) is the
+  default for every new movie and series (`movie_default_profile`,
+  `serie_default_profile`); **English + German + <Language>** (tag `lang-xx`) is
+  chosen automatically from the Radarr/Sonarr tag (`movie_tag_enabled`,
+  `serie_tag_enabled`), see [Languages](#languages). All of it is set by
+  `scripts/language-policy.sh`.
 - Files land next to the video: `<movie>.en.srt`, `<movie>.de.srt`,
   `<movie>.en.forced.srt` — the names Jellyfin understands.
 - Embedded subtitle tracks count as present (`use_embedded_subs`), so a remux/encode
   that already carries en/de subs triggers no download.
-- Providers: **YIFY Subtitles** (no account). The good ones need a free account →
-  see "To do" below: **OpenSubtitles.com** (username/password), **SubDL** and
-  **SubSource** (API keys).
+- Providers: **YIFY Subtitles** (no account, movies only) and **OpenSubtitles.com**
+  (free account, username/password in Bazarr; `use_hash` on, AI-translated and
+  machine-translated subtitles **off**). Still possible: **SubDL** and **SubSource**
+  (API keys).
 - Missing-subs search every 24 h (was 6 h): providers that hash the file read it,
   which would wake the HDD for demoted movies.
 
@@ -397,7 +459,7 @@ configured via the API the same way; what differs:
 | Auth | `External` (Authentik forward auth on `sonarr.holy-grail.ch`, group `streaming-admins`) |
 | Media management | hardlinks, recycle bin `/data/.recyclebin` 7 d, extra files `srt,ass,ssa,sub,idx`, rescan after manual refresh, delete empty folders, no metadata writers |
 | Connect | `Jellyfin` (Emby/Jellyfin), `/data/media/` -> `/media/`, on import/upgrade/rename/delete |
-| Bazarr | Sonarr `sonarr:8989`, SignalR feed (no webhook, same race as Radarr), profile **English + German** applied to every new series |
+| Bazarr | Sonarr `sonarr:8989`, SignalR feed (no webhook, same race as Radarr), profile **English + German** by default, `English + German + <Language>` via the `lang-xx` tag ([Languages](#languages)) |
 
 Naming (Recyclarr `jellyfin-tvdb` series folder, TRaSH default season/episode):
 
@@ -412,11 +474,12 @@ Quality profiles (Recyclarr, `recyclarr/recyclarr.yml` section `sonarr`):
 |---|---|---|---|
 | **4K HDR - WEB-2160p (1080p fallback)** — default | everything | WEB 2160p › WEB 1080p | TRaSH "WEB-2160p (Combined)": the TV counterpart of the movie profile. WEB, not Bluray: series are released on WEB first and TV Bluray encodes are rare. `SDR` and `DV (w/o HDR fallback)` rejected like the movies, Golden Rule UHD (x265 only for HDR) |
 | WEB-1080p | space saver, per series | WEB 1080p | plain TRaSH WEB-1080p, Golden Rule HD (x264) |
+| Anime - Bluray + WEB 1080p | anime, set by Seerr (series type `anime`) | Bluray-1080p (remux or encode) › WEB 1080p › 720p … | TRaSH `[Anime] Remux-1080p`: anime group tiers, `[Streaming Services] Anime`, Anime Raws / LQ groups / Dubs Only rejected, no Golden Rule, minimum score 100 |
 
-Shared with both: `[Optional] Language Profiles` (`Language: Not Original` −10000),
-German dual audio preferred exactly like the movies (`German DL` +11000, `German`
-dub −35000, every reject −35000), `[Streaming Services] HD/UHD boost` + `General`,
-`[Unwanted] Unwanted Formats`, TRaSH series size limits. The six stock Sonarr
+Shared by all: the [Languages](#languages) scores (`German DL` 20000, `Language:
+Original + English` 8000, `Language: Not Original` and every reject −50000),
+`[Streaming Services] HD/UHD boost` + `General`, `[Unwanted] Unwanted Formats`,
+TRaSH series size limits (one table per instance, `series`). The six stock Sonarr
 profiles are renamed `zz …` (no disable exists); Recyclarr ignores them.
 
 Verified 2026-10-19 with *Pioneer One* (2010, CC BY-NC-SA, TVDB 170551), the
