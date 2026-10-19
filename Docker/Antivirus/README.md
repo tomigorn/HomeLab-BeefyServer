@@ -10,7 +10,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | `clamd` | always, `clamav:3310` on the `movie-downloads` bridge | container `clamav`; reloaded by freshclam |
 | Completion scan | a download finishes | `hook/clamav-hook.py`, run by SABnzbd and qBittorrent, see below |
 | `scan.sh new` | 04:05 daily | `clamav-scan.timer` → `clamav-scan.service` → `docker exec clamav /scan.sh new` |
-| `scan.sh all`, `scan.sh <path>…` | by hand | see below |
+| `scan.sh all`, `scan.sh <path>…`, `scan.sh restore <file>` | by hand | see below |
 
 - 04:05: fastpi wakes beefy at 03:55 and it powers off about 04:25 when idle, so a later time never fires. A night asleep is skipped: the marker stays, the next run catches up.
 - Install / reinstall the units and host folders: `Docker/Antivirus/install.sh`. Start: `sudo docker compose up -d --build` (Movie-Downloads first: its network must exist).
@@ -36,7 +36,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 
 - Set by `../Movie-Downloads/scripts/clamav-hooks.sh` (idempotent). The hook is mounted read-only from `hook/`.
 - Streams each file to clamd (`INSTREAM`, Python stdlib, no clamdscan or docker socket in the clients). Files over 2 GiB are skipped; the nightly scan has the same limit.
-- Hit: file moved to `/data/quarantine`, line in `index.txt`, exit 1. SABnzbd marks the job failed, so Radarr/Sonarr never import it and handle it as a failed download. qBittorrent: the torrent is stopped and tagged `infected`.
+- Hit: file moved to `/data/quarantine` (name clash: `.001` suffix, as clamscan does), line in `index.txt`, exit 1. SABnzbd marks the job failed, so Radarr/Sonarr never import it and handle it as a failed download. qBittorrent: the torrent is stopped and tagged `infected`.
 - clamd unreachable (it waits 2 min, e.g. right after boot): exit 0, job goes through, `clamav_scan_errors{mode="hook"}` > 0; the nightly scan covers the files.
 - qBittorrent ignores the exit code and Radarr may import a small torrent before the scan ends; the nightly scan sees the hardlinked library file (new ctime) and quarantines it.
 
@@ -45,14 +45,9 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | Where (host) | What |
 |---|---|
 | `/srv/.disks/ssd-hot/quarantine/` (`/srv/video/quarantine` in the union, `/data/quarantine` in the apps) | quarantined files, `buntu`, 0750; no library points at the union root |
-| `.../quarantine/index.txt` | date TAB original path TAB signature; hook paths are `/data/...` (= `/srv/video/...`), nightly paths `/scan/ssd-hot/...` (= `/srv/.disks/ssd-hot/...`) |
+| `.../quarantine/index.txt` | date TAB original path as the `clamav` container sees it (`/scan/ssd-hot/...` = `/srv/.disks/ssd-hot/...`; the hook maps `/data` to it) TAB signature |
 
-```sh
-grep '<file name>' /srv/.disks/ssd-hot/quarantine/index.txt
-mv /srv/.disks/ssd-hot/quarantine/<file> /srv/.disks/ssd-hot/<original path below /data or /scan/ssd-hot>
-```
-
-The move changes the ctime: the next nightly run scans it again.
+False positive: `sudo docker exec clamav /scan.sh restore '<file name in quarantine>'` moves it back to its original path from `index.txt`, marks the line `restored <date>` and adds the path to `/var/lib/clamav-scan/allow.txt`, which every scan.sh mode skips.
 
 ## Metrics
 
