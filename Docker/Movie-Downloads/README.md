@@ -612,7 +612,7 @@ fastpi:
 
 ```bash
 # DOCKER-USER rule in /etc/iptables/rules.v4 (+ the IPv6 INPUT rule in rules.v6), persisted with netfilter-persistent
-# ports: 7878 radarr, 8989 sonarr, 9696 prowlarr, 6767 bazarr, 8080 qbit, 8081 sab, 8096 jellyfin, 8000 cup, 9001 portainer agent, 5055 seerr
+# ports: 7878 radarr, 8989 sonarr, 9696 prowlarr, 6767 bazarr, 8080 qbit, 8081 sab, 8096 jellyfin, 8000 cup, 9001 portainer agent, 5055 seerr, 8010 ryot
 sudo iptables -S DOCKER-USER
 ```
 
