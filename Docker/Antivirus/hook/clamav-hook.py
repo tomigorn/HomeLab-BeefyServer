@@ -24,6 +24,8 @@ QUARANTINE = os.environ.get("QUARANTINE", "/data/quarantine")
 TEXTFILE = os.environ.get("TEXTFILE", "/clamav")
 HOST = os.environ.get("HOST", "beefy")
 QBIT_API = os.environ.get("QBIT_API", "http://127.0.0.1:8080")
+# Paths in index.txt as the clamav container sees them, so "scan.sh restore" can move a file back.
+PATH_MAP = os.environ.get("PATH_MAP", "/data=/scan/ssd-hot")
 MAX_BYTES = int(os.environ.get("HOOK_MAX_BYTES", "2146435072"))
 CHUNK = 1 << 20
 
@@ -89,11 +91,18 @@ def quarantine(path, sig):
     n = 0
     while os.path.exists(dest):
         n += 1
-        dest = "%s.%d" % (os.path.join(QUARANTINE, os.path.basename(path)), n)
+        dest = "%s.%03d" % (os.path.join(QUARANTINE, os.path.basename(path)), n)
     shutil.move(path, dest)
     now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     with open(os.path.join(QUARANTINE, "index.txt"), "a") as f:
-        f.write("%s\t%s\t%s\n" % (now, path, sig))
+        f.write("%s\t%s\t%s\n" % (now, container_path(path), sig))
+
+
+def container_path(path):
+    src, _, dst = PATH_MAP.partition("=")
+    if src and (path == src or path.startswith(src + "/")):
+        return dst + path[len(src):]
+    return path
 
 
 def qbit(torrent_hash):

@@ -108,7 +108,7 @@ class HookTest(unittest.TestCase):
     def run_hook(self, *args, **env):
         e = dict(os.environ)
         e.update(CLAMD_HOST="127.0.0.1", CLAMD_PORT=str(self.clamd.server_address[1]), CLAMD_WAIT="0",
-                 QUARANTINE=self.quarantine, TEXTFILE=self.textfile, HOST="beefy", QBIT_API="http://127.0.0.1:1")
+                 PATH_MAP="", QUARANTINE=self.quarantine, TEXTFILE=self.textfile, HOST="beefy", QBIT_API="http://127.0.0.1:1")
         e.update(env)
         return subprocess.run([sys.executable, HOOK, *args], env=e, capture_output=True, text=True, timeout=60)
 
@@ -151,6 +151,13 @@ class HookTest(unittest.TestCase):
         self.assertRegex(date, r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$")
         self.assertEqual(path, bad)
         self.assertEqual(sig, SIG)
+
+    def test_index_path_is_mapped_to_the_clamav_container_view_for_restore(self):
+        bad = self.write("setup.exe", EICAR)
+        self.sab(PATH_MAP="%s/data=/scan/ssd-hot" % self.t)
+        with open(os.path.join(self.quarantine, "index.txt")) as f:
+            path = f.read().split("\t")[1]
+        self.assertEqual(path, "/scan/ssd-hot" + bad[len(self.t) + len("/data"):])
 
     def test_metrics_of_an_infected_run(self):
         self.write("setup.exe", EICAR)
@@ -209,7 +216,7 @@ class HookTest(unittest.TestCase):
         self.write("setup.exe", EICAR, where=self.quarantine)
         self.write("setup.exe", EICAR)
         self.sab()
-        self.assertEqual(sorted(os.listdir(self.quarantine)), ["index.txt", "setup.exe", "setup.exe.1"])
+        self.assertEqual(sorted(os.listdir(self.quarantine)), ["index.txt", "setup.exe", "setup.exe.001"])
 
     def test_quarantine_inside_the_scanned_tree_is_not_rescanned(self):
         self.quarantine = os.path.join(self.job, "quarantine")
