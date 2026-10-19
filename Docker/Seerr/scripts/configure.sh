@@ -20,7 +20,7 @@ done
 j "$A/settings/jellyfin/library" | python3 -c 'import json,sys; [print("  ", l["name"], "enabled" if l.get("enabled") else "disabled") for l in json.load(sys.stdin)]'
 
 echo "== Radarr"
-RP=$(curl -sf -H "X-Api-Key: $RK" http://127.0.0.1:7878/api/v3/qualityprofile | python3 -c 'import json,sys; print([p["id"] for p in json.load(sys.stdin) if p["name"].startswith("4K HDR")][0])')
+RP=$(curl -sf -H "X-Api-Key: $RK" http://127.0.0.1:7878/api/v3/qualityprofile | python3 -c 'import json,sys; print([p["id"] for p in json.load(sys.stdin) if p["name"]=="4K HDR - UHD Bluray + WEB (1080p fallback)"][0])')
 RADARR=$(cat <<JSON
 {"name":"Radarr","hostname":"radarr","port":7878,"apiKey":"$RK","useSsl":false,"baseUrl":"","activeProfileId":$RP,"activeProfileName":"4K HDR - UHD Bluray + WEB (1080p fallback)","activeDirectory":"/data/media/movies","is4k":false,"minimumAvailability":"released","isDefault":true,"externalUrl":"https://radarr.holy-grail.ch","syncEnabled":true,"preventSearch":false,"tagRequests":false,"tags":[]}
 JSON
@@ -30,7 +30,7 @@ RID=$(j "$A/settings/radarr" | python3 -c 'import json,sys; r=[x["id"] for x in 
 if [ -n "$RID" ]; then j -X PUT "$A/settings/radarr/$RID" -d "$RADARR" >/dev/null; else j -X POST "$A/settings/radarr" -d "$RADARR" >/dev/null; fi
 
 echo "== Sonarr"
-SP=$(curl -sf -H "X-Api-Key: $SK" http://127.0.0.1:8989/api/v3/qualityprofile | python3 -c 'import json,sys; print([p["id"] for p in json.load(sys.stdin) if p["name"].startswith("4K HDR")][0])')
+SP=$(curl -sf -H "X-Api-Key: $SK" http://127.0.0.1:8989/api/v3/qualityprofile | python3 -c 'import json,sys; print([p["id"] for p in json.load(sys.stdin) if p["name"]=="4K HDR - WEB-2160p (1080p fallback)"][0])')
 AP=$(curl -sf -H "X-Api-Key: $SK" http://127.0.0.1:8989/api/v3/qualityprofile | python3 -c 'import json,sys; print([p["id"] for p in json.load(sys.stdin) if p["name"].startswith("Anime")][0])')
 SONARR=$(cat <<JSON
 {"name":"Sonarr","hostname":"sonarr","port":8989,"apiKey":"$SK","useSsl":false,"baseUrl":"","activeProfileId":$SP,"activeProfileName":"4K HDR - WEB-2160p (1080p fallback)","activeDirectory":"/data/media/tv","activeLanguageProfileId":1,"activeAnimeProfileId":$AP,"activeAnimeProfileName":"Anime - Bluray + WEB 1080p","activeAnimeDirectory":"/data/media/tv","activeAnimeLanguageProfileId":1,"is4k":false,"enableSeasonFolders":true,"isDefault":true,"externalUrl":"https://sonarr.holy-grail.ch","syncEnabled":true,"preventSearch":false,"tagRequests":false,"tags":[],"animeTags":[],"seriesType":"standard","animeSeriesType":"anime"}
