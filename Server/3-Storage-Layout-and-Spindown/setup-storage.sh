@@ -112,12 +112,12 @@ configure() {
 
   mkdir -p /srv/.disks/ssd-hot /srv/.disks/hdd-cold /srv/video
 
-  local MERGER_OPTS="defaults,nofail,allow_other,use_ino,cache.files=partial,dropcacheonclose=true,category.create=ff,minfreespace=50G,moveonenospc=true,statfs=base,fsname=mergerfs,x-systemd.requires=/srv/.disks/ssd-hot,x-systemd.requires=/srv/.disks/hdd-cold"
+  local MERGER_OPTS="defaults,nofail,allow_other,cache.files=partial,dropcacheonclose=true,category.create=ff,minfreespace=50G,moveonenospc=true,statfs=base,fsname=mergerfs,x-systemd.requires=/srv/.disks/ssd-hot,x-systemd.requires=/srv/.disks/hdd-cold"
   sed -i '/# >>> beefy-storage/,/# <<< beefy-storage/d' /etc/fstab
   cat >> /etc/fstab <<EOF
 # >>> beefy-storage (managed by setup-storage.sh) >>>
-UUID=$HOT_UUID    /srv/.disks/ssd-hot   ext4  relatime,nofail,x-systemd.device-timeout=10s   0 2
-UUID=$COLD_UUID   /srv/.disks/hdd-cold  xfs   noatime,nofail,x-systemd.device-timeout=10s    0 2
+UUID=$HOT_UUID    /srv/.disks/ssd-hot   ext4  relatime,nofail,x-systemd.device-timeout=30s   0 2
+UUID=$COLD_UUID   /srv/.disks/hdd-cold  xfs   noatime,nofail,x-systemd.device-timeout=30s    0 2
 /srv/.disks/ssd-hot:/srv/.disks/hdd-cold  /srv/video  fuse.mergerfs  $MERGER_OPTS  0 0
 # <<< beefy-storage (managed by setup-storage.sh) <<<
 EOF

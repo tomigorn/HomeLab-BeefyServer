@@ -189,8 +189,8 @@ mode; Docker is gated on the pool by a drop-in instead — see §6 for why this 
 `/etc/fstab` example:
 
 ```fstab
-UUID=<hot-uuid>     /srv/.disks/ssd-hot   ext4  relatime,nofail,x-systemd.device-timeout=10s   0 2
-UUID=<cold-uuid>    /srv/.disks/hdd-cold  xfs   noatime,nofail,x-systemd.device-timeout=10s    0 2
+UUID=<hot-uuid>     /srv/.disks/ssd-hot   ext4  relatime,nofail,x-systemd.device-timeout=30s   0 2
+UUID=<cold-uuid>    /srv/.disks/hdd-cold  xfs   noatime,nofail,x-systemd.device-timeout=30s    0 2
 ```
 
 ```bash
@@ -209,7 +209,7 @@ sudo apt install -y mergerfs
 
 ```fstab
 /srv/.disks/ssd-hot:/srv/.disks/hdd-cold  /srv/video  fuse.mergerfs  \
-  defaults,nofail,allow_other,use_ino,cache.files=partial,dropcacheonclose=true,\
+  defaults,nofail,allow_other,cache.files=partial,dropcacheonclose=true,\
 category.create=ff,minfreespace=50G,moveonenospc=true,statfs=base,\
 fsname=mergerfs,x-systemd.requires=/srv/.disks/ssd-hot,\
 x-systemd.requires=/srv/.disks/hdd-cold  0 0
@@ -699,8 +699,8 @@ reason hardlinks (not "atomic move") are used here.
 the same inode** (the same physical data blocks on disk). It is **not** a copy and **not** a
 shortcut/symlink: there is exactly **one** copy of the data, and each name is an equal, first-class
 reference to it. The data is freed only when the **last** name is removed (link count → 0). On the
-union, `use_ino` (set in §4.5) makes the inode numbers consistent so apps correctly see the two
-paths as the same file.
+union, mergerfs reports consistent inode numbers (always on since 2.35; the old `use_ino` option
+is gone) so apps correctly see the two paths as the same file.
 
 **How that gives you both names at once:**
 
@@ -1076,9 +1076,9 @@ mergerfs       fuse.mergerfs   35T  535G   34T   2%  /srv/video
 
 ```
 # >>> beefy-storage (managed by setup-storage.sh) >>>
-UUID=5e19e1fd-ce5c-4c1d-80ba-d87983494e46    /srv/.disks/ssd-hot   ext4  relatime,nofail,x-systemd.device-timeout=10s   0 2
-UUID=b805bc03-6217-41ea-9161-2b55281e0313   /srv/.disks/hdd-cold  xfs   noatime,nofail,x-systemd.device-timeout=10s    0 2
-/srv/.disks/ssd-hot:/srv/.disks/hdd-cold  /srv/video  fuse.mergerfs  defaults,nofail,allow_other,use_ino,cache.files=partial,dropcacheonclose=true,category.create=ff,minfreespace=50G,moveonenospc=true,statfs=base,fsname=mergerfs,x-systemd.requires=/srv/.disks/ssd-hot,x-systemd.requires=/srv/.disks/hdd-cold  0 0
+UUID=5e19e1fd-ce5c-4c1d-80ba-d87983494e46    /srv/.disks/ssd-hot   ext4  relatime,nofail,x-systemd.device-timeout=30s   0 2
+UUID=b805bc03-6217-41ea-9161-2b55281e0313   /srv/.disks/hdd-cold  xfs   noatime,nofail,x-systemd.device-timeout=30s    0 2
+/srv/.disks/ssd-hot:/srv/.disks/hdd-cold  /srv/video  fuse.mergerfs  defaults,nofail,allow_other,cache.files=partial,dropcacheonclose=true,category.create=ff,minfreespace=50G,moveonenospc=true,statfs=base,fsname=mergerfs,x-systemd.requires=/srv/.disks/ssd-hot,x-systemd.requires=/srv/.disks/hdd-cold  0 0
 # <<< beefy-storage (managed by setup-storage.sh) <<<
 # (audio line removed 2026-07-03 — audio tier retired; SSD …909892P is now an unused spare)
 ```
