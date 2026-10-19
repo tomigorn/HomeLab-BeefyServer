@@ -1,14 +1,15 @@
 # yaml-language-server: $schema=https://schemas.recyclarr.dev/v8/config-schema.json
 ################################################################################
-## Recyclarr -> Radarr (beefy). Syncs TRaSH Guides custom formats, scores,
-## quality profiles, quality sizes and the Jellyfin naming scheme into Radarr.
+## Recyclarr -> Radarr + Sonarr (beefy). Syncs TRaSH Guides custom formats,
+## scores, quality profiles, quality sizes and the Jellyfin naming scheme.
 ##
 ## Edit HERE, never in the Radarr UI: anything Recyclarr manages is overwritten
 ## on the next sync. Settings Recyclarr does not manage (download clients, root
 ## folder, Connect, ...) are untouched.
 ##
-## Based on the official templates `uhd-bluray-web` + `hd-bluray-web`
-## (`recyclarr config list templates`). See README "Download -> library pipeline".
+## Based on the official templates `uhd-bluray-web` + `hd-bluray-web` (Radarr) and
+## `web-2160p-combined` + `web-1080p` (Sonarr), `recyclarr config list templates`.
+## See README "Download -> library pipeline" and "Series (Sonarr)".
 ################################################################################
 
 radarr:
@@ -101,3 +102,72 @@ radarr:
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
       # Default groups that stay ON: [Audio] Audio Formats, [HDR Formats] HDR,
       # [Streaming Services] General.
+
+sonarr:
+  series:
+    base_url: http://sonarr:8989
+    # From .env (SONARR_API_KEY) - never commit the key.
+    api_key: !env_var SONARR_API_KEY
+
+    # TRaSH file-size limits per quality (min/preferred/max MB per minute).
+    quality_definition:
+      type: series
+
+    media_management:
+      propers_and_repacks: do_not_prefer
+
+    # TRaSH "Jellyfin" scheme, TVDB flavour: Sonarr is TVDB-native, so every series
+    # has a TVDB id. Jellyfin matches on [tvdbid-...] in the series folder name.
+    # Episode and season formats are TRaSH's defaults (no Jellyfin variant exists;
+    # Jellyfin parses S01E01 from the file name).
+    media_naming:
+      series: jellyfin-tvdb
+      season: default
+      episodes:
+        rename: true
+        standard: default
+        daily: default
+        anime: default
+
+    quality_profiles:
+      # DEFAULT profile. TRaSH "WEB-2160p (Combined)": WEB 2160p first, WEB 1080p as
+      # the lower tier, so a series that has no 4K release gets 1080p now and is
+      # upgraded to 4K when one appears. Mirrors the movie profile; WEB rather than
+      # Bluray because TV is released on WEB first and Bluray TV encodes are rare.
+      - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7  # WEB-2160p (Combined)
+        name: 4K HDR - WEB-2160p (1080p fallback)
+        reset_unmatched_scores:
+          enabled: true
+
+      # Space saver, picked per series: plain TRaSH "WEB-1080p".
+      - trash_id: 72dae194fc92bf828f32cde7744e51a1  # WEB-1080p
+        reset_unmatched_scores:
+          enabled: true
+
+    custom_format_groups:
+      add:
+        # x265 only for HDR/4K; 1080p stays x264 (direct-plays everywhere).
+        - trash_id: e3f37512790f00d0e89e54fe5e790d1c  # [Optional] Golden Rule UHD
+          assign_scores_to:
+            - name: 4K HDR - WEB-2160p (1080p fallback)
+        - trash_id: 158188097a58d7687dee647e04af0da3  # [Optional] Golden Rule HD
+          assign_scores_to:
+            - trash_id: 72dae194fc92bf828f32cde7744e51a1
+        # Original-language audio only, same as the movies (German via Bazarr subs).
+        - trash_id: 74aff4168620ed49dcc67e92b2c2a5b4  # [Optional] Language Profiles
+        # Boosts the better streaming-service encodes (AMZN, ATVP, DSNP, ...).
+        - trash_id: 85fae4a2294965b75710ef2989c850eb  # [Streaming Services] HD/UHD boost
+        # BR-DISK, LQ groups, AV1, upscaled, extras, bad dual groups, ...
+        - trash_id: 59c3af66780d08332fdc64e68297098f  # [Unwanted] Unwanted Formats
+        # Same HDR policy as the movies: Dolby Vision without an HDR10 base layer is
+        # rejected (green/purple on non-DV clients), and a 2160p release without HDR
+        # (usually an upscale) loses to the 1080p tier.
+        - trash_id: d776a1ea912a117d66d83b880ff2055d  # [HDR Formats] DV (w/o HDR fallback)
+          assign_scores_to:
+            - name: 4K HDR - WEB-2160p (1080p fallback)
+        - trash_id: e1053c0ef622df3749fa43c22865663a  # [HDR Formats] SDR
+          select:
+            - 2016d1676f5ee13a5b7257ff86ac9a93  # SDR
+          assign_scores_to:
+            - name: 4K HDR - WEB-2160p (1080p fallback)
+      # Default groups that stay ON: [HDR Formats] HDR, [Streaming Services] General.

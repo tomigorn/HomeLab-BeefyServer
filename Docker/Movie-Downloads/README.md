@@ -1,8 +1,10 @@
-# Movie-Downloads — VPN, torrents, usenet and Radarr on beefy
+# Movie-Downloads — VPN, torrents, usenet, Radarr and Sonarr on beefy
 
-Everything needed to acquire a movie and file it into the library: **gluetun**
-(ProtonVPN) wrapping **qBittorrent** and **Prowlarr**, plus **SABnzbd**, **Radarr**
-and **Bazarr** outside the tunnel. Playback is a separate project — see
+Everything needed to acquire a movie or a series and file it into the library:
+**gluetun** (ProtonVPN) wrapping **qBittorrent** and **Prowlarr**, plus **SABnzbd**,
+**Radarr**, **Sonarr** and **Bazarr** outside the tunnel. The folder keeps its
+original name although it handles series too (since 2026-10-19); requests come in
+via `../Seerr`. Playback is a separate project — see
 `../Jellyfin`.
 
 **Deployed 2026-10-09.** The prerequisites below are kept as the rebuild recipe.
@@ -17,6 +19,7 @@ item is in [Download → library pipeline](#download--library-pipeline).
 | Prowlarr | `http://192.168.1.102:9696` | gluetun (shares its namespace) |
 | SABnzbd | `http://192.168.1.102:8081` | itself — 8080 was taken |
 | Radarr | `http://192.168.1.102:7878` | itself |
+| Sonarr | `http://192.168.1.102:8989` | itself |
 | Bazarr | `http://192.168.1.102:6767` | itself |
 
 ## Prerequisites (sudo — these are the only steps that need root)
@@ -52,12 +55,12 @@ sudo usermod -aG docker buntu
 
 # Identity is 1000:1000 = the existing `buntu` user (storage doc §14.0), so there
 # is no user to create. setgid (2775) so new dirs inherit the group.
-sudo mkdir -p /srv/video/torrents/movies \
+sudo mkdir -p /srv/video/torrents/{movies,tv} \
              /srv/video/usenet/incomplete \
-             /srv/video/usenet/complete/movies \
-             /srv/video/media/movies \
+             /srv/video/usenet/complete/{movies,tv} \
+             /srv/video/media/{movies,tv} \
              /srv/video/.recyclebin \
-             /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,bazarr}
+             /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr}
 sudo chown -R 1000:1000 /srv/video /srv/appdata
 sudo chmod -R 2775 /srv/video /srv/appdata
 
@@ -102,10 +105,12 @@ paths, so don't improvise alternatives:
 ```
 /srv/video/                     -> /data in every container
 ├── torrents/movies/            qBittorrent save path (radarr category)
+├── torrents/tv/                qBittorrent save path (sonarr category)
 ├── usenet/
 │   ├── incomplete/             SABnzbd scratch + unpack
-│   └── complete/movies/        SABnzbd finished, pre-import
+│   └── complete/{movies,tv}/   SABnzbd finished, pre-import (categories movies, tv)
 ├── media/movies/               <- Radarr root folder; Jellyfin reads this :ro
+├── media/tv/                   <- Sonarr root folder; Jellyfin reads this :ro
 └── .recyclebin/                arr recycle bin — stays on SSD, so deletes and
                                 upgrades never wake the HDD (§14.2-D)
 ```
@@ -124,6 +129,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 | Radarr | Recycle Bin | `/data/.recyclebin`, 7-day cleanup |
 | Radarr | qBittorrent client | host `gluetun`, port `8080` |
 | Radarr | SABnzbd client | host `sabnzbd`, port `8080` |
+| Sonarr | the same, with category `sonarr` / `tv`, root `/data/media/tv` | see [Series (Sonarr)](#series-sonarr) |
 | **Prowlarr** | storage volumes | **none — it gets no `/srv` mount at all** (§13.5) |
 
 No remote-path mapping is needed — every container sees the identical tree.
@@ -370,6 +376,51 @@ To check the *scoring* of a real title without downloading it: add the movie
 **unmonitored** with "Start search" off, then
 `GET /api/v3/release?movieId=<id>` (interactive search; it never grabs).
 
+### Series (Sonarr)
+
+Added 2026-10-19 (`lscr.io/linuxserver/sonarr:4.0.20`). Same pipeline as the movies,
+configured via the API the same way; what differs:
+
+| | Value |
+|---|---|
+| Root folder | `/data/media/tv`, Jellyfin library **Shows** on `/media/tv` |
+| SABnzbd | category `tv` -> `/data/usenet/complete/tv`, priority -100 (same as movies) |
+| qBittorrent | category `sonarr` -> `/data/torrents/tv` |
+| Prowlarr | application `Sonarr` (`http://sonarr:8989`), fullSync, TV categories 5000-5090 |
+| Auth | `External` (Authentik forward auth on `sonarr.holy-grail.ch`, group `streaming-admins`) |
+| Media management | hardlinks, recycle bin `/data/.recyclebin` 7 d, extra files `srt,ass,ssa,sub,idx`, rescan after manual refresh, delete empty folders, no metadata writers |
+| Connect | `Jellyfin` (Emby/Jellyfin), `/data/media/` -> `/media/`, on import/upgrade/rename/delete |
+| Bazarr | Sonarr `sonarr:8989`, SignalR feed (no webhook, same race as Radarr), profile **English + German** applied to every new series |
+
+Naming (Recyclarr `jellyfin-tvdb` series folder, TRaSH default season/episode):
+
+```
+{Series CleanTitleWithoutYear} {(Series Year)} [tvdbid-{TvdbId}]/Season {season:00}/
+{Series CleanTitleWithoutYear} {(Series Year)} - S{season:00}E{episode:00} - {Episode CleanTitle:90} {[Custom Formats]}{[Quality Full]}{[Mediainfo AudioCodec}{ Mediainfo AudioChannels]}{[MediaInfo VideoDynamicRangeType]}{[Mediainfo VideoCodec]}{-Release Group}
+```
+
+Quality profiles (Recyclarr, `recyclarr/recyclarr.yml` section `sonarr`):
+
+| Profile | Use | Qualities (top wins) | Why |
+|---|---|---|---|
+| **4K HDR - WEB-2160p (1080p fallback)** — default | everything | WEB 2160p › WEB 1080p | TRaSH "WEB-2160p (Combined)": the TV counterpart of the movie profile. WEB, not Bluray: series are released on WEB first and TV Bluray encodes are rare. `SDR` and `DV (w/o HDR fallback)` rejected like the movies, Golden Rule UHD (x265 only for HDR) |
+| WEB-1080p | space saver, per series | WEB 1080p | plain TRaSH WEB-1080p, Golden Rule HD (x264) |
+
+Shared with both: `[Optional] Language Profiles` (original audio, German via
+subtitles), `[Streaming Services] HD/UHD boost` + `General`, `[Unwanted] Unwanted
+Formats`, TRaSH series size limits. The six stock Sonarr profiles are unused.
+
+Verified 2026-10-19 with *Pioneer One* (2010, CC BY-NC-SA, TVDB 170551), the
+archive.org `S01E01 ... 720p.x264-VODO` mp4 placed in `/data/usenet/complete/tv/<release>/`:
+
+| Step | Result |
+|---|---|
+| Add series (unmonitored, no search) | `/data/media/tv/Pioneer One (2010) [tvdbid-170551]` |
+| Interactive search (never grabs) | 1080p AMZN WEB-DL scored 1725 accepted; two 720p HDTV releases rejected (not in profile) |
+| `DownloadedEpisodesScan`, Move | `Season 01/Pioneer One (2010) - S01E01 - Earthfall [SDTV][AAC 2.0][x264]-VODO.mp4`, release folder removed, file on `ssd-hot` (the archive mp4 is really 640x360, so MediaInfo said SDTV, not the 720p of the name - correct) |
+| Jellyfin | `/Library/Media/Updated` sent; the new Shows library needed one full scan first (empty-library gotcha), then TVDB/IMDb/TMDB ids, overview, poster, backdrop, trickplay, and `/media/tv` is watched |
+| Bazarr | series synced with profile English + German, 4 missing subtitles listed; the search is a no-op because the only enabled provider (YIFY) is movies-only - add OpenSubtitles.com / SubDL / SubSource (To do) |
+
 ### Verified 2026-10-19
 
 Test file: Netflix Open Content *Meridian* (CC BY 4.0). Netflix publishes no
@@ -399,12 +450,13 @@ with QSV to HEVC Main10, BT.2020/PQ, E-AC3 5.1, 1.4 GB — a legal derivative.
             └───────────┬───────────────────────┘
                         │ movie-downloads bridge, 172.28.10.0/24
        ┌────────────────┼────────────────┐
-   SABnzbd :8081    Radarr :7878    Bazarr :6767
+   SABnzbd :8081   Radarr :7878   Sonarr :8989   Bazarr :6767   (+ Seerr :5055 from ../Seerr)
 ```
 
 qBittorrent and Prowlarr are inside the tunnel because they talk to trackers and
 peers. SABnzbd is outside it on purpose: usenet is already TLS, it never seeds,
-and a VPN hiccup cannot stall a download. `FIREWALL_OUTBOUND_SUBNETS` in `.env`
+and a VPN hiccup cannot stall a download. Radarr, Sonarr and Bazarr only talk to
+the LAN and metadata APIs. `FIREWALL_OUTBOUND_SUBNETS` in `.env`
 **must** list the bridge subnet, or gluetun silently drops the arr apps' replies
 and Radarr cannot see qBittorrent at all.
 
@@ -419,7 +471,7 @@ which looks exactly like a dead tracker.
 ## Auth: Authentik is the only login
 
 Every UI in this stack sits behind Authentik forward auth on fastpi's Traefik, and the
-apps' own logins are turned off — Radarr/Prowlarr auth = `External`, Bazarr = `None`,
+apps' own logins are turned off — Radarr/Sonarr/Prowlarr auth = `External`, Bazarr = `None`,
 SABnzbd username/password empty, qBittorrent bypassed for the proxy subnet. Full
 setup, including the Authentik objects that must be created by hand, is in
 `HomeLab-FastPi` → `Docker/Traefik/docs/2026-10-06-authentik-sso.md`.
@@ -430,12 +482,12 @@ without them every route breaks. Close the LAN bypass with ufw instead, allowing
 fastpi:
 
 ```bash
-sudo ufw allow from 192.168.1.2 to any port 7878,9696,6767,8080,8081,8096 proto tcp
-sudo ufw deny  to any port 7878,9696,6767,8080,8081,8096 proto tcp
+# DOCKER-USER rule in /etc/iptables/rules.v4 (+ the IPv6 INPUT rule in rules.v6), persisted with netfilter-persistent
+# ports: 7878 radarr, 8989 sonarr, 9696 prowlarr, 6767 bazarr, 8080 qbit, 8081 sab, 8096 jellyfin, 8000 cup, 9001 portainer agent, 5055 seerr
+sudo iptables -S DOCKER-USER
 ```
 
-Until that is in place, anyone on the LAN can reach every one of these apps with no
-login at all.
+ufw was the wrong tool (Docker bypasses it); the DOCKER-USER rule is what is in place.
 
 ## Known trade-off: seeding on a host that sleeps
 
@@ -451,5 +503,6 @@ on fastpi's always-on `mouse` stack — that split is deliberate, not an oversig
 ## Related
 
 - `../Jellyfin` — playback, reads `/srv/video/media` read-only
+- `../Seerr` — requests from users, talks to Radarr and Sonarr over this bridge
 - `../../Server/3-Storage-Layout-and-Spindown.md` — mergerfs tiers, demotion
 - `../../Server/8-Idle-Watcher.md` — what counts as idle, and `beefy-keep-awake`

@@ -160,12 +160,34 @@ services:
       - movie-downloads
 
 # #########################################################
+# SONARR ##################################################
+# #########################################################
+# Series. Same shape as Radarr: one /data mount (hardlinks), qBittorrent at
+# gluetun:8080 (category sonarr), SABnzbd at sabnzbd:8080 (category tv).
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:4.0.20
+    container_name: movie-sonarr
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - UMASK=${UMASK}
+    volumes:
+      - ${APPDATA_ROOT}/sonarr:/config
+      - ${DATA_ROOT}:/data
+    ports:
+      - "${SONARR_PORT}:8989"
+    networks:
+      - movie-downloads
+
+# #########################################################
 # RECYCLARR ###############################################
 # #########################################################
-# Keeps Radarr's custom formats, scores, quality profiles, quality sizes and
-# naming in step with TRaSH Guides. The whole policy is ./recyclarr/recyclarr.yml
-# (in git); edit that, not the Radarr UI. Runs on its own cron, no ports, no
-# docker.sock. Run a sync by hand with:
+# Keeps Radarr's and Sonarr's custom formats, scores, quality profiles, quality
+# sizes and naming in step with TRaSH Guides. The whole policy is
+# ./recyclarr/recyclarr.yml (in git); edit that, not the Radarr/Sonarr UI. Runs
+# on its own cron, no ports, no docker.sock. Run a sync by hand with:
 #   docker compose run --rm recyclarr sync
   recyclarr:
     image: ghcr.io/recyclarr/recyclarr:8.7.3
@@ -174,12 +196,14 @@ services:
     user: ${PUID}:${PGID}
     depends_on:
       - radarr
+      - sonarr
     environment:
       - TZ=${TZ}
       # Inside the nightly window beefy is woken for (03:55), so a sync happens
       # even though the box sleeps most of the day. Missed runs are not caught up.
       - CRON_SCHEDULE=${RECYCLARR_CRON}
       - RADARR_API_KEY=${RADARR_API_KEY}
+      - SONARR_API_KEY=${SONARR_API_KEY}
     volumes:
       # Writable: Recyclarr caches the guide repos and its sync state here.
       - ${APPDATA_ROOT}/recyclarr:/config
