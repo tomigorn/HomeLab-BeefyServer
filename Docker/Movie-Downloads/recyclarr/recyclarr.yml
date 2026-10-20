@@ -99,13 +99,42 @@ radarr:
       # custom format and score of the main 4K profile (languages, rejects, HDR
       # rules), but anything from SDTV/DVD up is allowed, so a title that only
       # exists on DVD is grabbed now and upgraded towards 4K when better appears.
-      # Not moved by scripts/language-policy.sh (it only swaps main and twin).
+      # language-policy-hook.sh puts new old/niche titles here (README "Old and rare titles"); English originals use the twin below.
       - trash_id: 64fb5f9858489bdac2af690e27c8f42f  # UHD Bluray + WEB
         name: Any quality - old & rare (upgrades to 4K)
         reset_unmatched_scores:
           enabled: true
           except:
             - "Language: Original + English"
+        upgrade:
+          allowed: true
+          until_quality: Bluray-2160p
+          until_score: 20000
+        min_format_score: 0
+        qualities:
+          - name: Bluray-2160p
+          - name: WEB 2160p
+            qualities: [WEBRip-2160p, WEBDL-2160p]
+          - name: Bluray-1080p
+          - name: WEB 1080p
+            qualities: [WEBRip-1080p, WEBDL-1080p]
+          - name: HDTV-1080p
+          - name: Bluray-720p
+          - name: WEB 720p
+            qualities: [WEBRip-720p, WEBDL-720p]
+          - name: HDTV-720p
+          - name: Bluray-576p
+          - name: Bluray-480p
+          - name: WEB 480p
+            qualities: [WEBRip-480p, WEBDL-480p]
+          - name: DVD
+          - name: SDTV
+
+      # Same profile for English-original titles (language-policy.sh and the hook switch them), `Language: Original + English` 0.
+      - trash_id: 64fb5f9858489bdac2af690e27c8f42f  # UHD Bluray + WEB
+        name: Any quality - old & rare (upgrades to 4K) - English original
+        reset_unmatched_scores:
+          enabled: true
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
@@ -167,6 +196,7 @@ radarr:
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
           - name: Any quality - old & rare (upgrades to 4K)
+          - name: Any quality - old & rare (upgrades to 4K) - English original
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
 
       # German + original audio (TRaSH "German DL"): 20000 beats any English-only
@@ -181,6 +211,8 @@ radarr:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             score: 20000
           - name: Any quality - old & rare (upgrades to 4K)
+            score: 20000
+          - name: Any quality - old & rare (upgrades to 4K) - English original
             score: 20000
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: 20000
@@ -216,6 +248,8 @@ radarr:
             score: -50000
           - name: Any quality - old & rare (upgrades to 4K)
             score: -50000
+          - name: Any quality - old & rare (upgrades to 4K) - English original
+            score: -50000
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: -50000
           - name: HD Bluray + WEB
@@ -240,6 +274,8 @@ radarr:
             score: -50000
           - name: Any quality - old & rare (upgrades to 4K)
             score: -50000
+          - name: Any quality - old & rare (upgrades to 4K) - English original
+            score: -50000
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: -50000
       - trash_ids:
@@ -256,6 +292,7 @@ radarr:
           assign_scores_to:
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             - name: Any quality - old & rare (upgrades to 4K)
+            - name: Any quality - old & rare (upgrades to 4K) - English original
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
         - trash_id: f8bf8eab4617f12dfdbd16303d8da245  # [Optional] Golden Rule HD
           assign_scores_to:
@@ -270,6 +307,7 @@ radarr:
           assign_scores_to:
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             - name: Any quality - old & rare (upgrades to 4K)
+            - name: Any quality - old & rare (upgrades to 4K) - English original
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
         # "4K HDR wherever possible": a 2160p release without HDR is rejected, so
         # an SDR-only 4K (usually an upscale) loses to the 1080p tier instead.
@@ -279,6 +317,7 @@ radarr:
           assign_scores_to:
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             - name: Any quality - old & rare (upgrades to 4K)
+            - name: Any quality - old & rare (upgrades to 4K) - English original
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
       # Default groups that stay ON: [Audio] Audio Formats, [HDR Formats] HDR,
       # [Streaming Services] General, and for the anime profile its own groups
@@ -372,6 +411,35 @@ sonarr:
           - name: DVD
           - name: SDTV
 
+      # Same profile for English-original titles (language-policy.sh and the hook switch them), `Language: Original + English` 0.
+      - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7  # WEB-2160p (Combined)
+        name: Any quality - old & rare (upgrades to 4K) - English original
+        reset_unmatched_scores:
+          enabled: true
+        upgrade:
+          allowed: true
+          until_quality: WEB 2160p
+          until_score: 20000
+        min_format_score: 0
+        qualities:
+          - name: WEB 2160p
+            qualities: [WEBRip-2160p, WEBDL-2160p]
+          - name: Bluray-2160p
+          - name: WEB 1080p
+            qualities: [WEBRip-1080p, WEBDL-1080p]
+          - name: Bluray-1080p
+          - name: HDTV-1080p
+          - name: WEB 720p
+            qualities: [WEBRip-720p, WEBDL-720p]
+          - name: Bluray-720p
+          - name: HDTV-720p
+          - name: Bluray-576p
+          - name: WEB 480p
+            qualities: [WEBRip-480p, WEBDL-480p]
+          - name: Bluray-480p
+          - name: DVD
+          - name: SDTV
+
       # Space saver, picked per series: plain TRaSH "WEB-1080p".
       - trash_id: 72dae194fc92bf828f32cde7744e51a1  # WEB-1080p
         reset_unmatched_scores:
@@ -409,6 +477,8 @@ sonarr:
             score: 20000
           - name: Any quality - old & rare (upgrades to 4K)
             score: 20000
+          - name: Any quality - old & rare (upgrades to 4K) - English original
+            score: 20000
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: 20000
           - name: WEB-1080p
@@ -435,6 +505,8 @@ sonarr:
             score: -50000
           - name: Any quality - old & rare (upgrades to 4K)
             score: -50000
+          - name: Any quality - old & rare (upgrades to 4K) - English original
+            score: -50000
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: -50000
           - name: WEB-1080p
@@ -457,6 +529,8 @@ sonarr:
             score: -50000
           - name: Any quality - old & rare (upgrades to 4K)
             score: -50000
+          - name: Any quality - old & rare (upgrades to 4K) - English original
+            score: -50000
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: -50000
       - trash_ids:
@@ -472,6 +546,7 @@ sonarr:
           assign_scores_to:
             - name: 4K HDR - WEB-2160p (1080p fallback)
             - name: Any quality - old & rare (upgrades to 4K)
+            - name: Any quality - old & rare (upgrades to 4K) - English original
             - name: 4K HDR - WEB-2160p (1080p fallback) - English original
         - trash_id: 158188097a58d7687dee647e04af0da3  # [Optional] Golden Rule HD
           assign_scores_to:
@@ -493,6 +568,7 @@ sonarr:
           assign_scores_to:
             - name: 4K HDR - WEB-2160p (1080p fallback)
             - name: Any quality - old & rare (upgrades to 4K)
+            - name: Any quality - old & rare (upgrades to 4K) - English original
             - name: 4K HDR - WEB-2160p (1080p fallback) - English original
         - trash_id: e1053c0ef622df3749fa43c22865663a  # [HDR Formats] SDR
           select:
@@ -500,6 +576,7 @@ sonarr:
           assign_scores_to:
             - name: 4K HDR - WEB-2160p (1080p fallback)
             - name: Any quality - old & rare (upgrades to 4K)
+            - name: Any quality - old & rare (upgrades to 4K) - English original
             - name: 4K HDR - WEB-2160p (1080p fallback) - English original
       # Default groups that stay ON: [HDR Formats] HDR, [Streaming Services] General,
       # and for the anime profile its own groups ([Release Groups] Anime,
