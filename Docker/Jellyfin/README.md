@@ -331,11 +331,12 @@ exposes a password path, but it should be closed with an `ip6tables` INPUT DROP 
 `enp6s0` for the same port list, persisted with `netfilter-persistent save`.
 
 ## Tracker (Ryot): watch history per member (2026-10-20)
-Jellyfin posts each member's playback to their own Ryot account on fastpi (`HomeLab-FastPi` → `Docker/Ryot/`). One webhook per Jellyfin user, bound by `UserId`, so one member's playback never lands in another member's Tracker.
+Jellyfin posts each member's playback to their own Ryot account (`Docker/Ryot/` here on beefy, routed through fastpi Traefik). One webhook per Jellyfin user, bound by `UserId`, so one member's playback never lands in another member's Tracker.
 
 | Plugin | Repo | Version | Config |
 |---|---|---|---|
 | Webhooks (shemanaev) | `https://raw.githubusercontent.com/shemanaev/jellyfin-plugin-repo/master/manifest.json` | 3.10.0.120000 (Jellyfin shows 3.10.0.0) | `/config/data/plugins/configurations/Jellyfin.Webhooks.xml`, holds the secret integration URLs, not in git |
+| JavaScript Injector (n00bcodr) | `https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/12/manifest.json` | 4.0.0.0 | `/config/data/plugins/configurations/Jellyfin.Plugin.JavaScriptInjector.xml`, entry "Rate in Tracker" written by `tracker-link.py` |
 
 - Not the official "Webhook" plugin: its payload has only the episode's own ids, and 12.1 episodes have no TMDB id. shemanaev's "Default" format nests the series with its TMDB id, so episodes land on their show.
 - Route: `extra_hosts` sends `tracker.holy-grail.ch` to fastpi over the LAN; `/_i/` is LAN-only (403 via Cloudflare).
@@ -357,4 +358,17 @@ Jellyfin posts each member's playback to their own Ryot account on fastpi (`Home
 | New URL (regenerated in Ryot) | `python3 tracker-webhook.py add <user>` again, replaces the hook |
 | Remove a member | `python3 tracker-webhook.py remove <user>` |
 | Tests | `python3 -m unittest -v` |
-| Not arriving | `sudo docker logs jellyfin 2>&1 \| grep -i webhook \| tail` here, `docker logs ryot \| grep -i integration \| tail` on fastpi |
+| Not arriving | `sudo docker logs jellyfin 2>&1 \| grep -i webhook \| tail` here, `sudo docker logs ryot 2>&1 \| grep -i integration \| tail` |
+
+### "Rate in Tracker" link
+Film, series, season and episode pages in Jellyfin web get a "Rate in Tracker" link next to the TMDB/IMDb links. It opens `https://tracker.holy-grail.ch/go/tmdb/<movie|show>/<id>?title=…`; `ryot-go` (`Docker/Ryot/go/`) opens the Ryot item, or Ryot's search when the title is not in Ryot yet. Episodes and seasons link to their show. No TMDB id = no link. Web only, apps and TV have none.
+
+- Script: `tracker-link/rate-in-tracker.js`, served by JavaScript Injector from `private.js` (signed-in users only).
+- Not johnpc's Custom JavaScript: deprecated, and it rewrites `index.html` on disk (root-owned in the LSIO image). JavaScript Injector rewrites the response.
+
+| Task | Command (in `Docker/Jellyfin/`) |
+|---|---|
+| Tests (JS) | `sudo docker run --rm -v "$PWD":/w -w /w node:24-alpine node --test "tracker-link/*.test.mjs"` |
+| Tests (upsert) | `cd scripts && python3 -m unittest -v test_tracker_link` |
+| Push a changed script | `python3 scripts/tracker-link.py` → `upserted Rate in Tracker`, then reload the browser |
+| Check it is served | `curl -s localhost:8096/web/index.html \| grep -c -i injector` → ≥ 1 |
