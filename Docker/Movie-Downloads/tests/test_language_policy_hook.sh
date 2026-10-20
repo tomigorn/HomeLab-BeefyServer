@@ -18,6 +18,7 @@ PROFILES = [{"id": 3, "name": "Anime - Bluray + WEB 1080p"},
             {"id": 7, "name": "4K HDR - UHD Bluray + WEB (1080p fallback)"},
             {"id": 10, "name": "4K HDR - UHD Bluray + WEB (1080p fallback) - English original"},
             {"id": 11, "name": "Any quality - old & rare (upgrades to 4K)"},
+            {"id": 12, "name": "Any quality - old & rare (upgrades to 4K) - English original"},
             {"id": 17, "name": "4K HDR - WEB-2160p (1080p fallback)"},
             {"id": 20, "name": "4K HDR - WEB-2160p (1080p fallback) - English original"}]
 class H(http.server.BaseHTTPRequestHandler):
@@ -58,10 +59,15 @@ printf '<Config>\n  <Port>%s</Port>\n  <UrlBase>/base</UrlBase>\n  <ApiKey>wrong
 run() {
   echo "$1" > "$T/state.json"; shift
   : > "$T/requests"
-  env -i PATH="$PATH" LP_CONFIG="${CONFIG:-$T/config.xml}" "$@" bash "$HOOK" > "$T/out" 2>&1; RC=$?
+  env -i PATH="$PATH" LP_CONFIG="${CONFIG:-$T/config.xml}" LP_YEAR=2026 "$@" bash "$HOOK" > "$T/out" 2>&1; RC=$?
   grep '^PUT ' "$T/requests" | cut -d' ' -f2- > "$T/puts"
 }
 movie() { echo "{\"$1\": {\"id\": $1, \"title\": \"T\", \"qualityProfileId\": $2, \"originalLanguage\": $3}}"; }
+# film <id> <profile> <language> <year> <tmdb votes>
+film() { echo "{\"$1\": {\"id\": $1, \"title\": \"T\", \"qualityProfileId\": $2, \"originalLanguage\": $3, \"year\": $4, \"ratings\": {\"imdb\": {\"votes\": 900000}, \"tmdb\": {\"votes\": $5}}}}"; }
+# show <id> <profile> <language> <year> <votes>
+show() { echo "{\"$1\": {\"id\": $1, \"title\": \"T\", \"qualityProfileId\": $2, \"originalLanguage\": $3, \"year\": $4, \"ratings\": {\"votes\": $5}}}"; }
+put() { echo "/base/api/v3/$1/editor {\"$2\":[$3],\"qualityProfileId\":$4}"; }
 EN='{"id": 1, "name": "English"}'; ES='{"id": 3, "name": "Spanish"}'
 
 echo "Radarr"
@@ -78,9 +84,39 @@ assert_eq "English original on the twin stays" "" "$(cat "$T/puts")"
 run "$(movie 5 3 "$EN")" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "English original on another profile (anime) stays" "" "$(cat "$T/puts")"
 run "$(movie 5 11 "$EN")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "English original on Any quality stays" "" "$(cat "$T/puts")"
+assert_eq "English original on Any quality moves to its twin" "$(put movie movieIds 5 12)" "$(cat "$T/puts")"
 run "$(movie 5 11 "$ES")" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "Spanish original on Any quality stays" "" "$(cat "$T/puts")"
+run "$(movie 5 12 "$ES")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "Spanish original on the Any twin moves back to Any" "$(put movie movieIds 5 11)" "$(cat "$T/puts")"
+
+echo "Radarr: old and niche films"
+run "$(film 5 7 "$ES" 2014 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "film from 2014 (now - 12) on main moves to Any quality" "$(put movie movieIds 5 11)" "$(cat "$T/puts")"
+run "$(film 5 7 "$EN" 1968 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "old English film on main moves to the Any twin" "$(put movie movieIds 5 12)" "$(cat "$T/puts")"
+run "$(film 5 10 "$EN" 1968 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "old English film on the twin moves to the Any twin" "$(put movie movieIds 5 12)" "$(cat "$T/puts")"
+run "$(film 5 7 "$ES" 2015 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "popular film from 2015 stays on main" "" "$(cat "$T/puts")"
+run "$(film 5 7 "$EN" 2020 99)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "niche film (99 TMDB votes) moves to the Any twin" "$(put movie movieIds 5 12)" "$(cat "$T/puts")"
+run "$(film 5 7 "$ES" 2020 100)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "100 TMDB votes is not niche" "" "$(cat "$T/puts")"
+run "$(film 5 7 "$ES" 2025 10)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "few votes on a film from last year is not niche" "" "$(cat "$T/puts")"
+run "$(film 5 7 "$ES" 2024 10)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "few votes on a film 2 years old is niche" "$(put movie movieIds 5 11)" "$(cat "$T/puts")"
+run "$(film 5 7 "$ES" 0 0)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "unknown year (0) stays on main" "" "$(cat "$T/puts")"
+run "{\"5\": {\"id\": 5, \"qualityProfileId\": 7, \"originalLanguage\": $ES, \"year\": 2020, \"ratings\": {}}}" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "no TMDB rating on an older film counts as niche" "$(put movie movieIds 5 11)" "$(cat "$T/puts")"
+run "$(film 5 3 "$ES" 1968 5)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "old niche film on another profile (anime) stays" "" "$(cat "$T/puts")"
+run "$(film 5 11 "$ES" 2025 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "new popular film put on Any quality by the requester stays" "" "$(cat "$T/puts")"
+run "$(film 5 7 "$EN" 1968 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "  the log line names the reason" "movie 5: profile 7 -> 12 (old: 1968, English original)" "$(cat "$T/out")"
 run "$(movie 5 7 null)" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "no original language counts as not English" "" "$(cat "$T/puts")"
 run "{}" radarr_eventtype=Test
@@ -102,7 +138,17 @@ assert_eq "Spanish original on the twin moves back to main" '/base/api/v3/series
 run "$(movie 8 3 "$EN")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "English anime-profile series stays" "" "$(cat "$T/puts")"
 run "$(movie 8 11 "$EN")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
-assert_eq "English series on Any quality stays" "" "$(cat "$T/puts")"
+assert_eq "English series on Any quality moves to its twin" "$(put series seriesIds 8 12)" "$(cat "$T/puts")"
+run "$(show 8 17 "$ES" 2014 500000)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "series from 2014 on main moves to Any quality" "$(put series seriesIds 8 11)" "$(cat "$T/puts")"
+run "$(show 8 17 "$EN" 2015 500000)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "popular English series from 2015 moves to the twin only" "$(put series seriesIds 8 20)" "$(cat "$T/puts")"
+run "$(show 8 20 "$EN" 2018 999)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "niche English series (999 votes) moves to the Any twin" "$(put series seriesIds 8 12)" "$(cat "$T/puts")"
+run "$(show 8 17 "$ES" 2018 1000)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "1000 votes is not niche" "" "$(cat "$T/puts")"
+run "$(show 8 3 "$ES" 1990 5)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "old niche anime-profile series stays" "" "$(cat "$T/puts")"
 run "{}" sonarr_eventtype=Test
 assert_eq "Test event exits 0 and calls nothing" "0|" "$RC|$(cat "$T/requests")"
 
