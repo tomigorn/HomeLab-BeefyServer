@@ -1,0 +1,6 @@
+[Unit]
+Description=Household playback defaults for new Jellyfin users
+
+[Service]
+Type=oneshot
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/user-defaults.py

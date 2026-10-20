@@ -4,8 +4,7 @@ Serves the movie library that `../Movie-Downloads` fills, with **QuickSync
 hardware transcoding** on the i5-11400's UHD 730. Public at
 `https://jellyfin.holy-grail.ch`, and a request **wakes beefy** if it is asleep.
 
-**Not deployed yet.** This folder is scaffolding; see the prerequisites below, and
-note the Traefik half lives in the *other* repo.
+Live since 2026-10-09; the Traefik half lives in the *other* repo (HomeLab-FastPi).
 
 Deliberately a separate compose project from the download stack: restarting the
 downloaders has no business interrupting playback, and the library outlives any
@@ -238,7 +237,7 @@ otherwise keep the media disks spinning.
 Set via the API (they live in /config, not in this repo):
 
 - **Networking:** Known proxies `192.168.1.2` (Traefik on fastpi), LAN networks
-  `192.168.1.0/24` + `172.24.0.5/32` (the wg-easy VPN NAT address). Without this every
+  `192.168.1.0/24` + `172.24.255.5/32` (the wg-easy VPN NAT address, moved from 172.24.0.5 on 2026-10-20). Without this every
   client looked like fastpi, so internet viewers counted as "local". No remote bitrate
   limit on purpose: most viewers are remote.
 - **Trickplay (seek previews):** hardware decode + hardware MJPEG encode, key frames only,
@@ -264,7 +263,11 @@ Plugin: **OIDC Authentication 0.3.4.0** (`edmogeor/jellyfin-plugin-oidc`, repo
 `https://raw.githubusercontent.com/edmogeor/jellyfin-plugin-oidc/manifest-release/manifest.json`),
 config in `/config/data/plugins/configurations/Jellyfin.Plugin.Oidc.xml` (holds the
 client secret; not in this repo). Authentik app `jellyfin`, groups `streaming-users`
-(sign in) and `streaming-admins` (Jellyfin administrator, re-evaluated at every sign-in).
+(sign in) and `streaming-admins` (Jellyfin administrator). The plugin sets or removes
+administrator at every OIDC sign-in (`OidcUserProvisioner.cs`, v0.3.4.0); it reads only
+direct groups from the token, so the groups are independent (HomeLab-FastPi
+`Authentik/scripts/provision-media-groups.py`). Losing every allowed group blocks new
+sign-ins only; running sessions stay until revoked in Dashboard -> Devices.
 
 | Setting (Dashboard -> Plugins -> OIDC Authentication) | Value | Why |
 |---|---|---|
@@ -323,12 +326,54 @@ and `data/data/jellyfin.db.bak-2026-10-18-pre-oidc-only`.
 
 Published on `0.0.0.0:8096` because Traefik on fastpi connects over the LAN. The
 `DOCKER-USER` rule (`! -s 192.168.1.2 -i enp6s0 ... --dports ...,8096,... -j DROP`,
-see `../Cup-Agent/README.md`) limits IPv4 to fastpi. **Open issue (2026-10-18):**
-docker-proxy also listens on `[::]:8096`, and beefy's IPv6 link-local address
-(`fe80::7656:3cff:fe96:79a3`) reaches it from any LAN host, bypassing that IPv4 rule
-(same for the arr ports). Since password login is refused server-side this no longer
-exposes a password path, but it should be closed with an `ip6tables` INPUT DROP on
-`enp6s0` for the same port list, persisted with `netfilter-persistent save`.
+see `../Cup-Agent/README.md`) limits IPv4 to fastpi; an `ip6tables` INPUT DROP on
+`enp6s0` for the same ports closes IPv6 (since 2026-10-18, `/etc/iptables/rules.v6`).
+Checked 2026-10-20 from a second LAN address: every app port times out, from fastpi they answer.
+
+## Audio and subtitle language per user (2026-10-20)
+Server-side per user, so every client that takes the server's track choice follows it.
+
+| Setting (web: profile -> Settings) | Page | Default for new users |
+|---|---|---|
+| Preferred audio language | Playback | **Original language** |
+| Play default audio track regardless of language | Playback | **off** (on = the track flagged default wins over the language, often a dub) |
+| Remember audio selections | Playback | on |
+| Preferred subtitle language | Subtitles | empty: pick yours |
+| Subtitle mode | Subtitles | **Smart**: subtitles when the audio is not in your subtitle language, otherwise forced only |
+| Remember subtitle selections | Playback | on |
+
+- "Remember": a track you pick is stored per user **per film/episode** and used next time; the next episode in a queue keeps your pick (web/phone). A new episode otherwise starts with your language settings.
+- Jellyfin has no default user settings: `scripts/user-defaults.py` (user timer `systemd/jellyfin-user-defaults.timer`, every minute) gives each NEW user the column above once and never touches them again. Users present at install were only switched to "remember" (tomigorn already was: audio preference empty, play default track on, subtitles empty, mode Default).
+- Tell new members: set **Preferred subtitle language**, otherwise Smart shows forced subtitles only.
+
+| Client | Uses these settings | Where to change them |
+|---|---|---|
+| Web, Jellyfin Android app, Jellyfin iOS app (wrap the web client) | yes | in the app: Settings -> Playback / Subtitles |
+| Android TV app (0.19.10) | yes, server's default tracks; inside one play queue it keeps the audio language you picked | no settings page: change them in web or phone |
+| Swiftfin (iOS, 1.6.1) | yes, server's default tracks | no settings page in 1.6.1: web or phone |
+
+Sources: jellyfin v12.1 `MediaSourceManager.cs` / `MediaStreamSelector.cs`, jellyfin-androidtv v0.19.10 `PlaybackController.java`, jellyfin-android `JellyfinMediaSource.kt`, Swiftfin 1.6.1 `MediaPlayerItem.swift`.
+
+| Task | Command (in `scripts/`) |
+|---|---|
+| Install timer | `cp ../systemd/jellyfin-user-defaults.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now jellyfin-user-defaults.timer` |
+| What it would do | `./user-defaults.py --dry-run` |
+| Handled users | `cat ~/.local/state/jellyfin-user-defaults.json` (delete = re-adopt everyone, changes nothing) |
+| Log | `journalctl --user -u jellyfin-user-defaults.service --since today` |
+| Tests | `python3 -m unittest -v test_user_defaults` |
+
+## Playback
+Server side is done (Dashboard -> Playback): QSV decode + low-power encode, VPP tone mapping, HEVC encoding allowed, throttling + segment deletion, fallback font, trickplay, no remote bitrate limit, known proxy fastpi so LAN/VPN vs internet is judged right. No per-film playback profile exists in Jellyfin; per film only the remembered tracks (above) and, for films with several versions, the version menu.
+
+Per device (stored on the device, not on the server):
+
+| Client | Recommended |
+|---|---|
+| Web | Settings -> Playback: max streaming bitrate **Auto** (kept separately for home and away), "Prefer fMP4-HLS" **on** (default), audio channels **Auto**, DTS/TrueHD **off** (browsers cannot pass them through) |
+| Android TV | Settings -> Playback: max bitrate default 100 Mbps; raise it at home for 4K remuxes, lower it away if it buffers. Audio: **Direct stream** with an AV receiver/soundbar, **Downmix to stereo** on TV speakers; AC3 bitstream on (default); player ExoPlayer (default) |
+| Phone apps | max bitrate **Auto** |
+
+Direct play (no transcode) is always best; the server transcodes only what the device cannot play.
 
 ## Tracker (Ryot): watch history per member (2026-10-20)
 Jellyfin posts each member's playback to their own Ryot account (`Docker/Ryot/` here on beefy, routed through fastpi Traefik). One webhook per Jellyfin user, bound by `UserId`, so one member's playback never lands in another member's Tracker.
@@ -372,3 +417,10 @@ Film, series, season and episode pages in Jellyfin web get a "Rate in Tracker" l
 | Tests (upsert) | `cd scripts && python3 -m unittest -v test_tracker_link` |
 | Push a changed script | `python3 scripts/tracker-link.py` → `upserted Rate in Tracker`, then reload the browser |
 | Check it is served | `curl -s localhost:8096/web/index.html \| grep -c -i injector` → ≥ 1 |
+
+### Rating on TV and phone
+Jellyfin's TV and phone apps have only the heart (favourite) and "played"; no app has stars (jellyfin-androidtv `ItemMutationRepository.kt`), and Ryot has no native app.
+
+- Phone: open `https://tracker.holy-grail.ch`, browser menu -> **Install app** / **Add to Home screen**. Ryot is a PWA; its manifest and icons are reachable without sign-in for that (HomeLab-FastPi `Traefik/traefik/dynamic/tracker.yml`, router `tracker-pwa`).
+- TV: rate later on the phone; the TV app has no rating.
+- Not built: hearts -> Ryot. Ryot's Jellyfin Sink ignores favourites; the way would be a per-member Ryot "Generic JSON" integration URL plus a nightly job that posts Jellyfin favourites into a Ryot collection. It needs each member's own URL (only creatable in their Ryot session) and a real test, so it waits for a decision.
