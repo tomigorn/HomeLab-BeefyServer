@@ -87,7 +87,7 @@ print(",".join(str(t["id"]) for t in items if t["qualityProfileId"]==m and eng(t
 
   # The same move for every title added from now on, before its first search:
   # Connect "Custom Script" on add, running scripts/language-policy-hook.sh.
-  # Radarr also gets the wrong-film guard on grab (scripts/grab-guard.sh).
+  # Radarr and Sonarr also get the wrong-film guard on grab (scripts/grab-guard.sh).
   connect() { # connect <app> <name> <on-event field> <script path>
     local nid note
     nid=$(api $1 /notification | py 'import json,sys; r=[n["id"] for n in json.load(sys.stdin) if n["name"]==sys.argv[1]]; print(r[0] if r else "")' "$2")
@@ -104,7 +104,7 @@ print(json.dumps(n))' "$2" "$3" "$4" "$nid")
   }
   case $app in
     radarr) connect radarr "$HOOK_NAME" onMovieAdded "$HOOK_PATH"; connect radarr "$GUARD_NAME" onGrab "$GUARD_PATH";;
-    sonarr) connect sonarr "$HOOK_NAME" onSeriesAdd "$HOOK_PATH";;
+    sonarr) connect sonarr "$HOOK_NAME" onSeriesAdd "$HOOK_PATH"; connect sonarr "$GUARD_NAME" onGrab "$GUARD_PATH";;
   esac
 
   # Per-request tags. audio-xx: a release profile scoped to the tag requires the
