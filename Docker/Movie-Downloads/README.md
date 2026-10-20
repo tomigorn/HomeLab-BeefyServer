@@ -227,6 +227,8 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
   and its download-side link — the library link is untouched.
 - Identity: every container runs as `1000:1000`, `UMASK=002`; folders are
   `2775` setgid `buntu`. Radarr's own "Set Permissions" is off (not needed).
+  SABnzbd "Permissions for completed downloads" = `775` (since 2026-10-20: files unpacked from RARs kept the archive's `644`).
+- SABnzbd unwanted extensions (since 2026-10-20): `exe bat cmd com scr pif lnk msi msp ps1 vbs vbe js jse jar hta wsf wsh cpl reg dll apk` → job aborted (fake-video malware releases), on top of the ClamAV scan.
 
 ### Indexers (Prowlarr)
 
@@ -501,7 +503,7 @@ Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defi
   (free account, username/password in Bazarr; `use_hash` on, AI-translated and
   machine-translated subtitles **off**). Still possible: **SubDL** and **SubSource**
   (API keys).
-- Missing-subs search every 24 h (was 6 h): providers that hash the file read it,
+- Missing-subs search every 24 h for movies and series (series was still 6 h until 2026-10-20): providers that hash the file read it,
   which would wake the HDD for demoted movies.
 
 ### Jellyfin
@@ -623,6 +625,44 @@ with QSV to HEVC Main10, BT.2020/PQ, E-AC3 5.1, 1.4 GB — a legal derivative.
 | Trickplay | 72 tiles at 320 px, created during the refresh in ~3 s (hardware, key frames only) |
 | Bazarr | SignalR event → search at import; YIFY: 404 "No subtitles found" (no provider has this short). Official English CC subtitles (EBU STL from Netflix) converted to SRT and placed as `<movie>.en.srt`; Bazarr indexed it, Jellyfin shows it as external `subrip` `eng` |
 | Transcode | HLS 1080p/8 Mbps: VA-API decode → `scale_vaapi` → `tonemap_vaapi` (HDR10→BT.709) → `h264_qsv -low_power 1`, 119 fps (2× real time for 4K60); stopped via `DELETE /Videos/ActiveEncodings` |
+
+### Pipeline check
+
+```bash
+RK=$(grep -oP '(?<=<ApiKey>)[^<]+' /srv/appdata/radarr/config.xml)
+curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/config/mediamanagement | jq '{copyUsingHardlinks,importExtraFiles}'
+curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/config/downloadclient | jq '{enableCompletedDownloadHandling}'
+curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/downloadclient | jq '.[] | {name,removeCompletedDownloads}'
+curl -s -H "X-Api-Key: $RK" -H 'Content-Type: application/json' -X POST localhost:7878/api/v3/notification/test -d "$(curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/notification/1)"   # {} = Jellyfin reachable
+curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/releaseprofile | jq -r '.[].name'
+grep -a 'language-policy-hook\|grab-guard' /srv/appdata/radarr/logs/radarr.debug.txt | tail
+sudo docker exec movie-qbittorrent curl -s localhost:8080/api/v2/app/preferences | jq '{max_ratio,max_seeding_time,max_ratio_act,autorun_program}'
+```
+
+Same for Sonarr on `8989` with `/srv/appdata/sonarr/config.xml`.
+
+### Verified 2026-10-20: Seerr request to Jellyfin
+
+*His Girl Friday* (1940, public domain, TMDB 3085), requested with `POST /api/v1/request` (Seerr API key, owner):
+
+| Time | Step | Evidence |
+|---|---|---|
+| 03:35:34 | Seerr → Radarr add, hook | `movie 12: profile 7 -> 12 (old: 1940, English original)` |
+| 03:35:37 | search, grab | `His.Girl.Friday.(1940).(2160p.BluRay.x265.HEVC.10bit.DV.HDR.FLAC.2.0.r00t)`, Treasure Maps, 16.4 GB, CF 22750 |
+| 03:37:46 | SABnzbd download done | ~110 MB/s |
+| 03:39:57 | par2 verify + unpack done | |
+| 03:42:19 | ClamAV hook done | 12 files scanned, 0 infected, the 12 GB main file skipped (over clamd's size limit) |
+| 03:43:00 | import | moved (usenet): same inode `253466871261803363` in `complete/` and `media/`, link count 1 (hardlink count 2 is the torrent case); `His Girl Friday (1940) [tmdbid-3085] - [German DL][Bluray-2160p][FLAC 2.0][DV HDR10][x265]-r00t.mkv` |
+| 03:43:00 | Connect → Jellyfin | `POST /Library/Media/Updated` 204 |
+| 03:44:00 | Jellyfin refresh (+60 s `LibraryMonitorDelay`) | item `2747eb9158519689d8192afab4304774`, TMDB + IMDb ids, trickplay |
+| 03:45:00 | Seerr "Jellyfin Recently Added Scan" | media status 5 (Available), request completed |
+| | Bazarr | profile `English + German` (English original); EN + DE embedded (Criterion/Sony tracks) → nothing to download; forced EN/DE: no provider has them |
+
+Tag path, *Plan 9 from Outer Space* (1957, TMDB 10513), requested with tags `audio-de` + `subs-fr`: hook `profile 7 -> 12 (old: 1957, English original)`, `bz-fr` added, Bazarr profile created. No grab, correctly: every non-German release `Does not contain one of the required terms: /\b(german|deutsch|ger|deu)\b/i`, the German DL ones are from LQ group `msd` (−30000), the German-only ones dub-only (−100000).
+
+`subs-` on an existing title (*His Girl Friday*): `subs-fr` → `bz-fr` (French is embedded, nothing missing); `subs-pl` → `bz-fr-pl`, profile `English + German + French + Polish (requested)` → `….pl.srt` from OpenSubtitles.com (score 90 %).
+
+Delete (cleanup): Radarr delete with files → Connect → the Jellyfin item was gone 60 s later.
 
 ## Completion scan
 
