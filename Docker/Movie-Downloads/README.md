@@ -381,11 +381,7 @@ Lives in three places: `recyclarr/recyclarr.yml` (scores), `scripts/language-pol
   Services] Anime` (CR, HIDIVE, …), Anime Raws / LQ groups / `Dubs Only` rejected,
   TRaSH's minimum score 100 (no-name groups are skipped). Anime films: pick the Radarr
   anime profile by hand.
-- Tags: Radarr and Sonarr auto-tagging sets `lang-xx` (es, fr, it, pt, ja, ko, zh, da,
-  sv, nb, nl, ru) from the title's original language on add and on every refresh;
-  Bazarr maps the tag to the matching subtitle profile. English originals carry no
-  tag and keep **English + German**. New language: add it to `LANGS` in the script
-  and re-run it.
+- Tags: Radarr and Sonarr auto-tagging sets `lang-xx` (every language with `subs = yes` in `scripts/languages.tsv`) from the title's original language on add and on every refresh, except while a `subs-xx` tag is present (see [Per-request audio and subtitles](#per-request-audio-and-subtitles)); Bazarr maps the tag to the matching subtitle profile. English originals carry no tag and keep **English + German**. New language: add a row to `scripts/languages.tsv` and re-run the script.
 - Not built: **extra audio tracks by merging two downloads** (download EN+DE and
   EN+ES, copy the Spanish track into the first file). No maintained tool does this
   (Tdarr/Unmanic transcode, they do not add languages); it would be a bespoke
@@ -420,6 +416,34 @@ Bazarr after the sync: Pioneer One (English) → profile `English + German`; Mon
 Heist (Spanish, tag `lang-es`) → `English + German + Spanish`; Frieren (Japanese,
 `lang-ja`) → `English + German + Japanese`. Money Heist and Frieren are in Sonarr
 unmonitored, nothing was grabbed.
+
+### Per-request audio and subtitles
+
+Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defined in `scripts/languages.tsv`, created by `scripts/language-policy.sh`.
+
+| Tag | Meaning | How |
+|---|---|---|
+| `audio-xx` | the release **must** contain that audio language; not grabbed otherwise. Normal ranking on top | tag-scoped Release Profile `audio-xx: <Language> audio required`, required term = the regex in `languages.tsv`, matched against the release name |
+| `subs-xx` | Bazarr also fetches subtitles in that language (on top of EN + DE + original) | hook adds `bz-<original>-<requested…>` and creates the Bazarr profile `English + German + <Original> + <Requested…>` bound to it |
+| `lang-xx` | set automatically (original language), do not pick | auto-tagging |
+| `bz-…` | set by the hook, do not pick | one per subtitle combination |
+
+| Code | Language | `audio-` | `subs-` |
+|---|---|---|---|
+| `gsw` | Swiss German | ✓ (name match, see below) | – (no providers carry it; `de` is always fetched) |
+| `de`, `en` | German, English | ✓ | – (always fetched) |
+| `fr` `it` `es` `ja` `ko` `pt` `nl` `ru` `sv` `da` `nb` `zh` `pl` `tr` | | ✓ | ✓ |
+| `fi` `cs` `hu` `el` `ar` `he` `uk` | | – | ✓ |
+
+- Several `audio-` tags = all of them required (each release profile must match). Several `subs-` tags = one combined Bazarr profile.
+- `audio-<original>` is dropped on add: the original audio is required anyway, and release names of e.g. English films rarely say `English`.
+- Limits of name matching (release profiles see only the name, not the tracks):
+  - **Swiss German** has no Radarr/Sonarr language. Real names (NZBgeek/NzbPlanet search, 2026-10-20): `Swissgerman`, `SwissGerman`, `SWISSGERMAN`, `Swiss.German`, `Schweizerdeutsch`, `Schweizerduetsch`. `Mundart`, `Dialekt`, `CH-DE`, plain `Swiss` are noise and not matched. Nearly only Swiss productions are released that way; Radarr parses them as German.
+  - `audio-en` also accepts `Dual Audio`; `audio-fr` accepts `VFF/VFQ/VF2/TRUEFRENCH` but not plain `MULTi` (it does not say which languages) and not `VOSTFR` (French subtitles).
+  - A language word in the film title (*The French Connection*) satisfies the term.
+- Tags added to an existing title later: re-run `scripts/language-policy.sh` (runs the hook with `LP_TAGS_ONLY=1` for every title with a `subs-` tag).
+- The hook reads the Bazarr key from `secrets/hook/bazarr.apikey` (gitignored, written by the script, mounted at `/secrets:ro`) and reaches `http://bazarr:6767`.
+- Tests: `tests/test_language_policy_hook.sh` (hook), `python3 tests/test_audio_terms.py` (patterns against real names).
 
 ### Subtitles (Bazarr)
 

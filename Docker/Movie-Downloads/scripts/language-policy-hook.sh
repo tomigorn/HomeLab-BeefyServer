@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Radarr/Sonarr Connect "Custom Script" (On Movie Added / On Series Add): puts a new title on the right profile before its first search (README "Languages", "Old and rare titles").
-# Runs inside the app container (bash, curl, jq); registered by scripts/language-policy.sh.
+# Radarr/Sonarr Connect "Custom Script" (On Movie Added / On Series Add): puts a new title on the right profile before its first search and turns its subs-xx tags into one Bazarr profile (README "Languages", "Old and rare titles", "Per-request audio and subtitles").
+# Runs inside the app container (bash, curl, jq); registered by scripts/language-policy.sh. LP_TAGS_ONLY=1 skips the profile part (language-policy.sh, existing titles).
 set -euo pipefail
 
 ENG_SUFFIX=" - English original"
@@ -21,6 +21,9 @@ fi
 [ "$event" = "$want" ] || exit 0
 
 CONFIG=${LP_CONFIG:-/config/config.xml}
+LANGS_FILE=${LP_LANGUAGES:-/scripts/languages.tsv}
+BAZARR_URL=${LP_BAZARR_URL:-http://bazarr:6767}
+BAZARR_KEY=${LP_BAZARR_KEY:-/secrets/bazarr.apikey}
 xml() { sed -n "s:.*<$1>\(.*\)</$1>.*:\1:p" "$CONFIG"; }
 KEY=$(xml ApiKey)
 URL="http://localhost:$(xml Port)$(xml UrlBase)/api/v3"
@@ -33,29 +36,91 @@ read -r current english year votes < <(jq -r \
   "\"\(.qualityProfileId) \(.originalLanguage.name == \"English\") \(.year // 0) \($VOTES // 0)\"" <<<"$title")
 now=${LP_YEAR:-$(date +%Y)}
 
-case $current in
-  "$MID"|"$MEN") family=main;;
-  "$AID"|"$AEN") family=any;;
-  *) echo "$kind $id: profile $current kept"; exit 0;;
-esac
-reason=
-if [ "$family" = main ] && [ "$AID" != 0 ] && [ "$year" -gt 0 ]; then
-  if [ "$year" -le $((now - OLD_YEARS)) ]; then family=any; reason="old: $year"
-  elif [ "$year" -le $((now - NICHE_MIN_AGE)) ] && [ "$votes" -lt "$NICHE_VOTES" ]; then family=any; reason="niche: $votes votes"
+set_profile() {
+  local family reason= target
+  case $current in
+    "$MID"|"$MEN") family=main;;
+    "$AID"|"$AEN") family=any;;
+    *) echo "$kind $id: profile $current kept"; return;;
+  esac
+  if [ "$family" = main ] && [ "$AID" != 0 ] && [ "$year" -gt 0 ]; then
+    if [ "$year" -le $((now - OLD_YEARS)) ]; then family=any; reason="old: $year"
+    elif [ "$year" -le $((now - NICHE_MIN_AGE)) ] && [ "$votes" -lt "$NICHE_VOTES" ]; then family=any; reason="niche: $votes votes"
+    fi
   fi
-fi
-case $family:$english in
-  main:false) target=$MID;;
-  main:true) target=$MEN;;
-  any:false) target=$AID;;
-  any:true) target=$AEN;;
-esac
-[ "$target" != 0 ] || target=$current
-if [ "$english" = true ]; then reason="${reason:+$reason, }English original"; else reason="${reason:-not English original}"; fi
+  case $family:$english in
+    main:false) target=$MID;;
+    main:true) target=$MEN;;
+    any:false) target=$AID;;
+    any:true) target=$AEN;;
+  esac
+  [ "$target" != 0 ] || target=$current
+  if [ "$english" = true ]; then reason="${reason:+$reason, }English original"; else reason="${reason:-not English original}"; fi
+  if [ "$target" != "$current" ]; then
+    api "/$kind/editor" -X PUT -d "{\"$ids\":[$id],\"qualityProfileId\":$target}" >/dev/null
+    echo "$kind $id: profile $current -> $target ($reason)"
+  else
+    echo "$kind $id: profile $current kept"
+  fi
+}
 
-if [ "$target" != "$current" ]; then
-  api "/$kind/editor" -X PUT -d "{\"$ids\":[$id],\"qualityProfileId\":$target}" >/dev/null
-  echo "$kind $id: profile $current -> $target ($reason)"
-else
-  echo "$kind $id: profile $current kept"
-fi
+edit_tag() { # edit_tag <tag id> <add|remove>
+  api "/$kind/editor" -X PUT -d "{\"$ids\":[$id],\"tags\":[$1],\"applyTags\":\"$2\"}" >/dev/null
+}
+
+# Bazarr picks the first profile whose tag the title carries; lang-xx is not set while a subs-xx tag is (auto-tagging rule), so bz-<codes> is the only match.
+ensure_bazarr_profile() { # ensure_bazarr_profile <tag> <profile name> <codes...>
+  local tag=$1 name=$2; shift 2
+  [ -r "$BAZARR_KEY" ] || { echo "$kind $id: no Bazarr API key at $BAZARR_KEY, $tag not set" >&2; return 1; }
+  local key profiles langs
+  key=$(tr -d '[:space:]' < "$BAZARR_KEY")
+  profiles=$(curl -sf -m 10 -H "X-API-KEY: $key" "$BAZARR_URL/api/system/languages/profiles")
+  if jq -e --arg t "$tag" 'any(.[]; .tag == $t)' <<<"$profiles" >/dev/null; then return 0; fi
+  langs=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
+  profiles=$(jq -c --arg t "$tag" --arg n "$name" --argjson l "$langs" '
+    def item($i; $lang; $forced): {id: $i, language: $lang, audio_exclude: "False", audio_only_include: "False", hi: "False", forced: $forced};
+    . + [{profileId: ((map(.profileId) | max // 0) + 1), name: $n, cutoff: null, mustContain: [], mustNotContain: [], originalFormat: 0, tag: $t,
+          items: ([$l | to_entries[] | item(.key + 1; .value; "False")] + [item(($l | length) + 1; "en"; "True"), item(($l | length) + 2; "de"; "True")])}]' <<<"$profiles")
+  curl -sf -m 10 -H "X-API-KEY: $key" -X POST --data-urlencode "languages-profiles=$profiles" "$BAZARR_URL/api/system/settings" >/dev/null
+  echo "$kind $id: Bazarr profile '$name' ($tag) created"
+}
+
+set_tags() {
+  local tag_ids all labels orig code name codes names label tid
+  tag_ids=$(jq -c '.tags // []' <<<"$title")
+  [ "$tag_ids" != "[]" ] || return 0
+  all=$(api /tag)
+  labels=$(jq -r --argjson ids "$tag_ids" '.[] | select(.id as $i | $ids | index($i)) | .label' <<<"$all")
+  tag_id() { jq -r --arg l "$1" '.[] | select(.label == $l) | .id' <<<"$all"; }
+  orig=$(jq -r '.originalLanguage.name // ""' <<<"$title")
+  code=$(awk -F'\t' -v n="$orig" '!/^#/ && $2 == n {print $1}' "$LANGS_FILE")
+
+  if [ -n "$code" ] && grep -qx "audio-$code" <<<"$labels"; then
+    edit_tag "$(tag_id "audio-$code")" remove
+    echo "$kind $id: audio-$code dropped (original language)"
+  fi
+
+  codes=()
+  if [ -n "$code" ] && awk -F'\t' -v c="$code" '!/^#/ && $1 == c && $4 == "yes" {f=1} END {exit !f}' "$LANGS_FILE"; then codes+=("$code"); fi
+  while read -r c; do
+    [ -n "$c" ] && [ "$c" != "$code" ] && codes+=("$c")
+  done < <(sed -n 's/^subs-\([a-z]*\)$/\1/p' <<<"$labels" | grep -vx -e en -e de | sort)
+  [ "${#codes[@]}" -gt 0 ] && grep -q '^subs-' <<<"$labels" || return 0
+
+  label="bz-$(IFS=-; echo "${codes[*]}")"
+  names="English + German"
+  for c in "${codes[@]}"; do
+    names+=" + $(awk -F'\t' -v c="$c" '!/^#/ && $1 == c {print $2}' "$LANGS_FILE")"
+  done
+  ensure_bazarr_profile "$label" "$names" en de "${codes[@]}"
+
+  for old in $(grep '^bz-' <<<"$labels" | grep -vx "$label"); do edit_tag "$(tag_id "$old")" remove; done
+  grep -qx "$label" <<<"$labels" && return 0
+  tid=$(tag_id "$label")
+  [ -n "$tid" ] || tid=$(api /tag -X POST -d "{\"label\":\"$label\"}" | jq -r .id)
+  edit_tag "$tid" add
+  echo "$kind $id: tag $label added"
+}
+
+[ "${LP_TAGS_ONLY:-}" = 1 ] || set_profile
+set_tags

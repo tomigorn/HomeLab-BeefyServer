@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs scripts/language-policy-hook.sh against a fake Radarr/Sonarr API (python http.server).
+# Runs scripts/language-policy-hook.sh against a fake Radarr/Sonarr + Bazarr API (python http.server).
 # Usage: tests/test_language_policy_hook.sh   (needs bash, curl, jq, python3)
 HERE=$(cd "$(dirname "$0")" && pwd)
 HOOK="$HERE/../scripts/language-policy-hook.sh"
@@ -12,7 +12,7 @@ bad() { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; [ -n "$2" ] && printf '    
 assert_eq() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$2] got [$3]"; fi; }
 
 cat > "$T/fake.py" <<'PY'
-import http.server, json, os, sys
+import http.server, json, os, sys, urllib.parse
 T = sys.argv[1]
 PROFILES = [{"id": 3, "name": "Anime - Bluray + WEB 1080p"},
             {"id": 7, "name": "4K HDR - UHD Bluray + WEB (1080p fallback)"},
@@ -21,6 +21,9 @@ PROFILES = [{"id": 3, "name": "Anime - Bluray + WEB 1080p"},
             {"id": 12, "name": "Any quality - old & rare (upgrades to 4K) - English original"},
             {"id": 17, "name": "4K HDR - WEB-2160p (1080p fallback)"},
             {"id": 20, "name": "4K HDR - WEB-2160p (1080p fallback) - English original"}]
+TAGS = [{"id": 1, "label": "lang-es"}, {"id": 21, "label": "audio-en"}, {"id": 22, "label": "audio-de"},
+        {"id": 23, "label": "audio-es"}, {"id": 31, "label": "subs-fr"}, {"id": 32, "label": "subs-it"},
+        {"id": 40, "label": "bz-es-it"}]
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def reply(self, code, body=None):
@@ -32,12 +35,27 @@ class H(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(n).decode() if n else ""
         with open(os.path.join(T, "requests"), "a") as f:
             f.write(f"{self.command} {self.path} {body}\n")
+        state = json.load(open(os.path.join(T, "state.json")))
+        if self.path.startswith("/bazarr/api/"):
+            if self.headers.get("X-API-KEY") != "bzkey":
+                return self.reply(401)
+            if self.command == "GET" and self.path == "/bazarr/api/system/languages/profiles":
+                return self.reply(200, state.get("bazarr", []))
+            if self.command == "POST" and self.path == "/bazarr/api/system/settings":
+                form = urllib.parse.parse_qs(body)
+                with open(os.path.join(T, "bazarr_profiles.json"), "w") as f:
+                    f.write(form["languages-profiles"][0])
+                return self.reply(204)
+            return self.reply(404)
         if self.headers.get("X-Api-Key") != "testkey":
             return self.reply(401)
-        state = json.load(open(os.path.join(T, "state.json")))
         p = self.path.removeprefix("/base/api/v3")
         if self.command == "GET" and p == "/qualityprofile":
             return self.reply(200, PROFILES)
+        if self.command == "GET" and p == "/tag":
+            return self.reply(200, state.get("tags", TAGS))
+        if self.command == "POST" and p == "/tag":
+            return self.reply(201, {"id": 99, "label": json.loads(body)["label"]})
         for kind in ("movie", "series"):
             if self.command == "GET" and p.startswith(f"/{kind}/") and p.split("/")[2] in state:
                 return self.reply(200, state[p.split("/")[2]])
@@ -54,13 +72,17 @@ for _ in $(seq 50); do [ -s "$T/port" ] && break; sleep 0.1; done
 PORT=$(cat "$T/port")
 printf '<Config>\n  <Port>%s</Port>\n  <UrlBase>/base</UrlBase>\n  <ApiKey>%s</ApiKey>\n</Config>\n' "$PORT" testkey > "$T/config.xml"
 printf '<Config>\n  <Port>%s</Port>\n  <UrlBase>/base</UrlBase>\n  <ApiKey>wrong</ApiKey>\n</Config>\n' "$PORT" > "$T/badconfig.xml"
+echo bzkey > "$T/bazarr.apikey"
 
 # run <state json> <env...>: runs the hook, leaves the PUTs in $T/puts and the exit code in $RC
 run() {
   echo "$1" > "$T/state.json"; shift
   : > "$T/requests"
-  env -i PATH="$PATH" LP_CONFIG="${CONFIG:-$T/config.xml}" LP_YEAR=2026 "$@" bash "$HOOK" > "$T/out" 2>&1; RC=$?
+  rm -f "$T/bazarr_profiles.json"
+  env -i PATH="$PATH" LP_CONFIG="${CONFIG:-$T/config.xml}" LP_YEAR=2026 LP_LANGUAGES="$HERE/../scripts/languages.tsv" \
+    LP_BAZARR_URL="http://127.0.0.1:$PORT/bazarr" LP_BAZARR_KEY="${BZKEY-$T/bazarr.apikey}" "$@" bash "$HOOK" > "$T/out" 2>&1; RC=$?
   grep '^PUT ' "$T/requests" | cut -d' ' -f2- > "$T/puts"
+  grep '^POST /base/api/v3/tag ' "$T/requests" | cut -d' ' -f3- > "$T/newtags"
 }
 movie() { echo "{\"$1\": {\"id\": $1, \"title\": \"T\", \"qualityProfileId\": $2, \"originalLanguage\": $3}}"; }
 # film <id> <profile> <language> <year> <tmdb votes>
@@ -68,6 +90,10 @@ film() { echo "{\"$1\": {\"id\": $1, \"title\": \"T\", \"qualityProfileId\": $2,
 # show <id> <profile> <language> <year> <votes>
 show() { echo "{\"$1\": {\"id\": $1, \"title\": \"T\", \"qualityProfileId\": $2, \"originalLanguage\": $3, \"year\": $4, \"ratings\": {\"votes\": $5}}}"; }
 put() { echo "/base/api/v3/$1/editor {\"$2\":[$3],\"qualityProfileId\":$4}"; }
+# tagged <id> <profile> <language> <year> <tag ids>
+tagged() { echo "{\"$1\": {\"id\": $1, \"title\": \"T\", \"qualityProfileId\": $2, \"originalLanguage\": $3, \"year\": $4, \"ratings\": {\"votes\": 5000, \"tmdb\": {\"votes\": 5000}}, \"tags\": [$5]}}"; }
+tagput() { echo "/base/api/v3/$1/editor {\"$2\":[$3],\"tags\":[$4],\"applyTags\":\"$5\"}"; }
+bzprofile() { jq -c --arg t "$1" '.[] | select(.tag == $t) | [.name, ([.items[] | .language + (if .forced == "True" then "+f" else "" end)] | join(","))]' "$T/bazarr_profiles.json" 2>/dev/null; }
 EN='{"id": 1, "name": "English"}'; ES='{"id": 3, "name": "Spanish"}'
 
 echo "Radarr"
@@ -151,6 +177,54 @@ run "$(show 8 3 "$ES" 1990 5)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "old niche anime-profile series stays" "" "$(cat "$T/puts")"
 run "{}" sonarr_eventtype=Test
 assert_eq "Test event exits 0 and calls nothing" "0|" "$RC|$(cat "$T/requests")"
+
+echo "Tags: audio-xx and subs-xx"
+JA='{"id": 8, "name": "Japanese"}'; DE='{"id": 4, "name": "German"}'; HI='{"id": 26, "name": "Hindi"}'
+BZ_EXISTING='[{"profileId": 1, "name": "English + German", "tag": null, "items": []}, {"profileId": 2, "name": "English + German + Spanish", "tag": "lang-es", "items": []}]'
+run "$(tagged 5 7 "$ES" 2020 "1,22")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "audio-de on a Spanish film: nothing changes (tags present)" "0||" "$RC|$(cat "$T/puts")|$(cat "$T/newtags")"
+run "$(tagged 5 7 "$EN" 2020 "21")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "audio-en on an English film is dropped (original audio is required anyway)" "$(put movie movieIds 5 10)
+$(tagput movie movieIds 5 21 remove)" "$(cat "$T/puts")"
+run "$(tagged 5 7 "$ES" 2020 "1,23")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "audio-es on a Spanish film is dropped" "$(tagput movie movieIds 5 23 remove)" "$(cat "$T/puts")"
+run "$(tagged 5 7 "$EN" 2020 "31")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "subs-fr on an English film creates tag bz-fr" '{"label":"bz-fr"}' "$(cat "$T/newtags")"
+assert_eq "  and adds it to the film" "$(put movie movieIds 5 10)
+$(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
+assert_eq "  and creates the Bazarr profile for it" '["English + German + French","en,de,fr,en+f,de+f"]' "$(bzprofile bz-fr)"
+run "{\"tags\": [{\"id\": 31, \"label\": \"subs-fr\"}, {\"id\": 50, \"label\": \"bz-es-fr\"}], \"bazarr\": $BZ_EXISTING, $(tagged 5 7 "$ES" 2020 "1,31" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "subs-fr on a Spanish film: existing tag bz-es-fr is added" "$(tagput movie movieIds 5 50 add)" "$(cat "$T/puts")"
+assert_eq "  no new tag" "" "$(cat "$T/newtags")"
+assert_eq "  Bazarr profile: original + requested" '["English + German + Spanish + French","en,de,es,fr,en+f,de+f"]' "$(bzprofile bz-es-fr)"
+assert_eq "  existing Bazarr profiles are kept" '["English + German + Spanish",""]' "$(bzprofile lang-es)"
+run "{\"bazarr\": [{\"profileId\": 7, \"name\": \"English + German + Spanish + Italian\", \"tag\": \"bz-es-it\", \"items\": []}], $(tagged 5 7 "$ES" 2020 "1,32" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "Bazarr profile already there: not posted again" "missing" "$([ -e "$T/bazarr_profiles.json" ] && echo posted || echo missing)"
+assert_eq "  tag bz-es-it added" "$(tagput movie movieIds 5 40 add)" "$(cat "$T/puts")"
+run "$(tagged 5 7 "$JA" 2020 "32,31")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "two subs tags on a Japanese film: bz-ja-fr-it" '{"label":"bz-ja-fr-it"}' "$(cat "$T/newtags")"
+assert_eq "  profile" '["English + German + Japanese + French + Italian","en,de,ja,fr,it,en+f,de+f"]' "$(bzprofile bz-ja-fr-it)"
+run "$(tagged 5 7 "$DE" 2020 "31")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "German film: German is always there, bz-fr" '{"label":"bz-fr"}' "$(cat "$T/newtags")"
+run "$(tagged 5 7 "$HI" 2020 "31")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "original without subtitle support (Hindi): bz-fr" '{"label":"bz-fr"}' "$(cat "$T/newtags")"
+run "$(tagged 5 7 "$ES" 1968 "1,31")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "old film with subs-fr: profile and tag both change" "$(put movie movieIds 5 11)
+$(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
+run "$(tagged 5 7 "$ES" 1968 "1,31")" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
+assert_eq "LP_TAGS_ONLY=1: only the tag changes" "$(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
+BZKEY="$T/nokey" run "$(tagged 5 7 "$ES" 1968 "1,31")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "no Bazarr key: profile still changes, exit non-zero" "$(put movie movieIds 5 11)|1" "$(cat "$T/puts")|$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
+run "{\"tags\": [{\"id\": 33, \"label\": \"subs-es\"}], $(tagged 5 7 "$ES" 2020 "33" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "subs-es on a Spanish film keeps the Spanish profile: bz-es" '{"label":"bz-es"}' "$(cat "$T/newtags")"
+run "{\"tags\": [{\"id\": 31, \"label\": \"subs-fr\"}, {\"id\": 51, \"label\": \"bz-fr\"}], \"bazarr\": [{\"profileId\": 3, \"name\": \"x\", \"tag\": \"bz-fr\", \"items\": []}], $(tagged 5 10 "$EN" 2020 "31,51" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
+assert_eq "already tagged bz-fr: nothing to do" "" "$(cat "$T/puts")$(cat "$T/newtags")"
+run "{\"tags\": [{\"id\": 32, \"label\": \"subs-it\"}, {\"id\": 51, \"label\": \"bz-fr\"}, {\"id\": 52, \"label\": \"bz-it\"}], \"bazarr\": [{\"profileId\": 3, \"name\": \"x\", \"tag\": \"bz-it\", \"items\": []}], $(tagged 5 10 "$EN" 2020 "32,51" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
+assert_eq "subs changed from fr to it: stale bz-fr removed, bz-it added" "$(tagput movie movieIds 5 51 remove)
+$(tagput movie movieIds 5 52 add)" "$(cat "$T/puts")"
+run "$(tagged 8 17 "$ES" 2020 "1,31")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "Sonarr: subs-fr on a Spanish series" "$(tagput series seriesIds 8 99 add)" "$(cat "$T/puts")"
+assert_eq "  profile" '["English + German + Spanish + French","en,de,es,fr,en+f,de+f"]' "$(bzprofile bz-es-fr)"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
