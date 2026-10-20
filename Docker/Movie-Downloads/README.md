@@ -247,16 +247,19 @@ All Newznab, priority 25, synced by Prowlarr to Radarr (movie categories 2000-20
 
 ### Wrong-film guard
 
-Found 2026-10-20: Treasure Maps answers an ID search (`imdbid`/`tmdbid`) with every title match and stamps the *searched* IDs on all of them. Radarr trusts indexer IDs over title + year, so a search for *Night of the Living Dead* (1968) grabbed the 1990 remake twice (NZBgeek/NzbPlanet return only the right film).
+Found 2026-10-20: Treasure Maps answers an ID search (`imdbid`/`tmdbid`/`tvdbid`) with every title match and stamps the *searched* IDs on all of them. Radarr/Sonarr trust indexer IDs over title + year, so a search for *Night of the Living Dead* (1968) grabbed the 1990 remake twice (NZBgeek/NzbPlanet return only the right film). The same risk hits Sonarr: a same-named series from another year.
+
+The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 
 | | |
 |---|---|
-| Fix | Radarr Connect → Custom Script **Wrong-film guard**, On Grab: `scripts/grab-guard.sh` parses the release year (`/api/v3/parse`); more than 2 years off the movie's year and secondary year → queue item removed from SABnzbd/qBit, blocklisted, Radarr searches again |
-| Kept | no year in the name, ±2 years (premiere vs release year: *Plan 9 from Outer Space* is 1957 on TMDB, 1959 in release names) |
+| Radarr | parses the release year (`/api/v3/parse`); more than 2 years off the movie's year *and* secondary year → queue item removed from SABnzbd/qBit, blocklisted, Radarr searches again |
+| Sonarr | parses the series' disambiguation year from the release title (`parsedEpisodeInfo.seriesTitleInfo.year`) and compares it to the series' `firstAired` year, never the episode's air date. The title year is always the series' start year, so a legitimately old episode of a long-running current series is kept; more than 2 years off → removed, blocklisted, re-searched |
+| Kept | no year in the title, ±2 years (premiere vs release year: *Plan 9 from Outer Space* is 1957 on TMDB, 1959 in release names), unknown app-side year; Sonarr daily shows carry an air date, not a title year, so they are always kept |
 | Cost | each wrong grab uses one of Treasure Maps' 5 grabs/day and a few seconds of download |
-| Not covered | Sonarr (series names rarely carry a year); a remake with the same title *and* year |
-| Registered by | `scripts/language-policy.sh` |
-| Tests | `tests/test_grab_guard.sh`; live: `sudo docker exec movie-radarr env radarr_eventtype=Grab radarr_movie_id=<id> radarr_release_title=<name> radarr_download_id=x GG_WAIT=0 bash /scripts/grab-guard.sh` |
+| Not covered | a remake / same-named show with the same title *and* year; a release whose title carries no year |
+| Registered by | `scripts/language-policy.sh` (both apps, idempotent) |
+| Tests | `tests/test_grab_guard.sh`, `tests/test_grab_guard_sonarr.sh`; live: `sudo docker exec movie-radarr env radarr_eventtype=Grab radarr_movie_id=<id> radarr_release_title=<name> radarr_download_id=x GG_WAIT=0 bash /scripts/grab-guard.sh` (Sonarr: `movie-sonarr`, `sonarr_eventtype`, `sonarr_series_id`, `sonarr_release_title`, `sonarr_download_id`) |
 
 ### Radarr settings that matter here
 
