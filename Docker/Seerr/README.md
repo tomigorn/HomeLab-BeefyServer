@@ -144,15 +144,28 @@ Permissions: the owner (you) is admin (implies every permission). `configure.sh`
 Applies to users created afterwards; an existing user: Settings -> Users -> edit -> Advanced Requests. Change the defaults under Settings -> Users -> Default Permissions. Notifications (Telegram,
 email) are not set up: Settings -> Notifications.
 
-## Old or rare titles: pick the profile
+## How to request
 
-The default 4K profiles allow nothing below 1080p, so a title that only exists on DVD is never grabbed. Request it with the **Any quality** profile instead:
+| Want | Do |
+|---|---|
+| a film or series | **Request**, leave the profile on the default (4K HDR, 1080p fallback) |
+| an old or niche title | nothing: on add it moves to **Any quality - old & rare (upgrades to 4K)** by itself (released ≤ 12 years ago, or ≥ 2 years old with few votes) |
+| force Any quality for a new title | **Advanced** → Quality Profile **Any quality - old & rare (upgrades to 4K)** |
+| a must-have audio language | **Advanced** → Tags `audio-xx`: not grabbed without it |
+| extra subtitles | **Advanced** → Tags `subs-xx`: Bazarr fetches them on top of EN + DE + original |
 
-1. Film or series -> **Request** -> **Advanced** (needs `REQUEST_ADVANCED`, above).
-2. Quality Profile: **Any quality - old & rare (upgrades to 4K)**.
-3. Request.
+**Advanced** needs `REQUEST_ADVANCED` (above). Any profile other than the default (or its English twin) is kept as picked. Details, exact rules and the full tag list: `../Movie-Downloads/README.md`, "Old and rare titles" and "Per-request audio and subtitles".
 
-Same scores and rejects as the 4K default, SDTV/DVD up to 2160p allowed, upgraded to 4K when a better release appears (`../Movie-Downloads/README.md`, "Old and rare titles"). Already requested: change the profile in Radarr/Sonarr and search.
+| Example | Tags |
+|---|---|
+| Swiss film in Swiss German | `audio-gsw` (release name must say `SwissGerman`/`Swiss.German`/`Schweizerdeutsch`; Swiss German subtitles do not exist) |
+| English film, also with German audio | `audio-de` |
+| Korean film with French subtitles | `subs-fr` (Korean subs come anyway) |
+| Anime with English dub and Italian subs | `audio-en` + `subs-it` |
+
+- `lang-xx` and `bz-…` tags are set automatically: do not pick them.
+- `audio-` is a hard filter on the release name: no matching release = nothing is grabbed (Radarr/Sonarr → Activity / Interactive Search shows "Does not contain one of the required terms").
+- Already requested: add or change the tag (or profile) in Radarr/Sonarr, search; for `subs-` tags run `../Movie-Downloads/scripts/language-policy.sh` once.
 
 ## Related
 
