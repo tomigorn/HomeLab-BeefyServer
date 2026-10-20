@@ -249,8 +249,8 @@ Found 2026-10-20: Treasure Maps answers an ID search (`imdbid`/`tmdbid`) with ev
 
 | | |
 |---|---|
-| Fix | Radarr Connect → Custom Script **Wrong-film guard**, On Grab: `scripts/grab-guard.sh` parses the release year (`/api/v3/parse`); off by more than 1 year from the movie's year and secondary year → queue item removed from SABnzbd/qBit, blocklisted, Radarr searches again |
-| Kept | no year in the name, ±1 year (premiere vs release year) |
+| Fix | Radarr Connect → Custom Script **Wrong-film guard**, On Grab: `scripts/grab-guard.sh` parses the release year (`/api/v3/parse`); more than 2 years off the movie's year and secondary year → queue item removed from SABnzbd/qBit, blocklisted, Radarr searches again |
+| Kept | no year in the name, ±2 years (premiere vs release year: *Plan 9 from Outer Space* is 1957 on TMDB, 1959 in release names) |
 | Cost | each wrong grab uses one of Treasure Maps' 5 grabs/day and a few seconds of download |
 | Not covered | Sonarr (series names rarely carry a year); a remake with the same title *and* year |
 | Registered by | `scripts/language-policy.sh` |

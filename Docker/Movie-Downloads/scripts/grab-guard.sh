@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Radarr Connect "Custom Script" (On Grab): an indexer that tags a search result with the searched movie's IDs makes Radarr grab a same-titled film from another year (Treasure Maps: the 1990 remake for the 1968 Night of the Living Dead). Such a grab is removed, blocklisted and searched again (README "Wrong-film guard").
+# Radarr Connect "Custom Script" (On Grab): an indexer that tags a search result with the searched movie's IDs makes Radarr grab a same-titled film from another year (Treasure Maps: the 1990 remake for the 1968 Night of the Living Dead). A grab more than 2 years off is removed, blocklisted and searched again (README "Wrong-film guard").
 # Runs inside the Radarr container (bash, curl, jq); registered by scripts/language-policy.sh.
 set -euo pipefail
 
@@ -17,8 +17,8 @@ title=$radarr_release_title
 got=$(api "/parse?title=$(jq -rn --arg t "$title" '$t | @uri')" | jq -r '.parsedMovieInfo.year // 0')
 read -r year second < <(api "/movie/$id" | jq -r '"\(.year // 0) \(.secondaryYear // 0)"')
 
-off() { [ "$1" -gt 0 ] && [ $(( $2 > $1 ? $2 - $1 : $1 - $2 )) -le 1 ]; }
-if [ "$got" -eq 0 ] || [ "$year" -eq 0 ] || off "$year" "$got" || off "$second" "$got"; then exit 0; fi
+near() { [ "$1" -gt 0 ] && [ $(( $2 > $1 ? $2 - $1 : $1 - $2 )) -le 2 ]; }
+if [ "$got" -eq 0 ] || [ "$year" -eq 0 ] || near "$year" "$got" || near "$second" "$got"; then exit 0; fi
 
 # The grab reaches the queue with the next download-client poll.
 for _ in $(seq 0 5 "$WAIT"); do
