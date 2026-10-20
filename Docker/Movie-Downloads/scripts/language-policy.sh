@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The parts of the language policy (README "Languages") that Recyclarr cannot
-# express, applied through the apps' APIs. Idempotent: re-run after a rebuild or
-# after adding a language to LANGS.
+# express, applied through the apps' APIs. Idempotent: re-run after a rebuild, after
+# editing languages.tsv, or after adding subs-xx/audio-xx tags to existing titles.
 #   ~/Projects/Docker/Movie-Downloads/scripts/language-policy.sh
 #
 # Radarr + Sonarr: custom format "Language: Original + English" (8000 in every
@@ -11,9 +11,12 @@
 #   "- English original" twins, others move back; titles added later get the same
 #   move (plus old/niche -> Any quality) on add from the Connect script
 #   language-policy-hook.sh, which this script registers.
+#   Per-request tags from languages.tsv: `audio-xx` (tag-scoped release profile: the
+#   release name must name that language) and `subs-xx` (the hook turns them into
+#   one `bz-<codes>` tag + Bazarr profile; `lang-xx` is not set while one is present).
 # Bazarr: one subtitle profile per language ("English + German + <Language>",
 #   bound to the `lang-xx` tag), tag-based profile selection, OpenSubtitles.com
-#   without AI/machine translations.
+#   without AI/machine translations; its API key goes to secrets/hook/ for the hook.
 set -euo pipefail
 
 H=${H:-127.0.0.1}
@@ -21,9 +24,11 @@ RK=$(grep -oP '(?<=<ApiKey>)[^<]+' /srv/appdata/radarr/config.xml)
 SK=$(grep -oP '(?<=<ApiKey>)[^<]+' /srv/appdata/sonarr/config.xml)
 BK=$(grep -oP '(?<=apikey: ).*' /srv/appdata/bazarr/config/config.yaml | head -1)
 
-# Bazarr code2 -> Radarr/Sonarr language name. English stays on the default
-# "English + German" profile and needs no tag.
-LANGS="es:Spanish fr:French it:Italian pt:Portuguese ja:Japanese ko:Korean zh:Chinese da:Danish sv:Swedish nb:Norwegian nl:Dutch ru:Russian"
+HERE=$(cd "$(dirname "$0")" && pwd)
+TSV=$HERE/languages.tsv
+# Bazarr code2 -> Radarr/Sonarr language name, every language with subtitles in languages.tsv.
+# English and German are in every profile and need no tag.
+LANGS=$(awk -F'\t' '!/^#/ && $4 == "yes" {printf "%s:%s ", $1, $2}' "$TSV")
 CF_NAME="Language: Original + English"
 CF_SCORE=8000
 ENG_SUFFIX=" - English original"
@@ -93,15 +98,43 @@ print(json.dumps(n))' "$HOOK_NAME" "$ON" "$HOOK_PATH" "$NID")
   if [ -n "$NID" ]; then api $app "/notification/$NID" -X PUT -d "$NOTE" >/dev/null; else api $app /notification -X POST -d "$NOTE" >/dev/null; fi
   echo "   connect: $(api $app /notification | py 'import json,sys; [print(n["name"], n["fields"][0]["value"], sys.argv[1]+"="+str(n[sys.argv[1]])) for n in json.load(sys.stdin) if n["name"]==sys.argv[2]]' "$ON" "$HOOK_NAME")"
 
-  # One tag per language, set automatically from the original language. Radarr
-  # and Sonarr apply auto tags on add and on every refresh.
+  # Per-request tags. audio-xx: a release profile scoped to the tag requires the
+  # language in the release name (Swiss German has no language id, so names are
+  # all there is). subs-xx: read by the hook.
+  tag_id() { # tag_id <app> <label>: id of the tag, created if missing
+    local id
+    id=$(api $1 /tag | py 'import json,sys; r=[t["id"] for t in json.load(sys.stdin) if t["label"]==sys.argv[1]]; print(r[0] if r else "")' "$2")
+    [ -n "$id" ] || id=$(api $1 /tag -X POST -d "{\"label\":\"$2\"}" | py 'import json,sys; print(json.load(sys.stdin)["id"])')
+    echo "$id"
+  }
+  SUBS_TAGS=
+  while IFS=$'\t' read -r code name audio subs; do
+    case $code in \#*|"") continue;; esac
+    if [ "$subs" = yes ]; then SUBS_TAGS+="subs-$code=$(tag_id $app "subs-$code") "; fi
+    [ "$audio" != - ] || continue
+    TID=$(tag_id $app "audio-$code")
+    RP=$(py 'import json,sys; print(json.dumps({"name":sys.argv[1],"enabled":True,"required":["/"+sys.argv[2]+"/i"],"ignored":[],"indexerId":0,"tags":[int(sys.argv[3])]}))' "audio-$code: $name audio required" "$audio" "$TID")
+    RID=$(api $app /releaseprofile | py 'import json,sys; r=[p["id"] for p in json.load(sys.stdin) if p["name"].startswith(sys.argv[1])]; print(r[0] if r else "")' "audio-$code:")
+    if [ -n "$RID" ]; then
+      api $app "/releaseprofile/$RID" -X PUT -d "$(echo "$RP" | py 'import json,sys; d=json.load(sys.stdin); d["id"]=int(sys.argv[1]); print(json.dumps(d))' "$RID")" >/dev/null
+    else
+      api $app /releaseprofile -X POST -d "$RP" >/dev/null
+    fi
+  done < "$TSV"
+  echo "   release profiles: $(api $app /releaseprofile | py 'import json,sys; print(", ".join(p["name"].split(":")[0] for p in json.load(sys.stdin)))')"
+  echo "   subs tags: $(sed 's/=[0-9]*//g' <<<"$SUBS_TAGS")"
+
+  # One tag per language, set automatically from the original language, but not
+  # while a subs-xx tag is present (then the hook's bz-<codes> tag picks the Bazarr
+  # profile). Radarr and Sonarr apply auto tags on add and on every refresh.
   for pair in $LANGS; do
     code=${pair%%:*}; name=${pair#*:}; tag="lang-$code"
     LID=$(api $app /language | py 'import json,sys; print([l["id"] for l in json.load(sys.stdin) if l["name"]==sys.argv[1]][0])' "$name")
     TID=$(api $app /tag | py 'import json,sys; r=[t["id"] for t in json.load(sys.stdin) if t["label"]==sys.argv[1]]; print(r[0] if r else "")' "$tag")
     [ -n "$TID" ] || TID=$(api $app /tag -X POST -d "{\"label\":\"$tag\"}" | py 'import json,sys; print(json.load(sys.stdin)["id"])')
     RULE=$(py 'import json,sys
-print(json.dumps({"name":sys.argv[1],"removeTagsAutomatically":True,"tags":[int(sys.argv[2])],"specifications":[{"name":sys.argv[3],"implementation":"OriginalLanguageSpecification","negate":False,"required":True,"fields":[{"name":"value","value":int(sys.argv[4])}]}]}))' "$tag" "$TID" "$name" "$LID")
+subs=[{"name":"no "+l,"implementation":"TagSpecification","negate":True,"required":True,"fields":[{"name":"value","value":int(i)}]} for l,i in (x.split("=") for x in sys.argv[5].split())]
+print(json.dumps({"name":sys.argv[1],"removeTagsAutomatically":True,"tags":[int(sys.argv[2])],"specifications":[{"name":sys.argv[3],"implementation":"OriginalLanguageSpecification","negate":False,"required":True,"fields":[{"name":"value","value":int(sys.argv[4])}]}]+subs}))' "$tag" "$TID" "$name" "$LID" "$SUBS_TAGS")
     AID=$(api $app /autotagging | py 'import json,sys; r=[a["id"] for a in json.load(sys.stdin) if a["name"]==sys.argv[1]]; print(r[0] if r else "")' "$tag")
     if [ -n "$AID" ]; then
       api $app "/autotagging/$AID" -X PUT -d "$(echo "$RULE" | py 'import json,sys; d=json.load(sys.stdin); d["id"]=int(sys.argv[1]); print(json.dumps(d))' "$AID")" >/dev/null
@@ -153,10 +186,22 @@ bz "$B/system/settings" -X POST \
 bz "$B/system/languages/profiles" | py 'import json,sys; [print("   profile", p["profileId"], p["name"], "tag", p["tag"], [i["language"]+("+f" if i["forced"]=="True" else "") for i in p["items"]]) for p in json.load(sys.stdin)]'
 bz "$B/system/settings" | py 'import json,sys; d=json.load(sys.stdin); g=d["general"]; o=d["opensubtitlescom"]; print("   tags:", g["serie_tag_enabled"], g["movie_tag_enabled"], "defaults:", g["serie_default_profile"], g["movie_default_profile"], "| opensubtitles ai:", o["include_ai_translated"], "machine:", o["include_machine_translated"], "hash:", o["use_hash"])'
 
-echo "== apply to existing titles (refresh = auto tags, then Bazarr re-sync)"
+# The hook reaches Bazarr with this key (compose mounts secrets/hook at /secrets:ro).
+install -d -m 700 "$HERE/../secrets/hook"
+( umask 077; printf '%s\n' "$BK" > "$HERE/../secrets/hook/bazarr.apikey" )
+
+echo "== apply to existing titles (refresh = auto tags, hook for subs-xx tags, then Bazarr re-sync)"
 api radarr /command -X POST -d '{"name":"RefreshMovie"}' >/dev/null
 api sonarr /command -X POST -d '{"name":"RefreshSeries"}' >/dev/null
 sleep 20
+for app in radarr sonarr; do
+  case $app in radarr) kind=movie; ev=radarr_eventtype=MovieAdded; idv=radarr_movie_id;; sonarr) kind=series; ev=sonarr_eventtype=SeriesAdd; idv=sonarr_series_id;; esac
+  SUBS_IDS=$(api $app /tag | py 'import json,sys; print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if t["label"].startswith("subs-")))')
+  for TID in $(api $app "/$kind" | py 'import json,sys; s=set(map(int,sys.argv[1].split())); print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if s & set(t.get("tags",[]))))' "$SUBS_IDS"); do
+    env "$ev" "$idv=$TID" LP_TAGS_ONLY=1 LP_CONFIG=/srv/appdata/$app/config.xml LP_LANGUAGES="$TSV" \
+      LP_BAZARR_URL="http://$H:6767" LP_BAZARR_KEY="$HERE/../secrets/hook/bazarr.apikey" bash "$HERE/language-policy-hook.sh" | sed 's/^/   /'
+  done
+done
 bz "$B/system/tasks" -X POST --data-urlencode "taskid=update_movies" >/dev/null
 bz "$B/system/tasks" -X POST --data-urlencode "taskid=update_series" >/dev/null
 echo "done"

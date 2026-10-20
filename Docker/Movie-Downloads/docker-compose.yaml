@@ -140,6 +140,8 @@ services:
       - ${DATA_ROOT}:/data
       # Connect script that sets the profile of a new title (README "Languages").
       - ./scripts:/scripts:ro
+      # Bazarr API key for that script (written by scripts/language-policy.sh).
+      - ./secrets/hook:/secrets:ro
     ports:
       - "${RADARR_PORT}:7878"
     networks:
@@ -186,6 +188,8 @@ services:
       - ${DATA_ROOT}:/data
       # Connect script that sets the profile of a new title (README "Languages").
       - ./scripts:/scripts:ro
+      # Bazarr API key for that script (written by scripts/language-policy.sh).
+      - ./secrets/hook:/secrets:ro
     ports:
       - "${SONARR_PORT}:8989"
     networks:

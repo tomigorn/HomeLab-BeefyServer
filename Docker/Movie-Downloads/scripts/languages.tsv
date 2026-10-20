@@ -1,0 +1,26 @@
+# Per-request language tags (README "Per-request audio and subtitles"), read by language-policy.sh and language-policy-hook.sh.
+# code	language (Radarr/Sonarr name)	audio-<code>: release name must match (- = no audio tag)	subs-<code> tag
+gsw	Swiss German	\b(swiss[ ._-]?german|schw(ei|i{1,2})zer?d(eu|ue|ü|u)e?tsch)\b	no
+de	German	\b(german|deutsch|ger|deu)\b	no
+en	English	\b(english|eng)\b|\bdual[ ._-]?audio\b	no
+fr	French	\b(french|truefrench|fran[cç]ais|vff|vfq|vfi|vf2|vf)\b	yes
+it	Italian	\b(italian|italiano|ita)\b	yes
+es	Spanish	\b(spanish|espa[nñ]ol|castellano|latino|esp)\b	yes
+ja	Japanese	\b(japanese|jap|jpn)\b	yes
+ko	Korean	\b(korean|kor)\b	yes
+pt	Portuguese	\b(portuguese|portugu[eê]s|dublado|ptbr|pt-br)\b	yes
+nl	Dutch	\b(dutch|flemish|nederlands)\b	yes
+ru	Russian	\b(russian|rus)\b	yes
+sv	Swedish	\b(swedish|svenska|swe)\b	yes
+da	Danish	\b(danish|dansk)\b	yes
+nb	Norwegian	\b(norwegian|norsk)\b	yes
+zh	Chinese	\b(chinese|mandarin|cantonese|chs|cht)\b	yes
+pl	Polish	\b(polish|pldub|pol)\b	yes
+tr	Turkish	\b(turkish)\b	yes
+fi	Finnish	-	yes
+cs	Czech	-	yes
+hu	Hungarian	-	yes
+el	Greek	-	yes
+ar	Arabic	-	yes
+he	Hebrew	-	yes
+uk	Ukrainian	-	yes
