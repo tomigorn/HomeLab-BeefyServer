@@ -1,0 +1,11 @@
+[Unit]
+Description=Search cutoff-unmet movies and episodes, capped (Radarr, Sonarr)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/cutoff-search.sh
+NoNewPrivileges=true
+PrivateTmp=true

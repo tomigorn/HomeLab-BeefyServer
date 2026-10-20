@@ -334,6 +334,25 @@ Why this shape:
   API has no such flag), so they are renamed with a `zz ` prefix to sort last;
   Recyclarr does not touch them. Delete them in the UI if they are in the way.
 
+### Upgrades
+
+| | |
+|---|---|
+| Profiles | every Recyclarr profile `upgradeAllowed: true`; cutoff = best quality (Radarr Bluray-2160p, Sonarr WEB 2160p) + score 20000 |
+| RSS | Radarr every 30 min, Sonarr every 15 min, NZBgeek + NzbPlanet (Treasure Maps is search-only). Runs only while beefy is awake: new releases that appear while it sleeps are missed by RSS |
+| Weekly search | `systemd/cutoff-search.timer`, Sunday 04:12 (inside the 03:55 wake): `scripts/cutoff-search.sh` searches the 10 least recently searched cutoff-unmet movies (`MoviesSearch`) and 10 episodes (`EpisodeSearch`) |
+| Indexer budget | ~3 Treasure Maps calls per title -> ≤ ~60 of its 100/day; Prowlarr's query limit stops the rest. Radarr's own `CutoffUnmetMoviesSearch` has no cap, hence the script |
+
+```bash
+cd ~/Projects/Docker/Movie-Downloads/systemd
+sudo install -m 0644 cutoff-search.service cutoff-search.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now cutoff-search.timer
+sudo systemctl start cutoff-search.service; journalctl -u cutoff-search -n 5   # run now
+```
+
+- More or fewer per run: `Environment=CS_MOVIES=… CS_EPISODES=…` in the service (0 = skip).
+- Tests: `tests/test_cutoff_search.sh`. Verified 2026-10-20: `radarr: 2 of 2 cutoff-unmet searched: Bad Apples, The Ring Thing` -> Radarr `Completed search for 2 movies. 0 reports downloaded.`
+
 ### Languages
 
 Policy (2026-10-19): audio = the original language plus German plus English; if
