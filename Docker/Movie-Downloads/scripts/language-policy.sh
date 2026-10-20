@@ -171,10 +171,13 @@ def profile(pid,name,langs,tag):
 nxt=max([p["profileId"] for p in profiles]+[0])+1
 if "English + German" not in by_name:
     profiles.append(profile(nxt,"English + German",["en","de"],None)); nxt+=1
+by_tag={p["tag"]:p for p in profiles if p["tag"]}
 for pair in sys.argv[1].split():
     code,name=pair.split(":")
     pname="English + German + "+name
-    if pname in by_name:
+    if "lang-"+code in by_tag:
+        continue
+    if pname in by_name and by_name[pname]["tag"] is None:
         by_name[pname]["tag"]="lang-"+code
     else:
         profiles.append(profile(nxt,pname,["en","de",code],"lang-"+code)); nxt+=1
@@ -203,14 +206,24 @@ echo "== apply to existing titles (refresh = auto tags, hook for subs-xx tags, t
 api radarr /command -X POST -d '{"name":"RefreshMovie"}' >/dev/null
 api sonarr /command -X POST -d '{"name":"RefreshSeries"}' >/dev/null
 sleep 20
+SCAN=()
 for app in radarr sonarr; do
   case $app in radarr) kind=movie; ev=radarr_eventtype=MovieAdded; idv=radarr_movie_id;; sonarr) kind=series; ev=sonarr_eventtype=SeriesAdd; idv=sonarr_series_id;; esac
   SUBS_IDS=$(api $app /tag | py 'import json,sys; print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if t["label"].startswith("subs-")))')
   for TID in $(api $app "/$kind" | py 'import json,sys; s=set(map(int,sys.argv[1].split())); print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if s & set(t.get("tags",[]))))' "$SUBS_IDS"); do
     env "$ev" "$idv=$TID" LP_TAGS_ONLY=1 LP_CONFIG=/srv/appdata/$app/config.xml LP_LANGUAGES="$TSV" \
       LP_BAZARR_URL="http://$H:6767" LP_BAZARR_KEY="$HERE/../secrets/hook/bazarr.apikey" bash "$HERE/language-policy-hook.sh" | sed 's/^/   /'
+    SCAN+=("$app:$TID")
   done
 done
 bz "$B/system/tasks" -X POST --data-urlencode "taskid=update_movies" >/dev/null
 bz "$B/system/tasks" -X POST --data-urlencode "taskid=update_series" >/dev/null
+# A profile changed by the sync keeps its old missing-subtitles list until the title is rescanned.
+if [ "${#SCAN[@]}" -gt 0 ]; then
+  sleep 20
+  for t in "${SCAN[@]}"; do
+    case ${t%%:*} in radarr) bz "$B/movies" -X PATCH --data-urlencode "radarrid=${t#*:}" --data-urlencode "action=scan-disk";; sonarr) bz "$B/series" -X PATCH --data-urlencode "seriesid=${t#*:}" --data-urlencode "action=scan-disk";; esac
+  done
+  echo "   Bazarr rescanned: ${SCAN[*]}"
+fi
 echo "done"

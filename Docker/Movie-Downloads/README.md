@@ -456,7 +456,7 @@ Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defi
 | Tag | Meaning | How |
 |---|---|---|
 | `audio-xx` | the release **must** contain that audio language; not grabbed otherwise. Normal ranking on top | tag-scoped Release Profile `audio-xx: <Language> audio required`, required term = the regex in `languages.tsv`, matched against the release name |
-| `subs-xx` | Bazarr also fetches subtitles in that language (on top of EN + DE + original) | hook adds `bz-<original>-<requested…>` and creates the Bazarr profile `English + German + <Original> + <Requested…>` bound to it |
+| `subs-xx` | Bazarr also fetches subtitles in that language (on top of EN + DE + original) | hook adds `bz-<original>-<requested…>` and creates the Bazarr profile `English + German + <Original> + <Requested…> (requested)` bound to it |
 | `lang-xx` | set automatically (original language), do not pick | auto-tagging |
 | `bz-…` | set by the hook, do not pick | one per subtitle combination |
 
@@ -473,7 +473,7 @@ Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defi
   - **Swiss German** has no Radarr/Sonarr language. Real names (NZBgeek/NzbPlanet search, 2026-10-20): `Swissgerman`, `SwissGerman`, `SWISSGERMAN`, `Swiss.German`, `Schweizerdeutsch`, `Schweizerduetsch`. `Mundart`, `Dialekt`, `CH-DE`, plain `Swiss` are noise and not matched. Nearly only Swiss productions are released that way; Radarr parses them as German.
   - `audio-en` also accepts `Dual Audio`; `audio-fr` accepts `VFF/VFQ/VF2/TRUEFRENCH` but not plain `MULTi` (it does not say which languages) and not `VOSTFR` (French subtitles).
   - A language word in the film title (*The French Connection*) satisfies the term.
-- Tags added to an existing title later: re-run `scripts/language-policy.sh` (runs the hook with `LP_TAGS_ONLY=1` for every title with a `subs-` tag).
+- Tags added to an existing title later: re-run `scripts/language-policy.sh` (runs the hook with `LP_TAGS_ONLY=1` for every title with a `subs-` tag, then rescans those titles in Bazarr: a profile changed by the sync keeps its old missing-subtitles list until then).
 - The hook reads the Bazarr key from `secrets/hook/bazarr.apikey` (gitignored, written by the script, mounted at `/secrets:ro`) and reaches `http://bazarr:6767`.
 - Tests: `tests/test_language_policy_hook.sh` (hook), `python3 tests/test_audio_terms.py` (patterns against real names).
 

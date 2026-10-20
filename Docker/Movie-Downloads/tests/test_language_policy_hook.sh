@@ -192,18 +192,18 @@ run "$(tagged 5 7 "$EN" 2020 "31")" radarr_eventtype=MovieAdded radarr_movie_id=
 assert_eq "subs-fr on an English film creates tag bz-fr" '{"label":"bz-fr"}' "$(cat "$T/newtags")"
 assert_eq "  and adds it to the film" "$(put movie movieIds 5 10)
 $(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
-assert_eq "  and creates the Bazarr profile for it" '["English + German + French","en,de,fr,en+f,de+f"]' "$(bzprofile bz-fr)"
+assert_eq "  and creates the Bazarr profile for it" '["English + German + French (requested)","en,de,fr,en+f,de+f"]' "$(bzprofile bz-fr)"
 run "{\"tags\": [{\"id\": 31, \"label\": \"subs-fr\"}, {\"id\": 50, \"label\": \"bz-es-fr\"}], \"bazarr\": $BZ_EXISTING, $(tagged 5 7 "$ES" 2020 "1,31" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "subs-fr on a Spanish film: existing tag bz-es-fr is added" "$(tagput movie movieIds 5 50 add)" "$(cat "$T/puts")"
 assert_eq "  no new tag" "" "$(cat "$T/newtags")"
-assert_eq "  Bazarr profile: original + requested" '["English + German + Spanish + French","en,de,es,fr,en+f,de+f"]' "$(bzprofile bz-es-fr)"
+assert_eq "  Bazarr profile: original + requested" '["English + German + Spanish + French (requested)","en,de,es,fr,en+f,de+f"]' "$(bzprofile bz-es-fr)"
 assert_eq "  existing Bazarr profiles are kept" '["English + German + Spanish",""]' "$(bzprofile lang-es)"
 run "{\"bazarr\": [{\"profileId\": 7, \"name\": \"English + German + Spanish + Italian\", \"tag\": \"bz-es-it\", \"items\": []}], $(tagged 5 7 "$ES" 2020 "1,32" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "Bazarr profile already there: not posted again" "missing" "$([ -e "$T/bazarr_profiles.json" ] && echo posted || echo missing)"
 assert_eq "  tag bz-es-it added" "$(tagput movie movieIds 5 40 add)" "$(cat "$T/puts")"
 run "$(tagged 5 7 "$JA" 2020 "32,31")" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "two subs tags on a Japanese film: bz-ja-fr-it" '{"label":"bz-ja-fr-it"}' "$(cat "$T/newtags")"
-assert_eq "  profile" '["English + German + Japanese + French + Italian","en,de,ja,fr,it,en+f,de+f"]' "$(bzprofile bz-ja-fr-it)"
+assert_eq "  profile" '["English + German + Japanese + French + Italian (requested)","en,de,ja,fr,it,en+f,de+f"]' "$(bzprofile bz-ja-fr-it)"
 run "$(tagged 5 7 "$DE" 2020 "31")" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "German film: German is always there, bz-fr" '{"label":"bz-fr"}' "$(cat "$T/newtags")"
 run "$(tagged 5 7 "$HI" 2020 "31")" radarr_eventtype=MovieAdded radarr_movie_id=5
@@ -224,7 +224,7 @@ assert_eq "subs changed from fr to it: stale bz-fr removed, bz-it added" "$(tagp
 $(tagput movie movieIds 5 52 add)" "$(cat "$T/puts")"
 run "$(tagged 8 17 "$ES" 2020 "1,31")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "Sonarr: subs-fr on a Spanish series" "$(tagput series seriesIds 8 99 add)" "$(cat "$T/puts")"
-assert_eq "  profile" '["English + German + Spanish + French","en,de,es,fr,en+f,de+f"]' "$(bzprofile bz-es-fr)"
+assert_eq "  profile" '["English + German + Spanish + French (requested)","en,de,es,fr,en+f,de+f"]' "$(bzprofile bz-es-fr)"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

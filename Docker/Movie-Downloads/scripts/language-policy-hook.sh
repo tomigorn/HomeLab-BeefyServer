@@ -112,7 +112,8 @@ set_tags() {
   for c in "${codes[@]}"; do
     names+=" + $(awk -F'\t' -v c="$c" '!/^#/ && $1 == c {print $2}' "$LANGS_FILE")"
   done
-  ensure_bazarr_profile "$label" "$names" en de "${codes[@]}"
+  # "(requested)" keeps the name apart from the lang-xx profiles, which language-policy.sh finds by name.
+  ensure_bazarr_profile "$label" "$names (requested)" en de "${codes[@]}"
 
   for old in $(grep '^bz-' <<<"$labels" | grep -vx "$label"); do edit_tag "$(tag_id "$old")" remove; done
   grep -qx "$label" <<<"$labels" && return 0
