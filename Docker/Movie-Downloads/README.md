@@ -243,6 +243,19 @@ All Newznab, priority 25, synced by Prowlarr to Radarr (movie categories 2000-20
 - `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) on every run, enables the indexer and is idempotent. New key: replace the file, re-run the script. A rejected key makes it exit 1 and change nothing.
 - **Disabled since 2026-10-19:** the first account was blocked (duplicate after the site migration). Re-enable by running the script with the new account's key.
 
+### Wrong-film guard
+
+Found 2026-10-20: Treasure Maps answers an ID search (`imdbid`/`tmdbid`) with every title match and stamps the *searched* IDs on all of them. Radarr trusts indexer IDs over title + year, so a search for *Night of the Living Dead* (1968) grabbed the 1990 remake twice (NZBgeek/NzbPlanet return only the right film).
+
+| | |
+|---|---|
+| Fix | Radarr Connect → Custom Script **Wrong-film guard**, On Grab: `scripts/grab-guard.sh` parses the release year (`/api/v3/parse`); off by more than 1 year from the movie's year and secondary year → queue item removed from SABnzbd/qBit, blocklisted, Radarr searches again |
+| Kept | no year in the name, ±1 year (premiere vs release year) |
+| Cost | each wrong grab uses one of Treasure Maps' 5 grabs/day and a few seconds of download |
+| Not covered | Sonarr (series names rarely carry a year); a remake with the same title *and* year |
+| Registered by | `scripts/language-policy.sh` |
+| Tests | `tests/test_grab_guard.sh`; live: `sudo docker exec movie-radarr env radarr_eventtype=Grab radarr_movie_id=<id> radarr_release_title=<name> radarr_download_id=x GG_WAIT=0 bash /scripts/grab-guard.sh` |
+
 ### Radarr settings that matter here
 
 | Setting | Value | Why |
