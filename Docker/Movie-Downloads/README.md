@@ -476,7 +476,7 @@ Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defi
   - `audio-en` also accepts `Dual Audio`; `audio-fr` accepts `VFF/VFQ/VF2/TRUEFRENCH` but not plain `MULTi` (it does not say which languages) and not `VOSTFR` (French subtitles).
   - A language word in the film title (*The French Connection*) satisfies the term.
 - Tags added to an existing title later: re-run `scripts/language-policy.sh` (runs the hook with `LP_TAGS_ONLY=1` for every title with a `subs-` tag, then rescans those titles in Bazarr: a profile changed by the sync keeps its old missing-subtitles list until then).
-- The hook reads the Bazarr key from `secrets/hook/bazarr.apikey` (gitignored, written by the script, mounted at `/secrets:ro`) and reaches `http://bazarr:6767`.
+- The hook reads the Bazarr key from `secrets/hook/bazarr.apikey` (gitignored, written by the script, mounted at `/secrets:ro`) and reaches `http://bazarr:6767`. Rebuild: `mkdir -p secrets/hook` before the first `docker compose up` (otherwise Docker creates it root-owned), then run the script.
 - Tests: `tests/test_language_policy_hook.sh` (hook), `python3 tests/test_audio_terms.py` (patterns against real names).
 
 ### Subtitles (Bazarr)
