@@ -18,15 +18,15 @@ def user(uid, **config):
 
 class DefaultsTest(unittest.TestCase):
     def test_household_defaults(self):
-        self.assertEqual(ud.DEFAULTS, {"AudioLanguagePreference": "OriginalLanguage", "PlayDefaultAudioTrack": False,
-                                       "SubtitleLanguagePreference": "", "SubtitleMode": "Smart",
+        self.assertEqual(ud.DEFAULTS, {"AudioLanguagePreference": "eng", "PlayDefaultAudioTrack": False,
+                                       "SubtitleLanguagePreference": "", "SubtitleMode": "None",
                                        "RememberAudioSelections": True, "RememberSubtitleSelections": True})
 
     def test_new_user_gets_defaults_and_keeps_other_settings(self):
         cfg = ud.new_user_config(STOCK)
-        self.assertEqual(cfg["AudioLanguagePreference"], "OriginalLanguage")
+        self.assertEqual(cfg["AudioLanguagePreference"], "eng")
         self.assertFalse(cfg["PlayDefaultAudioTrack"])
-        self.assertEqual(cfg["SubtitleMode"], "Smart")
+        self.assertEqual(cfg["SubtitleMode"], "None")
         self.assertTrue(cfg["HidePlayedInLatest"])
 
     def test_adopted_user_keeps_choices_only_remember_turned_on(self):
@@ -48,11 +48,11 @@ class PlanTest(unittest.TestCase):
     def test_later_run_sets_defaults_for_new_users_only(self):
         updates, handled = ud.plan([user("a"), user("new")], {"a"})
         self.assertEqual([u for u, _ in updates], ["new"])
-        self.assertEqual(updates[0][1]["SubtitleMode"], "Smart")
+        self.assertEqual(updates[0][1]["SubtitleMode"], "None")
         self.assertEqual(handled, {"a", "new"})
 
     def test_known_user_who_changed_settings_is_never_touched(self):
-        updates, _ = ud.plan([user("a", SubtitleMode="None", RememberAudioSelections=False)], {"a"})
+        updates, _ = ud.plan([user("a", SubtitleMode="Always", RememberAudioSelections=False)], {"a"})
         self.assertEqual(updates, [])
 
     def test_deleted_users_leave_the_state(self):

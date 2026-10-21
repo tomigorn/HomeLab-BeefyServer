@@ -14,13 +14,13 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-# Original audio even when the default flag sits on a dub (needs PlayDefaultAudioTrack off),
-# subtitles "Smart": shown when the audio is not in the user's subtitle language, else forced only.
+# English audio even when the default flag sits on another track (needs PlayDefaultAudioTrack off),
+# subtitles off by default (SubtitleMode None). A user can change both under Jellyfin Settings.
 DEFAULTS = {
-    "AudioLanguagePreference": "OriginalLanguage",
+    "AudioLanguagePreference": "eng",
     "PlayDefaultAudioTrack": False,
     "SubtitleLanguagePreference": "",
-    "SubtitleMode": "Smart",
+    "SubtitleMode": "None",
     "RememberAudioSelections": True,
     "RememberSubtitleSelections": True,
 }
