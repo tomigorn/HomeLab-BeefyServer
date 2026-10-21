@@ -9,7 +9,7 @@ services:
 # library it serves should outlive any particular download stack, and a restart
 # of the downloaders has no business interrupting playback.
   jellyfin:
-    image: lscr.io/linuxserver/jellyfin:12.1ubu2604-ls51
+    image: lscr.io/linuxserver/jellyfin:12.2ubu2604-ls55
     container_name: jellyfin
     restart: unless-stopped
     # Reach the IdP over the LAN: avatar images on sso.holy-grail.ch/avatar-img are
