@@ -62,7 +62,7 @@ print(json.dumps({"name":sys.argv[1],"includeCustomFormatWhenRenaming":False,"sp
   fi
   echo "   custom format '$CF_NAME' id $CF_ID"
 
-  # Score it in every profile Recyclarr manages (the stock ones are named zz ...);
+  # Score it in every custom profile (the zz stock profiles were deleted 2026-10-22;
   # 0 in the English-original ones, where it would fire on any extra dub.
   for PID in $(api $app /qualityprofile | py 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin) if not p["name"].startswith("zz ")))'); do
     api $app "/qualityprofile/$PID" | py 'import json,sys

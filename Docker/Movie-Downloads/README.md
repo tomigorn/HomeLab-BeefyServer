@@ -349,7 +349,7 @@ Why this shape:
   - Golden Rule applies: an x265 SD/HD encode without HDR is rejected (−50000), as in the 1080p tier.
   - Verified 2026-10-20: *The Ring Thing* (TMDB 10248) on this profile grabbed `The.Ring.Thing.Das.Ding.mit.dem.Ring.German.2004.AC3.DVDRiP.x264-IND` (DVD, score 20750, 0.96 GB, SABnzbd); the DVD9 image was rejected (DVD-R not wanted).
 - The six stock Radarr profiles (Any, SD, HD-720p, …) cannot be disabled (the
-  API has no such flag), so they are renamed with a `zz ` prefix to sort last;
+  API has no such flag). The six stock profiles were DELETED 2026-10-22 (they were
   Recyclarr does not touch them. Delete them in the UI if they are in the way.
 
 ### Upgrades
@@ -596,7 +596,7 @@ Shared by all: the [Languages](#languages) scores (`German DL` 20000, `Language:
 Original + English` 8000, `Language: Not Original` and every reject −50000),
 `[Streaming Services] HD/UHD boost` + `General`, `[Unwanted] Unwanted Formats`,
 TRaSH series size limits (one table per instance, `series`). The six stock Sonarr
-profiles are renamed `zz …` (no disable exists); Recyclarr ignores them.
+stock profiles were deleted 2026-10-22 (unused; they only cluttered the Seerr dropdown).
 
 Verified 2026-10-19 with *Pioneer One* (2010, CC BY-NC-SA, TVDB 170551), the
 archive.org `S01E01 ... 720p.x264-VODO` mp4 placed in `/data/usenet/complete/tv/<release>/`:
