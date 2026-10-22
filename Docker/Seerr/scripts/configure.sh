@@ -42,6 +42,7 @@ if oidc_settings check; then
 else
   (cd "$D" && sudo docker compose stop seerr >/dev/null 2>&1)
   oidc_settings write
+  sudo chown 65109 "$CFG"   # written as buntu; Seerr runs as 65109 and must keep writing it
   (cd "$D" && sudo docker compose up -d seerr >/dev/null 2>&1)
   echo "   written, Seerr restarted"
 fi

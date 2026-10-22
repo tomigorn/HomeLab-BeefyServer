@@ -13,7 +13,7 @@ successor image is `ghcr.io/seerr-team/seerr`. **Temporarily** this runs the
 ## Deploy
 
 ```bash
-sudo mkdir -p /srv/appdata/seerr && sudo chown 1000:1000 /srv/appdata/seerr && sudo chmod 2775 /srv/appdata/seerr
+sudo mkdir -p /srv/appdata/seerr && sudo chown 65109:1000 /srv/appdata/seerr && sudo chmod 2770 /srv/appdata/seerr
 cd ~/Projects/Docker/Seerr && sudo docker compose up -d
 curl -s http://127.0.0.1:5055/api/v1/status     # preview: {"version":"develop-2d1a2ed...",...}
 ```

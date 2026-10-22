@@ -19,6 +19,7 @@ services:
     # The image ships no init process and runs as `node` (1000:1000), which is
     # the shared media identity here, so /app/config needs no chown.
     init: true
+    user: "65109:65109"   # dedicated; the image user node is 1000 = buntu (sudo) on this host
     security_opt:
       - no-new-privileges
     cap_drop:
