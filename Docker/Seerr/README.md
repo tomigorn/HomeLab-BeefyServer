@@ -152,22 +152,24 @@ email) are not set up: Settings -> Notifications.
 | an old or niche title | nothing: on add it moves to **Any quality - old & rare (upgrades to 4K)** by itself (released ≤ 12 years ago, or ≥ 2 years old with few votes) |
 | force Any quality for a new title | **Advanced** → Quality Profile **Any quality - old & rare (upgrades to 4K)** |
 | a must-have audio language | **Advanced** → Tags `audio-<language>`: not grabbed without it |
+| Swiss German (Mundart), hard | **Advanced** → Tags `audio-swiss-german` (or, for a title not yet in Radarr, Quality Profile **Swiss German (Mundart) only - any quality**: same effect): only Swiss German, any quality, also over a better High German; none = nothing grabbed |
 | extra subtitles | **Advanced** → Tags `subs-<language>`: Bazarr fetches them on top of EN + DE + original |
 
 **Advanced** needs `REQUEST_ADVANCED` (above). Any profile other than the default (or its English twin) is kept as picked. Details, exact rules and the full tag list: `../Movie-Downloads/README.md`, "Old and rare titles" and "Per-request audio and subtitles".
 
 | Example | Tags |
 |---|---|
-| Swiss film in Swiss German | `audio-swiss-german` (release name must say `SwissGerman`/`Swiss.German`/`Schweizerdeutsch`; Swiss German subtitles do not exist) |
+| Swiss film in Swiss German | `audio-swiss-german` (release name must say `SwissGerman`/`Swiss.German`/`Schweizerdeutsch`/…; Swiss German subtitles do not exist) |
+| Foreign film, Swiss German dub | `audio-swiss-german` (e.g. *Babe*: `…German.Schwyzerduetsch…DVDRip`) |
 | English film, also with German audio | `audio-german` |
 | Korean film with French subtitles | `subs-french` (Korean subs come anyway) |
 | Anime with English dub and Italian subs | `audio-english` + `subs-italian` |
 
-- Seerr's tag picker lists the Radarr/Sonarr tag labels as they are and has no description or help text per tag (checked in the 3.x source, `AdvancedRequester`); the labels cannot hold spaces or capitals, so there is no inline "Hard filter" hint and no friendly name. This table is the reference.
-- Tags apply only when Seerr adds a new title: requesting a film that is already in Radarr/Sonarr ignores the tags (log: "Movie is already monitored in Radarr"). Tag it in Radarr/Sonarr instead.
+- Seerr's tag picker shows the Radarr/Sonarr tag label as the option text, nothing else (checked 2026-10-23 in the running image, `src/components/RequestModal/AdvancedRequester/index.tsx`: `label: tag.label`); Seerr has no per-tag description, no custom help text and no setting for one. Labels allow only `a-z 0-9 -`, so "Swiss German (Mundart)" and the hint "Hard filter — only this audio, everything else is skipped." cannot be shown there. Possible only by patching Seerr (not done). The friendly names: `../Movie-Downloads/README.md` "Per-request audio and subtitles"; the Quality Profile dropdown shows the full name **Swiss German (Mundart) only - any quality**.
+- Requesting a film that is already in Radarr/Sonarr: Seerr drops the tags ("Movie is already monitored in Radarr"); `../Movie-Downloads/scripts/request-tags.sh` (timer, every 2 min) copies them over and searches.
 - `lang-xx` and `bz-…` tags are set automatically: do not pick them.
 - `audio-` is a hard filter on the release name: no matching release = nothing is grabbed (Radarr/Sonarr → Activity / Interactive Search shows "Does not contain one of the required terms").
-- Already requested: add or change the tag (or profile) in Radarr/Sonarr, search; for `subs-` tags run `../Movie-Downloads/scripts/language-policy.sh` once.
+- Tags changed after the request: add or change the tag (or profile) in Radarr/Sonarr, search; for `subs-` and `audio-swiss-german` tags run `../Movie-Downloads/scripts/language-policy.sh` once.
 
 ## Related
 
