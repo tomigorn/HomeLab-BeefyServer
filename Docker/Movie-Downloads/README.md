@@ -317,7 +317,7 @@ HDR10 releases show `[HDR10]`, DV ones `[DV HDR10]`.
 formats, scores, quality profiles, quality sizes and naming into Radarr every
 night at `RECYCLARR_CRON` (04:15, inside the nightly window beefy is woken for).
 **Edit `recyclarr/recyclarr.yml`, not the Radarr UI** — Recyclarr overwrites what
-it manages. API key: `RADARR_API_KEY` in `.env`.
+it manages. API key: `RADARR_API_KEY` in `.env`. Own custom formats (Swiss German, resolution): `recyclarr/custom-formats/radarr/*.json`, loaded through `recyclarr/settings.yml` (local resource provider); both are mounted into the container.
 
 ```bash
 docker compose run --rm recyclarr sync --preview   # what would change
@@ -325,11 +325,14 @@ docker compose run --rm recyclarr sync             # apply now
 docker compose run --rm recyclarr config list templates   # TRaSH templates
 ```
 
+After the first sync on a rebuild run `scripts/language-policy.sh` (profile language Any for the Swiss German profile, tags, hook).
+
 | Profile | Use | Qualities (top wins) | Upgrade until |
 |---|---|---|---|
 | **4K HDR - UHD Bluray + WEB (1080p fallback)** — default | everything | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p | Bluray-2160p, CF score 20000 |
 | 4K HDR - … (1080p fallback) - English original | English-original titles, set by `scripts/language-policy.sh` | same | same; `Language: Original + English` 0 (see [Languages](#languages)) |
 | Any quality - old & rare (upgrades to 4K) (+ `- English original` twin) | old/niche titles, set automatically on add ([Old and rare titles](#old-and-rare-titles)) or picked per request | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p › HDTV-1080p › Bluray-720p › WEB-720p › HDTV-720p › Bluray-576p › Bluray-480p › WEB-480p › DVD › SDTV | Bluray-2160p, 20000; scores identical to the default |
+| Swiss German (Mundart) only - any quality | titles tagged `audio-swiss-german`, set by the hook ([Swiss German](#swiss-german)) | one group: SDTV … Bluray-2160p, ranked by resolution scores | Swiss German + 2160p (score 1200000) |
 | HD Bluray + WEB | space saver, pick per movie | Bluray-1080p › WEB-1080p › Bluray-720p | Bluray-1080p, 20000 |
 | Anime - Remux + WEB 1080p | anime films, pick per movie (Seerr has no anime profile for movies) | Remux/Bluray-1080p › WEB-1080p › 720p … | Remux-1080p, 20000; TRaSH `[Anime] Remux-1080p`: anime group tiers, no Golden Rule (anime is x265 10-bit by default), minimum score 100 |
 
@@ -396,9 +399,9 @@ sudo systemctl start cutoff-search.service; journalctl -u cutoff-search -n 5   #
 Policy (2026-10-19): audio = the original language plus German plus English; if
 that does not exist, drop one (German first choice, English second); never a dub
 without the original track. Subtitles = English + German + the original language.
-Lives in three places: `recyclarr/recyclarr.yml` (scores), `scripts/language-policy.sh`
+Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-policy.sh`
 (what Recyclarr cannot express: one native custom format, tags, Bazarr profiles),
-`../Seerr/scripts/configure.sh` (anime profile).
+`scripts/request-tags.sh` (Seerr tags on existing titles), `../Seerr/scripts/configure.sh` (anime profile).
 
 | Rung | Audio | Score | How it is detected |
 |---|---|---|---|
@@ -476,11 +479,11 @@ unmonitored, nothing was grabbed.
 
 ### Per-request audio and subtitles
 
-Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defined in `scripts/languages.tsv`, created by `scripts/language-policy.sh`.
+Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defined in `scripts/languages.tsv`, created by `scripts/language-policy.sh`. Tags of a request for a title that is already in Radarr/Sonarr are copied over by `scripts/request-tags.sh` (below).
 
 | Tag | Meaning | How |
 |---|---|---|
-| `audio-<language>` | the release **must** contain that audio language; not grabbed otherwise. Normal ranking on top | tag-scoped Release Profile `audio-<language>: <Language> audio required`, required term = the regex in `languages.tsv`, matched against the release name |
+| `audio-<language>` | the release **must** contain that audio language; not grabbed otherwise. Normal ranking on top; `audio-swiss-german` also switches to its own profile ([Swiss German](#swiss-german)) | tag-scoped Release Profile `audio-<language>: <Language> audio required`, required term = the regex in `languages.tsv`, matched against the release name |
 | `subs-<language>` | Bazarr also fetches subtitles in that language (on top of EN + DE + original) | hook adds `bz-<original>-<requested…>` and creates the Bazarr profile `English + German + <Original> + <Requested…> (requested)` bound to it |
 | `lang-xx` | set automatically (original language), do not pick | auto-tagging |
 | `bz-…` | set by the hook, do not pick | one per subtitle combination |
@@ -492,20 +495,71 @@ Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defi
 | `fr` `it` `es` `ja` `ko` `pt` `nl` `ru` `sv` `da` `nb` `zh` `pl` `tr` | | ✓ | ✓ |
 | `fi` `cs` `hu` `el` `ar` `he` `uk` | | – | ✓ |
 
+Friendly names (docs only: Radarr/Sonarr tag labels allow only `a-z 0-9 -`, Seerr shows the label):
+
+| Tag | Friendly name |
+|---|---|
+| `audio-swiss-german` | Swiss German (Mundart) — hard filter, only this audio, everything else is skipped |
+| `audio-german` / `audio-english` | German / English |
+| `audio-french`, `audio-italian`, … | French, Italian, … (the language name) |
+| `subs-french`, `subs-italian`, … | French subtitles, Italian subtitles, … |
+| (none) `audio-orig` "Original language" | always required, no tag |
+| (none) `subs-de` / `subs-en` "German / English subtitles" | always fetched, no tag |
+| (none) `subs-forced` "Forced subtitles only" | forced EN + DE are always fetched, no tag |
+
 - **Tag labels are the language name, lowercase with hyphens, from `languages.tsv` column 2** (`audio-swiss-german`, `audio-german`, `subs-french`, …); the `Code` column below is only the Bazarr/`lang-xx`/`bz-` code. The `bz-<codes>` and `lang-xx` tags stay code-based.
 - Several `audio-` tags = all of them required (each release profile must match). Several `subs-` tags = one combined Bazarr profile.
 - `audio-<original>` is dropped on add: the original audio is required anyway, and release names of e.g. English films rarely say `English`.
 - Limits of name matching (release profiles see only the name, not the tracks):
-  - **Swiss German** has no Radarr/Sonarr language. Real names (NZBgeek/NzbPlanet search, 2026-10-20): `Swissgerman`, `SwissGerman`, `SWISSGERMAN`, `Swiss.German`, `Schweizerdeutsch`, `Schweizerduetsch`. `Mundart`, `Dialekt`, `CH-DE`, plain `Swiss` are noise and not matched. Nearly only Swiss productions are released that way; Radarr parses them as German.
+  - **Swiss German** has no Radarr/Sonarr language. Real names (NZBgeek/NzbPlanet search, 2026-10-20 and 2026-10-23): `Swissgerman`, `SwissGerman`, `SWISSGERMAN`, `Swiss.German`, `SWISS.German`, `Schweizerdeutsch`, `Schweizerduetsch`, `Schwyzerduetsch`. `Mundart`, `Dialekt`, `CH-DE`, plain `Swiss` are noise and not matched. Nearly only Swiss productions are released that way; Radarr parses them as German.
   - `audio-english` also accepts `Dual Audio`; `audio-french` accepts `VFF/VFQ/VF2/TRUEFRENCH` but not plain `MULTi` (it does not say which languages) and not `VOSTFR` (French subtitles).
   - A language word in the film title (*The French Connection*) satisfies the term.
-- **`audio-<language>` is a hard filter, not a score.** The release profile rejects every release without the term before scoring, so resolution cannot outrank it: with `audio-swiss-german` a 720p `SwissGerman` release is approved and a `German.DL` 2160p is rejected ("Does not contain one of the required terms"). Checked 2026-10-22 on *The Ring Thing* with `POST /api/v3/release/push` (rejected releases are never grabbed).
-- **Swiss German only works where the original language is German** (Swiss productions: TMDB says German). On a title with another original language the profile's language rule ("Original") and the `German` / `Language: Not Original` formats (-100000, below the minimum 0) still reject a Swiss German release (Knives Out, 2026-10-22). A Swiss German dub of a foreign film needs its own profile with language Any (not built).
+- **`audio-<language>` is a hard filter, not a score.** The release profile rejects every release without the term before scoring, so resolution cannot outrank it ("Does not contain one of the required terms").
+- **Swiss German**: see [Swiss German](#swiss-german) (own profile, also for a Swiss German dub of a foreign film).
 - **Tag labels are fixed:** Radarr/Sonarr only allow `a-z`, `0-9` and `-` in a tag label (API: "Allowed characters a-z, 0-9 and -"), so friendly names like "Swiss German (Mundart)" cannot be tag labels, and the scripts match on the `audio-<language>` / `subs-<language>` labels. There are no `audio-orig` or `subs-forced` tags (original audio is always required, forced subtitles are always fetched).
-- **Tags only apply to a new title.** Seerr sends them only when it adds the film; for one already in Radarr it logs "Movie is already monitored" and sends nothing (*The Ring Thing*: no tag, so no filter, the existing German DL stayed). Set the tag in Radarr/Sonarr by hand.
+- **Seerr sends tags only when it adds a new title**; for one already in Radarr it logs "Movie is already monitored" and drops them. `scripts/request-tags.sh` (timer every 2 min while beefy is awake) copies them onto the title, runs the hook and searches; each request once (`~/.local/state/movie-downloads/request-tags.done`), so a tag removed by hand stays removed.
+
+  ```bash
+  cd ~/Projects/Docker/Movie-Downloads/systemd
+  sudo install -m 0644 request-tags.service request-tags.timer /etc/systemd/system/
+  sudo systemctl daemon-reload && sudo systemctl enable --now request-tags.timer
+  journalctl -u request-tags -n 20     # "radarr: request 9, The Ring Thing: tags 13 added, searched"
+  ```
 - Tags added to an existing title later: re-run `scripts/language-policy.sh` (runs the hook with `LP_TAGS_ONLY=1` for every title with a `subs-` tag, then rescans those titles in Bazarr: a profile changed by the sync keeps its old missing-subtitles list until then).
 - The hook reads the Bazarr key from `secrets/hook/bazarr.apikey` (gitignored, written by the script, mounted at `/secrets:ro`) and reaches `http://bazarr:6767`. Rebuild: `mkdir -p secrets/hook` before the first `docker compose up` (otherwise Docker creates it root-owned), then run the script.
-- Tests: `tests/test_language_policy_hook.sh` (hook), `python3 tests/test_audio_terms.py` (patterns against real names).
+- Tests: `tests/test_language_policy_hook.sh` (hook), `tests/test_request_tags.sh` (Seerr tags), `python3 tests/test_audio_terms.py` (patterns against real names, Swiss German CF = `languages.tsv`). Live: `scripts/swiss-german-check.py`.
+
+### Swiss German
+
+`audio-swiss-german` = Swiss German audio is mandatory and outranks quality: a Swiss German DVD is taken over a High German 4K; no Swiss German release = nothing is grabbed.
+
+| Part | What |
+|---|---|
+| Release profile `audio-swiss-german: …` | hard filter on the raw release name (`Swissgerman`, `Swiss.German`, `Schweizerdeutsch`, `Schwiizerdütsch`, `Schwyzerdütsch`, …; regex in `languages.tsv`) |
+| Profile **Swiss German (Mundart) only - any quality** | language **Any** (a Swiss German dub of a foreign film passes), all qualities SDTV … Bluray-2160p in **one group** (a Swiss German release replaces any non-Swiss file, also a better one), cutoff Swiss German + 2160p |
+| Scores in that profile | `Audio: Swiss German` 1000000 · `Resolution: 2160p/1080p/720p/SD/DVD` 200000/150000/100000/50000/50000 · `German`, `Language: Not Original` 0 · LQ/BR-DISK/upscaled/DV w/o HDR … −2000000 · x265 HD and SDR 4K −50000 (one resolution step, taken instead of rejected: Swiss German releases are rare) · the rest as in the default profile |
+| Hook (on add, and on tags added later) | tag present → move to the profile, whatever was picked; added on the profile without the tag → tag added; profile language back to Any |
+| `request-tags.sh` (timer) | Seerr tags on titles already in Radarr; also puts the profile language back to Any (Recyclarr resets it to Original whenever it updates that profile) |
+| File name | `Audio: Swiss German` is renamed into the file name (`{Custom Formats}`), so Jellyfin shows it |
+
+- Nothing found shows: Seerr keeps the request at *Requested/Processing* (not Available); Radarr → Wanted → Missing (or Cutoff Unmet when a non-Swiss file exists); Interactive Search lists "Does not contain one of the required terms". `scripts/swiss-german-check.py` prints "Waiting for a Swiss German release: …".
+- The weekly cutoff search keeps looking for titles with a non-Swiss file (cutoff unmet).
+- `Audio: Swiss German` only ranks, it is not the filter: Radarr matches custom formats against the name minus the parsed film title, so in `Achtung.fertig.WK.Swissgerman.2013` the word counts as title and the format misses (the release profile still passes it; it then ranks by resolution like a non-Swiss file and may not replace an existing non-Swiss file).
+- Sonarr: release profile only (no own profile): works for German-original series, a Swiss German dub of a foreign series is still rejected by `Language: Not Original`.
+
+```bash
+./scripts/swiss-german-check.py      # profile, scores, release profile, hook, timer, tagged titles, ranking; read-only
+```
+
+Verified 2026-10-23 (Interactive Search, `GET /api/v3/release?movieId=`, never grabs):
+
+| Title (original) | Approved | Rejected (best non-Swiss) |
+|---|---|---|
+| *The Ring Thing* (German) | none: all 3 releases are High German | `…German.2004.AC3.DVDRiP.x264-IND` (the file on disk), `…German.DL.COMPLETE.PAL.DVD9` — "Does not contain one of the required terms" |
+| *The Divine Order* (German) | `…2017.Swissgerman.1080p.BluRay.x264-ETM` 1170000 › `…Swissgerman.German.720p.BluRay` 1120000 › `…Swissgerman.2017.AC3.BDRiP` 70750 | `The.Divine.Order.2017.GERMAN.1080p.BluRay`, German DL remuxes |
+| *Babe* (English: Swiss German dub) | `…1995.German.Schwyzerduetsch.Oesterreichisch.DVDRip.x264` 1050000 | `Babe.1995.UHD.BluRay.2160p.DDP.5.1.DV.HDR.x265` 203950 — only for the missing Swiss German |
+
+Hook live: both test films added on the default profile with the tag → `movie 15: profile 7 -> 13 (audio-swiss-german)`; removed again afterwards (no files).
 
 ### Subtitles (Bazarr)
 
