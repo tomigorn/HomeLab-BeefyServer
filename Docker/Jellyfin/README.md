@@ -69,7 +69,7 @@ RExt), VP9 8/10-bit, AV1, MPEG-2, VC-1; encodes H.264 and HEVC. **No AV1 encode.
 | Piece | Where | Why |
 |---|---|---|
 | `/dev/dri` passed through + `group_add: ${RENDER_GID}` | `docker-compose.yaml` | Container can open `renderD128` (inside it shows as group `groupdma3` - that is just the name for gid 990, harmless) |
-| `DOCKER_MODS=linuxserver/mods:jellyfin-opencl-intel` | `docker-compose.yaml` | The LSIO image ships **no Intel OpenCL** (only `nvidia.icd`). Still needed on 12.2/ls55; the mod installs the `legacy1` runtime, which is the one gen12 needs. Only used as the tone-mapping fallback for Dolby Vision / HLG - HDR10 goes through VPP |
+| `Dockerfile` (OpenCL debs from the `jellyfin-opencl-intel` mod image, pinned by digest) | `Dockerfile` | The LSIO image ships **no Intel OpenCL** (only `nvidia.icd`). Docker Mods do not run in linuxserver non-root mode, so the mod's `legacy1` + current runtime debs are installed at build time. Only used as the tone-mapping fallback for Dolby Vision / HLG - HDR10 goes through VPP. Bump: new digest of `lscr.io/linuxserver/mods:jellyfin-opencl-intel`, then `docker compose up -d --build` |
 | `i915.enable_guc=2` | `/etc/default/grub.d/i915-guc.cfg` (host, **not in this repo**) | Loads the HuC firmware, which the low-power (VDEnc) encoders need. Kernel 7.0 leaves RKL at `0` (HuC off). GuC *submission* stays off. Backup of the original: `/etc/default/grub.bak-2026-10-18-pre-guc` |
 
 Verify the host side after a kernel/OS upgrade:
