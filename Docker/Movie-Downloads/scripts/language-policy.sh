@@ -200,8 +200,8 @@ bz "$B/system/languages/profiles" | py 'import json,sys; [print("   profile", p[
 bz "$B/system/settings" | py 'import json,sys; d=json.load(sys.stdin); g=d["general"]; o=d["opensubtitlescom"]; print("   tags:", g["serie_tag_enabled"], g["movie_tag_enabled"], "defaults:", g["serie_default_profile"], g["movie_default_profile"], "| opensubtitles ai:", o["include_ai_translated"], "machine:", o["include_machine_translated"], "hash:", o["use_hash"])'
 
 # The hook reaches Bazarr with this key (compose mounts secrets/hook at /secrets:ro).
-install -d -m 700 "$HERE/../secrets/hook"
-( umask 077; printf '%s\n' "$BK" > "$HERE/../secrets/hook/bazarr.apikey" )
+install -d -m 2750 -g hook-secret "$HERE/../secrets/hook"   # radarr + sonarr read it via the hook-secret group
+( umask 027; printf '%s\n' "$BK" > "$HERE/../secrets/hook/bazarr.apikey" )
 
 echo "== apply to existing titles (refresh = auto tags, hook for subs-<language> tags, then Bazarr re-sync)"
 api radarr /command -X POST -d '{"name":"RefreshMovie"}' >/dev/null

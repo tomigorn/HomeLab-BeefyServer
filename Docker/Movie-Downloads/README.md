@@ -53,16 +53,26 @@ doc's original snippet also referenced `/srv/audio`; that tier was retired
 # members, which is why `docker info` fails. Log out and back in afterwards.
 sudo usermod -aG docker buntu
 
-# Identity is 1000:1000 = the existing `buntu` user (storage doc §14.0), so there
-# is no user to create. setgid (2775) so new dirs inherit the group.
+# Every container has its own uid (table in "Identity" below). /srv/video is shared
+# through group `media` (1100); setgid (2775) so new dirs inherit the group.
+sudo groupadd -g 1100 media
+sudo groupadd -g 65117 hook-secret
+sudo groupadd -g 65118 textfile-writers
+sudo usermod -aG media,hook-secret buntu
 sudo mkdir -p /srv/video/torrents/{movies,tv} \
              /srv/video/usenet/incomplete \
              /srv/video/usenet/complete/{movies,tv} \
              /srv/video/media/{movies,tv} \
              /srv/video/.recyclebin \
              /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr}
-sudo chown -R 1000:1000 /srv/video /srv/appdata
-sudo chmod -R 2775 /srv/video /srv/appdata
+sudo chown -R 1000:media /srv/video
+sudo chmod -R 2775 /srv/video
+sudo chown -R 1000:1000 /srv/appdata
+sudo chmod 2770 /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr}
+for a in radarr:65101 sonarr:65102 prowlarr:65103 bazarr:65104 qbittorrent:65105 \
+         sabnzbd:65106 recyclarr:65107 gluetun:65116; do
+    sudo chown -R "${a#*:}" "/srv/appdata/${a%%:*}"
+done
 
 # psmisc gives tier-move its open-file guard (it REFUSES to run without it, since
 # it deletes the source after copying); attr gives getfattr for tier queries
@@ -225,8 +235,20 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
 - Usenet is always moved (nothing seeds). Torrents are hardlinked; qBit stops
   them at ratio 2 or 30 days, then Radarr's "Remove Completed" deletes the torrent
   and its download-side link — the library link is untouched.
-- Identity: every container runs as `1000:1000`, `UMASK=002`; folders are
-  `2775` setgid `buntu`. Radarr's own "Set Permissions" is off (not needed).
+- Identity: no container runs as `buntu` (1000, sudo). Each app has its own uid, in linuxserver non-root mode (no root PID1, `cap_drop: ALL`):
+
+  | uid | App | Primary gid | Extra groups |
+  |---|---|---|---|
+  | 65101 | radarr | 1100 media | 65117 hook-secret |
+  | 65102 | sonarr | 1100 media | 65117 hook-secret |
+  | 65103 | prowlarr | 65103 | |
+  | 65104 | bazarr | 1100 media | |
+  | 65105 | qbittorrent | 1100 media | 65118 textfile-writers |
+  | 65106 | sabnzbd | 1100 media | 65118 textfile-writers |
+  | 65107 | recyclarr | 65107 | |
+  | 65116 | gluetun (root, owns `/gluetun` files) | | |
+
+  `media` is the primary gid because `/srv/video` is mergerfs: FUSE passes only the primary gid, `group_add` does not count there. `UMASK=002` keeps files group-writable, which the kernel's `protected_hardlinks` needs for Radarr's hardlinks. `/srv/appdata/<app>` is owned by the app, group `buntu` via setgid, so the host scripts still read the API keys; `o-rwx`. Radarr's own "Set Permissions" is off (not needed).
   SABnzbd "Permissions for completed downloads" = `775` (since 2026-10-20: files unpacked from RARs kept the archive's `644`).
 - SABnzbd unwanted extensions (since 2026-10-20): `exe bat cmd com scr pif lnk msi msp ps1 vbs vbe js jse jar hta wsf wsh cpl reg dll apk` → job aborted (fake-video malware releases), on top of the ClamAV scan.
 
