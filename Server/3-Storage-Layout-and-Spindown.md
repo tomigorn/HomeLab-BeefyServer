@@ -22,7 +22,7 @@ of the time.
 - ✅ Three data drives wiped (incl. old bcache/LVM signatures), GPT-partitioned, formatted:
   ext4 `ssd-hot`, ext4 `audio`, xfs `hdd-cold`.
 - ✅ Mounted by **UUID** via the managed `/etc/fstab` block; mergerfs pool `/srv/video`
-  reports **35 TB** (8 TB hot + 27 TB cold). `/srv/audio` = 7.3 TB.
+  reports **35 TB** (8 TB hot + 27 TB cold). The 7.3 TB audio SSD was retired 2026-07-03.
 - ✅ Spin-down: **`hd-idle` active + enabled**, parking only the cold HDD by serial after
   5 min (`-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 300`).
 - ✅ `smartd` active (HDD `-n standby`), `fstrim.timer` enabled, `user_allow_other` set.
@@ -65,8 +65,8 @@ Samba shares, and the remaining services (download/seed stack, Jellyfin). Owners
 > ⚠️ **All `/srv/audio` content elsewhere in this doc is now historical** — §2 (audio-SSD row),
 > §3 (audio mount line), §8C, §13.1 / §13.2 / §13.8 (Lidarr / Readarr / Audiobookshelf + audio
 > paths), §14.0 / §14.3 (audio ownership, categories, e-books), and the Appendix — describe the
-> removed tier and **no longer apply**. Audiobookshelf on beefy is decommissioned here; wanting
-> an audio library again is a fresh decision. (beefy hibernates S5 + WoL, so an empty `docker ps`
+> removed tier and **no longer apply**. Audiobookshelf will never move to beefy (owner decision
+> 2026-10-23); it stays on fastpi. (beefy hibernates S5 + WoL, so an empty `docker ps`
 > while idle is normal.)
 
 ---
@@ -94,7 +94,7 @@ Notes:
 - The two 870 QVO SSDs share an **identical model string** — always identify by **UUID
   or serial**, never by `/dev/sdX` (which can reorder across reboots).
 - 870 QVO is **QLC**: ~2,880 TBW endurance per 8 TB. Sustained writes drop to ~80 MB/s
-  once the SLC cache fills (a *speed* limit, not a longevity problem). The **audio SSD is
+  once the SLC cache fills (a *speed* limit, not a longevity problem). The **former audio SSD was
   read-dominant**; the **hot SSD is not** (it absorbs downloads + prefetch copies + mover
   rewrites) — still fine for ~a decade.
 - The cold HDD is a **new HAMR platform**: spin-up/ready is ~15–30 s, not the ~8 s of
@@ -132,7 +132,7 @@ serial, mounted by filesystem `UUID`, and hd-idle/smartd target the HDD by seria
 - `relatime` on the **hot SSD** so the mover can tell what was recently watched.
 - Cold tier is **xfs** (handles very large volumes / large files / fsck time better, and
   delayed-logging coalesces metadata writes).
-- Apps and Samba **only ever use `/srv/video`** and `/srv/audio` — never the raw branches.
+- Apps and Samba **only ever use `/srv/video`** — never the raw branches.
 
 ---
 
@@ -171,11 +171,9 @@ sudo dd if=/dev/zero of=/dev/disk/by-id/<...> bs=1M count=16 conv=fsync
 
 ```bash
 # One GPT partition per data drive (align to 1 MiB; tools default to this):
-sudo parted -s /dev/disk/by-id/<audio-ssd> mklabel gpt mkpart primary 0% 100%
 sudo parted -s /dev/disk/by-id/<hot-ssd>   mklabel gpt mkpart primary 0% 100%
 sudo parted -s /dev/disk/by-id/<cold-hdd>  mklabel gpt mkpart primary 0% 100%
 
-sudo mkfs.ext4 -L audio   /dev/disk/by-id/<audio-ssd>-part1
 sudo mkfs.ext4 -L ssd-hot /dev/disk/by-id/<hot-ssd>-part1
 sudo mkfs.xfs  -L hdd-cold /dev/disk/by-id/<cold-hdd>-part1
 ```
@@ -342,8 +340,7 @@ stays asleep; instant start.**
 by the time you press play it's hot → instant, HDD parks. Without pre-promotion, a truly
 cold play keeps the HDD awake for that film.
 
-**C. Audiobook / music:** files live on `/srv/audio` (pure SSD) → instant, **the 28 TB HDD
-is never involved.**
+**C. Audiobook / music:** not on beefy (audio tier retired 2026-07-03; Audiobookshelf stays on fastpi).
 
 **D. New download:** downloader writes into `/srv/video`; mergerfs places it on the **SSD
 hot branch** → fast writes, **HDD stays asleep during downloading**; the mover demotes it
@@ -363,8 +360,7 @@ file's folder can `stat` that file and wake the HDD once, then served from cache
 
 **F. Seeding (uploading to peers):** active torrents always seed **from SSD, never the cold
 HDD** — peers issue random reads at unpredictable times, so seeded data on the HDD would
-keep it awake constantly. Audiobook/music torrents seed from `/srv/audio` (pure SSD, no HDD
-behind it). Movie/series torrents seed from the **SSD hot tier** of `/srv/video`; the mover
+keep it awake constantly. Movie/series torrents seed from the **SSD hot tier** of `/srv/video`; the mover
 **pins actively-seeding files to the SSD** and demotes to the cold HDD only *after* seeding
 stops (ratio/time cap). The cold HDD therefore holds only finished, non-seeding content.
 **Caveat:** the live-seeding set must fit on the SSD — bound it with seed-ratio/time limits
@@ -382,8 +378,6 @@ Therefore:
 
 - **Movies → detection-only:** a periodic hash scan flags anything that rotted; re-download
   it. No parity drive needed.
-- **Audio (`/srv/audio`) → checksummed off-box backup** (restic/borg) — covers both bitrot
-  and drive death for the irreplaceable data. This is the real protection.
 
 ---
 
@@ -522,7 +516,7 @@ Install:  `sudo bash ~/Projects/Server/3-Storage-Layout-and-Spindown/install-hdd
 Not "untouched for weeks." Realistically: **asleep most of the time between cold-content
 accesses**, with a wake (a) per cold-movie play — for the whole film unless pre-promoted —
 and (b) per deep library scan (mitigated, not eliminated). The OS, all configs/DBs,
-audiobooks, music, browsing of hot content, and every download live on SSD/NVMe and never
+browsing of hot content, and every download live on SSD/NVMe and never
 touch the HDD.
 
 ---
@@ -535,7 +529,7 @@ app's config).
 
 **The one-sentence rule:** the SSD/HDD split is hidden behind mergerfs, so **almost every
 service needs to know nothing about it** — it uses `/srv/video` (mixed, unified) and
-`/srv/audio` (pure SSD) and treats them as ordinary folders. The split is real only to two
+treats it as an ordinary folder. The split is real only to two
 **host-level** daemons — the **mover** (§5) and the **promoter** (§7) — which are the *only*
 things allowed to touch the raw branches `/srv/.disks/ssd-hot` and `/srv/.disks/hdd-cold`.
 Everything else that "just works" does so because of three mergerfs/mount facts already in
@@ -547,7 +541,7 @@ place, **not** because the app is tier-aware:
 
 ### 13.0 Universal rules (apply to EVERY container — do these regardless of app)
 
-1. **Only ever mount `/srv/video` and/or `/srv/audio`.** **NEVER** bind-mount the raw branches
+1. **Only ever mount `/srv/video`.** **NEVER** bind-mount the raw branches
    (`/srv/.disks/ssd-hot`, `/srv/.disks/hdd-cold`) into any container. A container that writes
    to a raw branch defeats placement, breaks the unified namespace, and can corrupt mover/promoter
    assumptions.
@@ -561,11 +555,11 @@ place, **not** because the app is tier-aware:
 5. **Never run on an empty mount.** Docker is ordered after the pool (§6) precisely so an arr
    never sees an empty `/srv/video` and mass-deletes the library. Don't override that ordering.
 6. **Ownership / identity — DECIDED convention:** every media container runs as
-   **`PUID=1000` / `PGID=1000`** (the `buntu` user/group), and `/srv/video` & `/srv/audio` (plus
-   everything under them) is **`chown -R 1000:1000`** owned by `buntu`. One shared identity across
+   **`PUID=1000` / `PGID=1000`** (the `buntu` user/group), and `/srv/video` (plus
+   everything under it) is **`chown -R 1000:1000`** owned by `buntu`. One shared identity across
    the arr + download client + Jellyfin set is what lets hardlinks and cross-container reads work.
-   Set **`UMASK=002`** in each container so new files are group-writable. (`/srv/audio` is
-   **already `1000:1000`/setgid** — audio stack live, §0; `/srv/video` is still `root:root` —
+   Set **`UMASK=002`** in each container so new files are group-writable. (`/srv/video` is still
+   `root:root` —
    apply the `chown` when the video stack is wired.) See §14 for the full rationale and the
    one-time commands.
 
@@ -573,13 +567,13 @@ place, **not** because the app is tier-aware:
 
 | Component | Storage it uses | Touches the **cold HDD**? | Needs to know the SSD/HDD split? | One-line responsibility |
 |---|---|---|---|---|
-| **qBittorrent** (torrents) | `/srv/video/torrents`, `/srv/audio/torrents` | Only if it seeds a demoted file — **don't** (mover pins seeders to SSD) | **No** | Save into the pool; bound seed ratio/time so finished torrents stop & become demotable |
-| **SABnzbd / NZBGet** (usenet) | `/srv/video/usenet`, `/srv/audio/usenet` | No (no seeding) | **No** | Download+unpack into the pool; no seeding ⇒ imports demote freely once cold |
+| **qBittorrent** (torrents) | `/srv/video/torrents` | Only if it seeds a demoted file — **don't** (mover pins seeders to SSD) | **No** | Save into the pool; bound seed ratio/time so finished torrents stop & become demotable |
+| **SABnzbd / NZBGet** (usenet) | `/srv/video/usenet` | No (no seeding) | **No** | Download+unpack into the pool; no seeding ⇒ imports demote freely once cold |
 | **Prowlarr** (indexer manager) | *none* (config on NVMe) | No | **No — zero storage at all** | Talks to indexers + pushes configs to the arrs; never sees a media path |
 | **Sonarr** (TV) / **Radarr** (movies) | `/srv/video` (downloads + `media/`) | Only during a full rescan of cold files (avoid) | **No** (but must follow the hardlink path rule, §13.7) | Single-mount `/srv/video`, hardlink imports, event-driven rescans only |
-| **Lidarr** (music) / **Readarr** / **Audiobookshelf** | `/srv/audio` **only** | **Never** (audio is pure-SSD) | **No** | Keep *everything* (downloads + library) under `/srv/audio` so the HDD is never involved |
-| **Bazarr** (subtitles) | `/srv/video/media` (video only — **not** `/srv/audio`) | Only on a full library sub-scan (limit it) | **No** | Writes subtitle **sidecars** (kept on SSD, never demoted); drive it by webhook, not periodic disk sweeps |
-| **Jellyfin** (media server) | `/srv/video`, `/srv/audio` (read); NVMe for metadata/transcode | Yes on deep scans / image-extraction of cold files (mitigate) | **No** | Real-time monitoring instead of deep scans; metadata+transcode on NVMe; relies on the promoter for instant cold play |
+| **Lidarr** / **Readarr** / **Audiobookshelf** | retired 2026-07-03 (no audio tier; Audiobookshelf stays on fastpi) | — | — | — |
+| **Bazarr** (subtitles) | `/srv/video/media` (video only) | Only on a full library sub-scan (limit it) | **No** | Writes subtitle **sidecars** (kept on SSD, never demoted); drive it by webhook, not periodic disk sweeps |
+| **Jellyfin** (media server) | `/srv/video` (read); NVMe for metadata/transcode | Yes on deep scans / image-extraction of cold files (mitigate) | **No** | Real-time monitoring instead of deep scans; metadata+transcode on NVMe; relies on the promoter for instant cold play |
 | **mover** (§5, host daemon, *not yet built*) | raw branches `ssd-hot` + `hdd-cold` | **Yes — by design** | **YES — fully tier-aware** | Demotes cold/non-seeding files SSD→HDD in a batched window |
 | **promoter** (§7, host daemon, *not yet built*) | raw branches | **Yes — wakes it to pre-copy** | **YES — fully tier-aware** | Copies a cold title to SSD on detail-view, before play |
 | **Traefik / fastpi** (edge, the Pi) | *none* | No | **No — never, see §13.12** | Reverse-proxies HTTP only; never touches files |
@@ -596,20 +590,14 @@ arrs hardlink instead of copy:
     incomplete/                  SAB/NZBGet scratch (SSD; heavy unpack writes — NVMe scratch is an option)
     complete/{movies,tv}/        SAB/NZBGet finished, pre-import
   media/{movies,tv}/             Jellyfin library (arr-managed; sidecars .nfo/posters/subs kept on SSD)
-
-/srv/audio/                      (pure SSD — the 28 TB HDD is NEVER behind this)
-  torrents/music/                audio torrents seed from SSD
-  usenet/music/
-  media/{music,audiobooks}/      Lidarr / Audiobookshelf libraries
 ```
 
-Mount **`/srv/video`** (not its subfolders separately) into the video apps, and **`/srv/audio`**
-into the audio apps. Same root = same filesystem = atomic hardlink imports.
+Mount **`/srv/video`** (not its subfolders separately) into the video apps. Same root = same filesystem = atomic hardlink imports.
 
 ### 13.3 qBittorrent (torrent download client)
 
 - **Knows about the split: no.** Point category save paths inside the pool
-  (`/srv/video/torrents/{movies,tv}`, music → `/srv/audio/torrents/music`). New data auto-lands
+  (`/srv/video/torrents/{movies,tv}`). New data auto-lands
   on SSD; it never sees a branch.
 - **The single thing you MUST get right — bound the live-seeding set.** Active torrents are
   **pinned to the SSD** by the mover (§8F): peers do random reads at random times, so seeding
@@ -631,7 +619,7 @@ into the audio apps. Same root = same filesystem = atomic hardlink imports.
 ### 13.4 SABnzbd / NZBGet (usenet download client)
 
 - **Knows about the split: no.** Incomplete/unpack scratch + completed output under the pool
-  (`/srv/video/usenet/...`, audio → `/srv/audio/usenet/music`).
+  (`/srv/video/usenet/...`).
 - **No seeding** ⇒ none of the qBittorrent pin/reclaim complications. Once the arr imports and
   the usenet copy is cleaned up, only the single library link remains and the mover can demote it
   the moment it goes cold.
@@ -782,41 +770,14 @@ cleaned up after import anyway).
   set to move finished data to a path that isn't on `/srv/video`, you break same-filesystem and the
   arr falls back to copying. Keep completed downloads inside the pool tree (§13.2).
 
-### 13.8 Lidarr / Readarr / Audiobookshelf (audio stack)
+### 13.8 Lidarr / Readarr / Audiobookshelf (audio stack, retired)
 
-- **Knows about the split: no — and uniquely, never has to care.** `/srv/audio` is the **second
-  SSD** — a **pure-SSD** filesystem (model `…909892P`, §2/Appendix A) with **no HDD behind it**
-  (§8C). Keep **downloads and library both under `/srv/audio`** so (a) hardlink imports work within
-  that one filesystem and (b) the 28 TB HDD is **never** involved in audio at all — no spin-up, ever.
-- **The entire spin-down machinery does NOT apply to audio.** `/srv/audio` is **not** a mergerfs
-  union, has **no hot/cold tiers**, and the **mover (§5), promoter (§7), hd-idle, and the spin-state
-  logger all target only the cold *video* HDD** (§0). So for any audio app: **no demotion, no
-  promote-on-detail-view, no "schedule scans into the mover window," no hardlink-across-tiers worry,
-  no `moveonenospc` spill.** An SSD doesn't spin down — the audio SSD is simply always-on. (The one
-  rule that *still* applies is the universal boot-order safeguard, §13.0(5)/§14.2-F: Lidarr/Readarr
-  on an empty mount could still mass-delete — so `/srv/audio` is gated by the same Docker ordering.)
-- The audio SSD is read-dominant QLC — fine for ~a decade (§2). Config/DB/cache on NVMe.
-- The **only** audio data needing real protection is the off-box checksummed backup of
-  `/srv/audio` (§9) — that's an audio-stack concern, not a tiering one.
-- **Audiobookshelf specifically** is the **audio analog of Jellyfin** — a *media server*, not a
-  downloader. Content reaches `/srv/audio/media/audiobooks` (and `…/music`) via the download clients
-  + Lidarr/Readarr organizing into the library, via ABS's **built-in podcast downloader** (another
-  writer to `/srv/audio`), or by manual upload. Wire it like Jellyfin **except** the HDD caveats
-  vanish: put its **config / metadata / cache / transcode-temp on NVMe** (§13.0(3)), but you can let
-  ABS run **full library scans, cover/metadata fetching, and audio probing freely** — they only ever
-  touch the always-on SSD, so there is **nothing to spin up and nothing to schedule**. PUID/PGID/UMASK
-  per §14.0, same as the rest of the stack.
-- **Scope note:** **Lidarr** = music, **Audiobookshelf** = audiobook/podcast *server*. **Readarr**
-  manages **e-books *and* audiobooks** — but e-books are **not** audio: they'd need their own
-  library path (e.g. `/srv/audio/media/ebooks` is fine since it's all pure-SSD, or skip Readarr
-  entirely — it is effectively unmaintained upstream). Decide whether you actually want e-books
-  before wiring Readarr; if not, drop it and use Audiobookshelf for audiobooks. See §14 (open
-  decisions).
+- Audio tier retired 2026-07-03. Audiobookshelf will never move to beefy (owner decision 2026-10-23); it stays on fastpi. No audio apps on beefy.
 
 ### 13.9 Bazarr (subtitles)
 
 - **Knows about the split: no.** Bazarr handles **video subtitles only** (it pairs with
-  Sonarr/Radarr, not the audio stack) — so it mounts **`/srv/video` only, never `/srv/audio`**. It
+  Sonarr/Radarr, not the audio stack) — so it mounts **`/srv/video` only**. It
   writes subtitle files as **sidecars** next to the media in `/srv/video/media`. Sidecars are
   **never demoted** (§5), so they live on the SSD branch — Bazarr's writes stay on SSD
   automatically.
@@ -826,7 +787,7 @@ cleaned up after import anyway).
 
 ### 13.10 Jellyfin (media server)
 
-- **Knows about the split: no** — it reads `/srv/video` and `/srv/audio` like any folder. But its
+- **Knows about the split: no** — it reads `/srv/video` like any folder. But its
   *background behaviors* are the biggest non-playback source of HDD wakes, so it needs the most
   care:
   - **Metadata, images, and the transcode/temp dir → NVMe**, never the pool. (Jellyfin config is
@@ -900,7 +861,7 @@ before deploying any service.
 | Decision | Value | Notes |
 |---|---|---|
 | **Container identity** | `PUID=1000` / `PGID=1000` (the `buntu` user) | One shared identity for **all** media containers (arrs, download clients, Jellyfin, Bazarr). |
-| **Pool ownership** | `chown -R 1000:1000 /srv/video /srv/audio` | `/srv/audio` **done** (owned `1000:1000`, setgid — audio stack live, §0); apply to `/srv/video` when the video stack is wired. |
+| **Pool ownership** | `chown -R 1000:1000 /srv/video` | Apply when the video stack is wired. |
 | **Umask** | `UMASK=002` in every media container | New files group-writable → cross-container hardlinks/edits work. |
 | **Mover window** | nightly **`04:00–06:00`** | The one batched HDD-wake slot; *all* HDD-waking scans schedule into it (§5). |
 | **Seeding bound** | ratio **2.0** *or* **30 days** then stop, **+** hot-seed cap (see 14.2-A) | Conservative defaults so the live-seeding set fits the ~7.3 TB usable hot SSD. |
@@ -909,7 +870,7 @@ One-time ownership/identity setup (run when the first media service is wired):
 
 ```bash
 # buntu is uid/gid 1000:1000 already; just take ownership of the pool trees:
-sudo chown -R 1000:1000 /srv/video /srv/audio
+sudo chown -R 1000:1000 /srv/video
 # (each container then sets PUID=1000, PGID=1000, UMASK=002 in its .env / compose environment)
 ```
 
@@ -919,7 +880,7 @@ Until §5 (mover) and §7 (promoter) exist, the "it just works" guarantees in §
 true. What is actually live today (§0):
 
 - **Placement works:** new writes land on the SSD (`category.create=ff`); reads come from whichever
-  branch holds the file; hd-idle parks the cold HDD. So downloads, hot playback, audio, and
+  branch holds the file; hd-idle parks the cold HDD. So downloads, hot playback, and
   browsing already stay off the HDD.
 - **Nothing demotes:** the SSD hot tier only ever *fills*. There is no automatic SSD→HDD migration,
   no seeding pin enforcement, and **no promote-on-detail-view** (so a cold-content play wakes the
@@ -1016,16 +977,13 @@ transcode/seek patterns make raw atime a coarse proxy for "watched.")
 ### 14.3 Remaining open decisions (still TODO — not blockers for the *paths*, but needed to finish)
 
 - **Download-client categories & save-paths (download-stack phase, §8).** Proposed concrete defaults
-  to confirm: qBittorrent categories `radarr→/srv/video/torrents/movies`, `sonarr→/srv/video/torrents/tv`,
-  `lidarr→/srv/audio/torrents/music`; SAB categories `movies/tv→/srv/video/usenet/...`,
-  `music→/srv/audio/usenet/music`. **Ports** for every service are unassigned — pick a scheme when the
+  to confirm: qBittorrent categories `radarr→/srv/video/torrents/movies`, `sonarr→/srv/video/torrents/tv`; SAB categories `movies/tv→/srv/video/usenet/...`. **Ports** for every service are unassigned — pick a scheme when the
   compose stack is authored.
 - **Samba shares (§0/§1).** No share definitions, users, or permission model yet. When built: shares
-  expose `/srv/video` & `/srv/audio` (never raw branches); SMB writes land on SSD via
+  expose `/srv/video` (never raw branches); SMB writes land on SSD via
   `category.create=ff` and carry the same `minfreespace` spill caveat as 14.2-B (a huge SMB copy can
   spill to HDD).
-- **E-books / Readarr (§13.8).** Decide whether e-books are in scope. If yes, give them a path (e.g.
-  `/srv/audio/media/ebooks`) and accept Readarr's unmaintained status; if no, drop Readarr.
+- **E-books / Readarr (§13.8).** Retired with the audio tier (2026-07-03).
 - **Mover & promoter implementation (§5/§7).** The window (04:00–06:00) and policy are decided; the
   daemons themselves still need building. This is the largest remaining piece and the one that makes
   the spin-down design fully hold.
