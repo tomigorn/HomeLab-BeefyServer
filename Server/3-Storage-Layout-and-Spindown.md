@@ -861,7 +861,7 @@ before deploying any service.
 | Decision | Value | Notes |
 |---|---|---|
 | **Container identity** | `PUID=1000` / `PGID=1000` (the `buntu` user) | One shared identity for **all** media containers (arrs, download clients, Jellyfin, Bazarr). |
-| **Pool ownership** | `chown -R 1000:1000 /srv/video` | Apply when the video stack is wired. |
+| **Pool ownership** | `chown -R 1000:media /srv/video`, dirs 2775 | Group `media` (1100) is how the apps share it, see `Docker/Movie-Downloads/README.md` "Identity". |
 | **Umask** | `UMASK=002` in every media container | New files group-writable → cross-container hardlinks/edits work. |
 | **Mover window** | nightly **`04:00–06:00`** | The one batched HDD-wake slot; *all* HDD-waking scans schedule into it (§5). |
 | **Seeding bound** | ratio **2.0** *or* **30 days** then stop, **+** hot-seed cap (see 14.2-A) | Conservative defaults so the live-seeding set fits the ~7.3 TB usable hot SSD. |
@@ -870,7 +870,7 @@ One-time ownership/identity setup (run when the first media service is wired):
 
 ```bash
 # buntu is uid/gid 1000:1000 already; just take ownership of the pool trees:
-sudo chown -R 1000:1000 /srv/video
+sudo chown -R 1000:media /srv/video
 # (each container then sets PUID=1000, PGID=1000, UMASK=002 in its .env / compose environment)
 ```
 
