@@ -18,6 +18,7 @@ item is in [Download → library pipeline](#download--library-pipeline).
 | qBittorrent | `http://192.168.1.102:8080` | gluetun (shares its namespace) |
 | Prowlarr | `http://192.168.1.102:9696` | gluetun (shares its namespace) |
 | SABnzbd | `http://192.168.1.102:8081` | gluetun (shares its namespace; 8081 inside too, qBittorrent has 8080) |
+| VPN status | `http://127.0.0.1:8087` on beefy only (`ssh -L`) | itself, localhost — see [VPN status](#vpn-status) |
 | Radarr | `http://192.168.1.102:7878` | itself |
 | Sonarr | `http://192.168.1.102:8989` | itself |
 | Bazarr | `http://192.168.1.102:6767` | itself |
@@ -245,6 +246,7 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
   | 65105 | qbittorrent | 1100 media | 65118 textfile-writers |
   | 65106 | sabnzbd | 1100 media | 65118 textfile-writers |
   | 65107 | recyclarr | 65107 | |
+  | 65111 | vpn-status | 65111 | |
   | 65116 | gluetun (root, owns `/gluetun` files) | | |
 
   `media` is the primary gid because `/srv/video` is mergerfs: FUSE passes only the primary gid, `group_add` does not count there. `UMASK=002` keeps files group-writable, which the kernel's `protected_hardlinks` needs for Radarr's hardlinks. `/srv/appdata/<app>` is owned by the app, group `buntu` via setgid, so the host scripts still read the API keys; `o-rwx`. Radarr's own "Set Permissions" is off (not needed).
@@ -770,7 +772,7 @@ Details, restore and metrics: `../Antivirus/README.md`.
             └───────────┬─────────────────────────────┘
                         │ movie-downloads bridge, 172.28.10.0/24
        ┌────────────────┼────────────────┬──────────────┐
-   Radarr :7878   Sonarr :8989   Bazarr :6767   clamav :3310   (+ Seerr :5055 from ../Seerr)
+   Radarr :7878   Sonarr :8989   Bazarr :6767   vpn-status 127.0.0.1:8087   clamav :3310   (+ Seerr :5055 from ../Seerr)
 ```
 
 Every download client is inside the tunnel (SABnzbd since 2026-10-23, like `sabnzbd` behind `gluetun_nzb` on fastpi): trackers, peers, indexers and the usenet provider only see the VPN IP. Radarr, Sonarr and Bazarr only talk to the LAN and metadata APIs.
@@ -793,6 +795,27 @@ and no docker.sock**, unlike the older `mouse` stack on fastpi.
 localhost"**, or the hook gets a 403 and the forwarded port is never applied —
 which looks exactly like a dead tracker.
 
+## VPN status
+
+`movie-vpn-status`: the status page of fastpi's `port_updater` (mouse stack), read-only: it only watches, gluetun's hook does the updating. Code: `vpn-status/web-server.py` (copy of `HomeLab-FastPi` `Docker/mouse/port-updater/web-server.py` plus a poller).
+
+```bash
+ssh -L 8087:127.0.0.1:8087 beefy      # then http://localhost:8087/
+ssh beefy curl -s localhost:8087/api/status   # {"vpn_ip", "real_ip", "forwarded_port", "qbit_port", "match"}
+```
+
+| Card | Source |
+|---|---|
+| Forwarded Port | gluetun control server `GET /v1/portforward` |
+| qBittorrent Port | qBittorrent `listen_port` (`gluetun:8080`, bridge subnet is in qBit's auth whitelist); green ✓ = same as the forwarded port, red ✗ = mismatch |
+| VPN IP | gluetun `GET /v1/publicip/ip` |
+| Real IP | api.ipify.org from the bridge = beefy's WAN IP (must differ from the VPN IP) |
+| History | `/srv/appdata/vpn-status/port-history.json`: `startup`, `port_update`, `mismatch`, `zero_port`, one line per change (polled every 60 s while beefy is awake). A `mismatch` right after a stack start is normal: qBit starts on 6881 until the hook sets the port seconds later |
+
+- Localhost only (like fastpi's): no Traefik route, no new LAN port, no firewall change.
+- uid 65111, `read_only`, `cap_drop: ALL`, image `python:3.14.9-alpine3.24` (no build).
+- gluetun control server auth (since 2026-10-23): `/srv/appdata/gluetun/auth/config.toml` (600, not in git) gives role `vpn-status` (API key, header `X-API-Key`) only `GET /v1/portforward` and `GET /v1/publicip/ip`; every other route is 401, also `PUT /v1/vpn/status` (before, the routes were open to every container on the bridge). Key: `secrets/vpn-status.apikey` (gitignored, 400, uid 65111). New key: write both files, then `docker compose up -d --force-recreate gluetun qbittorrent prowlarr sabnzbd vpn-status` (the others share gluetun's namespace).
+- Tests: `python3 tests/test_vpn_status.py`.
 
 ## Auth: Authentik is the only login
 

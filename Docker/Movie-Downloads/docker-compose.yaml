@@ -45,6 +45,9 @@ services:
       # hook, which is why this stack has no port-updater container and no
       # docker.sock - unlike the older `mouse` stack on fastpi.
       - VPN_PORT_FORWARDING_UP_COMMAND=/scripts/qbit-port.sh {{PORTS}}
+      # Control server (:8000, not published) needs an API key for every route;
+      # only vpn-status may read the forwarded port and public IP (README "VPN status").
+      - HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH=/gluetun/auth/config.toml
     ports:
       # All of these belong to containers sharing this namespace, so they are
       # published HERE, not on the containers themselves.
@@ -285,6 +288,40 @@ services:
       - ./recyclarr/recyclarr.yml:/config/recyclarr.yml:ro
       - ./recyclarr/settings.yml:/config/settings.yml:ro
       - ./recyclarr/custom-formats:/config/custom-formats:ro
+    networks:
+      - movie-downloads
+
+# #########################################################
+# VPN STATUS ##############################################
+# #########################################################
+# Read-only status page: VPN public IP, forwarded port, qBittorrent's listen port,
+# history. Same page as port_updater on fastpi's mouse stack, minus the updating
+# (gluetun's own hook sets the port here). README "VPN status".
+  vpn-status:
+    image: python:3.14.9-alpine3.24
+    container_name: movie-vpn-status
+    restart: unless-stopped
+    user: "65111:65111"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    command: ["python3", "/app/web-server.py"]
+    environment:
+      - TZ=${TZ}
+      - PYTHONDONTWRITEBYTECODE=1
+      - WEB_PORT=8087
+    volumes:
+      - ./vpn-status/web-server.py:/app/web-server.py:ro
+      - ./secrets/vpn-status.apikey:/run/secrets/gluetun-apikey:ro
+      - ${APPDATA_ROOT}/vpn-status:/data
+    ports:
+      # localhost only, like fastpi's port_updater: ssh -L 8087:127.0.0.1:8087 beefy
+      - "127.0.0.1:8087:8087"
     networks:
       - movie-downloads
 

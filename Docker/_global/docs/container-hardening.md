@@ -25,6 +25,7 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65108 | jellyfin (app; s6 PID1 root) | 44 video, 990 render | CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID |
 | 65109 | seerr | | |
 | 65110 | ryot-go | | |
+| 65111 | movie-vpn-status (read_only) | | |
 | 1001 | ryot (image user, writes its own /home/ryot) | | NET_BIND_SERVICE (caddy file cap) |
 | 70 | ryot-db | | |
 | 65112 | clamav | 1100, 65118 | DAC_READ_SEARCH |
@@ -34,7 +35,7 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65116 | gluetun files (PUID; process root) | | NET_ADMIN, NET_RAW, NET_BIND_SERVICE, DAC_OVERRIDE, CHOWN |
 | 0 | portainer_agent | | none (full socket by design, `AGENT_SECRET` required) |
 
-Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65111, 65119+.
+Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65119+.
 
 ## Root by design
 | Container | Why |
