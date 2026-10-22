@@ -21,8 +21,8 @@ PROFILES = [{"id": 3, "name": "Anime - Bluray + WEB 1080p"},
             {"id": 12, "name": "Any quality - old & rare (upgrades to 4K) - English original"},
             {"id": 17, "name": "4K HDR - WEB-2160p (1080p fallback)"},
             {"id": 20, "name": "4K HDR - WEB-2160p (1080p fallback) - English original"}]
-TAGS = [{"id": 1, "label": "lang-es"}, {"id": 21, "label": "audio-en"}, {"id": 22, "label": "audio-de"},
-        {"id": 23, "label": "audio-es"}, {"id": 31, "label": "subs-fr"}, {"id": 32, "label": "subs-it"},
+TAGS = [{"id": 1, "label": "lang-es"}, {"id": 21, "label": "audio-english"}, {"id": 22, "label": "audio-german"},
+        {"id": 23, "label": "audio-spanish"}, {"id": 31, "label": "subs-french"}, {"id": 32, "label": "subs-italian"},
         {"id": 40, "label": "bz-es-it"}]
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -182,19 +182,19 @@ echo "Tags: audio-xx and subs-xx"
 JA='{"id": 8, "name": "Japanese"}'; DE='{"id": 4, "name": "German"}'; HI='{"id": 26, "name": "Hindi"}'
 BZ_EXISTING='[{"profileId": 1, "name": "English + German", "tag": null, "items": []}, {"profileId": 2, "name": "English + German + Spanish", "tag": "lang-es", "items": []}]'
 run "$(tagged 5 7 "$ES" 2020 "1,22")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "audio-de on a Spanish film: nothing changes (tags present)" "0||" "$RC|$(cat "$T/puts")|$(cat "$T/newtags")"
+assert_eq "audio-german on a Spanish film: nothing changes (tags present)" "0||" "$RC|$(cat "$T/puts")|$(cat "$T/newtags")"
 run "$(tagged 5 7 "$EN" 2020 "21")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "audio-en on an English film is dropped (original audio is required anyway)" "$(put movie movieIds 5 10)
+assert_eq "audio-english on an English film is dropped (original audio is required anyway)" "$(put movie movieIds 5 10)
 $(tagput movie movieIds 5 21 remove)" "$(cat "$T/puts")"
 run "$(tagged 5 7 "$ES" 2020 "1,23")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "audio-es on a Spanish film is dropped" "$(tagput movie movieIds 5 23 remove)" "$(cat "$T/puts")"
+assert_eq "audio-spanish on a Spanish film is dropped" "$(tagput movie movieIds 5 23 remove)" "$(cat "$T/puts")"
 run "$(tagged 5 7 "$EN" 2020 "31")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "subs-fr on an English film creates tag bz-fr" '{"label":"bz-fr"}' "$(cat "$T/newtags")"
+assert_eq "subs-french on an English film creates tag bz-fr" '{"label":"bz-fr"}' "$(cat "$T/newtags")"
 assert_eq "  and adds it to the film" "$(put movie movieIds 5 10)
 $(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
 assert_eq "  and creates the Bazarr profile for it" '["English + German + French (requested)","en,de,fr,en+f,de+f"]' "$(bzprofile bz-fr)"
-run "{\"tags\": [{\"id\": 31, \"label\": \"subs-fr\"}, {\"id\": 50, \"label\": \"bz-es-fr\"}], \"bazarr\": $BZ_EXISTING, $(tagged 5 7 "$ES" 2020 "1,31" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "subs-fr on a Spanish film: existing tag bz-es-fr is added" "$(tagput movie movieIds 5 50 add)" "$(cat "$T/puts")"
+run "{\"tags\": [{\"id\": 31, \"label\": \"subs-french\"}, {\"id\": 50, \"label\": \"bz-es-fr\"}], \"bazarr\": $BZ_EXISTING, $(tagged 5 7 "$ES" 2020 "1,31" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "subs-french on a Spanish film: existing tag bz-es-fr is added" "$(tagput movie movieIds 5 50 add)" "$(cat "$T/puts")"
 assert_eq "  no new tag" "" "$(cat "$T/newtags")"
 assert_eq "  Bazarr profile: original + requested" '["English + German + Spanish + French (requested)","en,de,es,fr,en+f,de+f"]' "$(bzprofile bz-es-fr)"
 assert_eq "  existing Bazarr profiles are kept" '["English + German + Spanish",""]' "$(bzprofile lang-es)"
@@ -209,21 +209,21 @@ assert_eq "German film: German is always there, bz-fr" '{"label":"bz-fr"}' "$(ca
 run "$(tagged 5 7 "$HI" 2020 "31")" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "original without subtitle support (Hindi): bz-fr" '{"label":"bz-fr"}' "$(cat "$T/newtags")"
 run "$(tagged 5 7 "$ES" 1968 "1,31")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "old film with subs-fr: profile and tag both change" "$(put movie movieIds 5 11)
+assert_eq "old film with subs-french: profile and tag both change" "$(put movie movieIds 5 11)
 $(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
 run "$(tagged 5 7 "$ES" 1968 "1,31")" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
 assert_eq "LP_TAGS_ONLY=1: only the tag changes" "$(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
 BZKEY="$T/nokey" run "$(tagged 5 7 "$ES" 1968 "1,31")" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "no Bazarr key: profile still changes, exit non-zero" "$(put movie movieIds 5 11)|1" "$(cat "$T/puts")|$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
-run "{\"tags\": [{\"id\": 33, \"label\": \"subs-es\"}], $(tagged 5 7 "$ES" 2020 "33" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "subs-es on a Spanish film keeps the Spanish profile: bz-es" '{"label":"bz-es"}' "$(cat "$T/newtags")"
-run "{\"tags\": [{\"id\": 31, \"label\": \"subs-fr\"}, {\"id\": 51, \"label\": \"bz-fr\"}], \"bazarr\": [{\"profileId\": 3, \"name\": \"x\", \"tag\": \"bz-fr\", \"items\": []}], $(tagged 5 10 "$EN" 2020 "31,51" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
+run "{\"tags\": [{\"id\": 33, \"label\": \"subs-spanish\"}], $(tagged 5 7 "$ES" 2020 "33" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "subs-spanish on a Spanish film keeps the Spanish profile: bz-es" '{"label":"bz-es"}' "$(cat "$T/newtags")"
+run "{\"tags\": [{\"id\": 31, \"label\": \"subs-french\"}, {\"id\": 51, \"label\": \"bz-fr\"}], \"bazarr\": [{\"profileId\": 3, \"name\": \"x\", \"tag\": \"bz-fr\", \"items\": []}], $(tagged 5 10 "$EN" 2020 "31,51" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
 assert_eq "already tagged bz-fr: nothing to do" "" "$(cat "$T/puts")$(cat "$T/newtags")"
-run "{\"tags\": [{\"id\": 32, \"label\": \"subs-it\"}, {\"id\": 51, \"label\": \"bz-fr\"}, {\"id\": 52, \"label\": \"bz-it\"}], \"bazarr\": [{\"profileId\": 3, \"name\": \"x\", \"tag\": \"bz-it\", \"items\": []}], $(tagged 5 10 "$EN" 2020 "32,51" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
+run "{\"tags\": [{\"id\": 32, \"label\": \"subs-italian\"}, {\"id\": 51, \"label\": \"bz-fr\"}, {\"id\": 52, \"label\": \"bz-it\"}], \"bazarr\": [{\"profileId\": 3, \"name\": \"x\", \"tag\": \"bz-it\", \"items\": []}], $(tagged 5 10 "$EN" 2020 "32,51" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
 assert_eq "subs changed from fr to it: stale bz-fr removed, bz-it added" "$(tagput movie movieIds 5 51 remove)
 $(tagput movie movieIds 5 52 add)" "$(cat "$T/puts")"
 run "$(tagged 8 17 "$ES" 2020 "1,31")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
-assert_eq "Sonarr: subs-fr on a Spanish series" "$(tagput series seriesIds 8 99 add)" "$(cat "$T/puts")"
+assert_eq "Sonarr: subs-french on a Spanish series" "$(tagput series seriesIds 8 99 add)" "$(cat "$T/puts")"
 assert_eq "  profile" '["English + German + Spanish + French (requested)","en,de,es,fr,en+f,de+f"]' "$(bzprofile bz-es-fr)"
 
 echo "$PASS passed, $FAIL failed"

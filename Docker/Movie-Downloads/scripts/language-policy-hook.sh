@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Radarr/Sonarr Connect "Custom Script" (On Movie Added / On Series Add): puts a new title on the right profile before its first search and turns its subs-xx tags into one Bazarr profile (README "Languages", "Old and rare titles", "Per-request audio and subtitles").
+# Radarr/Sonarr Connect "Custom Script" (On Movie Added / On Series Add): puts a new title on the right profile before its first search and turns its subs-<language> tags into one Bazarr profile (README "Languages", "Old and rare titles", "Per-request audio and subtitles").
 # Runs inside the app container (bash, curl, jq); registered by scripts/language-policy.sh. LP_TAGS_ONLY=1 skips the profile part (language-policy.sh, existing titles).
 set -euo pipefail
 
@@ -68,7 +68,7 @@ edit_tag() { # edit_tag <tag id> <add|remove>
   api "/$kind/editor" -X PUT -d "{\"$ids\":[$id],\"tags\":[$1],\"applyTags\":\"$2\"}" >/dev/null
 }
 
-# Bazarr picks the first profile whose tag the title carries; lang-xx is not set while a subs-xx tag is (auto-tagging rule), so bz-<codes> is the only match.
+# Bazarr picks the first profile whose tag the title carries; lang-xx is not set while a subs-<language> tag is (auto-tagging rule), so bz-<codes> is the only match.
 ensure_bazarr_profile() { # ensure_bazarr_profile <tag> <profile name> <codes...>
   local tag=$1 name=$2; shift 2
   [ -r "$BAZARR_KEY" ] || { echo "$kind $id: no Bazarr API key at $BAZARR_KEY, $tag not set" >&2; return 1; }
@@ -85,6 +85,9 @@ ensure_bazarr_profile() { # ensure_bazarr_profile <tag> <profile name> <codes...
   echo "$kind $id: Bazarr profile '$name' ($tag) created"
 }
 
+slug() { tr 'A-Z ' 'a-z-' <<<"$1"; } # language name -> tag slug: Swiss German -> swiss-german
+slug_code() { awk -F'\t' -v s="$1" '!/^#/ { n = tolower($2); gsub(/ /, "-", n); if (n == s) print $1 }' "$LANGS_FILE"; }
+
 set_tags() {
   local tag_ids all labels orig code name codes names label tid
   tag_ids=$(jq -c '.tags // []' <<<"$title")
@@ -95,16 +98,17 @@ set_tags() {
   orig=$(jq -r '.originalLanguage.name // ""' <<<"$title")
   code=$(awk -F'\t' -v n="$orig" '!/^#/ && $2 == n {print $1}' "$LANGS_FILE")
 
-  if [ -n "$code" ] && grep -qx "audio-$code" <<<"$labels"; then
-    edit_tag "$(tag_id "audio-$code")" remove
-    echo "$kind $id: audio-$code dropped (original language)"
+  oslug=$(slug "$orig")
+  if [ -n "$code" ] && grep -qx "audio-$oslug" <<<"$labels"; then
+    edit_tag "$(tag_id "audio-$oslug")" remove
+    echo "$kind $id: audio-$oslug dropped (original language)"
   fi
 
   codes=()
   if [ -n "$code" ] && awk -F'\t' -v c="$code" '!/^#/ && $1 == c && $4 == "yes" {f=1} END {exit !f}' "$LANGS_FILE"; then codes+=("$code"); fi
   while read -r c; do
     [ -n "$c" ] && [ "$c" != "$code" ] && codes+=("$c")
-  done < <(sed -n 's/^subs-\([a-z]*\)$/\1/p' <<<"$labels" | grep -vx -e en -e de | sort)
+  done < <(sed -n 's/^subs-//p' <<<"$labels" | while read -r s; do slug_code "$s"; done | grep -vx -e en -e de | sort)
   [ "${#codes[@]}" -gt 0 ] && grep -q '^subs-' <<<"$labels" || return 0
 
   label="bz-$(IFS=-; echo "${codes[*]}")"

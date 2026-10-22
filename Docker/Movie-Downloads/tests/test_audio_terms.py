@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The audio-<code> release-name patterns in scripts/languages.tsv against real and typical release names.
+"""The audio-<language> release-name patterns in scripts/languages.tsv against real and typical release names.
 Usage: python3 tests/test_audio_terms.py"""
 import pathlib
 import re
@@ -78,6 +78,14 @@ class AudioTerms(unittest.TestCase):
             self.assertIn(subs, ("yes", "no"))
             if audio != "-":
                 re.compile(audio, re.I)
+
+    def test_tag_labels_are_readable_slugs(self):
+        slugs = {c: n.lower().replace(" ", "-") for c, (n, _, _) in self.rows.items()}
+        self.assertEqual(len(set(slugs.values())), len(slugs))
+        for code, slug in slugs.items():
+            self.assertRegex(slug, r"^[a-z0-9]+(-[a-z0-9]+)*$")
+            self.assertGreater(len(slug), 3, code)
+        self.assertEqual(slugs["gsw"], "swiss-german")
 
     def test_required_codes_have_audio_tags(self):
         for code in ("gsw", "de", "en", "fr", "it", "es", "ja", "ko"):

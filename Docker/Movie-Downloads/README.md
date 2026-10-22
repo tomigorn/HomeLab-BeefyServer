@@ -418,7 +418,7 @@ Lives in three places: `recyclarr/recyclarr.yml` (scores), `scripts/language-pol
   Services] Anime` (CR, HIDIVE, …), Anime Raws / LQ groups / `Dubs Only` rejected,
   TRaSH's minimum score 100 (no-name groups are skipped). Anime films: pick the Radarr
   anime profile by hand.
-- Tags: Radarr and Sonarr auto-tagging sets `lang-xx` (every language with `subs = yes` in `scripts/languages.tsv`) from the title's original language on add and on every refresh, except while a `subs-xx` tag is present (see [Per-request audio and subtitles](#per-request-audio-and-subtitles)); Bazarr maps the tag to the matching subtitle profile. English originals carry no tag and keep **English + German**. New language: add a row to `scripts/languages.tsv` and re-run the script.
+- Tags: Radarr and Sonarr auto-tagging sets `lang-xx` (every language with `subs = yes` in `scripts/languages.tsv`) from the title's original language on add and on every refresh, except while a `subs-<language>` tag is present (see [Per-request audio and subtitles](#per-request-audio-and-subtitles)); Bazarr maps the tag to the matching subtitle profile. English originals carry no tag and keep **English + German**. New language: add a row to `scripts/languages.tsv` and re-run the script.
 - Not built: **extra audio tracks by merging two downloads** (download EN+DE and
   EN+ES, copy the Spanish track into the first file). No maintained tool does this
   (Tdarr/Unmanic transcode, they do not add languages); it would be a bespoke
@@ -460,8 +460,8 @@ Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defi
 
 | Tag | Meaning | How |
 |---|---|---|
-| `audio-xx` | the release **must** contain that audio language; not grabbed otherwise. Normal ranking on top | tag-scoped Release Profile `audio-xx: <Language> audio required`, required term = the regex in `languages.tsv`, matched against the release name |
-| `subs-xx` | Bazarr also fetches subtitles in that language (on top of EN + DE + original) | hook adds `bz-<original>-<requested…>` and creates the Bazarr profile `English + German + <Original> + <Requested…> (requested)` bound to it |
+| `audio-<language>` | the release **must** contain that audio language; not grabbed otherwise. Normal ranking on top | tag-scoped Release Profile `audio-<language>: <Language> audio required`, required term = the regex in `languages.tsv`, matched against the release name |
+| `subs-<language>` | Bazarr also fetches subtitles in that language (on top of EN + DE + original) | hook adds `bz-<original>-<requested…>` and creates the Bazarr profile `English + German + <Original> + <Requested…> (requested)` bound to it |
 | `lang-xx` | set automatically (original language), do not pick | auto-tagging |
 | `bz-…` | set by the hook, do not pick | one per subtitle combination |
 
@@ -472,15 +472,16 @@ Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defi
 | `fr` `it` `es` `ja` `ko` `pt` `nl` `ru` `sv` `da` `nb` `zh` `pl` `tr` | | ✓ | ✓ |
 | `fi` `cs` `hu` `el` `ar` `he` `uk` | | – | ✓ |
 
+- **Tag labels are the language name, lowercase with hyphens, from `languages.tsv` column 2** (`audio-swiss-german`, `audio-german`, `subs-french`, …); the `Code` column below is only the Bazarr/`lang-xx`/`bz-` code. The `bz-<codes>` and `lang-xx` tags stay code-based.
 - Several `audio-` tags = all of them required (each release profile must match). Several `subs-` tags = one combined Bazarr profile.
 - `audio-<original>` is dropped on add: the original audio is required anyway, and release names of e.g. English films rarely say `English`.
 - Limits of name matching (release profiles see only the name, not the tracks):
   - **Swiss German** has no Radarr/Sonarr language. Real names (NZBgeek/NzbPlanet search, 2026-10-20): `Swissgerman`, `SwissGerman`, `SWISSGERMAN`, `Swiss.German`, `Schweizerdeutsch`, `Schweizerduetsch`. `Mundart`, `Dialekt`, `CH-DE`, plain `Swiss` are noise and not matched. Nearly only Swiss productions are released that way; Radarr parses them as German.
-  - `audio-en` also accepts `Dual Audio`; `audio-fr` accepts `VFF/VFQ/VF2/TRUEFRENCH` but not plain `MULTi` (it does not say which languages) and not `VOSTFR` (French subtitles).
+  - `audio-english` also accepts `Dual Audio`; `audio-french` accepts `VFF/VFQ/VF2/TRUEFRENCH` but not plain `MULTi` (it does not say which languages) and not `VOSTFR` (French subtitles).
   - A language word in the film title (*The French Connection*) satisfies the term.
-- **`audio-xx` is a hard filter, not a score.** The release profile rejects every release without the term before scoring, so resolution cannot outrank it: with `audio-gsw` a 720p `SwissGerman` release is approved and a `German.DL` 2160p is rejected ("Does not contain one of the required terms"). Checked 2026-10-22 on *The Ring Thing* with `POST /api/v3/release/push` (rejected releases are never grabbed).
+- **`audio-<language>` is a hard filter, not a score.** The release profile rejects every release without the term before scoring, so resolution cannot outrank it: with `audio-swiss-german` a 720p `SwissGerman` release is approved and a `German.DL` 2160p is rejected ("Does not contain one of the required terms"). Checked 2026-10-22 on *The Ring Thing* with `POST /api/v3/release/push` (rejected releases are never grabbed).
 - **Swiss German only works where the original language is German** (Swiss productions: TMDB says German). On a title with another original language the profile's language rule ("Original") and the `German` / `Language: Not Original` formats (-100000, below the minimum 0) still reject a Swiss German release (Knives Out, 2026-10-22). A Swiss German dub of a foreign film needs its own profile with language Any (not built).
-- **Tag labels are fixed:** Radarr/Sonarr only allow `a-z`, `0-9` and `-` in a tag label (API: "Allowed characters a-z, 0-9 and -"), so friendly names like "Swiss German (Mundart)" cannot be tag labels, and the scripts match on the `audio-xx` / `subs-xx` labels. There are no `audio-orig` or `subs-forced` tags (original audio is always required, forced subtitles are always fetched).
+- **Tag labels are fixed:** Radarr/Sonarr only allow `a-z`, `0-9` and `-` in a tag label (API: "Allowed characters a-z, 0-9 and -"), so friendly names like "Swiss German (Mundart)" cannot be tag labels, and the scripts match on the `audio-<language>` / `subs-<language>` labels. There are no `audio-orig` or `subs-forced` tags (original audio is always required, forced subtitles are always fetched).
 - **Tags only apply to a new title.** Seerr sends them only when it adds the film; for one already in Radarr it logs "Movie is already monitored" and sends nothing (*The Ring Thing*: no tag, so no filter, the existing German DL stayed). Set the tag in Radarr/Sonarr by hand.
 - Tags added to an existing title later: re-run `scripts/language-policy.sh` (runs the hook with `LP_TAGS_ONLY=1` for every title with a `subs-` tag, then rescans those titles in Bazarr: a profile changed by the sync keeps its old missing-subtitles list until then).
 - The hook reads the Bazarr key from `secrets/hook/bazarr.apikey` (gitignored, written by the script, mounted at `/secrets:ro`) and reaches `http://bazarr:6767`. Rebuild: `mkdir -p secrets/hook` before the first `docker compose up` (otherwise Docker creates it root-owned), then run the script.
@@ -665,9 +666,9 @@ Same for Sonarr on `8989` with `/srv/appdata/sonarr/config.xml`.
 | 03:45:00 | Seerr "Jellyfin Recently Added Scan" | media status 5 (Available), request completed |
 | | Bazarr | profile `English + German` (English original); EN + DE embedded (Criterion/Sony tracks) → nothing to download; forced EN/DE: no provider has them |
 
-Tag path, *Plan 9 from Outer Space* (1957, TMDB 10513), requested with tags `audio-de` + `subs-fr`: hook `profile 7 -> 12 (old: 1957, English original)`, `bz-fr` added, Bazarr profile created. No grab, correctly: every non-German release `Does not contain one of the required terms: /\b(german|deutsch|ger|deu)\b/i`, the German DL ones are from LQ group `msd` (−30000), the German-only ones dub-only (−100000).
+Tag path, *Plan 9 from Outer Space* (1957, TMDB 10513), requested with tags `audio-german` + `subs-french`: hook `profile 7 -> 12 (old: 1957, English original)`, `bz-fr` added, Bazarr profile created. No grab, correctly: every non-German release `Does not contain one of the required terms: /\b(german|deutsch|ger|deu)\b/i`, the German DL ones are from LQ group `msd` (−30000), the German-only ones dub-only (−100000).
 
-`subs-` on an existing title (*His Girl Friday*): `subs-fr` → `bz-fr` (French is embedded, nothing missing); `subs-pl` → `bz-fr-pl`, profile `English + German + French + Polish (requested)` → `….pl.srt` from OpenSubtitles.com (score 90 %).
+`subs-` on an existing title (*His Girl Friday*): `subs-french` → `bz-fr` (French is embedded, nothing missing); `subs-polish` → `bz-fr-pl`, profile `English + German + French + Polish (requested)` → `….pl.srt` from OpenSubtitles.com (score 90 %).
 
 Delete (cleanup): Radarr delete with files → Connect → the Jellyfin item was gone 60 s later.
 
