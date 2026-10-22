@@ -151,17 +151,17 @@ email) are not set up: Settings -> Notifications.
 | a film or series | **Request**, leave the profile on the default (4K HDR, 1080p fallback) |
 | an old or niche title | nothing: on add it moves to **Any quality - old & rare (upgrades to 4K)** by itself (released ≤ 12 years ago, or ≥ 2 years old with few votes) |
 | force Any quality for a new title | **Advanced** → Quality Profile **Any quality - old & rare (upgrades to 4K)** |
-| a must-have audio language | **Advanced** → Tags `audio-xx`: not grabbed without it |
-| extra subtitles | **Advanced** → Tags `subs-xx`: Bazarr fetches them on top of EN + DE + original |
+| a must-have audio language | **Advanced** → Tags `audio-<language>`: not grabbed without it |
+| extra subtitles | **Advanced** → Tags `subs-<language>`: Bazarr fetches them on top of EN + DE + original |
 
 **Advanced** needs `REQUEST_ADVANCED` (above). Any profile other than the default (or its English twin) is kept as picked. Details, exact rules and the full tag list: `../Movie-Downloads/README.md`, "Old and rare titles" and "Per-request audio and subtitles".
 
 | Example | Tags |
 |---|---|
-| Swiss film in Swiss German | `audio-gsw` (release name must say `SwissGerman`/`Swiss.German`/`Schweizerdeutsch`; Swiss German subtitles do not exist) |
-| English film, also with German audio | `audio-de` |
-| Korean film with French subtitles | `subs-fr` (Korean subs come anyway) |
-| Anime with English dub and Italian subs | `audio-en` + `subs-it` |
+| Swiss film in Swiss German | `audio-swiss-german` (release name must say `SwissGerman`/`Swiss.German`/`Schweizerdeutsch`; Swiss German subtitles do not exist) |
+| English film, also with German audio | `audio-german` |
+| Korean film with French subtitles | `subs-french` (Korean subs come anyway) |
+| Anime with English dub and Italian subs | `audio-english` + `subs-italian` |
 
 - Seerr's tag picker lists the Radarr/Sonarr tag labels as they are and has no description or help text per tag (checked in the 3.x source, `AdvancedRequester`); the labels cannot hold spaces or capitals, so there is no inline "Hard filter" hint and no friendly name. This table is the reference.
 - Tags apply only when Seerr adds a new title: requesting a film that is already in Radarr/Sonarr ignores the tags (log: "Movie is already monitored in Radarr"). Tag it in Radarr/Sonarr instead.
