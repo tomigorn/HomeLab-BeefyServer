@@ -21,7 +21,7 @@ Both stacks are **deployed, live and verified in production**.
   LAN** (not just assumed).
 
 **Stacks**
-- `Movie-Downloads` (gluetun + qBittorrent + Prowlarr in the VPN netns; SABnzbd +
+- `Movie-Downloads` (gluetun + qBittorrent + Prowlarr + SABnzbd in the VPN netns, SABnzbd since 2026-10-23;
   Radarr + Bazarr outside it) and `Jellyfin`. 8 containers, all restart cleanly.
 - VPN verified: exit IP differs from WAN, port forwarding live, and `qbit-port.sh`
   applies new ports automatically (observed across both a reconnect and a reboot).

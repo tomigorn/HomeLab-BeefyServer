@@ -5,10 +5,10 @@ services:
 # #########################################################
 # GLUETUN #################################################
 # #########################################################
-# Owns the network namespace that qBittorrent and Prowlarr live in: if the tunnel
-# drops, their traffic stops with it rather than leaking to the LAN. SABnzbd,
-# Radarr and Bazarr deliberately stay OUT of it - usenet is already TLS and the
-# arr apps only talk to the LAN and to indexer APIs.
+# Owns the network namespace that every download client lives in (qBittorrent,
+# Prowlarr, SABnzbd): if the tunnel drops, their traffic stops with it rather
+# than leaking to the WAN. Radarr, Sonarr and Bazarr stay OUT of it - they only
+# talk to the LAN and to metadata APIs.
   gluetun:
     image: qmcgaw/gluetun:v3.41.3
     container_name: movie-gluetun
@@ -46,10 +46,11 @@ services:
       # docker.sock - unlike the older `mouse` stack on fastpi.
       - VPN_PORT_FORWARDING_UP_COMMAND=/scripts/qbit-port.sh {{PORTS}}
     ports:
-      # Both of these belong to containers sharing this namespace, so they are
+      # All of these belong to containers sharing this namespace, so they are
       # published HERE, not on the containers themselves.
       - "${QBITTORRENT_PORT}:8080"        # qBittorrent WebUI
       - "${PROWLARR_PORT}:9696"           # Prowlarr
+      - "${SABNZBD_PORT}:8081"            # SABnzbd (8081 inside too: qBittorrent has 8080 here)
     volumes:
       - ${APPDATA_ROOT}/gluetun:/gluetun
       - ./scripts/qbit-port.sh:/scripts/qbit-port.sh:ro
@@ -124,9 +125,10 @@ services:
 # #########################################################
 # SABNZBD #################################################
 # #########################################################
-# Usenet. No VPN on purpose: the provider connection is already TLS, usenet does
-# not seed, and keeping it out of the tunnel means a VPN hiccup cannot stall a
-# download. Downloads land locally so Radarr can hardlink.
+# Usenet. Shares gluetun's namespace like qBittorrent (since 2026-10-23), so the
+# provider sees the VPN IP and nothing leaves without the tunnel. Reached by the
+# other services as `gluetun:8081` (port = 8081 in sabnzbd.ini). Downloads land
+# locally so Radarr can hardlink.
   sabnzbd:
     image: lscr.io/linuxserver/sabnzbd:5.1.3
     container_name: movie-sabnzbd
@@ -141,6 +143,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
     environment:
       - TZ=${TZ}
       - UMASK=${UMASK}
@@ -150,15 +156,11 @@ services:
       # Completion scan (README "Completion scan"): the hook script and its metrics file.
       - ../Antivirus/hook:/clamav-hook:ro
       - /var/lib/clamav-scan/textfile:/clamav
-    ports:
-      - "${SABNZBD_PORT}:8080"
-    networks:
-      - movie-downloads
 
 # #########################################################
 # RADARR ##################################################
 # #########################################################
-# Movies. Talks to qBittorrent at gluetun:8080 and SABnzbd at sabnzbd:8080.
+# Movies. Talks to qBittorrent at gluetun:8080 and SABnzbd at gluetun:8081.
   radarr:
     image: lscr.io/linuxserver/radarr:6.4.4
     container_name: movie-radarr
@@ -220,7 +222,7 @@ services:
 # SONARR ##################################################
 # #########################################################
 # Series. Same shape as Radarr: one /data mount (hardlinks), qBittorrent at
-# gluetun:8080 (category sonarr), SABnzbd at sabnzbd:8080 (category tv).
+# gluetun:8080 (category sonarr), SABnzbd at gluetun:8081 (category tv).
   sonarr:
     image: lscr.io/linuxserver/sonarr:4.0.20
     container_name: movie-sonarr

@@ -1,7 +1,7 @@
 # Movie-Downloads — VPN, torrents, usenet, Radarr and Sonarr on beefy
 
 Everything needed to acquire a movie or a series and file it into the library:
-**gluetun** (ProtonVPN) wrapping **qBittorrent** and **Prowlarr**, plus **SABnzbd**,
+**gluetun** (ProtonVPN) wrapping **qBittorrent**, **Prowlarr** and **SABnzbd**, plus
 **Radarr**, **Sonarr** and **Bazarr** outside the tunnel. The folder keeps its
 original name although it handles series too (since 2026-10-19); requests come in
 via `../Seerr`. Playback is a separate project — see
@@ -17,7 +17,7 @@ item is in [Download → library pipeline](#download--library-pipeline).
 |---|---|---|
 | qBittorrent | `http://192.168.1.102:8080` | gluetun (shares its namespace) |
 | Prowlarr | `http://192.168.1.102:9696` | gluetun (shares its namespace) |
-| SABnzbd | `http://192.168.1.102:8081` | itself — 8080 was taken |
+| SABnzbd | `http://192.168.1.102:8081` | gluetun (shares its namespace; 8081 inside too, qBittorrent has 8080) |
 | Radarr | `http://192.168.1.102:7878` | itself |
 | Sonarr | `http://192.168.1.102:8989` | itself |
 | Bazarr | `http://192.168.1.102:6767` | itself |
@@ -100,6 +100,7 @@ Confirm the tunnel is actually carrying traffic before adding a single torrent:
 
 ```bash
 docker exec movie-gluetun wget -qO- https://ipinfo.io/ip   # must NOT be your WAN IP
+docker exec movie-sabnzbd curl -s https://ipinfo.io/ip      # same VPN IP (also movie-qbittorrent, movie-prowlarr)
 ```
 
 ## Storage — one mount, or Radarr copies instead of hardlinking
@@ -136,7 +137,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 | Radarr | **Use Hardlinks instead of Copy** | **on** (§13.6) |
 | Radarr | Recycle Bin | `/data/.recyclebin`, 7-day cleanup |
 | Radarr | qBittorrent client | host `gluetun`, port `8080` |
-| Radarr | SABnzbd client | host `sabnzbd`, port `8080` |
+| Radarr | SABnzbd client | host `gluetun`, port `8081` |
 | Sonarr | the same, with category `sonarr` / `tv`, root `/data/media/tv` | see [Series (Sonarr)](#series-sonarr) |
 | **Prowlarr** | storage volumes | **none — it gets no `/srv` mount at all** (§13.5) |
 
@@ -762,19 +763,25 @@ Details, restore and metrics: `../Antivirus/README.md`.
 ## Network topology
 
 ```
-            ┌─ gluetun (ProtonVPN) ─────────────┐
- LAN :8080 ─┤  qBittorrent    Prowlarr          │   no leak if tunnel drops
- LAN :9696 ─┤  (no ports/networks of their own) │
-            └───────────┬───────────────────────┘
+            ┌─ gluetun (ProtonVPN) ───────────────────┐
+ LAN :8080 ─┤  qBittorrent    Prowlarr    SABnzbd     │   no leak if tunnel drops
+ LAN :9696 ─┤  (no ports/networks of their own)       │
+ LAN :8081 ─┤                                         │
+            └───────────┬─────────────────────────────┘
                         │ movie-downloads bridge, 172.28.10.0/24
-       ┌────────────────┼────────────────┐
-   SABnzbd :8081   Radarr :7878   Sonarr :8989   Bazarr :6767   (+ Seerr :5055 from ../Seerr)
+       ┌────────────────┼────────────────┬──────────────┐
+   Radarr :7878   Sonarr :8989   Bazarr :6767   clamav :3310   (+ Seerr :5055 from ../Seerr)
 ```
 
-qBittorrent and Prowlarr are inside the tunnel because they talk to trackers and
-peers. SABnzbd is outside it on purpose: usenet is already TLS, it never seeds,
-and a VPN hiccup cannot stall a download. Radarr, Sonarr and Bazarr only talk to
-the LAN and metadata APIs. `FIREWALL_OUTBOUND_SUBNETS` in `.env`
+Every download client is inside the tunnel (SABnzbd since 2026-10-23, like `sabnzbd` behind `gluetun_nzb` on fastpi): trackers, peers, indexers and the usenet provider only see the VPN IP. Radarr, Sonarr and Bazarr only talk to the LAN and metadata APIs.
+
+| | |
+|---|---|
+| Kill switch | gluetun's firewall: `OUTPUT` policy `DROP`; allowed only `tun0`, the WireGuard endpoint (UDP 51820, gluetun itself) and `FIREWALL_OUTBOUND_SUBNETS` (LAN + bridge). Tunnel down = no internet for qBittorrent, Prowlarr and SABnzbd (LAN/bridge still reachable, so the WebUIs and Radarr keep working) |
+| Reached as | qBittorrent `gluetun:8080`, Prowlarr `gluetun:9696`, SABnzbd `gluetun:8081` (Radarr/Sonarr download client host) |
+| SABnzbd | `port = 8081` and `host_whitelist` += `gluetun` in `sabnzbd.ini` (not in git; backup `backups/pre-sab-vpn-2026-10-23/`); still reaches `clamav:3310` (gluetun's DNS resolves the container names) |
+| Verified 2026-10-23 | egress of sab, qBit, Prowlarr = VPN IP (≠ WAN); Radarr/Sonarr client tests 200; SAB "test server" (eweka, 563 TLS) OK; clamav hook clean scan from sab; Prowlarr testall valid; `192.168.1.102:8081` from fastpi and `sabnzbd.holy-grail.ch` (302 to SSO) unchanged |
+| Rollback | `backups/pre-sab-vpn-2026-10-23/`: compose, `sabnzbd.ini`, the two download-client JSONs (PUT back to `/api/v3/downloadclient/2`) | `FIREWALL_OUTBOUND_SUBNETS` in `.env`
 **must** list the bridge subnet, or gluetun silently drops the arr apps' replies
 and Radarr cannot see qBittorrent at all.
 
@@ -785,6 +792,7 @@ and no docker.sock**, unlike the older `mouse` stack on fastpi.
 ⚠️ **Enable qBittorrent → Options → WebUI → "Bypass authentication for clients on
 localhost"**, or the hook gets a 403 and the forwarded port is never applied —
 which looks exactly like a dead tracker.
+
 
 ## Auth: Authentik is the only login
 
