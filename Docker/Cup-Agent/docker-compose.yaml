@@ -24,6 +24,7 @@ services:
     container_name: cup-socket-proxy-ro
     restart: unless-stopped
     environment:
+      BIND_CONFIG: ":2375"   # IPv4; the internal network has no IPv6
       CONTAINERS: 1      # list/inspect containers
       IMAGES: 1          # compare local image digests against registries
       INFO: 1
@@ -35,13 +36,18 @@ services:
       - cup_socket
     # /var/run must stay writable (the proxy writes its generated haproxy config
     # there) and tmpfs-ing it would MASK the template shipped in the image.
+    # Non-root; the docker group (973) opens the socket. The image entrypoint renders
+    # haproxy.cfg into a root-owned dir, so haproxy runs the shipped template directly:
+    # it expands BIND_CONFIG (environment above) itself, like $SOCKET_PATH.
+    user: "65114:65114"
+    group_add:
+      - "973"
+    entrypoint: ["haproxy", "-W", "-db", "-f", "/usr/local/etc/haproxy/haproxy.cfg.template"]
+    read_only: true
+    tmpfs:
+      - /run:mode=1777,size=1m   # haproxy.pid
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      - SETUID
-      - SETGID
-      - DAC_OVERRIDE
     security_opt:
       - no-new-privileges:true
     mem_limit: 64m
@@ -55,6 +61,7 @@ services:
     image: alpine/socat:latest
     container_name: cup-socket-proxy-unix
     restart: unless-stopped
+    user: "65115:65115"   # owns the cup_socket_bridge volume; the socket itself is mode 666
     command: >-
       UNIX-LISTEN:/sock/docker.sock,fork,unlink-early,mode=666
       TCP:socket-proxy-ro:2375
@@ -76,6 +83,7 @@ services:
   cup-agent:
     image: ghcr.io/sergi0g/cup:${CUP_IMAGE_TAG:-v3.5.1}
     container_name: cup-agent
+    user: "65113:65113"
     command: -c /config/cup.json serve
     restart: unless-stopped
     volumes:
@@ -102,6 +110,8 @@ services:
     # probe can only ever report unhealthy. Same reasoning as fastpi's Cup.
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
 
 # =========================================================
 # Networks ================================================
