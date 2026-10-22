@@ -31,7 +31,15 @@ esac
 
 API="http://127.0.0.1:8080/api/v2/app/setPreferences"
 
-if wget -qO- --post-data "json={\"listen_port\":${PORT}}" "$API" >/dev/null 2>&1; then
+# On a stack start gluetun forwards the port before qBittorrent is up; wait for it (max 2 min).
+tries=0
+until wget -qO- --post-data "json={\"listen_port\":${PORT}}" "$API" >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    [ "$tries" -ge 24 ] && break
+    sleep 5
+done
+
+if [ "$tries" -lt 24 ]; then
     echo "qbit-port.sh: qBittorrent listen_port set to ${PORT}"
 else
     # Non-fatal on purpose: gluetun should keep the tunnel up even if
