@@ -10,6 +10,18 @@ services:
     build: ./clamav
     image: clamav-local:latest
     container_name: clamav
+    # Non-root, also for the timer's `docker exec clamav /scan.sh`. 1100 = media (quarantine moves on
+    # the ssd-hot branch), 65118 = writers of the node-exporter textfile dir.
+    user: "65112:65112"
+    group_add:
+      - "1100"
+      - "65118"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH   # read files owned by any uid to scan them; writes stay limited to the groups above
     # clamd and a nightly clamscan each hold the signatures (~1.5G), twice that while clamd reloads them.
     mem_limit: 4g
     restart: unless-stopped
