@@ -49,9 +49,7 @@ doc's original snippet also referenced `/srv/audio`; that tier was retired
 ### 1. The rest
 
 ```bash
-# Let buntu talk to the Docker daemon. The `docker` group currently has no
-# members, which is why `docker info` fails. Log out and back in afterwards.
-sudo usermod -aG docker buntu
+# Docker always runs as `sudo docker …`: buntu is deliberately not in the docker group.
 
 # Every container has its own uid (table in "Identity" below). /srv/video is shared
 # through group `media` (1100); setgid (2775) so new dirs inherit the group.

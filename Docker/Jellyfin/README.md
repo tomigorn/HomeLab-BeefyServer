@@ -18,13 +18,11 @@ cannot delete anything itself, but the guard must exist before *any* container
 bind-mounts `/srv/video`. Skip whichever steps you have already done:
 
 ```bash
-sudo usermod -aG docker buntu                       # log out/in afterwards
-
-# Identity is 1000:1000 = the existing `buntu` user (storage doc §14.0). Nothing to
-# create, and it is the same identity Radarr writes the library with.
-sudo mkdir -p /srv/video/media/movies /srv/appdata/jellyfin
-sudo chown -R 1000:1000 /srv/video/media /srv/appdata/jellyfin
-sudo chmod -R 2775 /srv/video/media /srv/appdata/jellyfin
+# Jellyfin runs as its own uid 65108 (PUID) and reads the library through its
+# other-read bits; the library itself belongs to group media (Movie-Downloads README).
+sudo mkdir -p /srv/appdata/jellyfin
+sudo chown -R 65108:1000 /srv/appdata/jellyfin
+sudo chmod 2770 /srv/appdata/jellyfin
 
 # Confirm the render gid still matches RENDER_GID in .env (it is assigned
 # dynamically and can shift across OS upgrades).
