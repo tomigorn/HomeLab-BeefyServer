@@ -1,0 +1,19 @@
+{
+  "trash_id": "0e7b1cf8e4391882146a4b0799ddb4db",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "Audio: Swiss German",
+  "includeCustomFormatWhenRenaming": true,
+  "specifications": [
+    {
+      "name": "Swiss German in the release name",
+      "implementation": "ReleaseTitleSpecification",
+      "negate": false,
+      "required": true,
+      "fields": {
+        "value": "\\b(swiss[ ._-]?german|schw(ei|i{1,2}|y)zer?d(eu|ue|\u00fc|u)e?tsch)\\b"
+      }
+    }
+  ]
+}

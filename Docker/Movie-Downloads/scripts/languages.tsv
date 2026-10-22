@@ -1,7 +1,7 @@
 # Per-request language tags (README "Per-request audio and subtitles"), read by language-policy.sh and language-policy-hook.sh.
 # code	language (Radarr/Sonarr name)	audio-<language>: release name must match (- = no audio tag)	subs-<language> tag
 # Tag labels are the lowercase-hyphen language name: Swiss German -> audio-swiss-german, subs-swiss-german
-gsw	Swiss German	\b(swiss[ ._-]?german|schw(ei|i{1,2})zer?d(eu|ue|ü|u)e?tsch)\b	no
+gsw	Swiss German	\b(swiss[ ._-]?german|schw(ei|i{1,2}|y)zer?d(eu|ue|ü|u)e?tsch)\b	no
 de	German	\b(german|deutsch|ger|deu)\b	no
 en	English	\b(english|eng)\b|\bdual[ ._-]?audio\b	no
 fr	French	\b(french|truefrench|fran[cç]ais|vff|vfq|vfi|vf2|vf)\b	yes

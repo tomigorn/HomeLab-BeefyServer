@@ -281,6 +281,8 @@ services:
       # Writable: Recyclarr caches the guide repos and its sync state here.
       - ${APPDATA_ROOT}/recyclarr:/config
       - ./recyclarr/recyclarr.yml:/config/recyclarr.yml:ro
+      - ./recyclarr/settings.yml:/config/settings.yml:ro
+      - ./recyclarr/custom-formats:/config/custom-formats:ro
     networks:
       - movie-downloads
 

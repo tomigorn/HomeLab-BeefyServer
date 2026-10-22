@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""The audio-<language> release-name patterns in scripts/languages.tsv against real and typical release names.
+"""The audio-<language> release-name patterns in scripts/languages.tsv against real and typical release names, and the Recyclarr custom format that repeats the Swiss German one.
 Usage: python3 tests/test_audio_terms.py"""
+import json
 import pathlib
 import re
 import unittest
 
-TSV = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "languages.tsv"
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+TSV = ROOT / "scripts" / "languages.tsv"
+SWISS_CF = ROOT / "recyclarr" / "custom-formats" / "radarr" / "audio-swiss-german.json"
 
 MATCH = {
     "gsw": ["Bon.Schuur.Ticino.2023.SwissGerman.AC3.1080p.WEB.H264-ZeroTwo",
@@ -14,7 +17,9 @@ MATCH = {
             "Ein.Schweinchen.namens.Babe.1995.German.Oesterreichisch.Schweizerduetsch.AC3.ML.1080p.BluRay.x265-FuN",
             "Wolkenbruch.2018.Swiss.German.1080p.WEB-DL.AAC2.0.H.264",
             "Film.2019.Schweizerdeutsch.DL.1080p.WEB.x264",
-            "Film.2019.Schwiizerdütsch.1080p.WEB.x264"],
+            "Film.2019.Schwiizerdütsch.1080p.WEB.x264",
+            "Ein.Schweinchen.namens.Babe.1995.German.Schwyzerduetsch.Oesterreichisch.DVDRip.x264-icq4711",
+            "It.Girl.2017.SWISS.German.1080p.WebHD.x264-SLG"],
     "de": ["Knives.Out.2019.German.DL.2160p.UHD.BluRay.HDR.x265-GROUP",
            "The.Ring.Thing.Das.Ding.mit.dem.Ring.German.2004.AC3.DVDRiP.x264-IND",
            "Money.Heist.S01E01.GERMAN.ML.1080p.NF.WEB.x264-GROUP",
@@ -102,6 +107,11 @@ class AudioTerms(unittest.TestCase):
             for n in names:
                 with self.subTest(code=code, name=n):
                     self.assertNotRegex(n, re.compile(self.rows[code][1], re.I))
+
+    def test_swiss_german_custom_format_uses_the_same_pattern(self):
+        cf = json.loads(SWISS_CF.read_text(encoding="utf-8"))
+        self.assertEqual(cf["name"], "Audio: Swiss German")
+        self.assertEqual([s["fields"]["value"] for s in cf["specifications"]], [self.rows["gsw"][1]])
 
 
 if __name__ == "__main__":

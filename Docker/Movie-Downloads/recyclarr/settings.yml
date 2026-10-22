@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://schemas.recyclarr.dev/v8/settings-schema.json
+# Mounted at /config/settings.yml. Own custom formats next to TRaSH's (README "Swiss German").
+resource_providers:
+  - name: holy-grail-radarr
+    type: custom-formats
+    service: radarr
+    path: /config/custom-formats/radarr

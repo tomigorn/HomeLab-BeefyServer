@@ -1,0 +1,19 @@
+{
+  "trash_id": "5a090bcbd86e0b244d9e73dbfc9909f0",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "Resolution: DVD",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+    {
+      "name": "DVD (Radarr gives it no resolution)",
+      "implementation": "SourceSpecification",
+      "negate": false,
+      "required": true,
+      "fields": {
+        "value": 5
+      }
+    }
+  ]
+}

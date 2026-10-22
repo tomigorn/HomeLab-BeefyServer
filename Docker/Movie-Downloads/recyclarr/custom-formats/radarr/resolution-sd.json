@@ -1,0 +1,46 @@
+{
+  "trash_id": "fe20a5aeb8a96e34f2e2873c5b7413de",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "Resolution: SD",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+    {
+      "name": "360p",
+      "implementation": "ResolutionSpecification",
+      "negate": false,
+      "required": false,
+      "fields": {
+        "value": 360
+      }
+    },
+    {
+      "name": "480p",
+      "implementation": "ResolutionSpecification",
+      "negate": false,
+      "required": false,
+      "fields": {
+        "value": 480
+      }
+    },
+    {
+      "name": "540p",
+      "implementation": "ResolutionSpecification",
+      "negate": false,
+      "required": false,
+      "fields": {
+        "value": 540
+      }
+    },
+    {
+      "name": "576p",
+      "implementation": "ResolutionSpecification",
+      "negate": false,
+      "required": false,
+      "fields": {
+        "value": 576
+      }
+    }
+  ]
+}
