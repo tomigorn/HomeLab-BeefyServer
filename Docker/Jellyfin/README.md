@@ -360,6 +360,16 @@ Sources: jellyfin v12.1 `MediaSourceManager.cs` / `MediaStreamSelector.cs`, jell
 | Log | `journalctl --user -u jellyfin-user-defaults.service --since today` |
 | Tests | `python3 -m unittest -v test_user_defaults` |
 
+### Pick the audio track by hand (e.g. Swiss German vs High German)
+A Swiss German track is often tagged `ger` like High German, so "Preferred audio language" cannot tell them apart: pick it by its title (e.g. "Schweizerdeutsch").
+
+| Client | Before playing | While playing |
+|---|---|---|
+| Web, Android app, iOS app (web wrapper) | film page: **Audio** dropdown under the Play button (active with 2+ tracks) | bottom bar: **Audio** button (note icon, left of volume/gear) -> pick the track |
+| Android TV | – | playback overlay: **Select audio track** button -> list; optional: Settings -> remote "Audio track button" |
+
+Sources: jellyfin-web v10.10.7 `controllers/itemDetails/index.html` (`selectAudio`), `controllers/playback/video/index.html` (`btnAudio`), jellyfin-androidtv `SelectAudioAction.kt`, `strings.xml`.
+
 ## Playback
 Server side is done (Dashboard -> Playback): QSV decode + low-power encode, VPP tone mapping, HEVC encoding allowed, throttling + segment deletion, fallback font, trickplay, no remote bitrate limit, known proxy fastpi so LAN/VPN vs internet is judged right. No per-film playback profile exists in Jellyfin; per film only the remembered tracks (above) and, for films with several versions, the version menu.
 
