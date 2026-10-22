@@ -1,6 +1,6 @@
 # beefy — Hardware Specifications
 
-Home-lab "beefy" server (data/compute tier: Audiobookshelf, downloads, Samba, media library) — woken on demand from fastpi via Wake-on-LAN, sleeps to S5 when idle.
+Home-lab "beefy" server (data/compute tier: downloads, Samba, media library; Audiobookshelf stays on fastpi) — woken on demand from fastpi via Wake-on-LAN, sleeps to S5 when idle.
 
 **Hostname:** `beefy` · **LAN IP:** `192.168.1.102/24` (`enp6s0`) · **MAC:** `74:56:3c:96:79:a3` (Wake-on-LAN)  
 **OS:** Ubuntu 26.04 LTS (Resolute Raccoon), x86_64 (64-bit) · **Kernel:** `7.0.0-27-generic`  
@@ -124,7 +124,7 @@ Good fit for Plex/Jellyfin HW transcoding up to 4K HEVC/H.264 10-bit incl. HDR t
 |---|---|---|---|---|---|---|
 | `nvme0n1` | Samsung SSD 970 EVO 1TB | NVMe M.2 (PCIe) | 1 TB | 2B2QEXE7 | vfat + ext4 | `/boot/efi` (1 GB) + `/` (930 GB) — **OS / boot** |
 | `sda` | Samsung SSD 870 QVO 8TB | SATA III 2.5" SSD (QLC) | 8 TB | — | ext4 | `/srv/.disks/ssd-hot` — **SSD hot tier** |
-| `sdb` | Samsung SSD 870 QVO 8TB | SATA III 2.5" SSD (QLC) | 8 TB | — | ext4 | `/srv/audio` — **Audiobookshelf audio** |
+| `sdb` | Samsung SSD 870 QVO 8TB | SATA III 2.5" SSD (QLC) | 8 TB | — | ext4 (label `audio`) | **Unused spare** — former `/srv/audio` tier, retired 2026-07-03. Not mounted, not in fstab, not in the mergerfs pool; SMART-monitored, data left intact |
 | `sdc` | Seagate Exos M ST30000NM004K | SATA III 3.5" HDD, 7200 RPM | 30 TB | — | xfs | `/srv/.disks/hdd-cold` — **cold tier** |
 
 - **mergerfs pool:** `/srv/video` (`fuse.mergerfs`) — unifies the hot-SSD + cold-HDD tiers for the video library.
