@@ -78,3 +78,7 @@ the server name.
 
 Keep `CUP_IMAGE_TAG` in step with fastpi's Cup — the agent API is versioned with the
 server.
+
+## Local rollback images
+
+Tags like `rollback-4.0.20-20261021` are not versions: Cup logs "no remote version tags" and the agent restarts in a loop. List each such image under `images.exclude` in `cup.json` (and remove it there once the image is deleted).
