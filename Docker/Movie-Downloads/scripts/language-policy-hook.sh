@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Radarr/Sonarr Connect "Custom Script" (On Movie Added / On Series Add): puts a new title on the right profile before its first search and turns its subs-<language> tags into one Bazarr profile (README "Languages", "Old and rare titles", "Per-request audio and subtitles").
-# Runs inside the app container (bash, curl, jq); registered by scripts/language-policy.sh. LP_TAGS_ONLY=1 skips the profile part (language-policy.sh, existing titles).
+# Radarr/Sonarr Connect "Custom Script" (On Movie Added / On Series Add): puts a new title on the right profile before its first search and turns its subs-<language> tags into one Bazarr profile (README "Languages", "Old and rare titles", "Per-request audio and subtitles", "Swiss German").
+# Runs inside the app container (bash, curl, jq); registered by scripts/language-policy.sh. LP_TAGS_ONLY=1 skips the profile part except the tag-driven Swiss German move (language-policy.sh, request-tags.sh: existing titles).
 set -euo pipefail
 
 ENG_SUFFIX=" - English original"
 ANY="Any quality - old & rare (upgrades to 4K)"
+SWISS="Swiss German (Mundart) only - any quality"
+SWISS_TAG=audio-swiss-german
 OLD_YEARS=${LP_OLD_YEARS:-12}
 NICHE_MIN_AGE=2
 if [ -n "${radarr_eventtype:-}" ]; then
@@ -30,8 +32,8 @@ URL="http://localhost:$(xml Port)$(xml UrlBase)/api/v3"
 api() { local path=$1; shift; curl -sf -m 10 -H "X-Api-Key: $KEY" -H 'Content-Type: application/json' "$URL$path" "$@"; }
 
 title=$(api "/$kind/$id")
-read -r MID MEN AID AEN < <(api /qualityprofile | jq -r --arg m "$MAIN" --arg a "$ANY" --arg s "$ENG_SUFFIX" \
-  'map({(.name): .id}) | add | "\(.[$m] // 0) \(.[$m + $s] // 0) \(.[$a] // 0) \(.[$a + $s] // 0)"')
+read -r MID MEN AID AEN SID < <(api /qualityprofile | jq -r --arg m "$MAIN" --arg a "$ANY" --arg s "$ENG_SUFFIX" --arg w "$SWISS" \
+  'map({(.name): .id}) | add | "\(.[$m] // 0) \(.[$m + $s] // 0) \(.[$a] // 0) \(.[$a + $s] // 0) \(.[$w] // 0)"')
 read -r current english year votes < <(jq -r \
   "\"\(.qualityProfileId) \(.originalLanguage.name == \"English\") \(.year // 0) \($VOTES // 0)\"" <<<"$title")
 now=${LP_YEAR:-$(date +%Y)}
@@ -61,6 +63,34 @@ set_profile() {
     echo "$kind $id: profile $current -> $target ($reason)"
   else
     echo "$kind $id: profile $current kept"
+  fi
+}
+
+# Swiss German is mandatory with audio-swiss-german, whatever profile the title was added with; a title added on that profile gets the tag, whose release profile is the hard filter (Radarr only: Sonarr has no such profile).
+swiss_profile() {
+  [ "$kind" = movie ] && [ "$SID" != 0 ] || return 1
+  local stid profile lang
+  stid=$(api /tag | jq -r --arg l "$SWISS_TAG" '.[] | select(.label == $l) | .id')
+  [ -n "$stid" ] || return 1
+  if jq -e --argjson t "$stid" '(.tags // []) | index($t)' <<<"$title" >/dev/null; then
+    if [ "$current" != "$SID" ]; then
+      api "/$kind/editor" -X PUT -d "{\"$ids\":[$id],\"qualityProfileId\":$SID}" >/dev/null
+      echo "$kind $id: profile $current -> $SID ($SWISS_TAG)"
+    else
+      echo "$kind $id: profile $current kept"
+    fi
+  elif [ "$current" = "$SID" ]; then
+    edit_tag "$stid" add
+    echo "$kind $id: tag $SWISS_TAG added (Swiss German profile)"
+  else
+    return 1
+  fi
+  # Recyclarr puts the guide's language (Original) back whenever it updates the profile; Any lets a Swiss German dub of a foreign film through.
+  profile=$(api "/qualityprofile/$SID")
+  lang=$(jq -r '.language.name' <<<"$profile")
+  if [ "$lang" != Any ]; then
+    jq -c '.language = {id: -1, name: "Any"}' <<<"$profile" | api "/qualityprofile/$SID" -X PUT -d @- >/dev/null
+    echo "profile $SID: language $lang -> Any"
   fi
 }
 
@@ -127,5 +157,5 @@ set_tags() {
   echo "$kind $id: tag $label added"
 }
 
-[ "${LP_TAGS_ONLY:-}" = 1 ] || set_profile
+swiss_profile || [ "${LP_TAGS_ONLY:-}" = 1 ] || set_profile
 set_tags

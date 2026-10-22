@@ -14,6 +14,7 @@
 #   Per-request tags from languages.tsv: `audio-<language>` (tag-scoped release profile: the
 #   release name must name that language) and `subs-<language>` (the hook turns them into
 #   one `bz-<codes>` tag + Bazarr profile; `lang-xx` is not set while one is present).
+#   `audio-swiss-german` also moves the title to the Swiss German profile (hook), whose language is set to Any here.
 # Bazarr: one subtitle profile per language ("English + German + <Language>",
 #   bound to the `lang-xx` tag), tag-based profile selection, OpenSubtitles.com
 #   without AI/machine translations; its API key goes to secrets/hook/ for the hook.
@@ -33,6 +34,7 @@ CF_NAME="Language: Original + English"
 CF_SCORE=8000
 ENG_SUFFIX=" - English original"
 ANY="Any quality - old & rare (upgrades to 4K)"
+SWISS="Swiss German (Mundart) only - any quality"
 HOOK_NAME="Language policy"
 HOOK_PATH=/scripts/language-policy-hook.sh
 GUARD_NAME="Wrong-film guard"
@@ -84,6 +86,16 @@ print(",".join(str(t["id"]) for t in items if t["qualityProfileId"]==m and eng(t
     [ "$TO_MAIN" = - ] || api $app "/$kind/editor" -X PUT -d "{\"$ids\":[$TO_MAIN],\"qualityProfileId\":$MID}" >/dev/null
     echo "   English original -> profile $EID: ${TO_ENG/-/none}; back to $MID: ${TO_MAIN/-/none}"
   done
+
+  # Swiss German profile (Recyclarr creates it, but does not manage the profile language): Any, so a Swiss German dub of a foreign film is not rejected for lacking the original audio.
+  if [ $app = radarr ]; then
+    SID=$(api radarr /qualityprofile | py 'import json,sys; r=[p["id"] for p in json.load(sys.stdin) if p["name"]==sys.argv[1]]; print(r[0] if r else "")' "$SWISS")
+    if [ -n "$SID" ]; then
+      api radarr "/qualityprofile/$SID" | py 'import json,sys; p=json.load(sys.stdin); p["language"]={"id":-1,"name":"Any"}; print(json.dumps(p))' | api radarr "/qualityprofile/$SID" -X PUT -d @- | py 'import json,sys; p=json.load(sys.stdin); print("   profile", p["name"], "language", p["language"]["name"], "min score", p["minFormatScore"])'
+    else
+      echo "   profile '$SWISS' missing: run the Recyclarr sync first" >&2
+    fi
+  fi
 
   # The same move for every title added from now on, before its first search:
   # Connect "Custom Script" on add, running scripts/language-policy-hook.sh.
@@ -203,14 +215,14 @@ bz "$B/system/settings" | py 'import json,sys; d=json.load(sys.stdin); g=d["gene
 install -d -m 2750 -g hook-secret "$HERE/../secrets/hook"   # radarr + sonarr read it via the hook-secret group
 ( umask 027; printf '%s\n' "$BK" > "$HERE/../secrets/hook/bazarr.apikey" )
 
-echo "== apply to existing titles (refresh = auto tags, hook for subs-<language> tags, then Bazarr re-sync)"
+echo "== apply to existing titles (refresh = auto tags, hook for subs-<language> and audio-swiss-german tags, then Bazarr re-sync)"
 api radarr /command -X POST -d '{"name":"RefreshMovie"}' >/dev/null
 api sonarr /command -X POST -d '{"name":"RefreshSeries"}' >/dev/null
 sleep 20
 SCAN=()
 for app in radarr sonarr; do
   case $app in radarr) kind=movie; ev=radarr_eventtype=MovieAdded; idv=radarr_movie_id;; sonarr) kind=series; ev=sonarr_eventtype=SeriesAdd; idv=sonarr_series_id;; esac
-  SUBS_IDS=$(api $app /tag | py 'import json,sys; print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if t["label"].startswith("subs-")))')
+  SUBS_IDS=$(api $app /tag | py 'import json,sys; print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if t["label"].startswith("subs-") or t["label"]=="audio-swiss-german"))')
   for TID in $(api $app "/$kind" | py 'import json,sys; s=set(map(int,sys.argv[1].split())); print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if s & set(t.get("tags",[]))))' "$SUBS_IDS"); do
     env "$ev" "$idv=$TID" LP_TAGS_ONLY=1 LP_CONFIG=/srv/appdata/$app/config.xml LP_LANGUAGES="$TSV" \
       LP_BAZARR_URL="http://$H:6767" LP_BAZARR_KEY="$HERE/../secrets/hook/bazarr.apikey" bash "$HERE/language-policy-hook.sh" | sed 's/^/   /'

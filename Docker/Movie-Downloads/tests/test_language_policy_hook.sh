@@ -19,10 +19,11 @@ PROFILES = [{"id": 3, "name": "Anime - Bluray + WEB 1080p"},
             {"id": 10, "name": "4K HDR - UHD Bluray + WEB (1080p fallback) - English original"},
             {"id": 11, "name": "Any quality - old & rare (upgrades to 4K)"},
             {"id": 12, "name": "Any quality - old & rare (upgrades to 4K) - English original"},
+            {"id": 13, "name": "Swiss German (Mundart) only - any quality"},
             {"id": 17, "name": "4K HDR - WEB-2160p (1080p fallback)"},
             {"id": 20, "name": "4K HDR - WEB-2160p (1080p fallback) - English original"}]
 TAGS = [{"id": 1, "label": "lang-es"}, {"id": 21, "label": "audio-english"}, {"id": 22, "label": "audio-german"},
-        {"id": 23, "label": "audio-spanish"}, {"id": 31, "label": "subs-french"}, {"id": 32, "label": "subs-italian"},
+        {"id": 23, "label": "audio-spanish"}, {"id": 24, "label": "audio-swiss-german"}, {"id": 31, "label": "subs-french"}, {"id": 32, "label": "subs-italian"},
         {"id": 40, "label": "bz-es-it"}]
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -52,6 +53,10 @@ class H(http.server.BaseHTTPRequestHandler):
         p = self.path.removeprefix("/base/api/v3")
         if self.command == "GET" and p == "/qualityprofile":
             return self.reply(200, PROFILES)
+        if self.command == "GET" and p == "/qualityprofile/13":
+            return self.reply(200, {"id": 13, "name": PROFILES[5]["name"], "language": state.get("swiss_language", {"id": -1, "name": "Any"})})
+        if self.command == "PUT" and p == "/qualityprofile/13":
+            return self.reply(202, json.loads(body))
         if self.command == "GET" and p == "/tag":
             return self.reply(200, state.get("tags", TAGS))
         if self.command == "POST" and p == "/tag":
@@ -225,6 +230,36 @@ $(tagput movie movieIds 5 52 add)" "$(cat "$T/puts")"
 run "$(tagged 8 17 "$ES" 2020 "1,31")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "Sonarr: subs-french on a Spanish series" "$(tagput series seriesIds 8 99 add)" "$(cat "$T/puts")"
 assert_eq "  profile" '["English + German + Spanish + French (requested)","en,de,es,fr,en+f,de+f"]' "$(bzprofile bz-es-fr)"
+
+echo "Swiss German: audio-swiss-german moves to its own profile"
+run "$(tagged 5 7 "$DE" 2020 "24")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "German film on main moves to the Swiss German profile" "$(put movie movieIds 5 13)" "$(cat "$T/puts")"
+assert_eq "  the log line names the tag" "movie 5: profile 7 -> 13 (audio-swiss-german)" "$(cat "$T/out")"
+run "$(tagged 5 7 "$EN" 1968 "24")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "old English film (Swiss German dub): Swiss German profile, not the Any twin" "$(put movie movieIds 5 13)" "$(cat "$T/puts")"
+run "$(tagged 5 3 "$JA" 2020 "24")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "a profile picked in Seerr (anime) is overruled" "$(put movie movieIds 5 13)" "$(cat "$T/puts")"
+run "$(tagged 5 13 "$DE" 2020 "24")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "already on the Swiss German profile: nothing changes" "|movie 5: profile 13 kept" "$(cat "$T/puts")|$(cat "$T/out")"
+run "$(tagged 5 11 "$DE" 2004 "24")" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
+assert_eq "LP_TAGS_ONLY=1 (tag added later): moves too" "$(put movie movieIds 5 13)" "$(cat "$T/puts")"
+run "$(tagged 5 7 "$DE" 2020 "22")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "audio-german is not Swiss German: stays on main (the tag is dropped, German is the original)" "$(tagput movie movieIds 5 22 remove)" "$(cat "$T/puts")"
+run "$(tagged 5 7 "$EN" 2020 "24,31")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "audio-swiss-german + subs-french: profile and bz-fr" "$(put movie movieIds 5 13)
+$(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
+run "{\"swiss_language\": {\"id\": -2, \"name\": \"Original\"}, $(tagged 5 7 "$EN" 2020 "24" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "Swiss German profile language reset to Original (by a Recyclarr update): back to Any before the search" '/base/api/v3/movie/editor {"movieIds":[5],"qualityProfileId":13}
+/base/api/v3/qualityprofile/13 {"id":13,"name":"Swiss German (Mundart) only - any quality","language":{"id":-1,"name":"Any"}}' "$(cat "$T/puts")"
+assert_eq "  log line" "movie 5: profile 7 -> 13 (audio-swiss-german)
+profile 13: language Original -> Any" "$(cat "$T/out")"
+run "$(film 5 13 "$DE" 2020 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "added on the Swiss German profile without the tag: tag added (it is the hard filter)" "$(tagput movie movieIds 5 24 add)" "$(cat "$T/puts")"
+assert_eq "  log line" "movie 5: tag audio-swiss-german added (Swiss German profile)" "$(cat "$T/out")"
+run "$(film 5 13 "$DE" 2020 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
+assert_eq "  also with LP_TAGS_ONLY=1" "$(tagput movie movieIds 5 24 add)" "$(cat "$T/puts")"
+run "$(tagged 8 17 "$EN" 2020 "24")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "Sonarr has no Swiss German profile: the usual twin move" "$(put series seriesIds 8 20)" "$(cat "$T/puts")"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
