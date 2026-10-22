@@ -1,0 +1,51 @@
+# Container hardening (beefy)
+
+State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rules as fastpi (`HomeLab-FastPi`, `Docker/_global/docs/container-hardening.md`).
+
+## Rules for every container
+| Rule | How |
+|---|---|
+| Never uid/gid 1000 (`buntu`, NOPASSWD sudo) or 100 (`users`) | dedicated `user: "651NN:…"`, next free in the map below |
+| No root where the image allows it | `user:`; linuxserver images in non-root mode (`tmpfs: /run:uid=…,gid=…,exec`) when the readme lists it |
+| No capabilities | `cap_drop: [ALL]`, `cap_add` only what a test proved is needed |
+| No privilege gain | `security_opt: [no-new-privileges:true]` |
+| `/srv/video` (mergerfs) | group `media` (1100) as the **primary** gid: FUSE ignores supplementary groups; `UMASK=002` for hardlinks |
+| `/srv/appdata/<app>` | owned by the app's uid, group `buntu` (setgid) so host scripts read the API keys, `o-rwx` |
+
+## uid map
+| uid:gid | Container | Extra groups | Caps |
+|---|---|---|---|
+| 65101:1100 | movie-radarr | 65117 | |
+| 65102:1100 | movie-sonarr | 65117 | |
+| 65103:65103 | movie-prowlarr | | |
+| 65104:1100 | movie-bazarr | | |
+| 65105:1100 | movie-qbittorrent | 65118 | |
+| 65106:1100 | movie-sabnzbd | 65118 | |
+| 65107:65107 | movie-recyclarr | | |
+| 65108 | jellyfin (app; s6 PID1 root) | 44 video, 990 render | CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID |
+| 65109 | seerr | | |
+| 65110 | ryot-go | | |
+| 1001 | ryot (image user, writes its own /home/ryot) | | NET_BIND_SERVICE (caddy file cap) |
+| 70 | ryot-db | | |
+| 65112 | clamav | 1100, 65118 | DAC_READ_SEARCH |
+| 65113 | cup-agent | | |
+| 65114 | cup-socket-proxy-ro | 973 docker | |
+| 65115 | cup-socket-proxy-unix | | |
+| 65116 | gluetun files (PUID; process root) | | NET_ADMIN, NET_RAW, NET_BIND_SERVICE, DAC_OVERRIDE, CHOWN |
+| 0 | portainer_agent | | none (full socket by design, `AGENT_SECRET` required) |
+
+Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65111, 65119+.
+
+## Root by design
+| Container | Why |
+|---|---|
+| jellyfin | image has no non-root mode (tested: s6 service always switches user) |
+| movie-gluetun | creates tun0 and iptables rules |
+| portainer_agent | needs the full Docker API; the socket is root anyway |
+
+## Images
+- `jellyfin-local`: `Jellyfin/Dockerfile` bakes in the Intel OpenCL runtime (Docker Mods are not used).
+- `clamav-local`: uid pinned to 65112 (`apk` default 100 is the host's `syslog`).
+
+## Backup of the switch
+`~/backups/pre-uid-20261022-230855/`: `appdata.tgz`, `jellyfin.tgz`, `seerr.tgz`, `ryot-dumpall.sql`, `perms.before` (all 600).
