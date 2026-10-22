@@ -163,6 +163,8 @@ email) are not set up: Settings -> Notifications.
 | Korean film with French subtitles | `subs-fr` (Korean subs come anyway) |
 | Anime with English dub and Italian subs | `audio-en` + `subs-it` |
 
+- Seerr's tag picker lists the Radarr/Sonarr tag labels as they are and has no description or help text per tag (checked in the 3.x source, `AdvancedRequester`); the labels cannot hold spaces or capitals, so there is no inline "Hard filter" hint and no friendly name. This table is the reference.
+- Tags apply only when Seerr adds a new title: requesting a film that is already in Radarr/Sonarr ignores the tags (log: "Movie is already monitored in Radarr"). Tag it in Radarr/Sonarr instead.
 - `lang-xx` and `bz-…` tags are set automatically: do not pick them.
 - `audio-` is a hard filter on the release name: no matching release = nothing is grabbed (Radarr/Sonarr → Activity / Interactive Search shows "Does not contain one of the required terms").
 - Already requested: add or change the tag (or profile) in Radarr/Sonarr, search; for `subs-` tags run `../Movie-Downloads/scripts/language-policy.sh` once.
