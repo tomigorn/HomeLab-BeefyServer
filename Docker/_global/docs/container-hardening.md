@@ -47,6 +47,7 @@ Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secre
 ## Images
 - `jellyfin-local`: `Jellyfin/Dockerfile` bakes in the Intel OpenCL runtime (Docker Mods are not used).
 - `clamav-local`: uid pinned to 65112 (`apk` default 100 is the host's `syslog`).
+- Base image tracking (Cup `images.extra`) and the rebuild routine of each local image: `Docker/Cup-Agent/README.md`, Locally built images, and the `Rebuild` line in each README.
 
 ## Backup of the switch
 `~/backups/pre-uid-20261022-230855/`: `appdata.tgz`, `jellyfin.tgz`, `seerr.tgz`, `ryot-dumpall.sql`, `perms.before` (all 600).
