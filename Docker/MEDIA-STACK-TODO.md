@@ -13,12 +13,7 @@ Both stacks are **deployed, live and verified in production**.
   Docker refuse to start).
 - Pool tree, ownership `1000:1000`, setgid, `psmisc`+`attr`, 298G reclaimed from
   ext4's root reserve.
-- **LAN exposure closed.** A `DOCKER-USER` DROP rule restricts ports
-  7878/9696/6767/8080/8081/8096 to fastpi (192.168.1.2) only. **Port 8000 (Cup agent,
-  added 2026-10-09) still needs adding to this list** - see `Docker/Cup-Agent/README.md`. ufw turned out to be
-  the wrong tool — Docker bypasses it — and is now uninstalled. Rule persisted via
-  `iptables-persistent`, survived a reboot, and **verified blocked from a Mac on the
-  LAN** (not just assumed).
+- **LAN exposure closed.** Published ports answer only fastpi (192.168.1.2), allowlist since 2026-10-24: `_global/docs/container-hardening.md`, Firewall. ufw turned out to be the wrong tool (Docker bypasses it) and is uninstalled. Verified blocked from a second LAN address.
 
 **Stacks**
 - `Movie-Downloads` (gluetun + qBittorrent + Prowlarr + SABnzbd in the VPN netns, SABnzbd since 2026-10-23;

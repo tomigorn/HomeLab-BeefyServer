@@ -62,3 +62,16 @@ Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secre
 | `~buntu/.ssh/authorized_keys` | every key has `from=`: automation keys (pi@fastpi, poweroff, history) only from `192.168.1.2`, personal devices only from `192.168.1.0/24`; backup `authorized_keys.bak-20261024` |
 | `/etc/ssh/sshd_config.d/20-access.conf` | no X11/agent forwarding, `MaxAuthTries 3` (TCP forwarding stays for `ssh -L`) |
 | SSH beefy → fastpi | removed; only fastpi → beefy |
+
+## Firewall (2026-10-24)
+Script: `_global/scripts/docker-user-guard.sh` (idempotent; `--persist` writes only its own lines into `/etc/iptables/rules.v4` / `rules.v6`, loaded at boot by netfilter-persistent).
+
+| Direction | Rule |
+|---|---|
+| LAN → published container ports | allowlist: only `192.168.1.2` (fastpi: Traefik, Prometheus, Portainer, Cup). A newly published port is closed by default |
+| containers → LAN | dropped, except `jellyfin` net (Jellyfin, Seerr) and `ryot` net → `192.168.1.2:443` (sso + tracker via `extra_hosts`). Container → beefy's own published ports is unaffected (DNAT, bridge to bridge) |
+| gluetun namespace (qBit, SAB, Prowlarr) | same DOCKER-USER drop, and `FIREWALL_OUTBOUND_SUBNETS` = bridge only; replies to fastpi still leave via eth0 |
+| IPv6 | chain `BEEFY-INPUT6` on `enp6s0`: only tcp/22 accepts new connections (docker-proxy listens on `[::]` for every published port) |
+| DNS | not needed: containers resolve through dockerd in the host namespace (`127.0.0.53`) |
+
+Check: `sudo iptables -S DOCKER-USER; sudo ip6tables -S BEEFY-INPUT6`. Test: `sudo docker exec movie-sonarr nc -zw2 192.168.1.2 22` must fail. fastpi side: `HomeLab-FastPi` `_global/scripts/docker-user-lan-guard.sh` (VPN clients reach beefy only on :22, :8096).

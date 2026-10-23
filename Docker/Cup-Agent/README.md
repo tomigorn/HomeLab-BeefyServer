@@ -25,31 +25,7 @@ no token, password or allowlist option. So anything that can reach port `8000` g
 full inventory of every image and container on beefy, including versions, which is a
 ready-made list of what to try exploits against.
 
-Port `8000` must therefore be in the `DOCKER-USER` DROP rule alongside the six arr
-ports. Verify:
-
-```bash
-sudo iptables -S DOCKER-USER
-```
-
-Expected — note `8000` at the end:
-
-```
--A DOCKER-USER ! -s 192.168.1.2/32 -i enp6s0 -p tcp \
-   -m multiport --dports 7878,9696,6767,8080,8081,8096,8000 -j DROP
-```
-
-If `8000` is missing, add it by *replacing* the rule (`-R`, so there is no moment
-where the ports are open) and re-persist:
-
-```bash
-sudo iptables -R DOCKER-USER 1 ! -s 192.168.1.2/32 -i enp6s0 -p tcp \
-  -m multiport --dports 7878,9696,6767,8080,8081,8096,8000 -j DROP
-sudo netfilter-persistent save
-```
-
-`-R ... 1` assumes the DROP is the first rule in the chain, which it is — Docker only
-ever appends its own `RETURN` after it. Confirm with `-S` before and after.
+Port `8000` is reachable only from fastpi: the `DOCKER-USER` rule is an allowlist since 2026-10-24 (`../_global/docs/container-hardening.md`, Firewall), so nothing has to be added per port. Check: `sudo iptables -S DOCKER-USER`.
 
 Why not drop the port publication entirely and keep it internal, as was done
 elsewhere: fastpi is a *different host*, so it can only reach this over the LAN.

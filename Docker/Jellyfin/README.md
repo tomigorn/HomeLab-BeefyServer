@@ -322,10 +322,7 @@ and `data/data/jellyfin.db.bak-2026-10-18-pre-oidc-only`.
 
 ### Direct port 8096
 
-Published on `0.0.0.0:8096` because Traefik on fastpi connects over the LAN. The
-`DOCKER-USER` rule (`! -s 192.168.1.2 -i enp6s0 ... --dports ...,8096,... -j DROP`,
-see `../Cup-Agent/README.md`) limits IPv4 to fastpi; an `ip6tables` INPUT DROP on
-`enp6s0` for the same ports closes IPv6 (since 2026-10-18, `/etc/iptables/rules.v6`).
+Published on `0.0.0.0:8096` because Traefik on fastpi connects over the LAN. The firewall (`../_global/docs/container-hardening.md`, Firewall) lets only fastpi reach it over IPv4 and nothing over IPv6. VPN clients reach it through fastpi (NAT to 192.168.1.2).
 Checked 2026-10-20 from a second LAN address: every app port times out, from fastpi they answer.
 
 ## Audio and subtitle language per user (2026-10-20)
