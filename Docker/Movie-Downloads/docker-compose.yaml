@@ -298,7 +298,7 @@ services:
 # history. Same page as port_updater on fastpi's mouse stack, minus the updating
 # (gluetun's own hook sets the port here). README "VPN status".
   vpn-status:
-    image: python:3.14.9-alpine3.24
+    image: python:3.15.1-alpine3.24
     container_name: movie-vpn-status
     restart: unless-stopped
     user: "65111:65111"
