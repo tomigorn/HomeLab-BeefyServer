@@ -1,0 +1,11 @@
+[Unit]
+Description=Textfile of audio-<language> titles still waiting for a release in that language (Swiss German not found alert)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/language-missing.py
+NoNewPrivileges=true
+PrivateTmp=true

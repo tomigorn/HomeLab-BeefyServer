@@ -1,0 +1,10 @@
+[Unit]
+Description=Language-not-found textfile hourly while beefy is awake; 12 min after boot, so the 03:55 wake has it before fastpi pulls at 04:20
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Timer]
+OnBootSec=12min
+OnUnitActiveSec=1h
+
+[Install]
+WantedBy=timers.target
