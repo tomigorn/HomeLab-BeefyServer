@@ -284,6 +284,27 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Registered by | `scripts/language-policy.sh` (both apps, idempotent) |
 | Tests | `tests/test_grab_guard.sh`, `tests/test_grab_guard_sonarr.sh`; live: `sudo docker exec movie-radarr env radarr_eventtype=Grab radarr_movie_id=<id> radarr_release_title=<name> radarr_download_id=x GG_WAIT=0 bash /scripts/grab-guard.sh` (Sonarr: `movie-sonarr`, `sonarr_eventtype`, `sonarr_series_id`, `sonarr_release_title`, `sonarr_download_id`) |
 
+### Delete a title
+
+To delete a title: press **Remove from Radarr** / **Remove from Sonarr** in Seerr (title page, admin) — that one button removes it everywhere (Radarr/Sonarr + files, qBittorrent torrent + files, SABnzbd history, Seerr request). **Clear Data** alone only forgets the request in Seerr and leaves everything else: Radarr keeps the title and a new request silently does nothing.
+
+`scripts/title-wipe-hook.sh` (Connect → Custom Script **Title wipe**, both apps) does the rest when a title is deleted **with its files** (Seerr's button; Radarr/Sonarr UI delete with "Delete files" ticked). A delete without files (unmonitor, remove only) wipes nothing.
+
+| Step | What |
+|---|---|
+| On Grab / Import / Upgrade | appends `<tmdbId or tvdbId> <qbit/sab> <hash or nzo id>` to `/config/title-wipe.tsv` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`) |
+| qBittorrent | the recorded hashes, only in the app's own category (`radarr` / `sonarr`): torrent **and its files** removed, seeding stops. fastpi's qBittorrent is never touched |
+| SABnzbd | the recorded jobs: removed from queue and history (`del_files=1`) |
+| Seerr | the media record (= **Clear Data**, `DELETE /api/v1/media/<id>`), run in the background after Seerr marked it deleted; log `/srv/appdata/<app>/logs/title-wipe.txt` |
+| Library file | Radarr/Sonarr move it to the recycle bin `/data/.recyclebin` (7 days) |
+| No record (grabbed before 2026-10-23, history gone) | name match in the app's category: film `<title> <year> …` only if exactly one torrent/job matches; series `<title> S01…`/`<title> <year>`/`Season`/`Complete`; skipped (logged) when ambiguous or another library title has the same name |
+| Keys | `secrets/hook/sabnzbd.apikey`, `secrets/hook/seerr.apikey` (640, group `hook-secret`), written by `scripts/language-policy.sh` (SABnzbd key via `sudo -n`, Seerr key from `../Seerr/secrets/api-key`) |
+| Registered by | `scripts/language-policy.sh` (both apps, idempotent) |
+| Seed old grabs | `sudo docker exec movie-radarr bash /scripts/title-wipe-hook.sh seed radarr` (Sonarr: `movie-sonarr … seed sonarr`), from the apps' grab history, idempotent |
+| Tests | `tests/test_title_wipe_hook.sh`; log: `grep -a title-wipe /srv/appdata/radarr/logs/radarr.debug.txt` |
+
+Verified 2026-10-23 with a throwaway *Night of the Living Dead* (1968): Seerr `DELETE /api/v1/media/<id>/file` → Radarr delete → its test torrent + files, its SABnzbd history entry and the Seerr record gone within 1 s; a 1990 decoy torrent in the same category stayed.
+
 ### Radarr settings that matter here
 
 | Setting | Value | Why |
@@ -298,6 +319,7 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Recycle Bin | `/data/.recyclebin`, 7 days | |
 | Metadata (Kodi/Emby NFO) | **all off** | Jellyfin fetches its own from TMDB; two writers = duplicate/conflicting artwork |
 | Connect | `Jellyfin` (Emby/Jellyfin) | see below |
+| Connect (Custom Script) | `Language policy`, `Wrong-film guard`, `Title wipe` | [Languages](#languages), [Wrong-film guard](#wrong-film-guard), [Delete a title](#delete-a-title) |
 
 ### Naming (TRaSH "Jellyfin", TMDB flavour)
 
@@ -720,7 +742,7 @@ curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/config/downloadclient | jq '{e
 curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/downloadclient | jq '.[] | {name,removeCompletedDownloads}'
 curl -s -H "X-Api-Key: $RK" -H 'Content-Type: application/json' -X POST localhost:7878/api/v3/notification/test -d "$(curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/notification/1)"   # {} = Jellyfin reachable
 curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/releaseprofile | jq -r '.[].name'
-grep -a 'language-policy-hook\|grab-guard' /srv/appdata/radarr/logs/radarr.debug.txt | tail
+grep -a 'language-policy-hook\|grab-guard\|title-wipe' /srv/appdata/radarr/logs/radarr.debug.txt | tail
 sudo docker exec movie-qbittorrent curl -s localhost:8080/api/v2/app/preferences | jq '{max_ratio,max_seeding_time,max_ratio_act,autorun_program}'
 ```
 
