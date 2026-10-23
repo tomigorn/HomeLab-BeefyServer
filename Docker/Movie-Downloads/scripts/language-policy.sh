@@ -14,7 +14,7 @@
 #   Per-request tags from languages.tsv: `audio-<language>` (tag-scoped release profile: the
 #   release name must name that language) and `subs-<language>` (the hook turns them into
 #   one `bz-<codes>` tag + Bazarr profile; `lang-xx` is not set while one is present).
-#   `audio-swiss-german` also moves the title to the Swiss German profile (hook), whose language is set to Any here.
+#   `audio-swiss-german` also moves the title to the Swiss German profile (hook, Radarr and Sonarr), whose language is set to Any here (Radarr; Sonarr profiles have none).
 # Bazarr: one subtitle profile per language ("English + German + <Language>",
 #   bound to the `lang-xx` tag), tag-based profile selection, OpenSubtitles.com
 #   without AI/machine translations; its API key goes to secrets/hook/ for the hook.
@@ -89,14 +89,14 @@ print(",".join(str(t["id"]) for t in items if t["qualityProfileId"]==m and eng(t
     echo "   English original -> profile $EID: ${TO_ENG/-/none}; back to $MID: ${TO_MAIN/-/none}"
   done
 
-  # Swiss German profile (Recyclarr creates it, but does not manage the profile language): Any, so a Swiss German dub of a foreign film is not rejected for lacking the original audio.
-  if [ $app = radarr ]; then
-    SID=$(api radarr /qualityprofile | py 'import json,sys; r=[p["id"] for p in json.load(sys.stdin) if p["name"]==sys.argv[1]]; print(r[0] if r else "")' "$SWISS")
-    if [ -n "$SID" ]; then
-      api radarr "/qualityprofile/$SID" | py 'import json,sys; p=json.load(sys.stdin); p["language"]={"id":-1,"name":"Any"}; print(json.dumps(p))' | api radarr "/qualityprofile/$SID" -X PUT -d @- | py 'import json,sys; p=json.load(sys.stdin); print("   profile", p["name"], "language", p["language"]["name"], "min score", p["minFormatScore"])'
-    else
-      echo "   profile '$SWISS' missing: run the Recyclarr sync first" >&2
-    fi
+  # Swiss German profile (Recyclarr creates it, but does not manage the profile language): Any, so a Swiss German dub of a foreign film is not rejected for lacking the original audio. Sonarr profiles have no language (the profile's CF scores do it).
+  SID=$(api $app /qualityprofile | py 'import json,sys; r=[p["id"] for p in json.load(sys.stdin) if p["name"]==sys.argv[1]]; print(r[0] if r else "")' "$SWISS")
+  if [ -z "$SID" ]; then
+    echo "   profile '$SWISS' missing: run the Recyclarr sync first" >&2
+  elif api $app "/qualityprofile/$SID" | py 'import json,sys; sys.exit(0 if "language" in json.load(sys.stdin) else 1)'; then
+    api $app "/qualityprofile/$SID" | py 'import json,sys; p=json.load(sys.stdin); p["language"]={"id":-1,"name":"Any"}; print(json.dumps(p))' | api $app "/qualityprofile/$SID" -X PUT -d @- | py 'import json,sys; p=json.load(sys.stdin); print("   profile", p["name"], "language", p["language"]["name"], "min score", p["minFormatScore"])'
+  else
+    echo "   profile $SWISS: no profile language ($app), min score $(api $app "/qualityprofile/$SID" | py 'import json,sys; print(json.load(sys.stdin)["minFormatScore"])')"
   fi
 
   # The same move for every title added from now on, before its first search:

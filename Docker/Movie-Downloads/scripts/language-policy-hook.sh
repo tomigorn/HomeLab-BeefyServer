@@ -66,9 +66,9 @@ set_profile() {
   fi
 }
 
-# Swiss German is mandatory with audio-swiss-german, whatever profile the title was added with; a title added on that profile gets the tag, whose release profile is the hard filter (Radarr only: Sonarr has no such profile).
+# Swiss German is mandatory with audio-swiss-german, whatever profile the title was added with; a title added on that profile gets the tag, whose release profile is the hard filter (Radarr and Sonarr).
 swiss_profile() {
-  [ "$kind" = movie ] && [ "$SID" != 0 ] || return 1
+  [ "$SID" != 0 ] || return 1
   local stid profile lang
   stid=$(api /tag | jq -r --arg l "$SWISS_TAG" '.[] | select(.label == $l) | .id')
   [ -n "$stid" ] || return 1
@@ -85,10 +85,10 @@ swiss_profile() {
   else
     return 1
   fi
-  # Recyclarr puts the guide's language (Original) back whenever it updates the profile; Any lets a Swiss German dub of a foreign film through.
+  # Recyclarr puts the guide's language (Original) back whenever it updates the profile; Any lets a Swiss German dub of a foreign film through. Sonarr profiles have no language.
   profile=$(api "/qualityprofile/$SID")
-  lang=$(jq -r '.language.name' <<<"$profile")
-  if [ "$lang" != Any ]; then
+  lang=$(jq -r '.language.name // "none"' <<<"$profile")
+  if [ "$lang" != Any ] && [ "$lang" != none ]; then
     jq -c '.language = {id: -1, name: "Any"}' <<<"$profile" | api "/qualityprofile/$SID" -X PUT -d @- >/dev/null
     echo "profile $SID: language $lang -> Any"
   fi

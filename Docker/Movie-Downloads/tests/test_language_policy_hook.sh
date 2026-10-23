@@ -52,8 +52,10 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.reply(401)
         p = self.path.removeprefix("/base/api/v3")
         if self.command == "GET" and p == "/qualityprofile":
-            return self.reply(200, PROFILES)
+            return self.reply(200, state.get("profiles", PROFILES))
         if self.command == "GET" and p == "/qualityprofile/13":
+            if state.get("swiss_no_language"):
+                return self.reply(200, {"id": 13, "name": PROFILES[5]["name"]})
             return self.reply(200, {"id": 13, "name": PROFILES[5]["name"], "language": state.get("swiss_language", {"id": -1, "name": "Any"})})
         if self.command == "PUT" and p == "/qualityprofile/13":
             return self.reply(202, json.loads(body))
@@ -258,8 +260,20 @@ assert_eq "added on the Swiss German profile without the tag: tag added (it is t
 assert_eq "  log line" "movie 5: tag audio-swiss-german added (Swiss German profile)" "$(cat "$T/out")"
 run "$(film 5 13 "$DE" 2020 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
 assert_eq "  also with LP_TAGS_ONLY=1" "$(tagput movie movieIds 5 24 add)" "$(cat "$T/puts")"
-run "$(tagged 8 17 "$EN" 2020 "24")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
-assert_eq "Sonarr has no Swiss German profile: the usual twin move" "$(put series seriesIds 8 20)" "$(cat "$T/puts")"
+# Sonarr profiles have no language field (Sonarr 4), so nothing to put back to Any there.
+NOLANG='"swiss_no_language": true'
+run "{$NOLANG, $(tagged 8 17 "$EN" 2020 "24" | sed 's/^{//')" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "Sonarr: English series on main moves to the Swiss German profile, no profile language to fix" "$(put series seriesIds 8 13)" "$(cat "$T/puts")"
+assert_eq "  log line" "series 8: profile 17 -> 13 (audio-swiss-german)" "$(cat "$T/out")"
+run "{$NOLANG, $(tagged 8 3 "$JA" 1990 "24,31" | sed 's/^{//')" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "Sonarr: anime profile overruled, subs-french still handled" "$(put series seriesIds 8 13)
+$(tagput series seriesIds 8 99 add)" "$(cat "$T/puts")"
+run "{$NOLANG, $(show 8 13 "$DE" 2020 5000 | sed 's/^{//')" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "Sonarr: added on the Swiss German profile without the tag: tag added" "$(tagput series seriesIds 8 24 add)" "$(cat "$T/puts")"
+run "{$NOLANG, $(tagged 8 11 "$DE" 2004 "24" | sed 's/^{//')" sonarr_eventtype=SeriesAdd sonarr_series_id=8 LP_TAGS_ONLY=1
+assert_eq "Sonarr: LP_TAGS_ONLY=1 (tag added later) moves too" "$(put series seriesIds 8 13)" "$(cat "$T/puts")"
+run "{\"profiles\": [{\"id\": 17, \"name\": \"4K HDR - WEB-2160p (1080p fallback)\"}, {\"id\": 20, \"name\": \"4K HDR - WEB-2160p (1080p fallback) - English original\"}], $(tagged 8 17 "$EN" 2020 "24" | sed 's/^{//')" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "no Swiss German profile (Recyclarr not synced yet): the usual twin move" "$(put series seriesIds 8 20)" "$(cat "$T/puts")"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
