@@ -839,22 +839,46 @@ Every download client is inside the tunnel (SABnzbd since 2026-10-23, like `sabn
 and Radarr cannot see qBittorrent at all.
 
 Port forwarding uses gluetun's own `VPN_PORT_FORWARDING_UP_COMMAND` hook
-(`scripts/qbit-port.sh`). That is why this stack has **no port-updater container
-and no docker.sock**, unlike the older `mouse` stack on fastpi.
+(`scripts/qbit-port.sh`: sets `listen_port`, then reannounces every torrent). That is why this stack has **no port-updater container**, unlike the older `mouse` stack on fastpi; the rest of port_updater's job is split up, see [Recovery](#recovery-parity-with-fastpis-mouse-stack).
 
 ⚠️ **Enable qBittorrent → Options → WebUI → "Bypass authentication for clients on
 localhost"**, or the hook gets a 403 and the forwarded port is never applied —
 which looks exactly like a dead tracker.
 
-Recreating only `qbittorrent` (image update) resets its listen port to 6881 and gluetun does not re-run the hook: `sudo docker exec movie-gluetun /scripts/qbit-port.sh $(sudo docker exec movie-gluetun cat /tmp/gluetun/forwarded_port)`.
+Restarting or recreating only `qbittorrent` resets its listen port to 6881 and gluetun does not re-run the hook; `movie-vpn-status` sets it back within 30 s (`port_fix` in the history). By hand: `sudo docker exec movie-gluetun /scripts/qbit-port.sh $(sudo docker exec movie-gluetun cat /tmp/gluetun/forwarded_port)`.
+
+qBittorrent settings that matter here (in `/srv/appdata/qbittorrent`, not in git; set via `POST /api/v2/app/setPreferences`, same as fastpi's `qbittorrent_mouse`):
+
+| Setting | Value | Why |
+|---|---|---|
+| `current_network_interface` | `tun0` | bound to the tunnel only (gluetun's WireGuard interface); without it qBit also listened on `eth0`/bridge and had 0 DHT nodes. Takes effect after a qBit restart |
+| `status_bar_external_ip` | `true` | WebUI status bar shows the external IP qBit sees (= VPN IP) |
+| ratio 2 / 30 days, queueing, connection limits | on | public trackers; mouse has none of these (private tracker, seeds forever) |
+
+### Recovery (parity with fastpi's mouse stack)
+
+| Case | mouse (fastpi) | here |
+|---|---|---|
+| Forwarded port changes | port_updater sets it + reannounce (≤10 min) | gluetun hook, at once, + reannounce |
+| qBit on the wrong port (restart, drift) | port_updater, ≤15 s | `movie-vpn-status`, ≤30 s, + reannounce |
+| No forwarded port | 3 polls at 0 → port_updater restarts the stack | gluetun healthcheck (image check + `GET /v1/portforward` ≠ 0, 20 s × 9) → unhealthy after ~3 min → autoheal restarts gluetun |
+| gluetun restarted, namespace members cut off | port_updater restarts qBit + mousehole | their healthcheck needs `tun0` in `/proc/net/dev` → unhealthy → autoheal restarts them into the new namespace (measured 2026-10-23: ~2 min) |
+| A container hangs | autoheal-mouse | `movie-autoheal` (label `autoheal-movie=true`: gluetun, qBit, Prowlarr, SABnzbd, FlareSolverr, Radarr, Sonarr, vpn-status) |
+
+- Docker API: `movie-autoheal` → `movie-socket-proxy-heal` (internal network `movie-heal`, `socket-proxy/autoheal-haproxy.cfg` = copy of fastpi's): container list/inspect + start/stop/restart only; create, exec, kill, update, logs, delete, images, volumes, networks = 403 (tested 2026-10-23). No app container has docker.sock.
+- gluetun's healthcheck reads the vpn-status API key (`secrets/vpn-status.apikey`, mounted read-only).
+- Proton without port forwarding for a long time = gluetun restarts every ~4 min, like mouse's stack restart.
 
 ## VPN status
 
-`movie-vpn-status`: the status page of fastpi's `port_updater` (mouse stack), read-only: it only watches, gluetun's hook does the updating. Code: `vpn-status/web-server.py` (copy of `HomeLab-FastPi` `Docker/mouse/port-updater/web-server.py` plus a poller).
+`movie-vpn-status`: the status page of fastpi's `port_updater` (mouse stack). It watches, and re-applies the forwarded port (+ reannounce) when qBittorrent's differs; gluetun's hook does the normal updating. No docker access. Code: `vpn-status/web-server.py` (copy of `HomeLab-FastPi` `Docker/mouse/port-updater/web-server.py` plus a poller).
+
+Reached like fastpi's (ssh tunnel only, no Traefik route). Local port 8187, so both pages can be open at once:
 
 ```bash
-ssh -L 8087:127.0.0.1:8087 beefy      # then http://localhost:8087/
-ssh beefy curl -s localhost:8087/api/status   # {"vpn_ip", "real_ip", "forwarded_port", "qbit_port", "match"}
+ssh -L 8187:127.0.0.1:8087 beefy      # beefy: http://localhost:8187/
+ssh -L 8087:127.0.0.1:8087 fastpi     # fastpi mouse: http://localhost:8087/
+ssh beefy curl -s localhost:8087/api/status   # vpn_ip, real_ip, forwarded_port, qbit_port, match, qbit_external_ip, qbit_connection, qbit_interface, dht_nodes
 ```
 
 | Card | Source |
@@ -863,12 +887,14 @@ ssh beefy curl -s localhost:8087/api/status   # {"vpn_ip", "real_ip", "forwarded
 | qBittorrent Port | qBittorrent `listen_port` (`gluetun:8080`, bridge subnet is in qBit's auth whitelist); green ✓ = same as the forwarded port, red ✗ = mismatch |
 | VPN IP | gluetun `GET /v1/publicip/ip` |
 | Real IP | api.ipify.org from the bridge = beefy's WAN IP (must differ from the VPN IP) |
-| History | `/srv/appdata/vpn-status/port-history.json`: `startup`, `port_update`, `mismatch`, `zero_port`, one line per change (polled every 60 s while beefy is awake). A `mismatch` right after a stack start is normal: qBit starts on 6881 until the hook sets the port seconds later |
+| qBittorrent External IP | `last_external_address_v4` of `/api/v2/transfer/info`: the IP qBit itself sees, ✓ = VPN IP |
+| qBittorrent Connection | `connection_status` · listen interface · DHT nodes; `firewalled` with no torrents is normal (no incoming peers yet) |
+| History | `/srv/appdata/vpn-status/port-history.json`: `startup`, `port_update`, `mismatch`, `port_fix` / `port_fix_failed`, `zero_port`, one line per change (polled every 30 s while beefy is awake). `mismatch` + `port_fix` right after a stack start is normal: qBit starts on 6881 |
 
 - Localhost only (like fastpi's): no Traefik route, no new LAN port, no firewall change.
 - uid 65111, `read_only`, `cap_drop: ALL`, image `python:3.15.1-alpine3.24` (no build).
 - gluetun control server auth (since 2026-10-23): `/srv/appdata/gluetun/auth/config.toml` (600, not in git) gives role `vpn-status` (API key, header `X-API-Key`) only `GET /v1/portforward` and `GET /v1/publicip/ip`; every other route is 401, also `PUT /v1/vpn/status` (before, the routes were open to every container on the bridge). Key: `secrets/vpn-status.apikey` (gitignored, 400, uid 65111). New key: write both files, then `docker compose up -d --force-recreate gluetun qbittorrent prowlarr sabnzbd vpn-status` (the others share gluetun's namespace).
-- Tests: `python3 tests/test_vpn_status.py`.
+- Tests: `python3 tests/test_vpn_status.py`, `tests/test_qbit_port.sh` (the hook).
 
 ## Auth: Authentik is the only login
 
