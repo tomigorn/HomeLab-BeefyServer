@@ -6,6 +6,7 @@ import http.server
 import socketserver
 import threading
 import time
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -20,7 +21,8 @@ POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "60"))
 
 _real_ip_cache: dict = {"ip": None, "ts": 0.0}
 _real_ip_lock = threading.Lock()
-_live: dict = {"forwarded_port": None, "qbit_port": None, "vpn_ip": None, "checked": None}
+_live: dict = {"forwarded_port": None, "qbit_port": None, "vpn_ip": None, "checked": None,
+               "qbit_external_ip": None, "qbit_connection": None, "qbit_interface": None, "dht_nodes": None}
 _live_lock = threading.Lock()
 
 
@@ -44,6 +46,36 @@ def _gluetun(path: str):
     except OSError:
         key = ""
     return _get_json(GLUETUN_URL + path, {"X-API-Key": key})
+
+
+def _post(url: str, form: dict) -> bool:
+    try:
+        req = urllib.request.Request(url, data=urllib.parse.urlencode(form).encode())
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def needs_port_fix(fwd, qbit) -> bool:
+    return bool(fwd) and bool(qbit) and fwd != qbit
+
+
+def fix_port(fwd) -> bool:
+    """Set qBittorrent's listen port to the forwarded one, then reannounce every torrent."""
+    if not _post(QBIT_URL + "/api/v2/app/setPreferences", {"json": json.dumps({"listen_port": fwd})}):
+        return False
+    return _post(QBIT_URL + "/api/v2/torrents/reannounce", {"hashes": "all"})
+
+
+def qbit_view(transfer, prefs) -> dict:
+    transfer, prefs = transfer or {}, prefs or {}
+    return {
+        "qbit_external_ip": transfer.get("last_external_address_v4"),
+        "qbit_connection": transfer.get("connection_status"),
+        "qbit_interface": prefs.get("current_network_interface"),
+        "dht_nodes": transfer.get("dht_nodes"),
+    }
 
 
 def poll_events(state: dict, fwd, qbit, vpn_ip) -> list:
@@ -90,10 +122,19 @@ def poller() -> None:
     while True:
         fwd = (_gluetun("/v1/portforward") or {}).get("port")
         vpn_ip = (_gluetun("/v1/publicip/ip") or {}).get("public_ip")
-        qbit = (_get_json(QBIT_URL + "/api/v2/app/preferences") or {}).get("listen_port")
+        prefs = _get_json(QBIT_URL + "/api/v2/app/preferences")
+        qbit = (prefs or {}).get("listen_port")
+        transfer = _get_json(QBIT_URL + "/api/v2/transfer/info")
+        events = poll_events(state, fwd, qbit, vpn_ip)
+        if needs_port_fix(fwd, qbit):
+            ok = fix_port(fwd)
+            events.append({"timestamp": _now(), "event": "port_fix" if ok else "port_fix_failed", "port": fwd, "old_port": qbit, "vpn_ip": vpn_ip or "",
+                           "message": f"qBittorrent listen port {qbit} set to forwarded port {fwd}, reannounced" if ok else f"could not set qBittorrent listen port {qbit} to {fwd}"})
+            if ok:
+                qbit = fwd
         with _live_lock:
-            _live.update(forwarded_port=fwd, qbit_port=qbit, vpn_ip=vpn_ip, checked=_now())
-        append_events(poll_events(state, fwd, qbit, vpn_ip))
+            _live.update(forwarded_port=fwd, qbit_port=qbit, vpn_ip=vpn_ip, checked=_now(), **qbit_view(transfer, prefs))
+        append_events(events)
         time.sleep(POLL_INTERVAL)
 
 
@@ -162,6 +203,8 @@ HTML = r"""<!DOCTYPE html>
     .badge-zero_port     { background: #450a0a; color: #fca5a5; }
     .badge-startup       { background: #1c2334; color: #94a3b8; }
     .badge-mismatch      { background: #450a0a; color: #fca5a5; }
+    .badge-port_fix      { background: #052e16; color: #86efac; }
+    .badge-port_fix_failed { background: #450a0a; color: #fca5a5; }
     .port-val { font-family: 'Courier New', monospace; font-size: 0.95rem; }
     .empty-row td { text-align: center; color: #334155; padding: 3rem 0; font-size: 0.875rem; }
     .footer { margin-top: 1rem; color: #334155; font-size: 0.75rem; text-align: right; }
@@ -177,7 +220,7 @@ HTML = r"""<!DOCTYPE html>
 </head>
 <body>
   <h1><span id="status-dot"></span>VPN Port Status</h1>
-  <p class="subtitle">beefy &middot; ProtonVPN &rarr; qBittorrent port forwarding (set by gluetun's own hook; this page only watches)</p>
+  <p class="subtitle">beefy &middot; ProtonVPN &rarr; qBittorrent port forwarding (gluetun's hook sets the port; this page re-applies it when qBittorrent drifts)</p>
 
   <div class="cards">
     <div class="card">
@@ -203,6 +246,14 @@ HTML = r"""<!DOCTYPE html>
     <div class="card">
       <div class="card-label">qBittorrent Port</div>
       <div class="card-value muted port-val" id="qbit-port">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">qBittorrent External IP</div>
+      <div class="card-value muted ip" id="qbit-ip">—</div>
+    </div>
+    <div class="card">
+      <div class="card-label">qBittorrent Connection</div>
+      <div class="card-value muted" id="qbit-conn">—</div>
     </div>
   </div>
 
@@ -254,7 +305,7 @@ HTML = r"""<!DOCTYPE html>
 
     function badgeClass(event)  { return 'badge badge-' + (event || 'startup'); }
     function badgeLabel(event) {
-      return { port_update: 'port update', zero_port: 'zero port', mismatch: 'mismatch', startup: 'startup' }[event] || event;
+      return { port_update: 'port update', zero_port: 'zero port', mismatch: 'mismatch', startup: 'startup', port_fix: 'port fix', port_fix_failed: 'port fix failed' }[event] || event;
     }
 
     function portCell(val) {
@@ -335,6 +386,13 @@ HTML = r"""<!DOCTYPE html>
         q.textContent = s.qbit_port ? s.qbit_port + (s.match ? ' ✓' : ' ✗') : '—';
         q.className = 'card-value port-val ' + (s.match ? 'green' : 'red');
         document.getElementById('real-ip-card').textContent = s.real_ip || '—';
+        const qi = document.getElementById('qbit-ip');
+        const ipOk = s.qbit_external_ip && s.qbit_external_ip === s.vpn_ip;
+        qi.textContent = s.qbit_external_ip ? s.qbit_external_ip + (ipOk ? ' ✓' : ' ✗') : '—';
+        qi.className = 'card-value ip ' + (ipOk ? 'green' : 'red');
+        const qc = document.getElementById('qbit-conn');
+        qc.textContent = s.qbit_connection ? `${s.qbit_connection} · ${s.qbit_interface || 'any'} · DHT ${s.dht_nodes}` : '—';
+        qc.className = 'card-value ip ' + ({ connected: 'green', firewalled: 'yellow' }[s.qbit_connection] || 'red');
       } catch (err) {}
     }
 
@@ -412,6 +470,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "qbit_port": qbit,
                 "match": bool(fwd) and fwd == qbit,
                 "checked": live["checked"],
+                "qbit_external_ip": live["qbit_external_ip"],
+                "qbit_connection": live["qbit_connection"],
+                "qbit_interface": live["qbit_interface"],
+                "dht_nodes": live["dht_nodes"],
             }).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
