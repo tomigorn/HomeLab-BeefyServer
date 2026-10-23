@@ -55,3 +55,10 @@ Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secre
 
 ## Backup of the switch
 `~/backups/pre-uid-20261022-230855/`: `appdata.tgz`, `jellyfin.tgz`, `seerr.tgz`, `ryot-dumpall.sql`, `perms.before` (all 600).
+
+## Host access (2026-10-24)
+| What | Setting |
+|---|---|
+| `~buntu/.ssh/authorized_keys` | every key has `from=`: automation keys (pi@fastpi, poweroff, history) only from `192.168.1.2`, personal devices only from `192.168.1.0/24`; backup `authorized_keys.bak-20261024` |
+| `/etc/ssh/sshd_config.d/20-access.conf` | no X11/agent forwarding, `MaxAuthTries 3` (TCP forwarding stays for `ssh -L`) |
+| SSH beefy → fastpi | removed; only fastpi → beefy |
