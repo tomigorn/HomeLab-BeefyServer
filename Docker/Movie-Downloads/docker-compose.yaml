@@ -48,6 +48,17 @@ services:
       # Control server (:8000, not published) needs an API key for every route;
       # only vpn-status may read the forwarded port and public IP (README "VPN status").
       - HTTP_CONTROL_SERVER_AUTH_CONFIG_FILEPATH=/gluetun/auth/config.toml
+    # Image healthcheck plus "a port is forwarded": ~3 min without one (or without a tunnel) = unhealthy, and
+    # autoheal restarts gluetun for a new lease (fastpi's port_updater does the same after 3 zero-port polls).
+    healthcheck:
+      test: ["CMD-SHELL", "/gluetun-entrypoint healthcheck && p=$$(wget -qO- --header \"X-API-Key: $$(cat /run/secrets/hc-apikey)\" http://127.0.0.1:8000/v1/portforward) && case $$p in *'\"port\":0'*|'') exit 1;; esac"]
+      interval: 20s
+      timeout: 10s
+      retries: 9
+      start_period: 120s
+      start_interval: 5s
+    labels:
+      - autoheal-movie=true
     ports:
       # All of these belong to containers sharing this namespace, so they are
       # published HERE, not on the containers themselves.
@@ -57,6 +68,7 @@ services:
     volumes:
       - ${APPDATA_ROOT}/gluetun:/gluetun
       - ./scripts/qbit-port.sh:/scripts/qbit-port.sh:ro
+      - ./secrets/vpn-status.apikey:/run/secrets/hc-apikey:ro
     networks:
       - movie-downloads
 
@@ -87,8 +99,17 @@ services:
       - TZ=${TZ}
       - UMASK=${UMASK}
       - WEBUI_PORT=8080
-      # The real listening port is set by gluetun's port-forward hook at runtime.
+      # The real listening port is set by gluetun's port-forward hook at runtime (and by vpn-status when it drifts).
       - TORRENTING_PORT=6881
+    # Unhealthy also when tun0 is gone from its namespace (gluetun restarted): autoheal restarts it into the new one.
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q tun0 /proc/net/dev && curl -fsS -o /dev/null http://127.0.0.1:8080/api/v2/app/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - autoheal-movie=true
     volumes:
       - ${APPDATA_ROOT}/qbittorrent:/config
       # ONE mount for the whole tree. Separate /downloads and /movies mounts are
@@ -122,6 +143,15 @@ services:
     environment:
       - TZ=${TZ}
       - UMASK=${UMASK}
+    # Unhealthy also when tun0 is gone from its namespace (gluetun restarted): autoheal restarts it into the new one.
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q tun0 /proc/net/dev && curl -fsS -o /dev/null http://127.0.0.1:9696/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - autoheal-movie=true
     volumes:
       - ${APPDATA_ROOT}/prowlarr:/config
 
@@ -154,6 +184,15 @@ services:
       - TZ=${TZ}
       - HOME=/home/flaresolverr
       - LOG_LEVEL=info
+    # Unhealthy also when tun0 is gone from its namespace (gluetun restarted): autoheal restarts it into the new one.
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q tun0 /proc/net/dev && curl -fsS -o /dev/null http://127.0.0.1:8191/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - autoheal-movie=true
     volumes:
       # undetected_chromedriver patches /app/chromedriver in place; this copy is owned by 65119 (re-copy it from the image on a version bump, README "FlareSolverr").
       - ${APPDATA_ROOT}/flaresolverr/chromedriver:/app/chromedriver
@@ -186,6 +225,15 @@ services:
     environment:
       - TZ=${TZ}
       - UMASK=${UMASK}
+    # Unhealthy also when tun0 is gone from its namespace (gluetun restarted): autoheal restarts it into the new one.
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q tun0 /proc/net/dev && curl -fsS -o /dev/null 'http://127.0.0.1:8081/api?mode=version'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - autoheal-movie=true
     volumes:
       - ${APPDATA_ROOT}/sabnzbd:/config
       - ${DATA_ROOT}:/data
@@ -221,6 +269,14 @@ services:
       - ./scripts:/scripts:ro
       # Bazarr API key for those scripts (written by scripts/language-policy.sh).
       - ./secrets/hook:/secrets:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:7878/ping"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - autoheal-movie=true
     ports:
       - "${RADARR_PORT}:7878"
     networks:
@@ -283,6 +339,14 @@ services:
       - ./scripts:/scripts:ro
       # Bazarr API key for those scripts (written by scripts/language-policy.sh).
       - ./secrets/hook:/secrets:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8989/ping"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - autoheal-movie=true
     ports:
       - "${SONARR_PORT}:8989"
     networks:
@@ -327,9 +391,10 @@ services:
 # #########################################################
 # VPN STATUS ##############################################
 # #########################################################
-# Read-only status page: VPN public IP, forwarded port, qBittorrent's listen port,
-# history. Same page as port_updater on fastpi's mouse stack, minus the updating
-# (gluetun's own hook sets the port here). README "VPN status".
+# Status page: VPN public IP, real IP, forwarded port, qBittorrent's listen port, external IP and
+# connection, history. Same page as port_updater on fastpi's mouse stack. gluetun's hook sets the port;
+# this re-applies it (plus reannounce) when qBittorrent drifts, e.g. back to 6881 after a restart. No docker.sock:
+# zero-port and reattach recovery are healthchecks + autoheal. README "VPN status".
   vpn-status:
     image: python:3.15.1-alpine3.24
     container_name: movie-vpn-status
@@ -348,6 +413,14 @@ services:
       - TZ=${TZ}
       - PYTHONDONTWRITEBYTECODE=1
       - WEB_PORT=8087
+      - POLL_INTERVAL=30
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8087/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    labels:
+      - autoheal-movie=true
     volumes:
       - ./vpn-status/web-server.py:/app/web-server.py:ro
       - ./secrets/vpn-status.apikey:/run/secrets/gluetun-apikey:ro
@@ -357,6 +430,64 @@ services:
       - "127.0.0.1:8087:8087"
     networks:
       - movie-downloads
+
+# #########################################################
+# AUTOHEAL ################################################
+# #########################################################
+# Restarts every container labelled autoheal-movie=true that turns unhealthy, like
+# autoheal-mouse on fastpi. That covers gluetun without a forwarded port and the
+# namespace members after a gluetun restart (their healthcheck needs tun0).
+# No docker.sock here: it talks to movie-socket-proxy-heal on the internal network
+# movie-heal, which allows container list/inspect and start/stop/restart only.
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: movie-autoheal
+    restart: unless-stopped
+    user: "65121:65121"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      - socket-proxy-heal
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal-movie
+      - AUTOHEAL_INTERVAL=30
+      - AUTOHEAL_START_PERIOD=0
+      - DOCKER_SOCK=tcp://movie-socket-proxy-heal:2375
+      - TZ=${TZ}
+    networks:
+      - movie-heal
+    mem_limit: 64m
+
+# Restart-only Docker API for autoheal: socket-proxy/autoheal-haproxy.cfg (copy of
+# fastpi's Docker-Socket-Proxy one). create, exec, kill, update, logs, images,
+# volumes, networks are 403. Only autoheal can reach it (internal network).
+  socket-proxy-heal:
+    image: ghcr.io/tecnativa/docker-socket-proxy:0.3.0
+    container_name: movie-socket-proxy-heal
+    restart: unless-stopped
+    environment:
+      BIND_CONFIG: ":2375"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./socket-proxy/autoheal-haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    # Non-root; the docker group (973) opens the socket.
+    user: "65120:65120"
+    group_add:
+      - "973"
+    entrypoint: ["haproxy", "-W", "-db", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+    read_only: true
+    tmpfs:
+      - /run:mode=1777,size=1m   # haproxy.pid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - movie-heal
+    mem_limit: 64m
 
 # =========================================================
 # Networks ================================================
@@ -370,6 +501,14 @@ networks:
         # A /24, not Docker's default /16 - beefy already has 172.17.0.0/16 and
         # 172.18.0.0/16 in use. Keep this in step with BRIDGE_SUBNET in .env.
         - subnet: 172.28.10.0/24
+  # autoheal <-> its socket proxy only; internal, no internet, nothing else on it.
+  movie-heal:
+    name: movie-heal
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.13.0/24
 
 # =========================================================
 # Volumes =================================================
