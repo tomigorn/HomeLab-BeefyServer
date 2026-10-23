@@ -94,3 +94,5 @@ Bump `RYOT_TAG` in `.env` and `.env.example`, then:
 scripts/ryot-db-backup.sh
 sudo docker compose pull && sudo docker compose up -d --build
 ```
+
+**Rebuild** (`ryot-go:local`, FROM `python:3.13-alpine`): `sudo docker compose up -d --build --pull ryot-go` when Cup shows an update for the base or the security scan lists a fixable base CVE, otherwise monthly.
