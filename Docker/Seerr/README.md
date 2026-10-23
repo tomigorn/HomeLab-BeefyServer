@@ -173,11 +173,16 @@ email) are not set up: Settings -> Notifications.
 
 ## Delete a title
 
-To delete a title: press **Remove from Radarr/Sonarr** in Seerr (title page → **Manage**, admin) — that one button removes it everywhere (Radarr/Sonarr + files, qBittorrent torrent + files, SABnzbd history, Seerr request). **Clear Data** alone only forgets the request in Seerr and leaves everything else: Radarr/Sonarr keep the title and a new request silently does nothing.
+Title page → **Manage** (admin):
 
-- A later request starts completely fresh (new search, new download).
-- The torrent stops seeding (its files are deleted too); the library file sits 7 days in the recycle bin.
-- How it works (Connect script `title-wipe-hook.sh`): `../Movie-Downloads/README.md` "Delete a title".
+| Button | What goes |
+|---|---|
+| **Remove from Radarr/Sonarr** | the title in Radarr/Sonarr (with its files), nothing else |
+| **Advanced → Clear Data** | everything: Seerr request, Radarr/Sonarr entry + files, qBittorrent torrent + files, SABnzbd history and Jellyfin (within ~2 min) |
+
+- A later request after Clear Data starts completely fresh (new search, new download).
+- The library file sits 7 days in the recycle bin.
+- How it works (`clear-data-wipe.sh` timer): `../Movie-Downloads/README.md` "Delete a title".
 
 ## Related
 
