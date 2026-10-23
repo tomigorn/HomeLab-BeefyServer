@@ -29,7 +29,7 @@ services:
     environment:
       - VPN_SERVICE_PROVIDER=protonvpn
       - VPN_TYPE=wireguard
-      - WIREGUARD_PRIVATE_KEY=${PROTONVPN_PRIVATE_KEY}
+      - WIREGUARD_PRIVATE_KEY_SECRETFILE=/run/secrets/wireguard_private_key
       - SERVER_COUNTRIES=${VPN_SERVER_COUNTRIES}
       - TZ=${TZ}
       - PUID=65116   # owner of its files in /gluetun
@@ -69,6 +69,7 @@ services:
       - ${APPDATA_ROOT}/gluetun:/gluetun
       - ./scripts/qbit-port.sh:/scripts/qbit-port.sh:ro
       - ./secrets/vpn-status.apikey:/run/secrets/hc-apikey:ro
+      - ./secrets/wireguard_private_key:/run/secrets/wireguard_private_key:ro
     networks:
       - movie-downloads
 
@@ -377,14 +378,14 @@ services:
       # Inside the nightly window beefy is woken for (03:55), so a sync happens
       # even though the box sleeps most of the day. Missed runs are not caught up.
       - CRON_SCHEDULE=${RECYCLARR_CRON}
-      - RADARR_API_KEY=${RADARR_API_KEY}
-      - SONARR_API_KEY=${SONARR_API_KEY}
     volumes:
       # Writable: Recyclarr caches the guide repos and its sync state here.
       - ${APPDATA_ROOT}/recyclarr:/config
       - ./recyclarr/recyclarr.yml:/config/recyclarr.yml:ro
       - ./recyclarr/settings.yml:/config/settings.yml:ro
       - ./recyclarr/custom-formats:/config/custom-formats:ro
+      # API keys for !secret in recyclarr.yml
+      - ./secrets/recyclarr.yml:/config/secrets.yml:ro
     networks:
       - movie-downloads
 

@@ -83,10 +83,23 @@ sudo apt install -y psmisc attr
 sudo tune2fs -m 1 /dev/sda1
 ```
 
-Then fill in `.env` — at minimum `PROTONVPN_PRIVATE_KEY`, which must be a **second,
+Then fill in `.env` and the secret files ("Secrets" below) — at minimum `secrets/wireguard_private_key`, which must be a **second,
 separate** ProtonVPN WireGuard key. Reusing fastpi's key makes both tunnels drop
 intermittently as the two endpoints fight over one session. Pick a server that
 supports **port forwarding** or torrents will never connect.
+
+## Secrets
+
+Files under `secrets/` (gitignored), never in `.env`: `docker inspect` stays clean. How-to: `../_global/docs/secrets-as-files.md`.
+
+| File | Read by | Owner / mode | Mechanism |
+|---|---|---|---|
+| `secrets/wireguard_private_key` | gluetun | `root:root 0400` | `WIREGUARD_PRIVATE_KEY_SECRETFILE` |
+| `secrets/recyclarr.yml` (`radarr_api_key: '…'`, `sonarr_api_key: '…'`) | recyclarr | `65107:65107 0400` | mounted as `/config/secrets.yml`, `!secret` in `recyclarr/recyclarr.yml` |
+| `secrets/vpn-status.apikey` | vpn-status, gluetun healthcheck | `65111 0400` | bind `:ro` |
+| `secrets/hook/*.apikey` | Radarr/Sonarr hooks | `buntu:hook-secret 0640` | bind `:ro` |
+
+Check: `sudo docker inspect movie-gluetun movie-recyclarr --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1` (`WIREGUARD_PRIVATE_KEY` is the image's empty default).
 
 ## Deploy
 
@@ -371,7 +384,7 @@ HDR10 releases show `[HDR10]`, DV ones `[DV HDR10]`.
 formats, scores, quality profiles, quality sizes and naming into Radarr every
 night at `RECYCLARR_CRON` (04:15, inside the nightly window beefy is woken for).
 **Edit `recyclarr/recyclarr.yml`, not the Radarr UI** — Recyclarr overwrites what
-it manages. API key: `RADARR_API_KEY` in `.env`. Own custom formats (Swiss German, resolution): `recyclarr/custom-formats/radarr/*.json` and `…/sonarr/*.json` (same patterns, own ids; Sonarr has no `Resolution: DVD`, its DVD quality is 480p and counts as SD), loaded through `recyclarr/settings.yml` (local resource provider); both are mounted into the container.
+it manages. API keys: `secrets/recyclarr.yml` (`!secret radarr_api_key` / `sonarr_api_key`, "Secrets"). Own custom formats (Swiss German, resolution): `recyclarr/custom-formats/radarr/*.json` and `…/sonarr/*.json` (same patterns, own ids; Sonarr has no `Resolution: DVD`, its DVD quality is 480p and counts as SD), loaded through `recyclarr/settings.yml` (local resource provider); both are mounted into the container.
 
 ```bash
 docker compose run --rm recyclarr sync --preview   # what would change

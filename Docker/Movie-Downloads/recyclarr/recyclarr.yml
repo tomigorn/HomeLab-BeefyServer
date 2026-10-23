@@ -27,8 +27,8 @@
 radarr:
   movies:
     base_url: http://radarr:7878
-    # From .env (RADARR_API_KEY) - never commit the key.
-    api_key: !env_var RADARR_API_KEY
+    # From secrets/recyclarr.yml (mounted as /config/secrets.yml) - never commit the key.
+    api_key: !secret radarr_api_key
 
     # TRaSH file-size limits per quality (min/preferred/max MB per minute).
     quality_definition:
@@ -411,8 +411,8 @@ radarr:
 sonarr:
   series:
     base_url: http://sonarr:8989
-    # From .env (SONARR_API_KEY) - never commit the key.
-    api_key: !env_var SONARR_API_KEY
+    # From secrets/recyclarr.yml (mounted as /config/secrets.yml) - never commit the key.
+    api_key: !secret sonarr_api_key
 
     # TRaSH file-size limits per quality (min/preferred/max MB per minute). One
     # table per instance; `series` also serves the anime profile (anime remuxes
