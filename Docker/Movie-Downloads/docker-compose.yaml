@@ -79,7 +79,7 @@ services:
 # Shares gluetun's namespace, so it has NO ports and NO networks of its own.
 # Reached by the other services as `gluetun:8080`.
   qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent:5.2.4
+    image: lscr.io/linuxserver/qbittorrent:5.3.0   # libtorrent 2.1 (2026-10-24); rollback: 5.2.4
     container_name: movie-qbittorrent
     restart: unless-stopped
     # linuxserver non-root mode: s6 and the app run as 65105, no root PID1, no capabilities.
