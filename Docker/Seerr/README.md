@@ -171,6 +171,14 @@ email) are not set up: Settings -> Notifications.
 - `audio-` is a hard filter on the release name: no matching release = nothing is grabbed (Radarr/Sonarr → Activity / Interactive Search shows "Does not contain one of the required terms").
 - Tags changed after the request: add or change the tag (or profile) in Radarr/Sonarr, search; for `subs-` and `audio-swiss-german` tags run `../Movie-Downloads/scripts/language-policy.sh` once.
 
+## Delete a title
+
+To delete a title: press **Remove from Radarr/Sonarr** in Seerr (title page → **Manage**, admin) — that one button removes it everywhere (Radarr/Sonarr + files, qBittorrent torrent + files, SABnzbd history, Seerr request). **Clear Data** alone only forgets the request in Seerr and leaves everything else: Radarr/Sonarr keep the title and a new request silently does nothing.
+
+- A later request starts completely fresh (new search, new download).
+- The torrent stops seeding (its files are deleted too); the library file sits 7 days in the recycle bin.
+- How it works (Connect script `title-wipe-hook.sh`): `../Movie-Downloads/README.md` "Delete a title".
+
 ## Related
 
 - `../Movie-Downloads` — Radarr, Sonarr, Prowlarr, download clients, Bazarr, Recyclarr
