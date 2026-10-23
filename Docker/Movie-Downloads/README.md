@@ -268,6 +268,15 @@ All Newznab, priority 25, synced by Prowlarr to Radarr (movie categories 2000-20
 - `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) on every run, enables the indexer and is idempotent. New key: replace the file, re-run the script. A rejected key makes it exit 1 and change nothing.
 - **Disabled since 2026-10-19:** the first account was blocked (duplicate after the site migration). Re-enable by running the script with the new account's key.
 
+Torrent indexers (`scripts/torrent-indexers.sh`, idempotent, also the FlareSolverr proxy):
+
+| Indexer | Priority | Min. seeders | Via |
+|---|---|---|---|
+| 1337x, EZTV (Sonarr only) | 40 | 1 | FlareSolverr (tag `flaresolverr`, Cloudflare) |
+| The Pirate Bay, Knaben | 40 | 1 | direct |
+
+- Min. seeders 1 (owner, 2026-10-23: rare releases may have one seeder); set in Prowlarr (`appMinimumSeeders`), synced to Radarr/Sonarr as `minimumSeeders`. Change: `MINSEEDERS` in the script, re-run it.
+
 ### Wrong-film guard
 
 Found 2026-10-20: Treasure Maps answers an ID search (`imdbid`/`tmdbid`/`tvdbid`) with every title match and stamps the *searched* IDs on all of them. Radarr/Sonarr trust indexer IDs over title + year, so a search for *Night of the Living Dead* (1968) grabbed the 1990 remake twice (NZBgeek/NzbPlanet return only the right film). The same risk hits Sonarr: a same-named series from another year.
