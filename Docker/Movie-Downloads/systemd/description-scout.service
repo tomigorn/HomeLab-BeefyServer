@@ -1,0 +1,14 @@
+[Unit]
+Description=Push torrents whose description (not name) says the requested audio language to Radarr
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+RuntimeDirectory=description-scout
+ExecStartPre=+/home/buntu/Projects/Docker/Movie-Downloads/scripts/description-scout.py --resolve-flaresolverr /run/description-scout/flaresolverr
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/description-scout.py
+TimeoutStartSec=30min
+NoNewPrivileges=true
+PrivateTmp=true

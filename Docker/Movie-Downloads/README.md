@@ -607,6 +607,7 @@ Matched spellings (case-insensitive; one regex in `languages.tsv`, the same in t
 - `Mundart` also matches other German dialects (rare in release names; accepted).
 - Nothing found shows: Seerr keeps the request at *Requested/Processing* (not Available); Radarr → Wanted → Missing (or Cutoff Unmet when a non-Swiss file exists); Interactive Search lists "Does not contain one of the required terms". `scripts/swiss-german-check.py` prints "Waiting for a Swiss German release: …".
 - The weekly cutoff search keeps looking for titles with a non-Swiss file (cutoff unmet).
+- Swiss German only in the description, not the name: [Description scout](#description-scout).
 - `Audio: Swiss German` only ranks, it is not the filter: Radarr matches custom formats against the name minus the parsed film title, so in `Achtung.fertig.WK.Swissgerman.2013` the word counts as title and the format misses (the release profile still passes it; it then ranks by resolution like a non-Swiss file and may not replace an existing non-Swiss file).
 - Sonarr: release profile only (no own profile): works for German-original series, a Swiss German dub of a foreign series is still rejected by `Language: Not Original`.
 
@@ -623,6 +624,38 @@ Verified 2026-10-23 (Interactive Search, `GET /api/v3/release?movieId=`, never g
 | *Babe* (English: Swiss German dub) | `…1995.German.Schwyzerduetsch.Oesterreichisch.DVDRip.x264` 1050000 | `Babe.1995.UHD.BluRay.2160p.DDP.5.1.DV.HDR.x265` 203950 — only for the missing Swiss German |
 
 Hook live: both test films added on the default profile with the tag → `movie 15: profile 7 -> 13 (audio-swiss-german)`; removed again afterwards (no files).
+
+### Description scout
+
+`audio-<language>` matches only the release **name**. `scripts/description-scout.py` (timer every 3 h) also reads the **description** of torrent releases: *The Ring Thing* TPB `The Ring Thing (2004) [XVID]` says `Language: Schwyzerdütsch` only in its description.
+
+| Step | What |
+|---|---|
+| Titles | Radarr movies: monitored, no file, with a scouted `audio-` tag (`DS_LANGUAGES`, default `gsw`) |
+| Search | Prowlarr `/api/v1/search`, `type=movie`, category 2000, torrent indexers only: `<title> <year>`, also the original title; by IMDb id only on indexers that support it (none today) |
+| Same movie? | imdb id equal when the indexer or the description names one, Radarr `/parse` maps the name to that movie, parsed year = year or secondary year; otherwise skipped, never fetched |
+| Description | TPB and Knaben→TPB: `apibay.org/t.php?id=` field `descr`; 1337x: the page's description block only. Both through FlareSolverr (VPN namespace). Others: skipped |
+| Match | the same `languages.tsv` regex, after decoding HTML entities and broken umlauts; a match after `Subtitles`/`Untertitel` on the same line does not count |
+| Push | seeders ≥ 1 → `POST /api/v3/release/push` with the magnet, name + `.<Language>.DESC` (`The Ring Thing (2004) [XVID].Swissgerman.DESC`; the release profile and `Audio: Swiss German` accept it, `.DESC` marks it). Radarr decides (profile, quality, wrong-film guard) |
+| Limits | 2 pushes and 15 description fetches per run (`DS_MAX_PUSH`, `DS_MAX_FETCH`); each release pushed once; a failing fetch or push is retried 3 times, then dropped; any Radarr/Prowlarr API error skips the run; seeders 0 = not pushed, checked again next run (description not fetched again) |
+| Not covered | usenet (no descriptions in NZB results), Sonarr (a series search returns season packs and episodes; the push would need the episode mapping, not done) |
+
+| File | |
+|---|---|
+| `~/.local/state/movie-downloads/description-scout.log` | every decision, timestamped (also `journalctl -u description-scout`) |
+| `~/.local/state/movie-downloads/description-scout.json` | per release (btih): `match`/`no`/`failed`, pushed, approved. Delete an entry to re-check it |
+
+```bash
+cd ~/Projects/Docker/Movie-Downloads/systemd
+sudo install -m 0644 description-scout.service description-scout.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now description-scout.timer
+# dry run, one movie (never pushes, state unchanged); FlareSolverr has no published port, the unit resolves gluetun's IP as root first
+sudo ../scripts/description-scout.py --resolve-flaresolverr /tmp/fs && DS_FLARESOLVERR=$(cat /tmp/fs) ../scripts/description-scout.py --dry-run --tmdb 10248
+python3 ../tests/test_description_scout.py
+```
+
+- Another language: its `audio-` regex in `languages.tsv` must match the language name without spaces (`French`), then `Environment=DS_LANGUAGES=gsw,fr` in the service. Common words (`French`, `German`) appear in many descriptions as subtitle or menu lists: only add rare ones.
+- Verified 2026-10-23: *The Ring Thing* → TPB 3872789 description matches, seeders 0, not pushed. Payload checked with a push Radarr had to reject (original name, seeders 0): mapped to the movie, indexer `The Pirate Bay (Prowlarr)`, rejected for missing term, seeders < 1 and `Unknown is not wanted in profile`: an `[XVID]` name without source parses as quality Unknown, which the Swiss German profile does not allow.
 
 ### Subtitles (Bazarr)
 

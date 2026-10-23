@@ -1,0 +1,11 @@
+[Unit]
+Description=Description scout every 3 hours while beefy is awake (low indexer load)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=3h
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
