@@ -946,7 +946,7 @@ Every download client is inside the tunnel (SABnzbd since 2026-10-23, like `sabn
 
 | | |
 |---|---|
-| Kill switch | gluetun's firewall: `OUTPUT` policy `DROP`; allowed only `tun0`, the WireGuard endpoint (UDP 51820, gluetun itself) and `FIREWALL_OUTBOUND_SUBNETS` (LAN + bridge). Tunnel down = no internet for qBittorrent, Prowlarr and SABnzbd (LAN/bridge still reachable, so the WebUIs and Radarr keep working) |
+| Kill switch | gluetun's firewall: `OUTPUT` policy `DROP`; allowed only `tun0`, the WireGuard endpoint (UDP 51820, gluetun itself) and `FIREWALL_OUTBOUND_SUBNETS` (bridge only since 2026-10-24; replies to fastpi leave via eth0 because gluetun routes its own eth0 address there). Tunnel down = no internet for qBittorrent, Prowlarr and SABnzbd (bridge still reachable, so the WebUIs and Radarr keep working) |
 | Reached as | qBittorrent `gluetun:8080`, Prowlarr `gluetun:9696`, SABnzbd `gluetun:8081` (Radarr/Sonarr download client host) |
 | SABnzbd | `port = 8081` and `host_whitelist` += `gluetun` in `sabnzbd.ini` (not in git; backup `backups/pre-sab-vpn-2026-10-23/`); still reaches `clamav:3310` (gluetun's DNS resolves the container names) |
 | Verified 2026-10-23 | egress of sab, qBit, Prowlarr = VPN IP (≠ WAN); Radarr/Sonarr client tests 200; SAB "test server" (eweka, 563 TLS) OK; clamav hook clean scan from sab; Prowlarr testall valid; `192.168.1.102:8081` from fastpi and `sabnzbd.holy-grail.ch` (302 to SSO) unchanged |
@@ -1022,14 +1022,7 @@ setup, including the Authentik objects that must be created by hand, is in
 
 ⚠️ **The host ports below are an unauthenticated bypass of all that.** Traefik reaches
 these apps at `192.168.1.102:<port>`, so the publications cannot simply be removed —
-without them every route breaks. Close the LAN bypass with ufw instead, allowing only
-fastpi:
-
-```bash
-# DOCKER-USER rule in /etc/iptables/rules.v4 (+ the IPv6 INPUT rule in rules.v6), persisted with netfilter-persistent
-# ports: 7878 radarr, 8989 sonarr, 9696 prowlarr, 6767 bazarr, 8080 qbit, 8081 sab, 8096 jellyfin, 8000 cup, 9001 portainer agent, 5055 seerr, 8010 ryot, 8011 ryot-go, 8087 vpn-status
-sudo iptables -S DOCKER-USER
-```
+without them every route breaks. The firewall lets only fastpi reach them: `../_global/docs/container-hardening.md`, Firewall.
 
 ufw was the wrong tool (Docker bypasses it); the DOCKER-USER rule is what is in place.
 

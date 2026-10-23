@@ -39,8 +39,9 @@ services:
       - WIREGUARD_PERSISTENT_KEEPALIVE_INTERVAL=25s
       # Without the bridge subnet here, gluetun's firewall drops the replies to
       # Radarr/Bazarr/SABnzbd and they cannot reach qBittorrent or Prowlarr at
-      # all. The LAN subnet is what lets you open the WebUIs from your desktop.
-      - FIREWALL_OUTBOUND_SUBNETS=${LAN_SUBNET},${BRIDGE_SUBNET}
+      # all. No LAN subnet: the WebUIs still answer fastpi (replies are tracked),
+      # but nothing in this namespace can open a connection into the LAN.
+      - FIREWALL_OUTBOUND_SUBNETS=${BRIDGE_SUBNET}
       # Hand the forwarded port straight to qBittorrent. This is gluetun's own
       # hook, which is why this stack has no port-updater container and no
       # docker.sock - unlike the older `mouse` stack on fastpi.
