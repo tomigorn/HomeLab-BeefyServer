@@ -330,7 +330,9 @@ sudo install -m 0644 clear-data-wipe.service clear-data-wipe.timer /etc/systemd/
 sudo systemctl daemon-reload && sudo systemctl enable --now clear-data-wipe.timer
 ```
 
-Verified 2026-10-23 with throwaway *Night of the Living Dead* (1968) and *The General* (1926): Remove from Radarr → only the Radarr entry + file gone; then Clear Data → torrent + files and SABnzbd entry gone within one cycle; Clear Data alone → Radarr entry + file, torrent, SABnzbd entry, Jellyfin item gone, and the row Seerr's Jellyfin sync re-created seconds later removed; a 1990 decoy torrent in the same category stayed.
+Verified 2026-10-23 with throwaway *Night of the Living Dead* (1968) and *The General* (1926): Remove from Radarr → only the Radarr entry + file gone; then Clear Data → torrent + files and SABnzbd entry gone within one cycle; Clear Data alone → Radarr entry + file, torrent, SABnzbd entry, Jellyfin item gone, and the row Seerr's Jellyfin sync re-created seconds later removed; a 1990 decoy torrent in the same category stayed. Sonarr, same day: [Radarr / Sonarr parity](#radarr--sonarr-parity).
+
+The records of a wiped title stay in `title-wipe.tsv`: the wipe runs as buntu and the file belongs to the app's uid (644). Harmless, those hashes and jobs no longer exist.
 
 ### Radarr settings that matter here
 
@@ -369,7 +371,7 @@ HDR10 releases show `[HDR10]`, DV ones `[DV HDR10]`.
 formats, scores, quality profiles, quality sizes and naming into Radarr every
 night at `RECYCLARR_CRON` (04:15, inside the nightly window beefy is woken for).
 **Edit `recyclarr/recyclarr.yml`, not the Radarr UI** — Recyclarr overwrites what
-it manages. API key: `RADARR_API_KEY` in `.env`. Own custom formats (Swiss German, resolution): `recyclarr/custom-formats/radarr/*.json`, loaded through `recyclarr/settings.yml` (local resource provider); both are mounted into the container.
+it manages. API key: `RADARR_API_KEY` in `.env`. Own custom formats (Swiss German, resolution): `recyclarr/custom-formats/radarr/*.json` and `…/sonarr/*.json` (same patterns, own ids; Sonarr has no `Resolution: DVD`, its DVD quality is 480p and counts as SD), loaded through `recyclarr/settings.yml` (local resource provider); both are mounted into the container.
 
 ```bash
 docker compose run --rm recyclarr sync --preview   # what would change
@@ -588,10 +590,10 @@ Friendly names (docs only: Radarr/Sonarr tag labels allow only `a-z 0-9 -`, Seer
 | Part | What |
 |---|---|
 | Release profile `audio-swiss-german: …` | hard filter on the raw release name (spellings below; regex in `languages.tsv`) |
-| Profile **Swiss German (Mundart) only - any quality** | language **Any** (a Swiss German dub of a foreign film passes), all qualities SDTV … Bluray-2160p in **one group** (a Swiss German release replaces any non-Swiss file, also a better one), cutoff Swiss German + 2160p |
+| Profile **Swiss German (Mundart) only - any quality** (Radarr and Sonarr) | language **Any** (Radarr; Sonarr profiles have no language: `German` and `Language: Not Original` are 0 there, so a Swiss German dub of a foreign film or series passes), all qualities Unknown, SDTV … Bluray-2160p in **one group** (a Swiss German release replaces any non-Swiss file, also a better one), cutoff Swiss German + 2160p |
 | Scores in that profile | `Audio: Swiss German` 1000000 · `Resolution: 2160p/1080p/720p/SD/DVD` 200000/150000/100000/50000/50000 · `German`, `Language: Not Original` 0 · LQ/BR-DISK/upscaled/DV w/o HDR … −2000000 · x265 HD and SDR 4K −50000 (one resolution step, taken instead of rejected: Swiss German releases are rare) · the rest as in the default profile |
 | Hook (on add, and on tags added later) | tag present → move to the profile, whatever was picked; added on the profile without the tag → tag added; profile language back to Any |
-| `request-tags.sh` (timer) | Seerr tags on titles already in Radarr; also puts the profile language back to Any (Recyclarr resets it to Original whenever it updates that profile) |
+| `request-tags.sh` (timer) | Seerr tags on titles already in Radarr/Sonarr; also puts the Radarr profile language back to Any (Recyclarr resets it to Original whenever it updates that profile) |
 | File name | `Audio: Swiss German` is renamed into the file name (`{Custom Formats}`), so Jellyfin shows it |
 
 Matched spellings (case-insensitive; one regex in `languages.tsv`, the same in the release profile and `Audio: Swiss German`; `tests/test_audio_terms.py` has 55 positive and 19 negative names):
@@ -605,14 +607,14 @@ Matched spellings (case-insensitive; one regex in `languages.tsv`, the same in t
 | Not matched | `Swiss` alone (*Swiss Army Man*, *The Swiss Family Robinson*, `Swiss.Cheese`, `Swiss.Miss`), `Swiss.Germany`, `Schweiz`, `CH`, `German`, `Schwyzer` / `Schweizer` alone (place name, surname, *Die Schweizermacher*), `Schweizer.Deutschland`, `Mund Art`, `de.CH` |
 
 - `Mundart` also matches other German dialects (rare in release names; accepted).
-- Nothing found shows: Seerr keeps the request at *Requested/Processing* (not Available); Radarr → Wanted → Missing (or Cutoff Unmet when a non-Swiss file exists); Interactive Search lists "Does not contain one of the required terms". `scripts/swiss-german-check.py` prints "Waiting for a Swiss German release: …".
+- Nothing found shows: Seerr keeps the request at *Requested/Processing* (not Available); Radarr/Sonarr → Wanted → Missing (or Cutoff Unmet when a non-Swiss file exists); Interactive Search lists "Does not contain one of the required terms". `scripts/swiss-german-check.py` prints "Waiting for a Swiss German release: …"; after 7 days a Telegram: [Swiss German not found alert](#swiss-german-not-found-alert).
 - The weekly cutoff search keeps looking for titles with a non-Swiss file (cutoff unmet).
 - Swiss German only in the description, not the name: [Description scout](#description-scout).
 - `Audio: Swiss German` only ranks, it is not the filter: Radarr matches custom formats against the name minus the parsed film title, so in `Achtung.fertig.WK.Swissgerman.2013` the word counts as title and the format misses (the release profile still passes it; it then ranks by resolution like a non-Swiss file and may not replace an existing non-Swiss file).
-- Sonarr: release profile only (no own profile): works for German-original series, a Swiss German dub of a foreign series is still rejected by `Language: Not Original`.
+- Sonarr: the same profile, release profile, hook and scores since 2026-10-23 (before: release profile only, a Swiss German dub of a foreign series was rejected by `Language: Not Original`).
 
 ```bash
-./scripts/swiss-german-check.py      # profile, scores, release profile, hook, timer, tagged titles, ranking; read-only
+./scripts/swiss-german-check.py      # Radarr and Sonarr (or: … sonarr): profile, scores, release profile, hook, timer, tagged titles, ranking; read-only
 ```
 
 Verified 2026-10-23 (Interactive Search, `GET /api/v3/release?movieId=`, never grabs):
@@ -625,20 +627,29 @@ Verified 2026-10-23 (Interactive Search, `GET /api/v3/release?movieId=`, never g
 
 Hook live: both test films added on the default profile with the tag → `movie 15: profile 7 -> 13 (audio-swiss-german)`; removed again afterwards (no files).
 
+Sonarr, verified 2026-10-23 (series added unmonitored with the tag, no search; `GET /api/v3/release?seriesId=&seasonNumber=`, never grabs; removed afterwards):
+
+| Series | Hook | Approved | Rejected |
+|---|---|---|---|
+| *Tschugger* (2021, Swiss German original) | `series 8: profile 7 -> 13 (audio-swiss-german)` | none on the name: all 129 releases are High German / English names | `Tschugger.2021.S01.German.DL.EAC3.1080p.NF.WEB.H264-ZeroTwo`, `…S01.1080p.NF.WEB-DL…-playWEB` — "Does not contain one of the required terms" |
+| *The Bachelor (CH)* (2012) | `series 9: profile 7 -> 13` | `Der.Bachelor.CH.S08E01.SWISSGERMAN.720p.WEB.x264-BTGTV` 1120000 (Swiss German + German DL + 720p) | the EZTV/1337x copies of the same names: "Unknown Series" (no alias `Der Bachelor CH` in Sonarr, they carry no TVDB id) |
+
+`scripts/swiss-german-check.py`: all checks passed for both apps.
+
 ### Description scout
 
-`audio-<language>` matches only the release **name**. `scripts/description-scout.py` (timer every 3 h) also reads the **description** of torrent releases: *The Ring Thing* TPB `The Ring Thing (2004) [XVID]` says `Language: Schwyzerdütsch` only in its description.
+`audio-<language>` matches only the release **name**. `scripts/description-scout.py` (timer every 3 h) also reads the **description** of torrent releases, for Radarr and Sonarr: *The Ring Thing* TPB `The Ring Thing (2004) [XVID]` says `Language: Schwyzerdütsch` only in its description.
 
 | Step | What |
 |---|---|
-| Titles | Radarr movies: monitored, no file, with a scouted `audio-` tag (`DS_LANGUAGES`, default `gsw`) |
-| Search | Prowlarr `/api/v1/search`, `type=movie`, category 2000, torrent indexers only: `<title> <year>`, also the original title; by IMDb id only on indexers that support it (none today) |
-| Same movie? | imdb id equal when the indexer or the description names one, Radarr `/parse` maps the name to that movie, parsed year = year or secondary year; otherwise skipped, never fetched |
+| Titles | Radarr movies: monitored, no file; Sonarr series: monitored, with missing monitored episodes (`/wanted/missing`); both with a scouted `audio-` tag (`DS_LANGUAGES`, default `gsw`) |
+| Search | Prowlarr `/api/v1/search`, torrent indexers only. Movies: `type=movie`, category 2000, `<title> <year>`, also the original title; by IMDb id only on indexers that support it (none today). Series: `type=search`, category 5000, the title without a `(CH)`-style suffix and its alternate titles (max 3); by TVDB id only on indexers that support it |
+| Same title? | imdb id equal when the indexer or the description names one. Movies: Radarr `/parse` maps the name to that movie, parsed year = year or secondary year. Series: Sonarr `/parse` maps the name to that series (by name: a name without a Sonarr alias, e.g. `Der Bachelor CH` for *The Bachelor (CH)*, is skipped), a year in the name = the series' year, and at least one of its episodes (episode or season pack) is missing. Otherwise skipped, never fetched |
 | Description | TPB and Knaben→TPB: `apibay.org/t.php?id=` field `descr`; 1337x: the page's description block only. Both through FlareSolverr (VPN namespace). Others: skipped |
 | Match | the same `languages.tsv` regex, after decoding HTML entities and broken umlauts; a match after `Subtitles`/`Untertitel` on the same line does not count |
-| Push | seeders ≥ 1 → `POST /api/v3/release/push` with the magnet, name + `.<Language>.DESC` (`The Ring Thing (2004) [XVID].Swissgerman.DESC`; the release profile and `Audio: Swiss German` accept it, `.DESC` marks it). Radarr decides (profile, quality, wrong-film guard) |
-| Limits | 2 pushes and 15 description fetches per run (`DS_MAX_PUSH`, `DS_MAX_FETCH`); each release pushed once; a failing fetch or push is retried 3 times, then dropped; any Radarr/Prowlarr API error skips the run; seeders 0 = not pushed, checked again next run (description not fetched again) |
-| Not covered | usenet (no descriptions in NZB results), Sonarr (a series search returns season packs and episodes; the push would need the episode mapping, not done) |
+| Push | seeders ≥ 1 → `POST /api/v3/release/push` to Radarr (tmdb/imdb id) or Sonarr (tvdb id) with the magnet, name + `.<Language>.DESC` (`The Ring Thing (2004) [XVID].Swissgerman.DESC`; the release profile and `Audio: Swiss German` accept it, `.DESC` marks it). The app decides (profile, quality, wrong-film guard, which episodes) |
+| Limits | 2 pushes and 15 description fetches per run, both apps together (`DS_MAX_PUSH`, `DS_MAX_FETCH`); each release pushed once; a failing fetch or push is retried 3 times, then dropped; a Prowlarr API error skips the run, a Radarr or Sonarr one skips that app; seeders 0 = not pushed, checked again next run (description not fetched again). `DS_APPS=radarr` scouts one app only |
+| Not covered | usenet (no descriptions in NZB results); series names Sonarr cannot map by name |
 
 | File | |
 |---|---|
@@ -651,10 +662,12 @@ sudo install -m 0644 description-scout.service description-scout.timer /etc/syst
 sudo systemctl daemon-reload && sudo systemctl enable --now description-scout.timer
 # dry run, one movie (never pushes, state unchanged); FlareSolverr has no published port, the unit resolves gluetun's IP as root first
 sudo ../scripts/description-scout.py --resolve-flaresolverr /tmp/fs && DS_FLARESOLVERR=$(cat /tmp/fs) ../scripts/description-scout.py --dry-run --tmdb 10248
+DS_FLARESOLVERR=$(cat /tmp/fs) ../scripts/description-scout.py --dry-run --tvdb 412881   # one series; with --dry-run an id also takes an unmonitored title
 python3 ../tests/test_description_scout.py
 ```
 
 - Another language: its `audio-` regex in `languages.tsv` must match the language name without spaces (`French`), then `Environment=DS_LANGUAGES=gsw,fr` in the service. Common words (`French`, `German`) appear in many descriptions as subtitle or menu lists: only add rare ones.
+- Verified 2026-10-23 (series, dry run): *Tschugger* (unmonitored, tagged) → 10 torrent results; `Tschugger - S01 (Eng subs)` (TPB) and `Tschugger   season 1 (Eng subs)` (1337x) say Swiss German in the description → would push `….Swissgerman.DESC` to Sonarr with tvdb id 412881 (30 and 6 seeders); the `SUBBED XviD-AFG` episodes and `S01-S02.1080p.WEB-DL.PlaySuisse` do not. *The Bachelor (CH)*: 369 results, none mapped by name, nothing fetched.
 - Verified 2026-10-23: *The Ring Thing* → TPB 3872789 description matches, seeders 0, not pushed. Payload checked with a push Radarr had to reject (original name, seeders 0): mapped to the movie, indexer `The Pirate Bay (Prowlarr)`, rejected for missing term, seeders < 1 and `Unknown is not wanted in profile`: an `[XVID]` name without source parses as quality Unknown, which the Swiss German profile does not allow.
 
 ### Subtitles (Bazarr)
@@ -766,12 +779,35 @@ Quality profiles (Recyclarr, `recyclarr/recyclarr.yml` section `sonarr`):
 | WEB-1080p | space saver, per series | WEB 1080p | plain TRaSH WEB-1080p, Golden Rule HD (x264) |
 | Any quality - old & rare (upgrades to 4K) (+ `- English original` twin) | old/niche series, set automatically on add or picked per request | WEB 2160p › Bluray-2160p › WEB 1080p › Bluray-1080p › HDTV-1080p › WEB 720p › Bluray-720p › HDTV-720p › Bluray-576p › WEB 480p › Bluray-480p › DVD › SDTV › Unknown, upgrade until WEB 2160p | same scores as the default; see the movie [Old and rare titles](#old-and-rare-titles) note |
 | Anime - Bluray + WEB 1080p | anime, set by Seerr (series type `anime`) | Bluray-1080p (remux or encode) › WEB 1080p › 720p … | TRaSH `[Anime] Remux-1080p`: anime group tiers, `[Streaming Services] Anime`, Anime Raws / LQ groups / Dubs Only rejected, no Golden Rule, minimum score 100 |
+| Swiss German (Mundart) only - any quality | series tagged `audio-swiss-german`, set by the hook | one group: Unknown, SDTV … Bluray-2160p, ranked by resolution scores | Swiss German + 2160p (1200000); same as the movie profile, see [Swiss German](#swiss-german) |
 
 Shared by all: the [Languages](#languages) scores (`German DL` 20000, `Language:
 Original + English` 8000, `Language: Not Original` and every reject −50000),
 `[Streaming Services] HD/UHD boost` + `General`, `[Unwanted] Unwanted Formats`,
 TRaSH series size limits (one table per instance, `series`). The six stock Sonarr
 stock profiles were deleted 2026-10-22 (unused; they only cluttered the Seerr dropdown).
+
+#### Radarr / Sonarr parity
+
+Every language, profile and delete feature works the same for movies and series (owner, 2026-10-23: "must be all the same for Sonarr as on Radarr").
+
+| Feature | Radarr | Sonarr | Where |
+|---|---|---|---|
+| Swiss German profile (all qualities incl. Unknown in one group, resolution scores, cutoff Swiss German + 2160p) | ✓ | ✓ since 2026-10-23 | `recyclarr/recyclarr.yml`, `recyclarr/custom-formats/<app>/` |
+| Profile language Any for that profile | ✓ (`language-policy.sh`, hook, `request-tags.sh`) | ➖ Sonarr profiles have no language; `German` / `Language: Not Original` 0 instead | |
+| Tolerant Swiss German regex: release profile (hard filter) + `Audio: Swiss German` CF, both = `languages.tsv` | ✓ | ✓ | `language-policy.sh`, `tests/test_audio_terms.py` |
+| `audio-` / `subs-` tags, hook switches the profile per tag (on add and for tags added later) | ✓ | ✓ (Swiss German move since 2026-10-23) | `language-policy-hook.sh` |
+| Seerr tags onto existing titles | ✓ | ✓ | `request-tags.sh` |
+| Remove from Radarr/Sonarr = only that app | ✓ | ✓ verified 2026-10-23 | Seerr |
+| Clear Data wipe (torrents, SABnzbd, Jellyfin, files) | ✓ | ✓ verified 2026-10-23 | `clear-data-wipe.sh`, `title-wipe-hook.sh` |
+| Description scout | ✓ | ✓ since 2026-10-23 (episodes and season packs) | `description-scout.py` |
+| Unknown quality in the old & rare profiles (+ twins) | ✓ | ✓ | `recyclarr/recyclarr.yml` |
+| Wrong-film guard | ✓ year | ✓ series start year | `grab-guard.sh` |
+| Live check | ✓ | ✓ since 2026-10-23 | `swiss-german-check.py` |
+| Swiss German not found alert (Telegram) | ✓ | ✓ new 2026-10-23 | `language-missing.py`, [alert](#swiss-german-not-found-alert) |
+| Weekly cutoff search | ✓ movies | ✓ episodes | `cutoff-search.sh` |
+
+Delete a title, verified 2026-10-23 with *Pioneer One* (TVDB 170551, added unmonitored without search) and fixtures that never download (a stopped magnet in category `sonarr`, recorded like a grab, plus an unrecorded decoy; a paused NZB in category `tv`, recorded): Seerr **Remove from Sonarr** → only the Sonarr entry gone, torrent, SABnzbd job and Seerr row kept; then **Clear Data** → within one cycle `torrent removed with files`, `SABnzbd queue entry … removed`, the stale Jellyfin item of the 2026-10-19 test removed, Seerr row gone; the decoy stayed.
 
 Verified 2026-10-19 with *Pioneer One* (2010, CC BY-NC-SA, TVDB 170551), the
 archive.org `S01E01 ... 720p.x264-VODO` mp4 placed in `/data/usenet/complete/tv/<release>/`:
@@ -841,6 +877,31 @@ Tag path, *Plan 9 from Outer Space* (1957, TMDB 10513), requested with tags `aud
 `subs-` on an existing title (*His Girl Friday*): `subs-french` → `bz-fr` (French is embedded, nothing missing); `subs-polish` → `bz-fr-pl`, profile `English + German + French + Polish (requested)` → `….pl.srt` from OpenSubtitles.com (score 90 %).
 
 Delete (cleanup): Radarr delete with files → Connect → the Jellyfin item was gone 60 s later.
+
+### Swiss German not found alert
+
+A title tagged `audio-swiss-german` (movie or series) that still has no Swiss German release after 7 days sends **one** Telegram: `[FIRING] AudioLanguageNotFound` / `Swiss German not found: <title> (<year>)`.
+
+| | |
+|---|---|
+| Counts | tagged, monitored, no file (series: missing monitored episodes), searched at least once, not downloading |
+| Since | first seen waiting (first run: the date the title was added); a file, unmonitor, untag or delete resets it |
+| Notified | since + 7 days (`LM_DAYS`); again only when the state changes: a new failed or blocklisted grab = a new `failed` label = one new Telegram |
+| beefy | `scripts/language-missing.py` (timer `language-missing.timer`, hourly, 12 min after boot) → `~/.local/state/movie-downloads/media-language.prom` (+ `language-missing.json` state) |
+| fastpi | `Server/4-Security-Monitoring/security_scan.py` group `media` (with `av`, 04:20/05:40/06:40) pulls it over ssh into node-exporter's textfile dir as `media_language_beefy.prom` → rule `grafana/prometheus/rules/media-language.yml` → Alertmanager route `AudioLanguageNotFound` → receiver `telegram-once` (no resolved message) |
+| Why this path | beefy has no Prometheus/Alertmanager and no exporter; fastpi already pulls beefy's ClamAV textfile this way (no new port, no firewall change, works while beefy sleeps: the file stays on fastpi, so the series never go stale) |
+| Once | the alert holds for 5 days after notify, then ends silently; the route's repeat interval is 168 h. A pull missed 5 days in a row loses it; two missed days already fire `SecurityScanStale` (subject `media-beefy`) |
+| Metrics | `media_language_missing_since_timestamp_seconds`, `media_language_missing_notify_timestamp_seconds` {app, title, language, failed}, `media_language_missing_last_run_timestamp_seconds` |
+| Tests | `python3 tests/test_language_missing.py`; fastpi: `promtool test rules tests/media-language_test.yml`, `amtool config routes test alertname=AudioLanguageNotFound` → `telegram-once` |
+
+```bash
+cd ~/Projects/Docker/Movie-Downloads/systemd
+sudo install -m 0644 language-missing.service language-missing.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now language-missing.timer
+cat ~/.local/state/movie-downloads/media-language.prom    # what fastpi will see
+```
+
+Verified 2026-10-23: *The Ring Thing* (tagged, searched, no file) → `since` 2026-10-23 10:56 (added), `notify` 2026-10-30; fastpi query returns it, rule `AudioLanguageNotFound` healthy and inactive until then.
 
 ## Completion scan
 
