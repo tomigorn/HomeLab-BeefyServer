@@ -5,3 +5,7 @@ resource_providers:
     type: custom-formats
     service: radarr
     path: /config/custom-formats/radarr
+  - name: holy-grail-sonarr
+    type: custom-formats
+    service: sonarr
+    path: /config/custom-formats/sonarr

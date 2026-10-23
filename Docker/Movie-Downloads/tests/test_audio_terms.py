@@ -8,7 +8,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TSV = ROOT / "scripts" / "languages.tsv"
-SWISS_CF = ROOT / "recyclarr" / "custom-formats" / "radarr" / "audio-swiss-german.json"
+SWISS_CFS = [ROOT / "recyclarr" / "custom-formats" / app / "audio-swiss-german.json" for app in ("radarr", "sonarr")]
 
 MATCH = {
     "gsw": ["Bon.Schuur.Ticino.2023.SwissGerman.AC3.1080p.WEB.H264-ZeroTwo",
@@ -133,9 +133,16 @@ class AudioTerms(unittest.TestCase):
                     self.assertNotRegex(n, re.compile(self.rows[code][1], re.I))
 
     def test_swiss_german_custom_format_uses_the_same_pattern(self):
-        cf = json.loads(SWISS_CF.read_text(encoding="utf-8"))
-        self.assertEqual(cf["name"], "Audio: Swiss German")
-        self.assertEqual([s["fields"]["value"] for s in cf["specifications"]], [self.rows["gsw"][1]])
+        for path in SWISS_CFS:
+            with self.subTest(app=path.parent.name):
+                cf = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(cf["name"], "Audio: Swiss German")
+                self.assertTrue(cf["includeCustomFormatWhenRenaming"])
+                self.assertEqual([s["fields"]["value"] for s in cf["specifications"]], [self.rows["gsw"][1]])
+
+    def test_own_custom_formats_have_unique_ids(self):
+        ids = [json.loads(p.read_text(encoding="utf-8"))["trash_id"] for p in (ROOT / "recyclarr" / "custom-formats").glob("*/*.json")]
+        self.assertEqual(len(ids), len(set(ids)))
 
 
 if __name__ == "__main__":
