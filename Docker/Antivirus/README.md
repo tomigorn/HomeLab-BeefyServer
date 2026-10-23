@@ -67,3 +67,5 @@ sudo docker run --rm --entrypoint sh -v "$PWD/Docker/Antivirus:/src:ro" clamav-l
 ```
 
 Changing `clamav/` needs a rebuild: `sudo docker compose up -d --build`.
+
+**Rebuild** (`clamav-local`, FROM `alpine:latest`): `sudo docker compose up -d --build --pull clamav` when the security scan lists a fixable Alpine CVE, otherwise monthly.
