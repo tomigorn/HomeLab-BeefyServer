@@ -1,7 +1,7 @@
 # Movie-Downloads — VPN, torrents, usenet, Radarr and Sonarr on beefy
 
 Everything needed to acquire a movie or a series and file it into the library:
-**gluetun** (ProtonVPN) wrapping **qBittorrent**, **Prowlarr**, **SABnzbd** and **FlareSolverr**, plus
+**gluetun** (ProtonVPN) wrapping **qBittorrent**, **Prowlarr** and **SABnzbd**, plus
 **Radarr**, **Sonarr** and **Bazarr** outside the tunnel. The folder keeps its
 original name although it handles series too (since 2026-10-19); requests come in
 via `../Seerr`. Playback is a separate project — see
@@ -63,13 +63,13 @@ sudo mkdir -p /srv/video/torrents/{movies,tv} \
              /srv/video/usenet/complete/{movies,tv} \
              /srv/video/media/{movies,tv} \
              /srv/video/.recyclebin \
-             /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr,flaresolverr}
+             /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr}
 sudo chown -R 1000:media /srv/video
 sudo chmod -R 2775 /srv/video
 sudo chown -R 1000:1000 /srv/appdata
-sudo chmod 2770 /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr,flaresolverr}
+sudo chmod 2770 /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr}
 for a in radarr:65101 sonarr:65102 prowlarr:65103 bazarr:65104 qbittorrent:65105 \
-         sabnzbd:65106 recyclarr:65107 gluetun:65116 flaresolverr:65119; do
+         sabnzbd:65106 recyclarr:65107 gluetun:65116; do
     sudo chown -R "${a#*:}" "/srv/appdata/${a%%:*}"
 done
 
@@ -246,7 +246,6 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
   | 65105 | qbittorrent | 1100 media | 65118 textfile-writers |
   | 65106 | sabnzbd | 1100 media | 65118 textfile-writers |
   | 65107 | recyclarr | 65107 | |
-  | 65119 | flaresolverr | 65119 | |
   | 65111 | vpn-status | 65111 | |
   | 65116 | gluetun (root, owns `/gluetun` files) | | |
 
@@ -256,7 +255,7 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
 
 ### Indexers (Prowlarr)
 
-Usenet first: the three Newznab indexers have priority 25, the torrent indexers 40, so a usenet release wins a tie. Prowlarr syncs all of them to Radarr (movie categories 2000-2090) and Sonarr (TV 5000-5090, anime 5070).
+All Newznab, priority 25, synced by Prowlarr to Radarr (movie categories 2000-2090) and Sonarr (TV 5000-5090, anime 5070).
 
 | Indexer | Base URL | App profile | Limits | Added by |
 |---|---|---|---|---|
@@ -268,29 +267,6 @@ Usenet first: the three Newznab indexers have priority 25, the torrent indexers 
 - RSS off because Radarr (every 30 min) + Sonarr (every 15 min) would use ~144 calls/day. Search costs ~3 calls per movie search.
 - `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) on every run, enables the indexer and is idempotent. New key: replace the file, re-run the script. A rejected key makes it exit 1 and change nothing.
 - **Disabled since 2026-10-19:** the first account was blocked (duplicate after the site migration). Re-enable by running the script with the new account's key.
-
-### Torrent indexers and FlareSolverr (since 2026-10-23)
-
-Added by `scripts/torrent-indexers.sh` (idempotent, run on beefy; creates the proxy, the tag and the four indexers, then triggers an app sync). Torrents are the fallback: they are only grabbed when usenet has nothing better, and releases with fewer than 5 seeders are rejected.
-
-| Indexer | Via FlareSolverr | Priority | Min seeders | Notes |
-|---|---|---|---|---|
-| 1337x | yes (tag `flaresolverr`) | 40 | 5 | Radarr + Sonarr |
-| EZTV | yes (tag `flaresolverr`) | 40 | 5 | TV only, so Sonarr only |
-| The Pirate Bay | no (API `apibay.org`) | 40 | 5 | Radarr + Sonarr |
-| Knaben | no | 40 | 5 | Radarr + Sonarr |
-
-- **Minimum seeders** is the indexer setting `torrentBaseSettings.appMinimumSeeders` (Prowlarr, per indexer); the sync pushes it to Radarr/Sonarr as the indexer's `minimumSeeders`. The app profile's own value is not used.
-- **FlareSolverr** (`movie-flaresolverr`, uid 65119, `read_only`, `cap_drop: ALL`) solves Cloudflare challenges with a headless Chromium. It sits in gluetun's namespace, so the browser traffic leaves through the VPN (same IP as Prowlarr) and Prowlarr reaches it at `http://localhost:8191`; it has no published port and no LAN exposure. Prowlarr: Settings, Indexers, proxy `FlareSolverr` with the tag `flaresolverr`; only indexers carrying that tag use it.
-- The image runs as 1000 by default; compose overrides it. `undetected_chromedriver` patches `/app/chromedriver` in place, so a copy owned by 65119 is bind-mounted from `/srv/appdata/flaresolverr/chromedriver`. On an image version bump re-copy it: `id=$(sudo docker create <image>); sudo docker cp $id:/app/chromedriver /srv/appdata/flaresolverr/chromedriver; sudo docker rm $id; sudo chown 65119:65119 /srv/appdata/flaresolverr/chromedriver`.
-- Check: `sudo docker exec movie-gluetun wget -qO- http://localhost:8191/` returns `FlareSolverr is ready!`.
-- **Deliberately not added:**
-
-| Site | Why not |
-|---|---|
-| YTS | the operator handed user data to rightsholders |
-| RARGB, ExtraTorrent.st | impostor brands of the original sites |
-| TorrentGalaxy | dead since 2025, the remaining mirrors are fakes |
 
 ### Wrong-film guard
 
@@ -310,24 +286,42 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 
 ### Delete a title
 
-To delete a title: press **Remove from Radarr** / **Remove from Sonarr** in Seerr (title page, admin) — that one button removes it everywhere (Radarr/Sonarr + files, qBittorrent torrent + files, SABnzbd history, Seerr request). **Clear Data** alone only forgets the request in Seerr and leaves everything else: Radarr keeps the title and a new request silently does nothing.
+| Seerr button (Manage panel, admin) | What goes |
+|---|---|
+| **Remove from Radarr** / **Remove from Sonarr** | the title in Radarr/Sonarr with its files, nothing else (torrent, SABnzbd history and Seerr request stay; Jellyfin drops the item when Radarr/Sonarr tell it the files are gone) |
+| **Advanced → Clear Data** | everything: Seerr request, Radarr/Sonarr entry + files, qBittorrent torrent + files, SABnzbd history and Jellyfin item (within ~2 min) |
 
-`scripts/title-wipe-hook.sh` (Connect → Custom Script **Title wipe**, both apps) does the rest when a title is deleted **with its files** (Seerr's button; Radarr/Sonarr UI delete with "Delete files" ticked). A delete without files (unmonitor, remove only) wipes nothing.
+Clear Data after an earlier Remove from Radarr/Sonarr still removes the leftovers. A new request after Clear Data starts fresh.
+
+Seerr has no event for Clear Data (it only deletes its media row), so `scripts/clear-data-wipe.sh` (timer `clear-data-wipe.timer`, every 2 min, as buntu) compares Seerr's media list with its last snapshot and runs `scripts/title-wipe-hook.sh wipe` for every row that is gone.
 
 | Step | What |
 |---|---|
-| On Grab / Import / Upgrade | appends `<tmdbId or tvdbId> <qbit/sab> <hash or nzo id>` to `/config/title-wipe.tsv` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`) |
-| qBittorrent | the recorded hashes, only in the app's own category (`radarr` / `sonarr`): torrent **and its files** removed, seeding stops. fastpi's qBittorrent is never touched |
-| SABnzbd | the recorded jobs: removed from queue and history (`del_files=1`) |
-| Seerr | the media record (= **Clear Data**, `DELETE /api/v1/media/<id>`), run in the background after Seerr marked it deleted; log `/srv/appdata/<app>/logs/title-wipe.txt` |
-| Library file | Radarr/Sonarr move it to the recycle bin `/data/.recyclebin` (7 days) |
+| Record (On Grab / Import / Upgrade) | `title-wipe-hook.sh` (Connect → Custom Script **Title wipe**, both apps) appends `<tmdbId or tvdbId> <qbit/sab> <hash or nzo id>` to `/config/title-wipe.tsv` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`). Deleting in Radarr/Sonarr wipes nothing |
+| Detect | snapshot `~/.local/state/movie-downloads/seerr-media.tsv` (type, tmdbId, tvdbId, status, row id); a row gone, or back with a new id and no request (re-created by Seerr's own Jellyfin/Radarr/Sonarr sync), = Clear Data |
+| Never wipes | first run (snapshot only); Seerr list unreadable, empty or incomplete; row back in a second listing; title requested again; more than 5 rows gone at once (`CW_MAX=<n> scripts/clear-data-wipe.sh` once by hand if intended); blocklisted rows (un-blocklisting deletes the row); series without tvdb id |
+| Radarr/Sonarr | the title by exact tmdbId/tvdbId: `DELETE …?deleteFiles=true` (file to the recycle bin `/data/.recyclebin`, 7 days) |
+| qBittorrent | the recorded hashes, only in the app's own category (`radarr` / `sonarr`): torrent **and its files**. fastpi's qBittorrent is never touched |
+| SABnzbd | the recorded jobs: queue and history (`del_files=1`) |
+| Jellyfin | the item with exactly that Tmdb/Tvdb provider id under `/media/movies/` or `/media/tv/`: waits 30 s for Radarr/Sonarr's own Jellyfin notification, then `DELETE /Items/<id>` |
+| Seerr | a row its sync re-created meanwhile (no request) is removed |
 | No record (grabbed before 2026-10-23, history gone) | name match in the app's category: film `<title> <year> …` only if exactly one torrent/job matches; series `<title> S01…`/`<title> <year>`/`Season`/`Complete`; skipped (logged) when ambiguous or another library title has the same name |
-| Keys | `secrets/hook/sabnzbd.apikey`, `secrets/hook/seerr.apikey` (640, group `hook-secret`), written by `scripts/language-policy.sh` (SABnzbd key via `sudo -n`, Seerr key from `../Seerr/secrets/api-key`) |
-| Registered by | `scripts/language-policy.sh` (both apps, idempotent) |
+| Failures | retried on the next runs, given up after 5 tries (logged) |
+| Log | `~/.local/state/movie-downloads/clear-data-wipe.log`, `journalctl -u clear-data-wipe` |
+| Keys | Seerr `../Seerr/secrets/api-key`, SABnzbd `secrets/hook/sabnzbd.apikey` (640, group `hook-secret`, written by `scripts/language-policy.sh` via `sudo -n`), Jellyfin `../Jellyfin/secrets/api-key` |
+| Registered by | `scripts/language-policy.sh` (Connect script, both apps, idempotent) |
 | Seed old grabs | `sudo docker exec movie-radarr bash /scripts/title-wipe-hook.sh seed radarr` (Sonarr: `movie-sonarr … seed sonarr`), from the apps' grab history, idempotent |
-| Tests | `tests/test_title_wipe_hook.sh`; log: `grep -a title-wipe /srv/appdata/radarr/logs/radarr.debug.txt` |
+| Tests | `tests/test_title_wipe_hook.sh`, `tests/test_clear_data_wipe.sh` |
 
-Verified 2026-10-23 with a throwaway *Night of the Living Dead* (1968): Seerr `DELETE /api/v1/media/<id>/file` → Radarr delete → its test torrent + files, its SABnzbd history entry and the Seerr record gone within 1 s; a 1990 decoy torrent in the same category stayed.
+Install the timer:
+
+```bash
+cd ~/Projects/Docker/Movie-Downloads/systemd
+sudo install -m 0644 clear-data-wipe.service clear-data-wipe.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now clear-data-wipe.timer
+```
+
+Verified 2026-10-23 with throwaway *Night of the Living Dead* (1968) and *The General* (1926): Remove from Radarr → only the Radarr entry + file gone; then Clear Data → torrent + files and SABnzbd entry gone within one cycle; Clear Data alone → Radarr entry + file, torrent, SABnzbd entry, Jellyfin item gone, and the row Seerr's Jellyfin sync re-created seconds later removed; a 1990 decoy torrent in the same category stayed.
 
 ### Radarr settings that matter here
 
@@ -821,7 +815,7 @@ Details, restore and metrics: `../Antivirus/README.md`.
    Radarr :7878   Sonarr :8989   Bazarr :6767   vpn-status 127.0.0.1:8087   clamav :3310   (+ Seerr :5055 from ../Seerr)
 ```
 
-Every download client is inside the tunnel, and so is FlareSolverr (SABnzbd since 2026-10-23, like `sabnzbd` behind `gluetun_nzb` on fastpi): trackers, peers, indexers and the usenet provider only see the VPN IP. Radarr, Sonarr and Bazarr only talk to the LAN and metadata APIs.
+Every download client is inside the tunnel (SABnzbd since 2026-10-23, like `sabnzbd` behind `gluetun_nzb` on fastpi): trackers, peers, indexers and the usenet provider only see the VPN IP. Radarr, Sonarr and Bazarr only talk to the LAN and metadata APIs.
 
 | | |
 |---|---|

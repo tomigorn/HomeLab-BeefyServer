@@ -101,7 +101,7 @@ print(",".join(str(t["id"]) for t in items if t["qualityProfileId"]==m and eng(t
 
   # The same move for every title added from now on, before its first search:
   # Connect "Custom Script" on add, running scripts/language-policy-hook.sh.
-  # Radarr and Sonarr also get the wrong-film guard on grab (scripts/grab-guard.sh) and the title wipe on grab/import/delete (scripts/title-wipe-hook.sh).
+  # Radarr and Sonarr also get the wrong-film guard on grab (scripts/grab-guard.sh) and the title-wipe recorder on grab/import (scripts/title-wipe-hook.sh).
   connect() { # connect <app> <name> <on-event fields, comma-separated> <script path>
     local nid note
     nid=$(api $1 /notification | py 'import json,sys; r=[n["id"] for n in json.load(sys.stdin) if n["name"]==sys.argv[1]]; print(r[0] if r else "")' "$2")
@@ -117,8 +117,8 @@ print(json.dumps(n))' "$2" "$3" "$4" "$nid")
     echo "   connect: $(api $1 /notification | py 'import json,sys; [print(n["name"], n["fields"][0]["value"], ",".join(f+"="+str(n[f]) for f in sys.argv[1].split(","))) for n in json.load(sys.stdin) if n["name"]==sys.argv[2]]' "$3" "$2")"
   }
   case $app in
-    radarr) connect radarr "$HOOK_NAME" onMovieAdded "$HOOK_PATH"; connect radarr "$GUARD_NAME" onGrab "$GUARD_PATH"; connect radarr "$WIPE_NAME" onGrab,onDownload,onUpgrade,onMovieDelete "$WIPE_PATH";;
-    sonarr) connect sonarr "$HOOK_NAME" onSeriesAdd "$HOOK_PATH"; connect sonarr "$GUARD_NAME" onGrab "$GUARD_PATH"; connect sonarr "$WIPE_NAME" onGrab,onDownload,onUpgrade,onSeriesDelete "$WIPE_PATH";;
+    radarr) connect radarr "$HOOK_NAME" onMovieAdded "$HOOK_PATH"; connect radarr "$GUARD_NAME" onGrab "$GUARD_PATH"; connect radarr "$WIPE_NAME" onGrab,onDownload,onUpgrade "$WIPE_PATH";;
+    sonarr) connect sonarr "$HOOK_NAME" onSeriesAdd "$HOOK_PATH"; connect sonarr "$GUARD_NAME" onGrab "$GUARD_PATH"; connect sonarr "$WIPE_NAME" onGrab,onDownload,onUpgrade "$WIPE_PATH";;
   esac
 
   # Per-request tags. audio-<language>: a release profile scoped to the tag requires the
@@ -216,18 +216,14 @@ bz "$B/system/settings" | py 'import json,sys; d=json.load(sys.stdin); g=d["gene
 # The hook reaches Bazarr with this key (compose mounts secrets/hook at /secrets:ro).
 install -d -m 2750 -g hook-secret "$HERE/../secrets/hook"   # radarr + sonarr read it via the hook-secret group
 ( umask 027; printf '%s\n' "$BK" > "$HERE/../secrets/hook/bazarr.apikey" )
-# The title-wipe hook (README "Delete a title") reaches SABnzbd and Seerr with these; sabnzbd.ini is readable by its own uid only.
-SAB_INI=/srv/appdata/sabnzbd/sabnzbd.ini; SEERR_KEY=$HERE/../../Seerr/secrets/api-key
+# The title wipe (README "Delete a title") reaches SABnzbd with this; sabnzbd.ini is readable by its own uid only.
+SAB_INI=/srv/appdata/sabnzbd/sabnzbd.ini
 if SAK=$(sudo -n sed -n 's/^api_key = //p' "$SAB_INI") && [ -n "$SAK" ]; then
   ( umask 027; printf '%s\n' "$SAK" > "$HERE/../secrets/hook/sabnzbd.apikey" )
 else
   echo "   no SABnzbd API key from $SAB_INI (needs sudo): title wipe skips SABnzbd" >&2
 fi
-if [ -r "$SEERR_KEY" ]; then
-  ( umask 027; tr -d '[:space:]' < "$SEERR_KEY" > "$HERE/../secrets/hook/seerr.apikey"; echo >> "$HERE/../secrets/hook/seerr.apikey" )
-else
-  echo "   no Seerr API key at $SEERR_KEY (Seerr/scripts/configure.sh writes it): title wipe skips Seerr" >&2
-fi
+rm -f "$HERE/../secrets/hook/seerr.apikey"
 unset SAK
 
 echo "== apply to existing titles (refresh = auto tags, hook for subs-<language> and audio-swiss-german tags, then Bazarr re-sync)"

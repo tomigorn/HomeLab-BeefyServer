@@ -217,9 +217,9 @@ services:
     volumes:
       - ${APPDATA_ROOT}/radarr:/config
       - ${DATA_ROOT}:/data
-      # Connect scripts: profile of a new title, wrong-film guard, title wipe (README "Languages", "Delete a title").
+      # Connect scripts: profile of a new title, wrong-film guard, title-wipe recorder (README "Languages", "Delete a title").
       - ./scripts:/scripts:ro
-      # API keys for those scripts: Bazarr, SABnzbd, Seerr (written by scripts/language-policy.sh).
+      # Bazarr API key for those scripts (written by scripts/language-policy.sh).
       - ./secrets/hook:/secrets:ro
     ports:
       - "${RADARR_PORT}:7878"
@@ -279,9 +279,9 @@ services:
     volumes:
       - ${APPDATA_ROOT}/sonarr:/config
       - ${DATA_ROOT}:/data
-      # Connect scripts: profile of a new title, wrong-film guard, title wipe (README "Languages", "Delete a title").
+      # Connect scripts: profile of a new title, wrong-film guard, title-wipe recorder (README "Languages", "Delete a title").
       - ./scripts:/scripts:ro
-      # API keys for those scripts: Bazarr, SABnzbd, Seerr (written by scripts/language-policy.sh).
+      # Bazarr API key for those scripts (written by scripts/language-policy.sh).
       - ./secrets/hook:/secrets:ro
     ports:
       - "${SONARR_PORT}:8989"

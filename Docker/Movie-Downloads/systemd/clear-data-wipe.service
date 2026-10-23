@@ -1,0 +1,11 @@
+[Unit]
+Description=Wipe titles cleared in Seerr (Clear Data) from Radarr/Sonarr, qBittorrent, SABnzbd and Jellyfin
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/clear-data-wipe.sh
+NoNewPrivileges=true
+PrivateTmp=true

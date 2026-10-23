@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Radarr/Sonarr Connect "Custom Script" (On Grab, On Import, On Upgrade, On Movie/Series Delete): remembers each title's downloads, and when the title is deleted WITH its files (Seerr "Remove from Radarr/Sonarr") removes its torrents + files from qBittorrent, its SABnzbd jobs and its Seerr record, so a new request starts fresh (README "Delete a title").
-# Runs inside the app container (bash, curl, jq, flock); registered by scripts/language-policy.sh. `title-wipe-hook.sh seed <radarr|sonarr>` fills the state from the app's grab history (titles grabbed before the hook existed).
+# Radarr/Sonarr Connect "Custom Script" (On Grab, On Import, On Upgrade): remembers each title's downloads (README "Delete a title"). Deleting a title in Radarr/Sonarr wipes nothing here.
+# `title-wipe-hook.sh wipe <radarr|sonarr> <tmdbId|tvdbId> [title] [year]` (run by clear-data-wipe.sh after Seerr "Clear Data"): deletes the title in Radarr/Sonarr with its files, its torrents + files in qBittorrent, its SABnzbd jobs and its Jellyfin item.
+# `title-wipe-hook.sh seed <radarr|sonarr>` fills the state from the app's grab history (titles grabbed before the hook existed). Needs bash, curl, jq, flock.
 set -euo pipefail
 
 CONFIG=${TW_CONFIG:-/config/config.xml}
@@ -8,30 +9,27 @@ STATE=${TW_STATE:-/config/title-wipe.tsv}
 QBIT=${TW_QBIT_URL:-http://gluetun:8080}
 SAB=${TW_SAB_URL:-http://gluetun:8081}
 SAB_KEY=${TW_SAB_KEY:-/secrets/sabnzbd.apikey}
-SEERR=${TW_SEERR_URL:-http://seerr:5055}
-SEERR_KEY=${TW_SEERR_KEY:-/secrets/seerr.apikey}
-SEERR_WAIT=${TW_SEERR_WAIT:-60}
-LOG=${TW_LOG:-/config/logs/title-wipe.txt}
+JF=${TW_JF_URL:-http://127.0.0.1:8096}
+JF_KEY=${TW_JF_KEY:-/secrets/jellyfin.apikey}
+JF_WAIT=${TW_JF_WAIT:-30}
 
-if [ "${1:-}" = seed ]; then
-  app=$2; event=seed
+if [ "${1:-}" = seed ] || [ "${1:-}" = wipe ]; then
+  event=$1; app=${2:-}; key=${3:-}; title=${4:-}; year=${5:-0}
 elif [ -n "${radarr_eventtype:-}" ]; then
   app=radarr; event=$radarr_eventtype; key=${radarr_movie_tmdbid:-}; dlid=${radarr_download_id:-}; client=${radarr_download_client_type:-${radarr_download_client:-}}
-  title=${radarr_movie_title:-}; year=${radarr_movie_year:-0}; deleted=${radarr_movie_deletedfiles:-}
 elif [ -n "${sonarr_eventtype:-}" ]; then
   app=sonarr; event=$sonarr_eventtype; key=${sonarr_series_tvdbid:-}; dlid=${sonarr_download_id:-}; client=${sonarr_download_client_type:-${sonarr_download_client:-}}
-  title=${sonarr_series_title:-}; year=${sonarr_series_year:-0}; deleted=${sonarr_series_deletedfiles:-}
 else
   echo "no radarr_eventtype/sonarr_eventtype: not called by Radarr or Sonarr" >&2; exit 1
 fi
 case $app in
-  radarr) kind=movie; DELETE=MovieDelete; catfield=movieCategory; idpath=.movie.tmdbId; include=includeMovie; mtype=movie; mid=tmdbId;;
-  sonarr) kind=series; DELETE=SeriesDelete; catfield=tvCategory; idpath=.series.tvdbId; include=includeSeries; mtype=tv; mid=tvdbId;;
-  *) echo "seed: app must be radarr or sonarr" >&2; exit 1;;
+  radarr) kind=movie; catfield=movieCategory; idpath=.movie.tmdbId; include=includeMovie; idf=tmdbId; excl=addImportExclusion; jtype=Movie; jid=Tmdb; jroot=${TW_JF_ROOT:-/media/movies/};;
+  sonarr) kind=series; catfield=tvCategory; idpath=.series.tvdbId; include=includeSeries; idf=tvdbId; excl=addImportListExclusion; jtype=Series; jid=Tvdb; jroot=${TW_JF_ROOT:-/media/tv/};;
+  *) echo "$event: app must be radarr or sonarr" >&2; exit 1;;
 esac
 
 xml() { sed -n "s:.*<$1>\(.*\)</$1>.*:\1:p" "$CONFIG"; }
-api() { local path=$1; shift; curl -sf -m 10 -H "X-Api-Key: $(xml ApiKey)" "http://localhost:$(xml Port)$(xml UrlBase)/api/v3$path" "$@"; }
+api() { local path=$1; shift; curl -sf -m 30 -H "X-Api-Key: $(xml ApiKey)" "http://localhost:$(xml Port)$(xml UrlBase)/api/v3$path" "$@"; }
 
 client_of() { # client_of <client name or type> <download id>: qbit | sab
   case ${1,,} in
@@ -60,20 +58,27 @@ if [ "$event" = seed ]; then
   exit 0
 fi
 
-case $event in
-  Grab|Download)
-    [ -n "$dlid" ] && [ -n "$key" ] || exit 0
-    record "$key" "$(client_of "$client" "$dlid")" "$dlid"
-    exit 0;;
-  "$DELETE") ;;
-  *) exit 0;;
-esac
-
-if [ "${deleted,,}" != true ]; then
-  echo "$kind $key: deleted without files, nothing wiped"; exit 0
+if [ "$event" != wipe ]; then
+  case $event in
+    Grab|Download) [ -n "$dlid" ] && [ -n "$key" ] && record "$key" "$(client_of "$client" "$dlid")" "$dlid";;
+  esac
+  exit 0
 fi
-[ -n "$key" ] && [ "$key" != 0 ] || { echo "$kind: no id, nothing wiped" >&2; exit 1; }
+
+[[ $key =~ ^[1-9][0-9]*$ ]] || { echo "wipe: $app needs a numeric $idf" >&2; exit 1; }
 failed=0
+
+# Radarr/Sonarr: the title (exact id) with its files; Seerr "Remove from Radarr/Sonarr" may have done this already.
+found=$(api "/$kind?$idf=$key") || { echo "$kind $key: $app not reachable, nothing wiped" >&2; exit 1; }
+found=$(jq -c --arg f "$idf" --argjson k "$key" '[.[] | select(.[$f] == $k)]' <<<"$found")
+if [ "$(jq length <<<"$found")" -gt 0 ]; then
+  title=$(jq -r '.[0].title' <<<"$found"); year=$(jq -r '.[0].year // 0' <<<"$found")
+  for id in $(jq -r '.[].id' <<<"$found"); do
+    if api "/$kind/$id?deleteFiles=true&$excl=false" -X DELETE >/dev/null; then echo "$kind $key: $title removed from $app with its files"; else echo "$kind $key: $app delete of $id failed" >&2; failed=1; fi
+  done
+else
+  echo "$kind $key: not in $app (any more)"
+fi
 
 norm='ascii_downcase | explode | map(select(. != 39 and . != 8217)) | implode | gsub("[^a-z0-9]+"; " ") | ltrimstr(" ") | rtrimstr(" ")'
 want=$(jq -rn --arg t "$title" "\$t | $norm")
@@ -88,7 +93,7 @@ name_match() { # name_match <jq path of the name>: reads [{…}], prints the mat
 }
 same_title_left=1
 if [ -n "$want" ] && library=$(api "/$kind"); then
-  same_title_left=$(jq --arg w "$want" --arg y "$year" --arg k "$kind" "[ .[] | select((.title | $norm) == \$w and (\$k == \"series\" or (.year | tostring) == \$y)) ] | length" <<<"$library")
+  same_title_left=$(jq --arg w "$want" --arg y "$year" --arg k "$kind" --arg f "$idf" --argjson key "$key" "[ .[] | select(.[\$f] != \$key and (.title | $norm) == \$w and (\$k == \"series\" or (.year | tostring) == \$y)) ] | length" <<<"$library")
 fi
 fallback_ok() { # fallback_ok <what> <matches json>
   local count; count=$(jq length <<<"$2")
@@ -143,47 +148,31 @@ if [ -r "$SAB_KEY" ]; then
       if sab -d mode=$mode -d name=delete -d "value=$nzo" -d del_files=1 >/dev/null; then echo "$kind $key: SABnzbd $mode entry $nzo removed"; else echo "$kind $key: SABnzbd delete of $nzo failed" >&2; failed=1; fi
     done
   done
+  unset sk
 else
   echo "$kind $key: no SABnzbd API key at $SAB_KEY" >&2; failed=1
 fi
 
-if [ "$recorded" -gt 0 ]; then
-  ( flock 9; awk -F'\t' -v k="$key" '$1 != k' "$STATE" > "$STATE.new"; cat "$STATE.new" > "$STATE"; rm -f "$STATE.new" ) 9>>"$STATE.lock"
+# Jellyfin: the item with exactly this provider id in the app's library folder; Radarr/Sonarr's own Jellyfin notification usually drops it first.
+if [ -r "$JF_KEY" ]; then
+  jk=$(tr -d '[:space:]' < "$JF_KEY")
+  jitems() { curl -sf -m 30 -H "Authorization: MediaBrowser Token=\"$jk\"" "$JF/Items?Recursive=true&IncludeItemTypes=$jtype&Fields=ProviderIds,Path" \
+    | jq -c --arg p "$jid" --arg k "$key" --arg r "$jroot" '[.Items[] | select(.ProviderIds[$p] == $k and ((.Path // "") | startswith($r)))]'; }
+  waited=0
+  while hit=$(jitems) && [ "$(jq length <<<"$hit")" -gt 0 ] && [ "$waited" -lt "$JF_WAIT" ]; do sleep 5; waited=$((waited + 5)); done
+  if [ -z "${hit:-}" ]; then
+    echo "$kind $key: Jellyfin not reachable at $JF" >&2; failed=1
+  else
+    for id in $(jq -r '.[].Id' <<<"$hit"); do
+      if curl -sf -m 30 -X DELETE -H "Authorization: MediaBrowser Token=\"$jk\"" "$JF/Items/$id" >/dev/null; then echo "$kind $key: Jellyfin item $id removed"; else echo "$kind $key: Jellyfin delete of $id failed" >&2; failed=1; fi
+    done
+  fi
+  unset jk
+else
+  echo "$kind $key: no Jellyfin API key at $JF_KEY" >&2; failed=1
 fi
 
-# Seerr: what its "Clear Data" does. Its own "Remove from Radarr" saves the record (status deleted, 7) after Radarr answers, so wait for that and run detached, or the save would bring the record back.
-seerr_wipe() {
-  local sk media found id status waited=0
-  [ -r "$SEERR_KEY" ] || { echo "$kind $key: no Seerr API key at $SEERR_KEY" >&2; return 1; }
-  sk=$(tr -d '[:space:]' < "$SEERR_KEY")
-  find_media() {
-    local skip=0 page
-    while :; do
-      page=$(curl -sf -m 10 -H "X-Api-Key: $sk" "$SEERR/api/v1/media?take=100&skip=$skip") || return 1
-      found=$(jq -c --arg t "$mtype" --arg f "$mid" --argjson k "$key" '[.results[] | select(.mediaType == $t and .[$f] == $k)][0] // empty' <<<"$page")
-      [ -z "$found" ] || return 0
-      skip=$((skip + 100))
-      [ "$skip" -lt "$(jq -r '.pageInfo.results // 0' <<<"$page")" ] || return 0
-    done
-  }
-  find_media || { echo "$kind $key: Seerr not reachable at $SEERR" >&2; return 1; }
-  [ -n "$found" ] || { echo "$kind $key: not in Seerr"; return 0; }
-  while status=$(jq -r .status <<<"$found"); [ "$status" != 7 ] && [ "$waited" -lt "$SEERR_WAIT" ]; do
-    sleep 2; waited=$((waited + 2)); find_media || true
-    [ -n "$found" ] || { echo "$kind $key: gone from Seerr"; return 0; }
-  done
-  id=$(jq -r .id <<<"$found")
-  if curl -sf -m 10 -X DELETE -H "X-Api-Key: $sk" "$SEERR/api/v1/media/$id" >/dev/null; then
-    echo "$kind $key: Seerr media $id removed"
-  else
-    echo "$kind $key: Seerr delete of media $id failed" >&2; return 1
-  fi
-}
-if [ "${TW_FOREGROUND:-}" = 1 ]; then
-  seerr_wipe || failed=1
-else
-  mkdir -p "$(dirname "$LOG")"
-  ( seerr_wipe 2>&1 | while IFS= read -r l; do echo "$(date '+%F %T') $l"; done >> "$LOG" ) </dev/null >/dev/null 2>&1 &
-  echo "$kind $key: Seerr record is cleared in the background (log $LOG)"
+if [ "$failed" = 0 ] && [ "$recorded" -gt 0 ] && [ -w "$STATE" ] && [ -w "$(dirname "$STATE")" ]; then
+  ( flock 9; awk -F'\t' -v k="$key" '$1 != k' "$STATE" > "$STATE.new"; cat "$STATE.new" > "$STATE"; rm -f "$STATE.new" ) 9>>"$STATE.lock"
 fi
 exit $failed

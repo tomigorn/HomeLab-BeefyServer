@@ -1,0 +1,10 @@
+[Unit]
+Description=Seerr Clear Data wipe, every 2 minutes while beefy is awake
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target
