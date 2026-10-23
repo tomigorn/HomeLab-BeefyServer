@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tell qBittorrent which port gluetun just had forwarded.
+# Tell qBittorrent which port gluetun just had forwarded, then reannounce every torrent so the trackers learn it.
 #
 # Runs INSIDE the gluetun container, via VPN_PORT_FORWARDING_UP_COMMAND, every
 # time the forwarded port changes. qBittorrent's WebUI is on 127.0.0.1 here
@@ -29,7 +29,8 @@ case "$PORT" in
         ;;
 esac
 
-API="http://127.0.0.1:8080/api/v2/app/setPreferences"
+QBIT="${QBIT_URL:-http://127.0.0.1:8080}"
+API="$QBIT/api/v2/app/setPreferences"
 
 # On a stack start gluetun forwards the port before qBittorrent is up; wait for it (max 2 min).
 tries=0
@@ -41,6 +42,9 @@ done
 
 if [ "$tries" -lt 24 ]; then
     echo "qbit-port.sh: qBittorrent listen_port set to ${PORT}"
+    wget -qO- --post-data "hashes=all" "$QBIT/api/v2/torrents/reannounce" >/dev/null 2>&1 \
+        && echo "qbit-port.sh: reannounced all torrents" \
+        || echo "qbit-port.sh: reannounce failed (non-fatal)" >&2
 else
     # Non-fatal on purpose: gluetun should keep the tunnel up even if
     # qBittorrent is still starting. gluetun re-runs this on the next change.
