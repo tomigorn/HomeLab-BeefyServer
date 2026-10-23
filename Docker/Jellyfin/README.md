@@ -432,3 +432,5 @@ Jellyfin's TV and phone apps have only the heart (favourite) and "played"; no ap
 - Phone: open `https://tracker.holy-grail.ch`, browser menu -> **Install app** / **Add to Home screen**. Ryot is a PWA; its manifest and icons are reachable without sign-in for that (HomeLab-FastPi `Traefik/traefik/dynamic/tracker.yml`, router `tracker-pwa`).
 - TV: rate later on the phone; the TV app has no rating.
 - Not built: hearts -> Ryot. Ryot's Jellyfin Sink ignores favourites; the way would be a per-member Ryot "Generic JSON" integration URL plus a nightly job that posts Jellyfin favourites into a Ryot collection. It needs each member's own URL (only creatable in their Ryot session) and a real test, so it waits for a decision.
+
+**Rebuild** (`jellyfin-local`, FROM `lscr.io/linuxserver/jellyfin` + the OpenCL mods image by digest): bump the tag in `Dockerfile` when Cup shows a newer linuxserver tag, then `sudo docker compose up -d --build --pull`; otherwise monthly.
