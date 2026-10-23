@@ -18,7 +18,7 @@ item is in [Download → library pipeline](#download--library-pipeline).
 | qBittorrent | `http://192.168.1.102:8080` | gluetun (shares its namespace) |
 | Prowlarr | `http://192.168.1.102:9696` | gluetun (shares its namespace) |
 | SABnzbd | `http://192.168.1.102:8081` | gluetun (shares its namespace; 8081 inside too, qBittorrent has 8080) |
-| VPN status | `http://127.0.0.1:8087` on beefy only (`ssh -L`) | itself, localhost — see [VPN status](#vpn-status) |
+| VPN status | https://vpn-status-beefy.holy-grail.ch (Holy Grail, homelab-admins) | itself, `:8087` (fastpi only) — see [VPN status](#vpn-status) |
 | Radarr | `http://192.168.1.102:7878` | itself |
 | Sonarr | `http://192.168.1.102:8989` | itself |
 | Bazarr | `http://192.168.1.102:6767` | itself |
@@ -926,7 +926,7 @@ Details, restore and metrics: `../Antivirus/README.md`.
             └───────────┬─────────────────────────────┘
                         │ movie-downloads bridge, 172.28.10.0/24
        ┌────────────────┼────────────────┬──────────────┐
-   Radarr :7878   Sonarr :8989   Bazarr :6767   vpn-status 127.0.0.1:8087   clamav :3310   (+ Seerr :5055 from ../Seerr)
+   Radarr :7878   Sonarr :8989   Bazarr :6767   vpn-status :8087   clamav :3310   (+ Seerr :5055 from ../Seerr)
 ```
 
 Every download client is inside the tunnel (SABnzbd since 2026-10-23, like `sabnzbd` behind `gluetun_nzb` on fastpi): trackers, peers, indexers and the usenet provider only see the VPN IP. Radarr, Sonarr and Bazarr only talk to the LAN and metadata APIs.
@@ -976,7 +976,7 @@ qBittorrent settings that matter here (in `/srv/appdata/qbittorrent`, not in git
 
 `movie-vpn-status`: the status page of fastpi's `port_updater` (mouse stack). It watches, and re-applies the forwarded port (+ reannounce) when qBittorrent's differs; gluetun's hook does the normal updating. No docker access. Code: `vpn-status/web-server.py` (copy of `HomeLab-FastPi` `Docker/mouse/port-updater/web-server.py` plus a poller).
 
-Reached like fastpi's (ssh tunnel only, no Traefik route). Local port 8187, so both pages can be open at once:
+Status pages: https://vpn-status-beefy.holy-grail.ch and https://vpn-status-mouse.holy-grail.ch (fastpi's, Holy Grail, group `homelab-admins`, LAN/VPN only; tiles on sso.holy-grail.ch). The beefy route wakes beefy after the login. The ssh tunnels still work, local port 8187 so both pages can be open at once:
 
 ```bash
 ssh -L 8187:127.0.0.1:8087 beefy      # beefy: http://localhost:8187/
@@ -994,7 +994,7 @@ ssh beefy curl -s localhost:8087/api/status   # vpn_ip, real_ip, forwarded_port,
 | qBittorrent Connection | `connection_status` · listen interface · DHT nodes; `firewalled` with no torrents is normal (no incoming peers yet) |
 | History | `/srv/appdata/vpn-status/port-history.json`: `startup`, `port_update`, `mismatch`, `port_fix` / `port_fix_failed`, `zero_port`, one line per change (polled every 30 s while beefy is awake). `mismatch` + `port_fix` right after a stack start is normal: qBit starts on 6881 |
 
-- Localhost only (like fastpi's): no Traefik route, no new LAN port, no firewall change.
+- `8087` is published on the LAN for fastpi's Traefik (route `HomeLab-FastPi` `Docker/Traefik/traefik/dynamic/vpn-status-beefy.yml`) and is in the `DOCKER-USER` fastpi-only DROP rule (+ the IPv6 INPUT rule). The page has no login of its own, Authentik forward auth is the gate.
 - uid 65111, `read_only`, `cap_drop: ALL`, image `python:3.15.1-alpine3.24` (no build).
 - gluetun control server auth (since 2026-10-23): `/srv/appdata/gluetun/auth/config.toml` (600, not in git) gives role `vpn-status` (API key, header `X-API-Key`) only `GET /v1/portforward` and `GET /v1/publicip/ip`; every other route is 401, also `PUT /v1/vpn/status` (before, the routes were open to every container on the bridge). Key: `secrets/vpn-status.apikey` (gitignored, 400, uid 65111). New key: write both files, then `docker compose up -d --force-recreate gluetun qbittorrent prowlarr sabnzbd vpn-status` (the others share gluetun's namespace).
 - Tests: `python3 tests/test_vpn_status.py`, `tests/test_qbit_port.sh` (the hook).
@@ -1014,7 +1014,7 @@ fastpi:
 
 ```bash
 # DOCKER-USER rule in /etc/iptables/rules.v4 (+ the IPv6 INPUT rule in rules.v6), persisted with netfilter-persistent
-# ports: 7878 radarr, 8989 sonarr, 9696 prowlarr, 6767 bazarr, 8080 qbit, 8081 sab, 8096 jellyfin, 8000 cup, 9001 portainer agent, 5055 seerr, 8010 ryot, 8011 ryot-go
+# ports: 7878 radarr, 8989 sonarr, 9696 prowlarr, 6767 bazarr, 8080 qbit, 8081 sab, 8096 jellyfin, 8000 cup, 9001 portainer agent, 5055 seerr, 8010 ryot, 8011 ryot-go, 8087 vpn-status
 sudo iptables -S DOCKER-USER
 ```
 

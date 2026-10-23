@@ -426,8 +426,9 @@ services:
       - ./secrets/vpn-status.apikey:/run/secrets/gluetun-apikey:ro
       - ${APPDATA_ROOT}/vpn-status:/data
     ports:
-      # localhost only, like fastpi's port_updater: ssh -L 8087:127.0.0.1:8087 beefy
-      - "127.0.0.1:8087:8087"
+      # LAN-published for fastpi's Traefik (https://vpn-status-beefy.holy-grail.ch, Holy Grail, homelab-admins).
+      # DOCKER-USER drops 8087 for everyone but fastpi. ssh -L 8087:127.0.0.1:8087 beefy still works.
+      - "8087:8087"
     networks:
       - movie-downloads
 
