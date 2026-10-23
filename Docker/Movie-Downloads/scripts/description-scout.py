@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Description scout (README "Description scout"): the audio-<language> filter sees only release names, so a release that says the language only in its description is never grabbed. For every monitored Radarr movie without a file that carries a scouted audio tag, this searches the torrent indexers through Prowlarr, reads the descriptions of releases that are surely that movie (TPB via apibay, 1337x via its page, both through FlareSolverr in the VPN), and hands a match with seeders to Radarr (release push) with the language word appended to its name. Radarr then decides as usual. Run by systemd/description-scout.timer.
-Usage: scripts/description-scout.py [--dry-run] [--tmdb ID]
+"""Description scout (README "Description scout"): the audio-<language> filter sees only release names, so a release that says the language only in its description is never grabbed. For every monitored Radarr movie without a file and every monitored Sonarr series with missing episodes that carries a scouted audio tag, this searches the torrent indexers through Prowlarr, reads the descriptions of releases that are surely that title (TPB via apibay, 1337x via its page, both through FlareSolverr in the VPN), and hands a match with seeders to Radarr/Sonarr (release push) with the language word appended to its name. The app then decides as usual. Run by systemd/description-scout.timer.
+Usage: scripts/description-scout.py [--dry-run] [--tmdb ID | --tvdb ID]   (an id with --dry-run also takes an unmonitored title)
        scripts/description-scout.py --resolve-flaresolverr FILE   (root, writes FlareSolverr's URL; the unit runs it first)"""
 import argparse
 import html
@@ -134,9 +134,37 @@ def release_key(result):
     return "btih:" + m.group(1).upper() if m else "url:" + (result.get("infoUrl") or result.get("guid") or "")
 
 
+def mapping_ok_series(series, parsed, imdb, wanted):
+    if imdb and imdb_num(imdb) != imdb_num(series.get("imdbId")):
+        return False, f"imdb {imdb} is not {series.get('imdbId')}"
+    got = (parsed or {}).get("series") or {}
+    if got.get("id") != series["id"]:
+        return False, "Sonarr parses it as another series" if got.get("id") else "Sonarr cannot map it to a series (no alias for that name)"
+    year = (((parsed or {}).get("parsedEpisodeInfo") or {}).get("seriesTitleInfo") or {}).get("year") or 0
+    if year and year != series.get("year"):
+        return False, f"year {year} is not {series.get('year')}"
+    eps = {e["id"] for e in (parsed or {}).get("episodes") or []}
+    if not eps:
+        return False, "no episodes"
+    if not eps & wanted:
+        return False, "none of its episodes is missing"
+    return True, f"same series, {len(eps & wanted)} missing episode(s)"
+
+
+def push_payload_series(result, series, lang, magnet, indexer):
+    p = push_payload(result, {}, lang, magnet, indexer)
+    del p["tmdbId"], p["imdbId"]
+    p["tvdbId"] = series.get("tvdbId") or 0
+    return p
+
+
+def search_title(title):
+    return re.sub(r"\s*\([^)]*\)\s*$", "", title).strip() or title
+
+
 class Scout:
-    def __init__(self, radarr, prowlarr, fetch, state_path, log, dry_run=False, max_push=2, max_fetch=15):
-        self.radarr, self.prowlarr, self.fetch, self.log = radarr, prowlarr, fetch, log
+    def __init__(self, radarr, prowlarr, fetch, state_path, log, dry_run=False, max_push=2, max_fetch=15, sonarr=None):
+        self.radarr, self.sonarr, self.prowlarr, self.fetch, self.log = radarr, sonarr, prowlarr, fetch, log
         self.state_path = pathlib.Path(state_path)
         self.dry_run, self.max_push, self.max_fetch = dry_run, max_push, max_fetch
         self.pushes = self.fetches = 0
@@ -150,20 +178,38 @@ class Scout:
         tmp.write_text(json.dumps(self.state, indent=1, sort_keys=True))
         tmp.replace(self.state_path)
 
-    def run(self, langs, tmdb=None):
+    def run(self, langs, tmdb=None, tvdb=None):
         try:
-            tags = {t["label"]: t["id"] for t in self.radarr("GET", "/tag")}
-            movies = self.radarr("GET", "/movie")
-            rindexers = {i["name"]: i for i in self.radarr("GET", "/indexer") if i.get("protocol") == "torrent"}
             pindexers = [i for i in self.prowlarr("GET", "/indexer") if i.get("protocol") == "torrent" and i.get("enable")]
         except ApiError as e:
             self.log(f"API error, run skipped: {e}")
             return 1
         rc = 0
+        if self.radarr and tvdb is None:
+            rc |= self.run_movies(langs, pindexers, tmdb)
+        if self.sonarr and tmdb is None:
+            rc |= self.run_series(langs, pindexers, tvdb)
+        return rc
+
+    def picked(self, item, key, wanted_id, monitored):
+        # An explicit id in a dry run also takes an unmonitored title (nothing is pushed).
+        if wanted_id is None:
+            return bool(monitored)
+        return item.get(key) == wanted_id and (bool(monitored) or self.dry_run)
+
+    def run_movies(self, langs, pindexers, tmdb):
+        try:
+            tags = {t["label"]: t["id"] for t in self.radarr("GET", "/tag")}
+            movies = self.radarr("GET", "/movie")
+            rindexers = {i["name"]: i for i in self.radarr("GET", "/indexer") if i.get("protocol") == "torrent"}
+        except ApiError as e:
+            self.log(f"Radarr API error, movies skipped: {e}")
+            return 1
+        rc = 0
         for lang in langs:
             tid = tags.get(lang["tag"])
-            wanted = [m for m in movies if tid is not None and tid in m.get("tags", []) and m.get("monitored") and not m.get("hasFile")
-                      and (tmdb is None or m.get("tmdbId") == tmdb)]
+            wanted = [m for m in movies if tid is not None and tid in m.get("tags", []) and not m.get("hasFile")
+                      and self.picked(m, "tmdbId", tmdb, m.get("monitored"))]
             for movie in wanted:
                 try:
                     self.movie(movie, lang, pindexers, rindexers)
@@ -172,16 +218,68 @@ class Scout:
                     rc = 1
         return rc
 
+    def run_series(self, langs, pindexers, tvdb):
+        try:
+            tags = {t["label"]: t["id"] for t in self.sonarr("GET", "/tag")}
+            shows = self.sonarr("GET", "/series")
+            sindexers = {i["name"]: i for i in self.sonarr("GET", "/indexer") if i.get("protocol") == "torrent"}
+            missing, page = [], 1
+            while True:
+                r = self.sonarr("GET", "/wanted/missing", {"page": page, "pageSize": 1000, "monitored": "true"}) or {}
+                missing += r.get("records") or []
+                if page * 1000 >= (r.get("totalRecords") or 0):
+                    break
+                page += 1
+        except ApiError as e:
+            self.log(f"Sonarr API error, series skipped: {e}")
+            return 1
+        by_series = {}
+        for e in missing:
+            by_series.setdefault(e.get("seriesId"), set()).add(e["id"])
+        rc = 0
+        for lang in langs:
+            tid = tags.get(lang["tag"])
+            for series in shows:
+                if tid is None or tid not in series.get("tags", []):
+                    continue
+                wanted = by_series.get(series["id"], set())
+                if tvdb is not None and self.dry_run and series.get("tvdbId") == tvdb and not wanted:
+                    wanted = {e["id"] for e in self.sonarr("GET", "/episode", {"seriesId": series["id"]}) or [] if not e.get("hasFile")}
+                if not wanted or not self.picked(series, "tvdbId", tvdb, series.get("monitored")):
+                    continue
+                try:
+                    self.series(series, wanted, lang, pindexers, sindexers)
+                except ApiError as e:
+                    self.log(f"{series['title']} ({series.get('year')}, series): API error, skipped: {e}")
+                    rc = 1
+        return rc
+
     def search(self, movie, pindexers):
         ids = [i["id"] for i in pindexers]
         titles = [movie["title"]] + ([movie["originalTitle"]] if movie.get("originalTitle") and movie["originalTitle"] != movie["title"] else [])
-        queries = [(f"{t} {movie['year']}", ids) for t in titles]
+        queries = [(f"{t} {movie['year']}", ids, "movie", [2000]) for t in titles]
         by_imdb = [i["id"] for i in pindexers if "imdbId" in ((i.get("capabilities") or {}).get("movieSearchParams") or [])]
         if by_imdb and movie.get("imdbId"):
-            queries.append((f"{{ImdbId:{movie['imdbId']}}}", by_imdb))
+            queries.append((f"{{ImdbId:{movie['imdbId']}}}", by_imdb, "movie", [2000]))
+        return self.query(queries)
+
+    def search_series(self, series, pindexers):
+        ids = [i["id"] for i in pindexers]
+        titles = []
+        for t in [series["title"]] + [a.get("title") for a in series.get("alternateTitles") or []]:
+            t = search_title(t or "")
+            if t and t not in titles:
+                titles.append(t)
+        queries = [(t, ids, "search", [5000]) for t in titles[:3]]
+        by_tvdb = [i["id"] for i in pindexers if "tvdbId" in ((i.get("capabilities") or {}).get("tvSearchParams") or [])]
+        if by_tvdb and series.get("tvdbId"):
+            queries.append((f"{{TvdbId:{series['tvdbId']}}}", by_tvdb, "tvsearch", [5000]))
+        return self.query(queries)
+
+    def query(self, queries):
         seen, results = set(), []
-        for q, ids in queries:
-            for r in self.prowlarr("GET", "/search", {"query": q, "type": "movie", "categories": [2000], "indexerIds": ids}) or []:
+        for q, ids, kind, cats in queries:
+            for r in self.prowlarr("GET", "/search", {"query": q, "type": kind, "categories": cats, "indexerIds": ids}) or []:
                 k = release_key(r)
                 if k not in seen:
                     seen.add(k)
@@ -192,6 +290,21 @@ class Scout:
         name = f"{movie['title']} ({movie.get('year')})"
         results = self.search(movie, pindexers)
         self.log(f"{name}: {len(results)} torrent results")
+        self.scout(name, results, lang, rindexers, "Radarr", self.radarr,
+                   lambda title, imdb: mapping_ok(movie, self.radarr("GET", "/parse", {"title": title}), imdb),
+                   lambda r, magnet, indexer: push_payload(r, movie, lang, magnet, indexer),
+                   movie.get("imdbId"))
+
+    def series(self, series, wanted, lang, pindexers, sindexers):
+        name = f"{series['title']} ({series.get('year')}, series)"
+        results = self.search_series(series, pindexers)
+        self.log(f"{name}: {len(results)} torrent results, {len(wanted)} missing episode(s)")
+        self.scout(name, results, lang, sindexers, "Sonarr", self.sonarr,
+                   lambda title, imdb: mapping_ok_series(series, self.sonarr("GET", "/parse", {"title": title}), imdb, wanted),
+                   lambda r, magnet, indexer: push_payload_series(r, series, lang, magnet, indexer),
+                   series.get("imdbId"))
+
+    def scout(self, name, results, lang, app_indexers, app_name, app, mapping, payload_of, imdb_id):
         for r in results:
             if r.get("protocol") != "torrent":
                 continue
@@ -201,7 +314,7 @@ class Scout:
             st = self.state.get(key, {})
             if st.get("pushed") or st.get("verdict") in ("no", "failed"):
                 continue
-            ok, why = mapping_ok(movie, self.radarr("GET", "/parse", {"title": r["title"]}), r.get("imdbId") or None)
+            ok, why = mapping(r["title"], r.get("imdbId") or None)
             if not ok:
                 continue
             src = description_source(r)
@@ -226,10 +339,10 @@ class Scout:
                     self.save()
                     self.log(f"{name}: '{r['title']}' ({r.get('indexer')}): description fetch failed ({errors}/{MAX_ERRORS}): {e}")
                     continue
-                if info.get("imdb") and imdb_num(info["imdb"]) != imdb_num(movie.get("imdbId")):
+                if info.get("imdb") and imdb_num(info["imdb"]) != imdb_num(imdb_id):
                     self.state[key] = {"verdict": "no", "title": r["title"], "why": f"description imdb {info['imdb']}"}
                     self.save()
-                    self.log(f"{name}: '{r['title']}': description names {info['imdb']}, another movie, skipped")
+                    self.log(f"{name}: '{r['title']}': description names {info['imdb']}, another title, skipped")
                     continue
                 if not description_matches(info["descr"], lang["regex"]):
                     self.state[key] = {"verdict": "no", "title": r["title"]}
@@ -246,12 +359,12 @@ class Scout:
             if not st.get("magnet"):
                 self.log(f"{name}: '{r['title']}': no magnet link, not pushed")
                 continue
-            indexer = rindexers.get(f"{r.get('indexer')} (Prowlarr)")
+            indexer = app_indexers.get(f"{r.get('indexer')} (Prowlarr)")
             if not indexer:
-                self.log(f"{name}: '{r['title']}': indexer {r.get('indexer')} not in Radarr, not pushed")
+                self.log(f"{name}: '{r['title']}': indexer {r.get('indexer')} not in {app_name}, not pushed")
                 continue
-            payload = push_payload(r, movie, lang, st["magnet"], indexer)
-            ok, why = mapping_ok(movie, self.radarr("GET", "/parse", {"title": payload["title"]}), r.get("imdbId") or None)
+            payload = payload_of(r, st["magnet"], indexer)
+            ok, why = mapping(payload["title"], r.get("imdbId") or None)
             if not ok:
                 self.log(f"{name}: '{payload['title']}': {why} after renaming, not pushed")
                 continue
@@ -263,7 +376,7 @@ class Scout:
                 self.log(f"{name}: dry run, would push {json.dumps(payload)}")
                 continue
             try:
-                answer = self.radarr("POST", "/release/push", body=payload)
+                answer = app("POST", "/release/push", body=payload)
             except ApiError as e:
                 errors = st.get("errors", 0) + 1
                 self.state[key] = dict(st, errors=errors, **({"verdict": "failed"} if errors >= MAX_ERRORS else {}))
@@ -274,7 +387,7 @@ class Scout:
             self.state[key] = dict(st, pushed=time.strftime("%Y-%m-%dT%H:%M:%S"), approved=bool(d.get("approved")))
             self.save()
             rej = "; ".join(x.get("reason", str(x)) if isinstance(x, dict) else str(x) for x in d.get("rejections") or [])
-            self.log(f"{name}: pushed '{payload['title']}' to Radarr: {'approved, Radarr grabs it' if d.get('approved') else 'rejected: ' + rej}")
+            self.log(f"{name}: pushed '{payload['title']}' to {app_name}: {'approved, ' + app_name + ' grabs it' if d.get('approved') else 'rejected: ' + rej}")
 
 
 def config(path):
@@ -328,6 +441,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="fetch and match, never push, state unchanged")
     ap.add_argument("--tmdb", type=int, help="only this movie")
+    ap.add_argument("--tvdb", type=int, help="only this series")
     ap.add_argument("--resolve-flaresolverr", metavar="FILE")
     a = ap.parse_args()
     if a.resolve_flaresolverr:
@@ -346,13 +460,18 @@ def main():
     if not fs:
         log("FlareSolverr URL unknown (DS_FLARESOLVERR or the unit's resolve step), run skipped")
         return 1
-    rkey, rport, rbase = config(os.environ.get("DS_RADARR_CONFIG", "/srv/appdata/radarr/config.xml"))
+    apps = os.environ.get("DS_APPS", "radarr,sonarr").split(",")
+    clients = {}
+    for app, port in (("radarr", 7878), ("sonarr", 8989)):
+        if app in apps:
+            key, aport, base = config(os.environ.get(f"DS_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml"))
+            clients[app] = client(f"http://localhost:{aport or port}{base}/api/v3", key)
     pkey, _, _ = config(os.environ.get("DS_PROWLARR_CONFIG", "/srv/appdata/prowlarr/config.xml"))
     langs = load_languages(HERE / "languages.tsv", os.environ.get("DS_LANGUAGES", "gsw").split(","))
-    scout = Scout(client(f"http://localhost:{rport}{rbase}/api/v3", rkey), client(os.environ.get("DS_PROWLARR_URL", "http://127.0.0.1:9696") + "/api/v1", pkey),
+    scout = Scout(clients.get("radarr"), client(os.environ.get("DS_PROWLARR_URL", "http://127.0.0.1:9696") + "/api/v1", pkey),
                   flaresolverr(fs), os.environ.get("DS_STATE", STATE_DIR / "description-scout.json"), log, dry_run=a.dry_run,
-                  max_push=int(os.environ.get("DS_MAX_PUSH", 2)), max_fetch=int(os.environ.get("DS_MAX_FETCH", 15)))
-    return scout.run(langs, tmdb=a.tmdb)
+                  max_push=int(os.environ.get("DS_MAX_PUSH", 2)), max_fetch=int(os.environ.get("DS_MAX_FETCH", 15)), sonarr=clients.get("sonarr"))
+    return scout.run(langs, tmdb=a.tmdb, tvdb=a.tvdb)
 
 
 if __name__ == "__main__":

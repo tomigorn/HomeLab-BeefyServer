@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""scripts/description-scout.py: description matching, movie-mapping guard, dedupe, error paths and the push payload, against fake Radarr/Prowlarr/FlareSolverr.
+"""scripts/description-scout.py: description matching, movie- and series-mapping guards, dedupe, error paths and the push payloads, against fake Radarr/Sonarr/Prowlarr/FlareSolverr.
 Usage: python3 tests/test_description_scout.py"""
 import importlib.util
 import json
@@ -27,6 +27,23 @@ PAGE_1337 = ('<html><body><div class="tab-pane active" id="description"><p><stro
              '<br><br><strong>IMDB: </strong><a href="https://www.imdb.com/title/tt0432028/">imdb</a><br>Language &nbsp; : Schwiizertüütsch'
              '</p></div><!-- description --><div class="tab-pane" id="comments">Swiss German please!</div>'
              '<a href="magnet:?xt=urn:btih:ABCDEF&amp;dn=Ring">Magnet</a></body></html>')
+
+
+WILDER = {"id": 9, "title": "Wilder (CH)", "year": 2017, "tvdbId": 337514, "imdbId": "tt7139936", "monitored": True, "tags": [13],
+          "alternateTitles": [{"title": "Wilder"}, {"title": "Wilder (CH)"}]}
+WILDER_TPB = dict(TPB, guid="magnet:?xt=urn:btih:CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC&dn=Wilder", title="Wilder.S01.720p.HDTV.x264-GRP",
+                  infoUrl="https://thepiratebay.org/description.php?id=555", imdbId=None, size=5000)
+WILDER_APIBAY = APIBAY.replace("3872789", "555").replace("The Ring Thing (2004) [XVID]", "Wilder S01").replace("tt0432028", "tt7139936").replace(
+    "180F491CAA6F63C4469294D239A5A98E02FBB9A5", "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
+
+
+def eps(*ids, series_id=9):
+    return [{"id": i, "seasonNumber": 1, "episodeNumber": i - 100} for i in ids]
+
+
+def parsed_series(series_id=9, episodes=(101, 102), year=0):
+    return {"series": {"id": series_id} if series_id else None, "episodes": eps(*episodes) if series_id else [],
+            "parsedEpisodeInfo": {"seasonNumber": 1, "seriesTitleInfo": {"year": year}}}
 
 
 def parsed(movie_id=21, year=2004):
@@ -98,15 +115,64 @@ class Mapping(unittest.TestCase):
         self.assertEqual(p["infoUrl"], TPB["infoUrl"])
 
 
-class FakeApi:
-    """Radarr + Prowlarr + FlareSolverr in one, records writes."""
+class SeriesMapping(unittest.TestCase):
+    def test_same_series_with_a_missing_episode(self):
+        self.assertTrue(scout.mapping_ok_series(WILDER, parsed_series(), None, {102})[0])
+        self.assertTrue(scout.mapping_ok_series(WILDER, parsed_series(year=2017), "tt7139936", {101})[0])
 
-    def __init__(self, movies=None, results=None, pages=None, fail=()):
+    def test_other_or_unmapped_series_wrong_year_or_imdb(self):
+        for p, imdb in ((parsed_series(series_id=None), None), (parsed_series(series_id=4), None), (parsed_series(year=1990), None), (parsed_series(), "tt1")):
+            with self.subTest(p=p, imdb=imdb):
+                self.assertFalse(scout.mapping_ok_series(WILDER, p, imdb, {101})[0])
+
+    def test_no_episodes_or_none_missing(self):
+        self.assertFalse(scout.mapping_ok_series(WILDER, parsed_series(episodes=()), None, {101})[0])
+        self.assertFalse(scout.mapping_ok_series(WILDER, parsed_series(episodes=(103,)), None, {101, 102})[0])
+
+    def test_search_title_drops_the_country_suffix(self):
+        self.assertEqual(scout.search_title("The Bachelor (CH)"), "The Bachelor")
+        self.assertEqual(scout.search_title("Wilder"), "Wilder")
+
+    def test_push_payload_series(self):
+        p = scout.push_payload_series(WILDER_TPB, WILDER, GSW, "magnet:x", {"id": 4, "name": "The Pirate Bay (Prowlarr)"})
+        self.assertEqual(p["title"], "Wilder.S01.720p.HDTV.x264-GRP.Swissgerman.DESC")
+        self.assertEqual((p["tvdbId"], p["protocol"], p["magnetUrl"], p["indexerId"]), (337514, "torrent", "magnet:x", 4))
+        self.assertNotIn("tmdbId", p)
+
+
+class FakeApi:
+    """Radarr + Sonarr + Prowlarr + FlareSolverr in one, records writes."""
+
+    def __init__(self, movies=None, results=None, pages=None, fail=(), series=None, missing=None, episodes=None):
         self.movies = [RING] if movies is None else movies
+        self.series = [] if series is None else series
+        self.missing = eps(101, 102) if missing is None else missing
+        self.episodes = episodes
         self.results = [TPB] if results is None else results
-        self.pages = {"https://apibay.org/t.php?id=3872789": APIBAY} if pages is None else pages
+        self.pages = {"https://apibay.org/t.php?id=3872789": APIBAY, "https://apibay.org/t.php?id=555": WILDER_APIBAY} if pages is None else pages
         self.fail = set(fail)
-        self.pushes, self.fetches, self.searches = [], [], []
+        self.pushes, self.fetches, self.searches, self.spushes = [], [], [], []
+
+    def sonarr(self, method, path, query=None, body=None):
+        if "sonarr" in self.fail:
+            raise scout.ApiError("sonarr down")
+        if path == "/tag":
+            return [{"id": 13, "label": "audio-swiss-german"}]
+        if path == "/series":
+            return self.series
+        if path == "/indexer":
+            return [{"id": 4, "name": "The Pirate Bay (Prowlarr)", "protocol": "torrent"}]
+        if path == "/wanted/missing":
+            return {"totalRecords": len(self.missing), "records": [dict(e, seriesId=9) for e in self.missing]}
+        if path == "/episode":
+            return self.episodes or []
+        if path == "/parse":
+            t = query["title"]
+            return parsed_series(episodes=(101, 102)) if t.startswith("Wilder.S01") else parsed_series(series_id=None)
+        if path == "/release/push" and method == "POST":
+            self.spushes.append(body)
+            return [{"approved": False, "rejections": [{"reason": "test"}]}]
+        raise AssertionError(path)
 
     def radarr(self, method, path, query=None, body=None):
         if "radarr" in self.fail:
@@ -254,6 +320,71 @@ class Run(unittest.TestCase):
         api = FakeApi()
         self.run_scout(api, tmdb=1)
         self.assertEqual(api.searches, [])
+
+
+class RunSeries(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = pathlib.Path(self.tmp.name) / "state.json"
+        self.log = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_scout(self, api, dry_run=False, tmdb=None, tvdb=None, radarr=False):
+        s = scout.Scout(api.radarr if radarr else None, api.prowlarr, api.fetch, self.state, self.log.append, dry_run=dry_run, max_push=2, max_fetch=10, sonarr=api.sonarr)
+        return s.run(LANGS, tmdb=tmdb, tvdb=tvdb)
+
+    def test_season_pack_with_the_language_in_its_description_is_pushed_to_sonarr_once(self):
+        api = FakeApi(series=[WILDER], results=[WILDER_TPB])
+        self.assertEqual(self.run_scout(api), 0)
+        self.assertEqual(len(api.spushes), 1)
+        self.assertEqual(api.spushes[0]["title"], "Wilder.S01.720p.HDTV.x264-GRP.Swissgerman.DESC")
+        self.assertEqual(api.spushes[0]["tvdbId"], 337514)
+        self.assertTrue(any("pushed 'Wilder.S01.720p.HDTV.x264-GRP.Swissgerman.DESC' to Sonarr: rejected: test" in l for l in self.log))
+        self.run_scout(api)
+        self.assertEqual((len(api.spushes), len(api.fetches)), (1, 1))
+
+    def test_searches_title_without_suffix_and_alternate_titles_in_tv_categories(self):
+        api = FakeApi(series=[WILDER], results=[])
+        self.run_scout(api)
+        self.assertEqual([q["query"] for q in api.searches], ["Wilder"])
+        self.assertEqual((api.searches[0]["type"], api.searches[0]["categories"], api.searches[0]["indexerIds"]), ("search", [5000], [5, 4]))
+
+    def test_without_missing_episodes_untagged_or_unmonitored_series_are_ignored(self):
+        for series, missing in ((WILDER, []), (dict(WILDER, tags=[]), None), (dict(WILDER, monitored=False), None)):
+            api = FakeApi(series=[series], results=[WILDER_TPB], missing=missing)
+            self.run_scout(api)
+            self.assertEqual((api.searches, api.spushes), ([], []))
+
+    def test_release_of_episodes_that_are_not_missing_is_never_fetched(self):
+        api = FakeApi(series=[WILDER], results=[WILDER_TPB], missing=eps(105))
+        self.run_scout(api)
+        self.assertEqual((api.fetches, api.spushes), ([], []))
+
+    def test_name_sonarr_cannot_map_is_never_fetched(self):
+        api = FakeApi(series=[WILDER], results=[dict(WILDER_TPB, title="Der.Wilder.CH.S01.720p")])
+        self.run_scout(api)
+        self.assertEqual((api.fetches, api.spushes), ([], []))
+
+    def test_sonarr_error_skips_series_but_not_movies(self):
+        api = FakeApi(series=[WILDER], results=[TPB], fail={"sonarr"})
+        self.assertEqual(self.run_scout(api, radarr=True), 1)
+        self.assertEqual(len(api.pushes), 1)
+
+    def test_explicit_id_dry_run_takes_an_unmonitored_series_and_pushes_nothing(self):
+        api = FakeApi(series=[dict(WILDER, monitored=False)], results=[WILDER_TPB], missing=[], episodes=[{"id": 101, "hasFile": False}, {"id": 102, "hasFile": True}])
+        self.run_scout(api, dry_run=True, tvdb=337514)
+        self.assertEqual(api.spushes, [])
+        self.assertTrue(any("would push" in l and "Swissgerman.DESC" in l for l in self.log))
+
+    def test_tmdb_skips_series_and_tvdb_skips_movies(self):
+        api = FakeApi(series=[WILDER], results=[WILDER_TPB, TPB])
+        self.run_scout(api, tmdb=10248, radarr=True)
+        self.assertEqual(api.spushes, [])
+        api = FakeApi(series=[WILDER], results=[WILDER_TPB, TPB])
+        self.run_scout(api, tvdb=337514, radarr=True)
+        self.assertEqual((len(api.pushes), len(api.spushes)), (0, 1))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 [Unit]
-Description=Push torrents whose description (not name) says the requested audio language to Radarr
+Description=Push torrents whose description (not name) says the requested audio language to Radarr and Sonarr
 Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
 After=docker.service
 
