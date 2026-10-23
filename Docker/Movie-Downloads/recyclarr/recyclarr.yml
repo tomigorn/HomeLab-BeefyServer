@@ -131,6 +131,7 @@ radarr:
             qualities: [WEBRip-480p, WEBDL-480p]
           - name: DVD
           - name: SDTV
+          - name: Unknown
 
       # Same profile for English-original titles (language-policy.sh and the hook switch them), `Language: Original + English` 0.
       - trash_id: 64fb5f9858489bdac2af690e27c8f42f  # UHD Bluray + WEB
@@ -160,6 +161,7 @@ radarr:
             qualities: [WEBRip-480p, WEBDL-480p]
           - name: DVD
           - name: SDTV
+          - name: Unknown
 
       # Swiss German audio is a hard requirement (README "Swiss German"): the hook moves titles tagged audio-swiss-german here, and tags titles added on this profile.
       # One quality group, so a Swiss German release replaces any non-Swiss file, even a better one; the resolution CFs rank inside it.
@@ -179,7 +181,7 @@ radarr:
         min_format_score: 0
         qualities:
           - name: Any quality
-            qualities: [Bluray-2160p, WEBRip-2160p, WEBDL-2160p, Bluray-1080p, WEBRip-1080p, WEBDL-1080p, HDTV-1080p, Bluray-720p, WEBRip-720p, WEBDL-720p, HDTV-720p, Bluray-576p, Bluray-480p, WEBRip-480p, WEBDL-480p, DVD, SDTV]
+            qualities: [Bluray-2160p, WEBRip-2160p, WEBDL-2160p, Bluray-1080p, WEBRip-1080p, WEBDL-1080p, HDTV-1080p, Bluray-720p, WEBRip-720p, WEBDL-720p, HDTV-720p, Bluray-576p, Bluray-480p, WEBRip-480p, WEBDL-480p, DVD, SDTV, Unknown]
 
       # Space saver, picked per movie: plain TRaSH "HD Bluray + WEB" (6-15 GB).
       - trash_id: d1d67249d3890e49bc12e275d989a7e9  # HD Bluray + WEB
@@ -493,6 +495,7 @@ sonarr:
           - name: Bluray-480p
           - name: DVD
           - name: SDTV
+          - name: Unknown
 
       # Same profile for English-original titles (language-policy.sh and the hook switch them), `Language: Original + English` 0.
       - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7  # WEB-2160p (Combined)
@@ -522,6 +525,7 @@ sonarr:
           - name: Bluray-480p
           - name: DVD
           - name: SDTV
+          - name: Unknown
 
       # Space saver, picked per series: plain TRaSH "WEB-1080p".
       - trash_id: 72dae194fc92bf828f32cde7744e51a1  # WEB-1080p

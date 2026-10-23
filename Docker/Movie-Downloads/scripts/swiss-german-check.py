@@ -41,6 +41,7 @@ if sw is None:
     sys.exit(1)
 score = {f["name"]: f["score"] for f in sw["formatItems"]}
 allowed = [i for i in sw["items"] if i["allowed"]]
+check("quality Unknown allowed (XVID names without a source)", "Unknown" in [q["quality"]["name"] for i in allowed for q in i.get("items", [])])
 check("language Any (a Swiss German dub of a foreign film passes)", sw["language"]["name"] == "Any", sw["language"]["name"])
 check("one allowed quality group (a Swiss German release replaces a better non-Swiss file)", len(allowed) == 1 and len(allowed[0].get("items", [])) > 10, [i.get("name") for i in allowed])
 check("upgrades on, until Swiss German + 2160p", sw["upgradeAllowed"] and sw["cutoffFormatScore"] == score.get("Audio: Swiss German", 0) + score.get("Resolution: 2160p", 0), sw["cutoffFormatScore"])
@@ -80,8 +81,10 @@ def total(title):
 swiss_sd = total("Swiss.Check.2004.SwissGerman.DVDRip.x264-TEST")
 german_4k = total("Swiss.Check.2004.German.DL.2160p.UHD.BluRay.HDR.DTS-HD.MA.x265-TEST")
 swiss_1080 = total("Swiss.Check.2004.SwissGerman.1080p.BluRay.x264-TEST")
+swiss_unknown = total("Swiss.Check.2004.SwissGerman.XVID-TEST")
 swiss_720 = total("Swiss.Check.2004.SwissGerman.720p.WEB.h264-TEST")
 check("Swiss German DVD beats High German 2160p HDR (upgrade over an existing file)", swiss_sd > german_4k, (swiss_sd, german_4k))
+check("Swiss German 1080p > DVD > Unknown quality (Unknown is allowed, ranks lowest)", swiss_1080 > swiss_sd > swiss_unknown, (swiss_1080, swiss_sd, swiss_unknown))
 check("Swiss German 1080p beats Swiss German 720p", swiss_1080 > swiss_720, (swiss_1080, swiss_720))
 
 waiting = [m["title"] for m in tagged if not re.search(GSW, (m.get("movieFile") or {}).get("sceneName") or (m.get("movieFile") or {}).get("relativePath") or "", re.I)]
