@@ -27,13 +27,13 @@ Ryot has no URL by TMDB id, so `ryot-go` looks it up: `metadata` row (`source=tm
 | | |
 |---|---|
 | Code | `go/app.py` (stdlib + psycopg 3), tests `cd go && python3 -m unittest -v` |
-| DB | role `ryot_go`, `SELECT` on `metadata` only, password `RYOT_GO_DB_PASSWORD` |
+| DB | role `ryot_go`, `SELECT` on `metadata` only, password in `secrets/ryot_go_pgpass` (libpq `passfile` in `RYOT_GO_DSN`) |
 | Check | `curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' 'http://127.0.0.1:8011/go/tmdb/movie/603?title=The%20Matrix'` → `302 …` |
 
 ### Setup (once, and after a restore into a new database cluster: roles are not in the dump)
 
 ```bash
-cd ~/Projects/Docker/Ryot && PW=$(sed -n 's/^RYOT_GO_DB_PASSWORD=//p' .env)
+cd ~/Projects/Docker/Ryot && PW=$(sudo cut -d: -f5- secrets/ryot_go_pgpass)
 sudo docker exec -i -e PW="$PW" ryot-db sh -c 'psql -v ON_ERROR_STOP=1 -v pw="$PW" -U ryot -d ryot' <<'SQL'
 CREATE ROLE ryot_go LOGIN PASSWORD :'pw';
 GRANT CONNECT ON DATABASE ryot TO ryot_go;
@@ -50,14 +50,21 @@ sudo docker exec ryot-db psql -U ryot_go -d ryot -c 'select count(*) from metada
 - `USERS_DISABLE_LOCAL_AUTH=true`: no passwords. `USERS_ALLOW_REGISTRATION=true`: OIDC users are only created while it is on.
 - First user = Ryot admin (the owner, done).
 
-## Env (`.env`, secrets blank in `.env.example`)
+## Secrets
 
-| Key | Value |
-|---|---|
-| `RYOT_DB_PASSWORD` | secret, also builds `DATABASE_URL` in compose |
-| `SERVER_ADMIN_ACCESS_TOKEN` | secret |
-| `SERVER_OIDC_CLIENT_ID`, `SERVER_OIDC_CLIENT_SECRET` | secret, written from fastpi by `provision-tracker-sso.py` (`HomeLab-FastPi` `Authentik/README.md`) |
-| `MOVIES_AND_SHOWS_TMDB_ACCESS_TOKEN` | secret, TMDB "API Read Access Token" |
+Files under `secrets/` (gitignored), not in `.env`: `docker inspect` shows no value. How-to: `../_global/docs/secrets-as-files.md`.
+
+| File | Was | Owner / mode | Read by |
+|---|---|---|---|
+| `secrets/ryot_db_password` | `RYOT_DB_PASSWORD` | `70:1001 0440` | ryot-db `POSTGRES_PASSWORD_FILE` (init only), ryot `DATABASE_URL` |
+| `secrets/ryot_admin_access_token` | `SERVER_ADMIN_ACCESS_TOKEN` | `1001:1001 0400` | ryot |
+| `secrets/ryot_oidc_client_secret` | `SERVER_OIDC_CLIENT_SECRET` | `1001:1001 0400` | ryot |
+| `secrets/ryot_tmdb_access_token` | `MOVIES_AND_SHOWS_TMDB_ACCESS_TOKEN` (TMDB "API Read Access Token") | `1001:1001 0400` | ryot |
+| `secrets/ryot_go_pgpass` | `RYOT_GO_DB_PASSWORD` | `65110:65110 0400`, line `*:*:*:ryot_go:<password>` | ryot-go (libpq `passfile`) |
+
+- Ryot has no `*_FILE` option: its compose `entrypoint` reads the files and exports them into the process env, then runs the image entrypoint.
+- `SERVER_OIDC_CLIENT_ID` stays in `.env` (not secret). `provision-tracker-sso.py` on fastpi still prints `ENV Ryot/.env` lines: after a re-provision move the secret into `secrets/ryot_oidc_client_secret` and delete the line from `.env`.
+- New file: `printf %s "$value" | sudo tee secrets/<name> >/dev/null`, then the owner/mode above, then `sudo docker compose up -d --force-recreate`.
 
 `ryot` has `extra_hosts: sso.holy-grail.ch:192.168.1.2`: OIDC discovery goes straight to fastpi's Traefik.
 
@@ -65,7 +72,7 @@ sudo docker exec ryot-db psql -U ryot_go -d ryot -c 'select count(*) from metada
 
 ```bash
 sudo mkdir -p /srv/appdata/ryot-db
-cd ~/Projects/Docker/Ryot && sudo docker compose up -d --build
+cd ~/Projects/Docker/Ryot && sudo docker compose up -d --build   # secrets/ filled first ("Secrets")
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8010/health    # 200
 ```
 

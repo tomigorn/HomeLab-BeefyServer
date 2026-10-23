@@ -28,7 +28,9 @@ services:
       TZ: ${TZ}
       POSTGRES_USER: ryot
       POSTGRES_DB: ryot
-      POSTGRES_PASSWORD: ${RYOT_DB_PASSWORD:?database password required}
+      POSTGRES_PASSWORD_FILE: /run/secrets/ryot_db_password
+    secrets:
+      - ryot_db_password
     volumes:
       - ${APPDATA_ROOT}/ryot-db:/var/lib/postgresql
     networks:
@@ -50,8 +52,23 @@ services:
       - NET_BIND_SERVICE   # the bundled caddy binary carries it as a file capability
     env_file:
       - .env
-    environment:
-      DATABASE_URL: postgres://ryot:${RYOT_DB_PASSWORD}@ryot-db:5432/ryot
+    # No *_FILE support in Ryot: the secrets go from the files into the process env only, not into docker inspect.
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        db=$$(cat /run/secrets/ryot_db_password)
+        admin=$$(cat /run/secrets/ryot_admin_access_token)
+        oidc=$$(cat /run/secrets/ryot_oidc_client_secret)
+        tmdb=$$(cat /run/secrets/ryot_tmdb_access_token)
+        export DATABASE_URL="postgres://ryot:$$db@ryot-db:5432/ryot" SERVER_ADMIN_ACCESS_TOKEN="$$admin" SERVER_OIDC_CLIENT_SECRET="$$oidc" MOVIES_AND_SHOWS_TMDB_ACCESS_TOKEN="$$tmdb"
+        unset db admin oidc tmdb
+        exec docker-entrypoint.sh /usr/local/bin/run-container.sh
+    secrets:
+      - ryot_db_password
+      - ryot_admin_access_token
+      - ryot_oidc_client_secret
+      - ryot_tmdb_access_token
     # OIDC discovery goes straight to fastpi's Traefik, not via Cloudflare.
     extra_hosts:
       - "sso.holy-grail.ch:192.168.1.2"
@@ -81,7 +98,9 @@ services:
     user: "65110:65110"   # dedicated; the image user is 1000 = buntu (sudo) on this host
     environment:
       TZ: ${TZ}
-      RYOT_GO_DSN: postgres://ryot_go:${RYOT_GO_DB_PASSWORD:?ryot_go password required}@ryot-db:5432/ryot
+      RYOT_GO_DSN: postgres://ryot_go@ryot-db:5432/ryot?passfile=/run/secrets/ryot_go_pgpass
+    secrets:
+      - ryot_go_pgpass
     ports:
       - "${RYOT_GO_PORT}:8080"
     read_only: true
@@ -111,3 +130,19 @@ networks:
 # Volumes =================================================
 # =========================================================
 # None. The database is a bind mount under APPDATA_ROOT (NVMe), dumped nightly by scripts/ryot-db-backup.sh.
+
+# =========================================================
+# Secrets =================================================
+# =========================================================
+# Gitignored files under ./secrets, owner/mode per reader (README "Secrets"); compose bind-mounts them at /run/secrets/<name>.
+secrets:
+  ryot_db_password:
+    file: ./secrets/ryot_db_password
+  ryot_admin_access_token:
+    file: ./secrets/ryot_admin_access_token
+  ryot_oidc_client_secret:
+    file: ./secrets/ryot_oidc_client_secret
+  ryot_tmdb_access_token:
+    file: ./secrets/ryot_tmdb_access_token
+  ryot_go_pgpass:
+    file: ./secrets/ryot_go_pgpass
