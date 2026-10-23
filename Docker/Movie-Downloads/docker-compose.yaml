@@ -126,6 +126,39 @@ services:
       - ${APPDATA_ROOT}/prowlarr:/config
 
 # #########################################################
+# FLARESOLVERR ############################################
+# #########################################################
+# Headless Chromium that solves Cloudflare challenges for Prowlarr (1337x). Shares
+# gluetun's namespace, so its browser traffic leaves through the VPN and Prowlarr
+# reaches it at http://localhost:8191; no published port, nothing on the LAN.
+# Chromium needs a writable HOME and /tmp, hence the tmpfs mounts on a read_only root.
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.2
+    container_name: movie-flaresolverr
+    restart: unless-stopped
+    user: "65119:65119"
+    read_only: true
+    shm_size: 512m
+    tmpfs:
+      - /tmp:uid=65119,gid=65119,exec
+      - /home/flaresolverr:uid=65119,gid=65119,exec
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    network_mode: service:gluetun
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      - TZ=${TZ}
+      - HOME=/home/flaresolverr
+      - LOG_LEVEL=info
+    volumes:
+      # undetected_chromedriver patches /app/chromedriver in place; this copy is owned by 65119 (re-copy it from the image on a version bump, README "FlareSolverr").
+      - ${APPDATA_ROOT}/flaresolverr/chromedriver:/app/chromedriver
+
+# #########################################################
 # SABNZBD #################################################
 # #########################################################
 # Usenet. Shares gluetun's namespace like qBittorrent (since 2026-10-23), so the

@@ -1,7 +1,7 @@
 # Movie-Downloads — VPN, torrents, usenet, Radarr and Sonarr on beefy
 
 Everything needed to acquire a movie or a series and file it into the library:
-**gluetun** (ProtonVPN) wrapping **qBittorrent**, **Prowlarr** and **SABnzbd**, plus
+**gluetun** (ProtonVPN) wrapping **qBittorrent**, **Prowlarr**, **SABnzbd** and **FlareSolverr**, plus
 **Radarr**, **Sonarr** and **Bazarr** outside the tunnel. The folder keeps its
 original name although it handles series too (since 2026-10-19); requests come in
 via `../Seerr`. Playback is a separate project — see
@@ -63,13 +63,13 @@ sudo mkdir -p /srv/video/torrents/{movies,tv} \
              /srv/video/usenet/complete/{movies,tv} \
              /srv/video/media/{movies,tv} \
              /srv/video/.recyclebin \
-             /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr}
+             /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr,flaresolverr}
 sudo chown -R 1000:media /srv/video
 sudo chmod -R 2775 /srv/video
 sudo chown -R 1000:1000 /srv/appdata
-sudo chmod 2770 /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr}
+sudo chmod 2770 /srv/appdata/{gluetun,qbittorrent,prowlarr,sabnzbd,radarr,sonarr,bazarr,recyclarr,flaresolverr}
 for a in radarr:65101 sonarr:65102 prowlarr:65103 bazarr:65104 qbittorrent:65105 \
-         sabnzbd:65106 recyclarr:65107 gluetun:65116; do
+         sabnzbd:65106 recyclarr:65107 gluetun:65116 flaresolverr:65119; do
     sudo chown -R "${a#*:}" "/srv/appdata/${a%%:*}"
 done
 
@@ -246,6 +246,7 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
   | 65105 | qbittorrent | 1100 media | 65118 textfile-writers |
   | 65106 | sabnzbd | 1100 media | 65118 textfile-writers |
   | 65107 | recyclarr | 65107 | |
+  | 65119 | flaresolverr | 65119 | |
   | 65111 | vpn-status | 65111 | |
   | 65116 | gluetun (root, owns `/gluetun` files) | | |
 
@@ -255,7 +256,7 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
 
 ### Indexers (Prowlarr)
 
-All Newznab, priority 25, synced by Prowlarr to Radarr (movie categories 2000-2090) and Sonarr (TV 5000-5090, anime 5070).
+Usenet first: the three Newznab indexers have priority 25, the torrent indexers 40, so a usenet release wins a tie. Prowlarr syncs all of them to Radarr (movie categories 2000-2090) and Sonarr (TV 5000-5090, anime 5070).
 
 | Indexer | Base URL | App profile | Limits | Added by |
 |---|---|---|---|---|
@@ -267,6 +268,29 @@ All Newznab, priority 25, synced by Prowlarr to Radarr (movie categories 2000-20
 - RSS off because Radarr (every 30 min) + Sonarr (every 15 min) would use ~144 calls/day. Search costs ~3 calls per movie search.
 - `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) on every run, enables the indexer and is idempotent. New key: replace the file, re-run the script. A rejected key makes it exit 1 and change nothing.
 - **Disabled since 2026-10-19:** the first account was blocked (duplicate after the site migration). Re-enable by running the script with the new account's key.
+
+### Torrent indexers and FlareSolverr (since 2026-10-23)
+
+Added by `scripts/torrent-indexers.sh` (idempotent, run on beefy; creates the proxy, the tag and the four indexers, then triggers an app sync). Torrents are the fallback: they are only grabbed when usenet has nothing better, and releases with fewer than 5 seeders are rejected.
+
+| Indexer | Via FlareSolverr | Priority | Min seeders | Notes |
+|---|---|---|---|---|
+| 1337x | yes (tag `flaresolverr`) | 40 | 5 | Radarr + Sonarr |
+| EZTV | yes (tag `flaresolverr`) | 40 | 5 | TV only, so Sonarr only |
+| The Pirate Bay | no (API `apibay.org`) | 40 | 5 | Radarr + Sonarr |
+| Knaben | no | 40 | 5 | Radarr + Sonarr |
+
+- **Minimum seeders** is the indexer setting `torrentBaseSettings.appMinimumSeeders` (Prowlarr, per indexer); the sync pushes it to Radarr/Sonarr as the indexer's `minimumSeeders`. The app profile's own value is not used.
+- **FlareSolverr** (`movie-flaresolverr`, uid 65119, `read_only`, `cap_drop: ALL`) solves Cloudflare challenges with a headless Chromium. It sits in gluetun's namespace, so the browser traffic leaves through the VPN (same IP as Prowlarr) and Prowlarr reaches it at `http://localhost:8191`; it has no published port and no LAN exposure. Prowlarr: Settings, Indexers, proxy `FlareSolverr` with the tag `flaresolverr`; only indexers carrying that tag use it.
+- The image runs as 1000 by default; compose overrides it. `undetected_chromedriver` patches `/app/chromedriver` in place, so a copy owned by 65119 is bind-mounted from `/srv/appdata/flaresolverr/chromedriver`. On an image version bump re-copy it: `id=$(sudo docker create <image>); sudo docker cp $id:/app/chromedriver /srv/appdata/flaresolverr/chromedriver; sudo docker rm $id; sudo chown 65119:65119 /srv/appdata/flaresolverr/chromedriver`.
+- Check: `sudo docker exec movie-gluetun wget -qO- http://localhost:8191/` returns `FlareSolverr is ready!`.
+- **Deliberately not added:**
+
+| Site | Why not |
+|---|---|
+| YTS | the operator handed user data to rightsholders |
+| RARGB, ExtraTorrent.st | impostor brands of the original sites |
+| TorrentGalaxy | dead since 2025, the remaining mirrors are fakes |
 
 ### Wrong-film guard
 
@@ -797,7 +821,7 @@ Details, restore and metrics: `../Antivirus/README.md`.
    Radarr :7878   Sonarr :8989   Bazarr :6767   vpn-status 127.0.0.1:8087   clamav :3310   (+ Seerr :5055 from ../Seerr)
 ```
 
-Every download client is inside the tunnel (SABnzbd since 2026-10-23, like `sabnzbd` behind `gluetun_nzb` on fastpi): trackers, peers, indexers and the usenet provider only see the VPN IP. Radarr, Sonarr and Bazarr only talk to the LAN and metadata APIs.
+Every download client is inside the tunnel, and so is FlareSolverr (SABnzbd since 2026-10-23, like `sabnzbd` behind `gluetun_nzb` on fastpi): trackers, peers, indexers and the usenet provider only see the VPN IP. Radarr, Sonarr and Bazarr only talk to the LAN and metadata APIs.
 
 | | |
 |---|---|
