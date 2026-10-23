@@ -19,6 +19,7 @@ services:
       - /var/lib/docker/volumes:/var/lib/docker/volumes
     # No /:/host mount: it only serves Business-edition host management.
     # Without AGENT_SECRET the agent trusts whichever Portainer connects first after a start.
+    # Stays in env: the agent has no file option and the image no shell (_global/docs/secrets-as-files.md).
     environment:
       - AGENT_SECRET=${AGENT_SECRET:?set AGENT_SECRET in .env}
     security_opt:
