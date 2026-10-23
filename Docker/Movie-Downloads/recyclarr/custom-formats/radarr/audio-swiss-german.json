@@ -12,7 +12,7 @@
       "negate": false,
       "required": true,
       "fields": {
-        "value": "\\b(swiss[ ._-]?german|schw(ei|i{1,2}|y)zer?d(eu|ue|\u00fc|u)e?tsch)\\b"
+        "value": "\\b(swiss[ ._-]?ger(man)?|s(ch|h)?w(ei|i{1,2}|y)z(er?)?[ ._-]?[dt](eu|(\u00fc|ue|u|y|\u00c3.?|\\?|\ufffd|&uuml;|%C3%BC){0,2})e?tsch|s(ch|h)?wi{1,2}zer|mundart|gsw|de[-_]?ch)\\b"
       }
     }
   ]

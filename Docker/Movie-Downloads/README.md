@@ -554,7 +554,7 @@ Friendly names (docs only: Radarr/Sonarr tag labels allow only `a-z 0-9 -`, Seer
 - Several `audio-` tags = all of them required (each release profile must match). Several `subs-` tags = one combined Bazarr profile.
 - `audio-<original>` is dropped on add: the original audio is required anyway, and release names of e.g. English films rarely say `English`.
 - Limits of name matching (release profiles see only the name, not the tracks):
-  - **Swiss German** has no Radarr/Sonarr language. Real names (NZBgeek/NzbPlanet search, 2026-10-20 and 2026-10-23): `Swissgerman`, `SwissGerman`, `SWISSGERMAN`, `Swiss.German`, `SWISS.German`, `Schweizerdeutsch`, `Schweizerduetsch`, `Schwyzerduetsch`. `Mundart`, `Dialekt`, `CH-DE`, plain `Swiss` are noise and not matched. Nearly only Swiss productions are released that way; Radarr parses them as German.
+  - **Swiss German** has no Radarr/Sonarr language. Real names (NZBgeek/NzbPlanet search, 2026-10-20 and 2026-10-23): `Swissgerman`, `SwissGerman`, `SWISSGERMAN`, `Swiss.German`, `SWISS.German`, `Schweizerdeutsch`, `Schweizerduetsch`, `Schwyzerduetsch`, `Schwyzerd&uuml;tsch`. The pattern is deliberately tolerant (spellings: [Swiss German](#swiss-german)). Nearly only Swiss productions are released that way; Radarr parses them as German.
   - `audio-english` also accepts `Dual Audio`; `audio-french` accepts `VFF/VFQ/VF2/TRUEFRENCH` but not plain `MULTi` (it does not say which languages) and not `VOSTFR` (French subtitles).
   - A language word in the film title (*The French Connection*) satisfies the term.
 - **`audio-<language>` is a hard filter, not a score.** The release profile rejects every release without the term before scoring, so resolution cannot outrank it ("Does not contain one of the required terms").
@@ -578,13 +578,24 @@ Friendly names (docs only: Radarr/Sonarr tag labels allow only `a-z 0-9 -`, Seer
 
 | Part | What |
 |---|---|
-| Release profile `audio-swiss-german: …` | hard filter on the raw release name (`Swissgerman`, `Swiss.German`, `Schweizerdeutsch`, `Schwiizerdütsch`, `Schwyzerdütsch`, …; regex in `languages.tsv`) |
+| Release profile `audio-swiss-german: …` | hard filter on the raw release name (spellings below; regex in `languages.tsv`) |
 | Profile **Swiss German (Mundart) only - any quality** | language **Any** (a Swiss German dub of a foreign film passes), all qualities SDTV … Bluray-2160p in **one group** (a Swiss German release replaces any non-Swiss file, also a better one), cutoff Swiss German + 2160p |
 | Scores in that profile | `Audio: Swiss German` 1000000 · `Resolution: 2160p/1080p/720p/SD/DVD` 200000/150000/100000/50000/50000 · `German`, `Language: Not Original` 0 · LQ/BR-DISK/upscaled/DV w/o HDR … −2000000 · x265 HD and SDR 4K −50000 (one resolution step, taken instead of rejected: Swiss German releases are rare) · the rest as in the default profile |
 | Hook (on add, and on tags added later) | tag present → move to the profile, whatever was picked; added on the profile without the tag → tag added; profile language back to Any |
 | `request-tags.sh` (timer) | Seerr tags on titles already in Radarr; also puts the profile language back to Any (Recyclarr resets it to Original whenever it updates that profile) |
 | File name | `Audio: Swiss German` is renamed into the file name (`{Custom Formats}`), so Jellyfin shows it |
 
+Matched spellings (case-insensitive; one regex in `languages.tsv`, the same in the release profile and `Audio: Swiss German`; `tests/test_audio_terms.py` has 55 positive and 19 negative names):
+
+| Kind | Matches |
+|---|---|
+| `Swiss` + `German`/`Ger` | `Swiss German`, `Swiss.German`, `Swiss-German`, `Swiss_German`, `Swissgerman`, `SwissGer`, `SWISS.GER` |
+| `Schweizer`/`Schwyzer`/`Schwizer`/`Schwiizer`/`Shwizer`/`Swizer` + `deutsch`/`dütsch`/`tütsch` | separator space `.` `_` `-` or none: `Schweizerdeutsch`, `Schwyzerdütsch`, `Schwiizertüütsch`, `Schwiizer.Dütsch`, `Schwyzer-Duetsch`, `Schwizertütsch` |
+| ü written as | `ü`, `ue`, `u`, `y`, doubled (`düütsch`), broken encodings `Ã¼` / `Ã` + any char, `?`, `�`, `&uuml;`, `%C3%BC`, or missing (`Schwyzerdtsch`: Radarr drops `?` before custom-format matching) |
+| Alone | `Schwizer`, `Schwiizer`, `Shwizer`, `Swizer` (dialect spellings), `Mundart`, `gsw`, `de-CH` / `de_CH` / `deCH` |
+| Not matched | `Swiss` alone (*Swiss Army Man*, *The Swiss Family Robinson*, `Swiss.Cheese`, `Swiss.Miss`), `Swiss.Germany`, `Schweiz`, `CH`, `German`, `Schwyzer` / `Schweizer` alone (place name, surname, *Die Schweizermacher*), `Schweizer.Deutschland`, `Mund Art`, `de.CH` |
+
+- `Mundart` also matches other German dialects (rare in release names; accepted).
 - Nothing found shows: Seerr keeps the request at *Requested/Processing* (not Available); Radarr → Wanted → Missing (or Cutoff Unmet when a non-Swiss file exists); Interactive Search lists "Does not contain one of the required terms". `scripts/swiss-german-check.py` prints "Waiting for a Swiss German release: …".
 - The weekly cutoff search keeps looking for titles with a non-Swiss file (cutoff unmet).
 - `Audio: Swiss German` only ranks, it is not the filter: Radarr matches custom formats against the name minus the parsed film title, so in `Achtung.fertig.WK.Swissgerman.2013` the word counts as title and the format misses (the release profile still passes it; it then ranks by resolution like a non-Swiss file and may not replace an existing non-Swiss file).
@@ -598,7 +609,7 @@ Verified 2026-10-23 (Interactive Search, `GET /api/v3/release?movieId=`, never g
 
 | Title (original) | Approved | Rejected (best non-Swiss) |
 |---|---|---|
-| *The Ring Thing* (German) | none: all 3 releases are High German | `…German.2004.AC3.DVDRiP.x264-IND` (the file on disk), `…German.DL.COMPLETE.PAL.DVD9` — "Does not contain one of the required terms" |
+| *The Ring Thing* (German) | none: all 5 releases from the configured indexers are High German / Polish (re-checked with the tolerant pattern; a `Schwyzerd…` release is not on any of them) | `…German.2004.AC3.DVDRiP.x264-IND` (the file on disk), `…German.DL.COMPLETE.PAL.DVD9` — "Does not contain one of the required terms" |
 | *The Divine Order* (German) | `…2017.Swissgerman.1080p.BluRay.x264-ETM` 1170000 › `…Swissgerman.German.720p.BluRay` 1120000 › `…Swissgerman.2017.AC3.BDRiP` 70750 | `The.Divine.Order.2017.GERMAN.1080p.BluRay`, German DL remuxes |
 | *Babe* (English: Swiss German dub) | `…1995.German.Schwyzerduetsch.Oesterreichisch.DVDRip.x264` 1050000 | `Babe.1995.UHD.BluRay.2160p.DDP.5.1.DV.HDR.x265` 203950 — only for the missing Swiss German |
 
