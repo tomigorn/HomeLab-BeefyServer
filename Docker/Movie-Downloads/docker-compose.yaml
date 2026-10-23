@@ -264,7 +264,7 @@ services:
 # on its own cron, no ports, no docker.sock. Run a sync by hand with:
 #   docker compose run --rm recyclarr sync
   recyclarr:
-    image: ghcr.io/recyclarr/recyclarr:8.7.3
+    image: ghcr.io/recyclarr/recyclarr:8.8.0
     container_name: movie-recyclarr
     restart: unless-stopped
     user: "65107:65107"
