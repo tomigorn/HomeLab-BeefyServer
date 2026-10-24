@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly image auto-update
+Documentation=file:///home/buntu/Projects/README.md#image-auto-update
+
+[Timer]
+# Inside the 03:55-04:25 maintenance wake: after the 04:05 new-files scan (done about 04:11), finished before fastpi pulls the result at 04:20. A night asleep is skipped. Never a wake of its own.
+OnCalendar=*-*-* 04:12:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target

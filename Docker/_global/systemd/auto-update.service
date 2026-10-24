@@ -1,0 +1,32 @@
+[Unit]
+Description=Nightly image auto-update by tier with verification and rollback (Docker/_global/auto-update.conf)
+Documentation=file:///home/buntu/Projects/README.md#image-auto-update
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+Group=buntu
+# The docker group for this service only; buntu itself stays outside it (CLAUDE.md).
+SupplementaryGroups=docker
+StateDirectory=auto-update
+Environment=HOME=/home/buntu
+Environment=COOLDOWN_HOURS=24
+Environment=AUTO_UPDATE_HOST=beefy
+# fastpi pulls the file at 04:20 (security-av): no registry check or update starts after 04:16, at most 2 projects a night, the rest waits for the next night.
+Environment=AUTO_UPDATE_APPLY_BY=04:16
+Environment=AUTO_UPDATE_MAX_APPLY=2
+Environment=AUTO_UPDATE_TEXTFILE=/var/lib/auto-update/textfile
+# Hold the idle watcher off only while running, and release only what this run took (an owner's hold stays).
+ExecStartPre=+/bin/sh -c 'rm -f /run/auto-update-keep-awake; [ -e /run/beefy-keep-awake ] || { /usr/local/sbin/beefy-keep-awake on && touch /run/auto-update-keep-awake; }'
+ExecStart=/usr/bin/python3 /home/buntu/Projects/Docker/_global/scripts/auto_update.py
+ExecStopPost=+/bin/sh -c '[ -e /run/auto-update-keep-awake ] && /usr/local/sbin/beefy-keep-awake off; rm -f /run/auto-update-keep-awake'
+# Hard stop at about 04:22 (start 04:12); the soft limit above normally ends it by 04:19.
+TimeoutStartSec=600
+Nice=10
+IOSchedulingClass=idle
+# Writes backups under ~/backups and drives docker, which is root-equivalent anyway: no ProtectHome.
+NoNewPrivileges=true
+PrivateTmp=true
