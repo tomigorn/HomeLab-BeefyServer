@@ -1,0 +1,10 @@
+[Unit]
+Description=Original audio default: 5 min after boot and daily 04:24 while beefy is awake (04:20 fastpi pull is unaffected, the job is short)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Timer]
+OnBootSec=5min
+OnCalendar=*-*-* 04:24:00
+
+[Install]
+WantedBy=timers.target
