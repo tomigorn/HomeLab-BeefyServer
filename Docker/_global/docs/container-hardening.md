@@ -28,7 +28,7 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65111 | movie-vpn-status (read_only) | | |
 | 1001 | ryot (image user, writes its own /home/ryot) | | NET_BIND_SERVICE (caddy file cap) |
 | 70 | ryot-db | | |
-| 65112 | clamav | 1100, 65118 | DAC_READ_SEARCH |
+| 65112 | clamav | 1100, 65118 | none |
 | 65113 | cup-agent | | |
 | 65114 | cup-socket-proxy-ro | 973 docker | |
 | 65115 | cup-socket-proxy-unix | | |
@@ -46,6 +46,7 @@ Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secre
 | jellyfin | image has no non-root mode (tested: s6 service always switches user) |
 | movie-gluetun | creates tun0 and iptables rules |
 | portainer_agent | needs the full Docker API; the socket is root anyway |
+| clamav-hostscan | caps DAC_READ_SEARCH, DAC_OVERRIDE, CHOWN: weekly host scan reads everything (`/:/host:ro`); non-root cannot use DAC_READ_SEARCH. Safe because `network_mode: none`, read-only root fs, writes only state + textfile; the always-on `clamav` no longer mounts the host root |
 
 ## Images
 - `jellyfin-local`: `Jellyfin/Dockerfile` bakes in the Intel OpenCL runtime (Docker Mods are not used).
