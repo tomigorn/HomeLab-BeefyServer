@@ -4,7 +4,7 @@
 # editing languages.tsv, or after adding subs-<language>/audio-<language> tags to existing titles.
 #   ~/Projects/Docker/Movie-Downloads/scripts/language-policy.sh
 #
-# Radarr + Sonarr: custom format "Language: Original + English" (8000 in every
+# Radarr + Sonarr: custom format "Language: Original + English" (20000 in every
 #   profile, 0 in the "- English original" ones), one `lang-xx` tag per language and
 #   an auto-tagging rule that sets it from the title's original language.
 #   English-original titles on the main 4K profile and on Any quality move to their
@@ -17,7 +17,7 @@
 #   `audio-swiss-german` also moves the title to the Swiss German profile (hook, Radarr and Sonarr), whose language is set to Any here (Radarr; Sonarr profiles have none).
 # Bazarr: one subtitle profile per language ("English + German + <Language>",
 #   bound to the `lang-xx` tag), tag-based profile selection, OpenSubtitles.com
-#   without AI/machine translations; its API key goes to secrets/hook/ for the hook.
+#   without AI/machine translations, every new subtitle synced to the original-language audio (frame-rate fix on); its API key goes to secrets/hook/ for the hook.
 set -euo pipefail
 
 H=${H:-127.0.0.1}
@@ -31,7 +31,7 @@ TSV=$HERE/languages.tsv
 # English and German are in every profile and need no tag.
 LANGS=$(awk -F'\t' '!/^#/ && $4 == "yes" {printf "%s:%s ", $1, $2}' "$TSV")
 CF_NAME="Language: Original + English"
-CF_SCORE=8000
+CF_SCORE=20000
 ENG_SUFFIX=" - English original"
 ANY="Any quality - old & rare (upgrades to 4K)"
 SWISS="Swiss German (Mundart) only - any quality"
@@ -205,13 +205,18 @@ bz "$B/system/settings" -X POST "${ARGS[@]}" \
   --data-urlencode "settings-general-serie_tag_enabled=true" \
   --data-urlencode "settings-general-movie_tag_enabled=true" \
   --data-urlencode "settings-opensubtitlescom-include_ai_translated=false" \
-  --data-urlencode "settings-opensubtitlescom-include_machine_translated=false"
+  --data-urlencode "settings-opensubtitlescom-include_machine_translated=false" \
+  --data-urlencode "settings-subsync-use_subsync=true" \
+  --data-urlencode "settings-subsync-use_original_language=true" \
+  --data-urlencode "settings-subsync-no_fix_framerate=false" \
+  --data-urlencode "settings-subsync-use_subsync_threshold=false" \
+  --data-urlencode "settings-subsync-use_subsync_movie_threshold=false"
 DEFAULT=$(bz "$B/system/languages/profiles" | py 'import json,sys; print([p["profileId"] for p in json.load(sys.stdin) if p["name"]=="English + German"][0])')
 bz "$B/system/settings" -X POST \
   --data-urlencode "settings-general-serie_default_profile=$DEFAULT" \
   --data-urlencode "settings-general-movie_default_profile=$DEFAULT"
 bz "$B/system/languages/profiles" | py 'import json,sys; [print("   profile", p["profileId"], p["name"], "tag", p["tag"], [i["language"]+("+f" if i["forced"]=="True" else "") for i in p["items"]]) for p in json.load(sys.stdin)]'
-bz "$B/system/settings" | py 'import json,sys; d=json.load(sys.stdin); g=d["general"]; o=d["opensubtitlescom"]; print("   tags:", g["serie_tag_enabled"], g["movie_tag_enabled"], "defaults:", g["serie_default_profile"], g["movie_default_profile"], "| opensubtitles ai:", o["include_ai_translated"], "machine:", o["include_machine_translated"], "hash:", o["use_hash"])'
+bz "$B/system/settings" | py 'import json,sys; d=json.load(sys.stdin); g=d["general"]; o=d["opensubtitlescom"]; print("   subsync:", d["subsync"]["use_subsync"], "original audio:", d["subsync"]["use_original_language"], "framerate fix:", not d["subsync"]["no_fix_framerate"]); print("   tags:", g["serie_tag_enabled"], g["movie_tag_enabled"], "defaults:", g["serie_default_profile"], g["movie_default_profile"], "| opensubtitles ai:", o["include_ai_translated"], "machine:", o["include_machine_translated"], "hash:", o["use_hash"])'
 
 # The hook reaches Bazarr with this key (compose mounts secrets/hook at /secrets:ro).
 install -d -m 2750 -g hook-secret "$HERE/../secrets/hook"   # radarr + sonarr read it via the hook-secret group

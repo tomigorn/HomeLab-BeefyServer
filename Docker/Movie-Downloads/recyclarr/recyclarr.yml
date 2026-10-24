@@ -13,10 +13,10 @@
 ## See README "Download -> library pipeline", "Series (Sonarr)" and "Languages".
 ##
 ## Language policy (README "Languages"), identical in every profile:
-##   original + German + English  28000  > original + German  20000
-##   > original + English  8000  > original only  0  > anything else rejected.
-## `German DL` = German + original audio (20000). `Language: Original + English`
-## (8000) is a native custom format created by scripts/language-policy.sh, not a
+##   original + German + English  28000  > original + English  20000
+##   > original + German  8000  > original only  0  > anything else rejected.
+## `German DL` = German + original audio (8000). `Language: Original + English`
+## (20000) is a native custom format created by scripts/language-policy.sh, not a
 ## TRaSH one, hence the `except` on every reset_unmatched_scores. Every reject is
 ## -50000: the best possible positive sum (28000 + ~7200 audio/HDR/tier) must stay
 ## below the minimum score of 0.
@@ -224,9 +224,9 @@ radarr:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
           - name: Swiss German (Mundart) only - any quality
 
-      # German + original audio (TRaSH "German DL"): 20000 beats any English-only
-      # release of the same quality (best audio + HDR + tier sum is ~7200) and any
-      # original + English one (8000 + 7200). "(undefined)" catches German-named
+      # German + original audio (TRaSH "German DL"): 8000 beats any original-only
+      # release of the same quality (best audio + HDR + tier sum is ~7200) but stays
+      # below original + English (20000), owner's order 2026-10-25. "(undefined)" catches German-named
       # releases of German-original titles and DL/ML-tagged ones the parser
       # cannot resolve.
       - trash_ids:
@@ -234,17 +234,17 @@ radarr:
           - 6aad77771dabe9d3e9d7be86f310b867  # German DL (undefined)
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
-            score: 20000
+            score: 8000
           - name: Any quality - old & rare (upgrades to 4K)
-            score: 20000
+            score: 8000
           - name: Any quality - old & rare (upgrades to 4K) - English original
-            score: 20000
+            score: 8000
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
-            score: 20000
+            score: 8000
           - name: HD Bluray + WEB
-            score: 20000
+            score: 8000
           - name: Anime - Remux + WEB 1080p
-            score: 20000
+            score: 8000
           - name: Swiss German (Mundart) only - any quality
             score: 20000
       # Own formats (recyclarr/custom-formats, a local resource provider in recyclarr/settings.yml), scored only in the Swiss German profile.
@@ -276,13 +276,13 @@ radarr:
         assign_scores_to:
           - name: Swiss German (Mundart) only - any quality
             score: 50000
-      # Japanese + English anime releases ("Dual Audio" in the title). Same rung
+      # Japanese + English anime releases ("Dual Audio" in the title). Same rung (20000)
       # as "Language: Original + English", which title-only anime names rarely hit.
       - trash_ids:
           - 4a3b087eea2ce012fcc1ce319259a3be  # Anime Dual Audio
         assign_scores_to:
           - name: Anime - Remux + WEB 1080p
-            score: 8000
+            score: 20000
       # Dub only (`German`), no original audio, and every unwanted format: -50000.
       - trash_ids:
           - 86bc3115eb4e9873ac96904a4a68e19e  # German
@@ -579,17 +579,17 @@ sonarr:
           - c5dd0fd675f85487ad5bdf97159180bd  # German DL (undefined)
         assign_scores_to:
           - name: 4K HDR - WEB-2160p (1080p fallback)
-            score: 20000
+            score: 8000
           - name: Any quality - old & rare (upgrades to 4K)
-            score: 20000
+            score: 8000
           - name: Any quality - old & rare (upgrades to 4K) - English original
-            score: 20000
+            score: 8000
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
-            score: 20000
+            score: 8000
           - name: WEB-1080p
-            score: 20000
+            score: 8000
           - name: Anime - Bluray + WEB 1080p
-            score: 20000
+            score: 8000
           - name: Swiss German (Mundart) only - any quality
             score: 20000
       # Own formats (recyclarr/custom-formats/sonarr), scored only in the Swiss German profile, as in Radarr.
@@ -649,7 +649,7 @@ sonarr:
           - 418f50b10f1907201b6cfdf881f467b7  # Anime Dual Audio
         assign_scores_to:
           - name: Anime - Bluray + WEB 1080p
-            score: 8000
+            score: 20000
       - trash_ids:
           - 8a9fcdbb445f2add0505926df3bb7b8a  # German
           - ae575f95ab639ba5d15f663bf019e3e8  # Language: Not Original

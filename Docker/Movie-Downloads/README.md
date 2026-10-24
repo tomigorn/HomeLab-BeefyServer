@@ -463,9 +463,9 @@ sudo systemctl start cutoff-search.service; journalctl -u cutoff-search -n 5   #
 
 ### Languages
 
-Policy (2026-10-19): audio = the original language plus German plus English; if
-that does not exist, drop one (German first choice, English second); never a dub
-without the original track. Subtitles = English + German + the original language.
+Policy (2026-10-19, order changed by the owner 2026-10-25): audio = the original language plus German plus English; if
+that does not exist, drop one (English first choice, German second); never a dub
+without the original track. Subtitles = English + German + the original language, every new subtitle synced to the original-language audio by Bazarr (below). Films, series and anime alike; existing titles below the cutoff upgrade to the new order.
 Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-policy.sh`
 (what Recyclarr cannot express: one native custom format, tags, Bazarr profiles),
 `scripts/request-tags.sh` (Seerr tags on existing titles), `../Seerr/scripts/configure.sh` (anime profile).
@@ -473,8 +473,8 @@ Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-poli
 | Rung | Audio | Score | How it is detected |
 |---|---|---|---|
 | 1 | original + German + English | 28000 | `German DL` + `Language: Original + English` |
-| 2 | original + German | 20000 | TRaSH `German DL` (German + original audio), `German DL (undefined)` |
-| 3 | original + English (non-English title) | 8000 | `Language: Original + English` (own CF: English, the original, and a language other than the original all present); anime also `Anime Dual Audio` 8000 (title says "Dual Audio"); 0 in the English-original profiles |
+| 2 | original + English (non-English title) | 20000 | `Language: Original + English` (own CF: English, the original, and a language other than the original all present); anime also `Anime Dual Audio` 20000 (title says "Dual Audio"); 0 in the English-original profiles |
+| 3 | original + German | 8000 | TRaSH `German DL` (German + original audio), `German DL (undefined)`; the Swiss German profile keeps 20000 |
 | 4 | original only | 0 | untagged releases count as the original language |
 | rejected | dub only (`German`, `Dubs Only`), no original track (`Language: Not Original`), every unwanted format | −50000 | Radarr additionally keeps profile language `Original` (rejects a release without the original audio, source-checked in Radarr 6: a multi-language release passes if the original is among its languages); Sonarr has no profile language, the CF does it |
 
@@ -483,6 +483,8 @@ Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-poli
   (quality itself still ranks first: any allowed 2160p beats any 1080p). Rejects are
   −50000 rather than TRaSH's −10000 so the best possible sum (28000 + 7200) stays
   below the minimum score of 0.
+- Anime: `Anime Dual Audio` and `Language: Original + English` add up when both match (40000), so a Japanese + English "Dual Audio" release beats a Japanese + German + English one named only "Multi" (28000). Rare, accepted.
+- Subtitle sync (Bazarr, set by `scripts/language-policy.sh`): every downloaded subtitle is synced (ffsubsync) to the original-language audio track, with frame-rate correction (fixes the slowly growing lag of subtitles made for 24 vs 23.976 fps). One title by hand: Bazarr → the title → subtitle → Sync, or `PATCH /api/subtitles?action=sync&reference=a:<n>`.
 - English originals: a custom format cannot see that the original *is* English, so `Language: Original + English` fires on any extra dub (English + Portuguese got 8000). English-original titles therefore use the twin profiles `… - English original` (Radarr and Sonarr, 4K default and Any quality), identical except that CF at 0: English + German 20000 › English (+ any dub) 0.
   - `scripts/language-policy.sh` moves English originals on the main 4K profile to the twin and others back (existing titles).
   - Titles added later (Seerr, Radarr/Sonarr UI, import lists): Connect → Custom Script **Language policy** runs `scripts/language-policy-hook.sh` (mounted at `/scripts:ro` in both containers, registered by `language-policy.sh`) and does the same move for that one title (plus old/niche -> Any quality, see [Old and rare titles](#old-and-rare-titles)), before its first search.
