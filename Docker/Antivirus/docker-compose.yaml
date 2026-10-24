@@ -7,7 +7,7 @@ services:
 # #########################################################
 # freshclam + clamd (port 3310 on movie-downloads, for the SABnzbd/qBittorrent completion hook) + scan.sh for the nightly and manual scans.
   clamav:
-    build: ./clamav
+    build: ./clamav   # rebuild: see README (build with --network host)
     image: clamav-local:latest
     container_name: clamav
     # Non-root, also for the timer's `docker exec clamav /scan.sh`. 1100 = media (quarantine moves on
@@ -27,7 +27,7 @@ services:
     restart: unless-stopped
     environment:
       - HOST=beefy
-      - SCAN_ROOTS=/scan/ssd-hot /scan/appdata
+      - SCAN_ROOTS=/scan/ssd-hot
       - QUARANTINE=/scan/ssd-hot/quarantine
       - STATE=/state
       - TEXTFILE=/textfile
@@ -37,11 +37,6 @@ services:
       - type: bind
         source: /srv/.disks/ssd-hot
         target: /scan/ssd-hot
-        bind:
-          create_host_path: false
-      - type: bind
-        source: /srv/appdata
-        target: /scan/appdata
         bind:
           create_host_path: false
       # Host root for "scan.sh all", report only.

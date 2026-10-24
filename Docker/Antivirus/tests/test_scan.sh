@@ -110,7 +110,7 @@ assert_eq "files_listed 0" 0 "$(metric clamav_files_listed new)"
 
 echo "== new: excludes"
 reset; marker
-for p in antivirus-quarantine/x.exe some/quarantine/x.exe .snapshots/s1/x.exe qbittorrent/incomplete/x.exe movies/a.part movies/b.!qB sonarr/logs.db-wal sonarr/logs.db-shm sonarr/logs.db-journal; do fresh "$T/red/$p"; done
+for p in antivirus-quarantine/x.exe some/quarantine/x.exe .snapshots/s1/x.exe qbittorrent/incomplete/x.exe qbittorrent/config/qBittorrent/logs/qbittorrent.log.bak3 movies/a.part movies/b.!qB sonarr/logs.db-wal sonarr/logs.db-shm sonarr/logs.db-journal; do fresh "$T/red/$p"; done
 fresh "$T/red/movies/keep.mkv"
 run new > /dev/null
 assert_eq "only keep.mkv listed" "$T/red/movies/keep.mkv" "$(cat "$STATE/new.list")"

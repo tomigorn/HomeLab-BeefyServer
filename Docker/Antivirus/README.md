@@ -13,17 +13,17 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | `scan.sh all`, `scan.sh <path>…`, `scan.sh restore <file>` | by hand | see below |
 
 - 04:05: fastpi wakes beefy at 03:55 and it powers off about 04:25 when idle, so a later time never fires. A night asleep is skipped: the marker stays, the next run catches up.
-- Install / reinstall the units and host folders: `Docker/Antivirus/install.sh`. Start: `sudo docker compose up -d --build` (Movie-Downloads first: its network must exist).
+- Install / reinstall the units and host folders: `Docker/Antivirus/install.sh`. Start: `sudo docker build --network host -t clamav-local:latest ./clamav && sudo docker compose up -d` (Movie-Downloads first: its network must exist).
 
 ## Nightly and manual scans
 
 | Command on beefy | Scans | Infected files |
 |---|---|---|
-| `sudo docker exec clamav /scan.sh new` | files under `/scan/ssd-hot`, `/scan/appdata` changed since the last good run | moved to quarantine |
+| `sudo docker exec clamav /scan.sh new` | files under `/scan/ssd-hot` changed since the last good run | moved to quarantine |
 | `sudo docker exec clamav /scan.sh all` | both and the host root (`/host`, read-only, one filesystem) | report only |
 | `sudo docker exec clamav /scan.sh /scan/ssd-hot/<path>` | the given files/folders | moved under `/scan/...`, report only for `/host/...` |
 
-- `/scan/ssd-hot` = `/srv/.disks/ssd-hot` (the SSD branch, where every download and import lands), `/scan/appdata` = `/srv/appdata`. The `/srv/video` union and the cold HDD are never scanned, so it stays spun down.
+- `/scan/ssd-hot` = `/srv/.disks/ssd-hot` (the SSD branch, where every download and import lands). `/srv/appdata` (app configs, owner-only since 2026-10-22) is not scanned: no outside files land there. The `/srv/video` union and the cold HDD are never scanned, so it stays spun down.
 - Exit codes `0` clean, `1` infected, `2` errors (marker kept, next run retries). Files over 2 GiB are skipped by ClamAV (`clamav_files_skipped_large`). Details: fastpi repo `Docker/antivirus/README.md`.
 - Logs: `journalctl -u clamav-scan`, `/var/lib/clamav-scan/last-<mode>.log`.
 
@@ -66,6 +66,6 @@ python3 Docker/Antivirus/tests/test_hook.py
 sudo docker run --rm --entrypoint sh -v "$PWD/Docker/Antivirus:/src:ro" clamav-local:latest /src/tests/test_scan.sh   # busybox
 ```
 
-Changing `clamav/` needs a rebuild: `sudo docker compose up -d --build`.
+Changing `clamav/` needs a rebuild: `sudo docker build --network host -t clamav-local:latest ./clamav && sudo docker compose up -d clamav`. `--network host` because the DOCKER-USER guard drops a build container's DNS to the LAN (compose builds can't get the host network without a BuildKit entitlement).
 
-**Rebuild** (`clamav-local`, FROM `alpine:latest`): `sudo docker compose up -d --build --pull clamav` when the security scan lists a fixable Alpine CVE, otherwise monthly.
+**Rebuild** (`clamav-local`, FROM `alpine:latest`): `sudo docker build --network host --pull -t clamav-local:latest ./clamav && sudo docker compose up -d clamav` when the security scan lists a fixable Alpine CVE, otherwise monthly.

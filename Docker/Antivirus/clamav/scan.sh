@@ -79,7 +79,7 @@ under_roots() {
 list_find() {
 	if [ -e "$STATE/last-run" ]; then since=$(stat -c %Y "$STATE/last-run"); else since=$(( $(date +%s) - 86400 )); fi
 	find $SCAN_ROOTS -xdev \
-		\( -path "$QUARANTINE" -o -path '*/quarantine' -o -path '*/.snapshots' -o -path '*/incomplete' \) -prune -o \
+		\( -path "$QUARANTINE" -o -path '*/quarantine' -o -path '*/.snapshots' -o -path '*/incomplete' -o -path '*/qBittorrent/logs' \) -prune -o \
 		-type f ! -name '*.part' ! -name '*.!qB' ! -name '*-wal' ! -name '*-shm' ! -name '*-journal' \
 		-exec stat -c '%Z %Y %n' {} + > "$STATE/find.out" 2> "$STATE/find.err"
 	VANISHED=$((VANISHED + $(grep -c 'No such file or directory$' "$STATE/find.err")))
@@ -103,7 +103,7 @@ list_btrfs() {
 	done
 	sort -u "$STATE/find-new.list" | while IFS= read -r f; do
 		case $f in
-			"$QUARANTINE"/* | */quarantine/* | */.snapshots/* | */incomplete/* | *.part | *.!qB | *-wal | *-shm | *-journal) ;;
+			"$QUARANTINE"/* | */quarantine/* | */.snapshots/* | */incomplete/* | */qBittorrent/logs/* | *.part | *.!qB | *-wal | *-shm | *-journal) ;;
 			*) [ -f "$f" ] && printf '%s\n' "$f" ;;
 		esac
 	done
