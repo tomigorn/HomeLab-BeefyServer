@@ -20,13 +20,12 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - DAC_READ_SEARCH   # read files owned by any uid to scan them; writes stay limited to the groups above
     # clamd and a nightly clamscan each hold the signatures (~1.5G), twice that while clamd reloads them.
     mem_limit: 4g
     restart: unless-stopped
     environment:
       - HOST=beefy
+      - SCAN_HOST=0   # the host root is scanned by clamav-hostscan, which has no network
       - SCAN_ROOTS=/scan/ssd-hot
       - QUARANTINE=/scan/ssd-hot/quarantine
       - STATE=/state
@@ -39,11 +38,6 @@ services:
         target: /scan/ssd-hot
         bind:
           create_host_path: false
-      # Host root for "scan.sh all", report only.
-      - type: bind
-        source: /
-        target: /host
-        read_only: true
       - type: bind
         source: /var/lib/clamav-scan
         target: /state
@@ -66,6 +60,56 @@ services:
         max-file: "3"
     networks:
       - movie-downloads
+
+# #########################################################
+# ClamAV whole-host scan ##################################
+# #########################################################
+# Weekly, started by clamav-hostscan.timer (`docker compose run --rm clamav-hostscan`), never by `up`. Reads the host, so it has no network.
+  clamav-hostscan:
+    image: clamav-local:latest
+    profiles: ["hostscan"]
+    entrypoint: ["/hostscan.sh"]
+    user: "0:0"   # a non-root uid has no effective capabilities in Docker, so DAC_READ_SEARCH only works for root
+    network_mode: none
+    read_only: true
+    mem_limit: 2g
+    restart: "no"
+    healthcheck:
+      disable: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH   # read every file of the host
+      - DAC_OVERRIDE      # write the state dir (owned by 65112) and the textfile dir (group 65118)
+      - CHOWN             # hand the results back to 65112 for the clamav container
+    environment:
+      - HOST=beefy
+      - SCAN_HOST=0
+      # Not the whole disk: / holds ~630k files (Docker layers, /usr) and a scan outlasts beefy's 04:00-04:25 window. These are the writable, user-reachable places.
+      - SCAN_ROOTS=/host/home /host/root /host/etc /host/opt /host/usr/local /host/tmp /host/var/tmp /host/srv/appdata
+      - QUARANTINE=/tmp   # unused: `all` is report only, scan.sh just needs an existing directory
+      - STATE=/state
+      - TEXTFILE=/state/textfile
+      - STATE_OWNER=65112:65112
+      - TEXTFILE_OWNER=65112:65118
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    volumes:
+      - type: bind
+        source: /
+        target: /host
+        read_only: true
+      - type: volume
+        source: clamav-db
+        target: /var/lib/clamav
+        read_only: true
+      - type: bind
+        source: /var/lib/clamav-scan
+        target: /state
+        bind:
+          create_host_path: false
 
 # =========================================================
 # Networks ================================================

@@ -13,8 +13,9 @@ COPY freshclam.conf /etc/clamav/freshclam.conf
 COPY clamd.conf /etc/clamav/clamd.conf
 COPY entrypoint.sh /entrypoint.sh
 COPY scan.sh /scan.sh
+COPY hostscan.sh /hostscan.sh
 
-RUN chmod +x /entrypoint.sh /scan.sh && \
+RUN chmod +x /entrypoint.sh /scan.sh /hostscan.sh && \
     chown clamav:clamav /etc/clamav/freshclam.conf
 
 VOLUME /var/lib/clamav

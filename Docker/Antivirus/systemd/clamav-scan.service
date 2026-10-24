@@ -1,5 +1,5 @@
 [Unit]
-Description=ClamAV scan of new files on ssd-hot and appdata
+Description=ClamAV scan of new files on ssd-hot
 Documentation=file:///home/buntu/Projects/Docker/Antivirus/README.md
 After=docker.service
 Requires=docker.service
