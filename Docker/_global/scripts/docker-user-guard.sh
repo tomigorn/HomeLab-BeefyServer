@@ -5,7 +5,7 @@
 # Outbound: containers may not open connections into the LAN, except Jellyfin/Seerr and Ryot → fastpi :443 (sso + tracker via extra_hosts).
 # IPv6: no container has IPv6, but docker-proxy listens on [::] for every published port, so only sshd is reachable over IPv6.
 #
-# Idempotent: rebuilds both chains on every run. `--persist` also writes them into /etc/iptables/rules.v4 / rules.v6 (only those lines; Docker's own chains there are left alone).
+# Idempotent: rebuilds both chains on every run. `--persist` writes /etc/iptables/rules.v4 / rules.v6 with ONLY these two chains. Never `netfilter-persistent save`: it freezes Docker's own per-bridge rules, which come back at boot for bridges that no longer exist and silently drop traffic to reused container IPs (seen on fastpi 2026-10-24).
 set -euo pipefail
 
 IFACE=enp6s0
@@ -35,24 +35,20 @@ ip6tables -S INPUT | { grep -E '^-A INPUT .*--dports .* -j DROP$' || true; } | s
 ip6tables -I INPUT -i "$IFACE" -j BEEFY-INPUT6
 
 if [[ ${1:-} == --persist ]]; then
-  RULES_DIR=${RULES_DIR:-/etc/iptables} python3 - <<'PY'
-import os, subprocess
-d = os.environ['RULES_DIR']
-def put(path, cmd, chain, hook):
-    lines = open(path).read().split('\n')
-    start = lines.index('*filter'); end = lines.index('COMMIT', start)
-    body = [l for l in lines[start + 1:end] if not l.startswith((f'-A {chain} ', f':{chain} ', '-A INPUT -i enp6s0 -p tcp -m multiport --dports'))]
-    last_decl = max(i for i, l in enumerate(body) if l.startswith(':'))
-    body.insert(last_decl + 1, f':{chain} - [0:0]')
-    if hook not in body:
-        body.insert(next(i for i, l in enumerate(body) if l.startswith('-A ')), hook)
-    rules = [l for l in subprocess.check_output([cmd, '-S', chain], text=True).splitlines() if l.startswith(f'-A {chain} ')]
-    open(path, 'w').write('\n'.join(lines[:start + 1] + body + rules + lines[end:]))
-put(f'{d}/rules.v4', 'iptables', 'DOCKER-USER', '-A FORWARD -j DOCKER-USER')
-put(f'{d}/rules.v6', 'ip6tables', 'BEEFY-INPUT6', '-A INPUT -i enp6s0 -j BEEFY-INPUT6')
-PY
-  iptables-restore --test "${RULES_DIR:-/etc/iptables}/rules.v4" && ip6tables-restore --test "${RULES_DIR:-/etc/iptables}/rules.v6"
-  echo "persisted to ${RULES_DIR:-/etc/iptables}/rules.v4 + rules.v6"
+  d=${RULES_DIR:-/etc/iptables}
+  persist() {  # file, save-cmd, restore-cmd, chain, hook
+    local tmp; tmp=$(mktemp)
+    { echo "# Written by docker-user-guard.sh --persist: only $4, Docker builds its own chains."
+      echo "*filter"; echo ":$4 - [0:0]"; echo "$5"
+      "$2" -S "$4" | grep '^-A '
+      echo "COMMIT"; } > "$tmp"
+    "$3" --test < "$tmp"
+    [[ -e $1 ]] && cp -a "$1" "$1.bak-$(date +%Y%m%d-%H%M%S)"
+    install -m 640 "$tmp" "$1"; rm -f "$tmp"
+  }
+  persist "$d/rules.v4" iptables iptables-restore DOCKER-USER "-A FORWARD -j DOCKER-USER"
+  persist "$d/rules.v6" ip6tables ip6tables-restore BEEFY-INPUT6 "-A INPUT -i $IFACE -j BEEFY-INPUT6"
+  echo "persisted to $d/rules.v4 + rules.v6"
 fi
 
 iptables -L DOCKER-USER -n -v --line-numbers

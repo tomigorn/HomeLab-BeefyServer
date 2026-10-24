@@ -64,7 +64,7 @@ Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secre
 | SSH beefy → fastpi | removed; only fastpi → beefy |
 
 ## Firewall (2026-10-24)
-Script: `_global/scripts/docker-user-guard.sh` (idempotent; `--persist` writes only its own lines into `/etc/iptables/rules.v4` / `rules.v6`, loaded at boot by netfilter-persistent).
+Script: `_global/scripts/docker-user-guard.sh` (idempotent; `--persist` writes `/etc/iptables/rules.v4` / `rules.v6` with only its two chains, loaded at boot by netfilter-persistent). Never `netfilter-persistent save`: it freezes Docker's per-bridge rules, which return at boot for deleted bridges and drop traffic to reused container IPs.
 
 | Direction | Rule |
 |---|---|
