@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # update-project.sh <compose-dir> <mode> [backup-paths...]
 #   mode: pull | build | recreate
-# Follows _global/UPDATE-RUNBOOK.md: snapshot image IDs, back up stateful paths
-# (bind dirs or "vol:<name>"), update, wait, verify every container of the
+# Follows _global/UPDATE-RUNBOOK.md: snapshot image IDs, pull/build, stop and back up stateful paths
+# (bind dirs or "vol:<name>"), start/recreate, wait, verify every container of the
 # project is running (and healthy if it has a healthcheck) with no crash loop;
 # on failure re-tag the old images and recreate (automatic rollback).
 # Env: SERVICES (pull/build/recreate only these, --no-deps; the verify still covers the whole project), WAIT (45), CHECK (functional check, a shell command; retried CHECK_TRIES=6 times 10 s apart),
@@ -31,17 +31,19 @@ if [[ -x scripts/traefik-plugin-test.sh ]]; then
   scripts/traefik-plugin-test.sh "$t" || { echo "FAIL $proj: plugin test failed on traefik:$t, nothing changed"; exit 1; }
 fi
 
-# backups
-for b in "$@"; do
-  if [[ $b == vol:* ]]; then v=${b#vol:}; docker run --rm -v "$v":/from:ro -v "$bk":/to alpine tar czf "/to/vol-$v.tgz" -C /from . && echo "  backup: volume $v -> $bk"
-  else [[ -e $b ]] && sudo tar czf "$bk/$(basename "$b").tgz" -C "$(dirname "$b")" "$(basename "$b")" && echo "  backup: $b -> $bk"; fi
-done
-
 case $mode in
   pull)     docker compose pull -q ${SERVICES:-} 2>&1 | grep -viE 'pulling|pulled|^$' | head -5 ;;
   build)    docker compose build --pull -q ${SERVICES:-} 2>&1 | grep -viE '^\s*$' | tail -3 ;;
   recreate) : ;;
 esac
+
+# backups: cold (services stopped after the pull), so a live database is never copied mid-write
+if (( $# )); then docker compose stop ${SERVICES:-} 2>&1 | grep -E 'Stopped|Error|error' | head -8; fi
+for b in "$@"; do
+  if [[ $b == vol:* ]]; then v=${b#vol:}; docker run --rm -v "$v":/from:ro -v "$bk":/to alpine tar czf "/to/vol-$v.tgz" -C /from . && echo "  backup: volume $v -> $bk"
+  else [[ -e $b ]] && sudo tar czf "$bk/$(basename "$b").tgz" -C "$(dirname "$b")" "$(basename "$b")" && echo "  backup: $b -> $bk"; fi
+done
+
 docker compose up -d --remove-orphans ${SERVICES:+--no-deps $SERVICES} 2>&1 | grep -E 'Recreat|Creat|Error|error' | head -8
 
 sleep "${WAIT:-45}"
