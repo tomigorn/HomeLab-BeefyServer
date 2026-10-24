@@ -66,8 +66,14 @@ class Decide(unittest.TestCase):
         self.assertEqual(p["action"], "ok")
 
     def test_original_in_name_kept(self):
-        p = oa.decide("Spanish", [t("spa", "Original audio", False, 1)])
+        p = oa.decide("Spanish", [t("spa", "Spanish Original", False, 1)])
         self.assertEqual(p["edits"], [("a1", ["flag-default=1"])])
+
+    def test_unrelated_name_replaced(self):
+        p = oa.decide("English", [t("eng", "United States (Original)", True, 1)])
+        self.assertEqual(p["edits"], [("a1", ["name=English (Original)"])])
+        p = oa.decide("Japanese", [t("jpn", "Mono Mix", True, 1)])
+        self.assertEqual(p["edits"], [("a1", ["name=Japanese (Original)"])])
 
     def test_only_flag_fix_when_name_ok(self):
         p = oa.decide("Spanish", [t("ger", "", True, 1), t("spa", "Spanish (Original)", True, 2)])
@@ -86,21 +92,41 @@ class Decide(unittest.TestCase):
         p = oa.decide("German", [t("deu", "", False, 1)])
         self.assertEqual(p["action"], "set")
 
-    def test_commentary_by_name_loses(self):
-        p = oa.decide("English", [t("eng", "Director Commentary", True, 1), t("eng", "English", True, 2)])
+    def test_commentary_by_name_loses_and_gets_flag(self):
+        p = oa.decide("English", [t("eng", "Director Commentary", True, 1), t("eng", "English", False, 2)])
         self.assertEqual(p["track"], 2)
-        self.assertIn(("a1", ["flag-default=0"]), p["edits"])
+        self.assertEqual(p["edits"][0], ("a1", ["flag-default=0", "flag-commentary=1"]))
 
-    def test_commentary_flag_loses(self):
+    def test_commentary_words(self):
+        for w in ("Kommentar", "Commentaire", "commentary"):
+            self.assertEqual(oa.decide("English", [t("eng", w, False, 1), t("eng", "", False, 2)])["track"], 2)
+
+    def test_commentary_flag_loses_without_extra_edit(self):
         a = t("eng", "", False, 1)
         a["commentary"] = True
         p = oa.decide("English", [a, t("eng", "", True, 2)])
         self.assertEqual(p["track"], 2)
+        self.assertEqual([e[0] for e in p["edits"]], ["a2"])
 
-    def test_two_matches_ambiguous(self):
-        p = oa.decide("English", [t("eng", "English", True, 1), t("eng", "English 2.0", False, 2)])
+    def test_commentary_flag_not_repeated(self):
+        a = t("eng", "Commentary", False, 1)
+        a["commentary"] = True
+        p = oa.decide("English", [a, t("eng", "English (Original)", True, 2)])
+        self.assertEqual(p["action"], "ok")
+
+    def test_only_commentary_skipped(self):
+        p = oa.decide("English", [t("eng", "Commentary", True, 1)])
         self.assertEqual(p["action"], "skip")
-        self.assertIn("ambiguous", p["reason"])
+
+    def test_several_prefers_default(self):
+        p = oa.decide("English", [t("eng", "English", False, 1), t("eng", "English 2.0", True, 2)])
+        self.assertEqual(p["track"], 2)
+        self.assertEqual(p["candidates"], 2)
+
+    def test_several_none_default_takes_first(self):
+        p = oa.decide("English", [t("eng", "English", False, 1), t("eng", "English 2.0", False, 2)])
+        self.assertEqual(p["track"], 1)
+        self.assertNotIn(("a2", ["flag-default=0"]), p["edits"])
 
     def test_non_mkv(self):
         p = oa.decide("Spanish", [], suffix=".mp4")
@@ -121,6 +147,7 @@ class Describe(unittest.TestCase):
     def test_lines(self):
         self.assertEqual(oa.describe({"action": "ok"}, "Spanish"), "ok")
         self.assertEqual(oa.describe({"action": "set", "track": 2}, "Spanish"), "set Spanish track 2 default")
+        self.assertEqual(oa.describe({"action": "set", "track": 2, "candidates": 2}, "Spanish"), "set Spanish track 2 default (of 2 candidates)")
         self.assertEqual(oa.describe({"action": "skip", "reason": "x"}, "Spanish"), "skip: x")
 
     def test_propedit_args(self):

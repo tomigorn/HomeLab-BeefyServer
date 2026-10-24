@@ -52,7 +52,7 @@ def parse_tracks(info):
 
 
 def is_commentary(tr):
-    return tr.get("commentary") or re.search(r"commentary|kommentar", tr["name"], re.I) is not None
+    return re.search(r"commentary|kommentar|commentaire", tr["name"], re.I) is not None
 
 
 def decide(language, tracks, nlink=1, suffix=".mkv"):
@@ -64,35 +64,41 @@ def decide(language, tracks, nlink=1, suffix=".mkv"):
     if not codes:
         return {"action": "skip", "reason": f"unknown language {language!r}"}
     hits = [x for x in tracks if x["lang"] in codes]
-    if len(hits) > 1:
-        hits = [x for x in hits if not is_commentary(x)]
-        if len(hits) != 1:
-            return {"action": "skip", "reason": f"ambiguous: several {language} audio tracks"}
     if not hits:
         return {"action": "skip", "reason": f"no {language} audio track (dub only or und)"}
-    keep = hits[0]
+    cands = [x for x in hits if not (x.get("commentary") or is_commentary(x))]
+    if not cands:
+        return {"action": "skip", "reason": f"only {language} commentary tracks"}
+    keep = next((x for x in cands if x["default"]), cands[0])
     edits = []
     for x in tracks:
         args = []
         if x is keep:
             if not x["default"]:
                 args.append("flag-default=1")
-            if "original" not in x["name"].lower():
-                args.append(f"name={x['name']} (Original)" if x["name"] else f"name={language} (Original)")
+            name = x["name"]
+            if language.lower() in name.lower():
+                if "original" not in name.lower():
+                    args.append(f"name={name} (Original)")
+            elif name != f"{language} (Original)":
+                args.append(f"name={language} (Original)")
         elif x["default"]:
             args.append("flag-default=0")
+        if is_commentary(x) and not x.get("commentary"):
+            args.append("flag-commentary=1")
         if args:
             edits.append((f"a{x['n']}", args))
     if not edits:
         return {"action": "ok"}
-    return {"action": "set", "track": keep["n"], "edits": edits}
+    return {"action": "set", "track": keep["n"], "candidates": len(cands), "edits": edits}
 
 
 def describe(plan, language):
     if plan["action"] == "ok":
         return "ok"
     if plan["action"] == "set":
-        return f"set {language} track {plan['track']} default"
+        more = f" (of {plan['candidates']} candidates)" if plan.get("candidates", 1) > 1 else ""
+        return f"set {language} track {plan['track']} default{more}"
     return "skip: " + plan["reason"]
 
 

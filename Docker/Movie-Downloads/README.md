@@ -602,8 +602,8 @@ Friendly names (docs only: Radarr/Sonarr tag labels allow only `a-z 0-9 -`, Seer
 
 Jellyfin plays the user's preferred language, else the track flagged *default* in the file. German DL releases flag the German dub, so a user without the original language in their preferences got the dub. User preferences stay untouched; `scripts/original-audio.py` fixes the files instead.
 
-- Every `.mkv` of Radarr / Sonarr: the one audio track in the original language (from the app) gets `flag-default` and the name `<Language> (Original)`, all other audio tracks lose `flag-default` (`mkvpropedit`, header edit in place, no remux, mtime restored). Idempotent.
-- Skipped and reported: not mkv, link count > 1 (still seeding, edited on a later run), no original-language track (dub only, `und`), several candidates (commentaries are ignored first).
+- Every `.mkv` of Radarr / Sonarr: the one audio track in the original language (from the app) gets `flag-default` and the name `<existing name> (Original)` if it contains the language name, else `<Language> (Original)`, all other audio tracks lose `flag-default` (`mkvpropedit`, header edit in place, no remux, mtime restored). Idempotent.
+- Skipped and reported: not mkv, link count > 1 (still seeding, edited on a later run), no original-language track (dub only, `und`), several original-language tracks are not a skip: commentaries (name or flag) are dropped, then the track already flagged default wins, else the first; commentary tracks get `flag-commentary`.
 - Jellyfin: the changed items are refreshed (FullRefresh) afterwards.
 - `systemd/original-audio.timer`: 5 min after boot and daily 04:24. Install as above (`sudo install -m 0644 original-audio.service original-audio.timer /etc/systemd/system/`, `enable --now`). Needs `mkvtoolnix` (`sudo apt-get install -y mkvtoolnix`).
 - By hand: `scripts/original-audio.py --dry-run`, then without `--dry-run`. Tests: `python3 tests/test_original_audio.py`.
