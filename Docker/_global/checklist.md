@@ -5,3 +5,4 @@
 | Seerr | ❌ | ❌ | | | |
 | Antivirus | ❌ | ❌ | | | |
 | Ryot | ❌ | ❌ | | | |
+| Dependency-Track | ❌ | ❌ | | | |

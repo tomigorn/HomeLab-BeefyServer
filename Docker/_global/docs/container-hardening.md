@@ -27,7 +27,7 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65110 | ryot-go | | |
 | 65111 | movie-vpn-status (read_only) | | |
 | 1001 | ryot (image user, writes its own /home/ryot) | | NET_BIND_SERVICE (caddy file cap) |
-| 70 | ryot-db | | |
+| 70 | ryot-db, dt-db | | |
 | 65112 | clamav | 1100, 65118 | none |
 | 65113 | cup-agent | | |
 | 65114 | cup-socket-proxy-ro | 973 docker | |
@@ -35,10 +35,12 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65119 | movie-flaresolverr (read_only) | | |
 | 65120 | movie-socket-proxy-heal (read_only) | 973 docker | |
 | 65121 | movie-autoheal (read_only) | | |
+| 65122 | dt-apiserver (read_only) | | |
+| 65123 | dt-frontend (read_only) | | |
 | 65116 | gluetun files (PUID; process root) | | NET_ADMIN, NET_RAW, NET_BIND_SERVICE, DAC_OVERRIDE, CHOWN |
 | 0 | portainer_agent | | none (full socket by design, `AGENT_SECRET` required) |
 
-Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65122+.
+Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65124+.
 
 ## Root by design
 | Container | Why |
