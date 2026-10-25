@@ -443,7 +443,7 @@ services:
 # No docker.sock here: it talks to movie-socket-proxy-heal on the internal network
 # movie-heal, which allows the label-scoped list and restart by ID only.
   autoheal:
-    image: willfarrell/autoheal:latest
+    image: willfarrell/autoheal:latest@sha256:0f0ce6b17107f8c428f228586ad79187dd6eda431b25309229eb7f38efdcf5a1   # no release since 1.2.0 (2021); digest of the audited build
     container_name: movie-autoheal
     restart: unless-stopped
     user: "65121:65121"
