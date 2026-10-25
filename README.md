@@ -11,6 +11,7 @@ Nightly, by tier, with a functional check and automatic rollback. `Docker/_globa
 | `Docker/_global/systemd/auto-update.{service,timer}` | 04:12 inside the 03:55 wake; nothing starts after 04:16 (rest `deferred`), max 2 projects a night, hard stop after 10 min; holds `beefy-keep-awake` only while running (an existing hold stays) |
 | `Docker/_global/install-auto-update.sh` | installs and enables the timer |
 | Result | `/var/lib/auto-update/textfile/auto_update.prom`, pulled by fastpi at 04:20 → Telegram `Nightly auto-update beefy` |
+| Failed rollback | paged at once from beefy itself: `Docker/_global/scripts/oob-alert.sh` (verbatim copy of fastpi's, direct Telegram via DoH), secrets `Docker/_global/secrets/oob-alert.env` + `telegram_bot_token` (600, gitignored, same bot as fastpi's Alertmanager) |
 
 | Tier | Stacks | Why |
 |---|---|---|
