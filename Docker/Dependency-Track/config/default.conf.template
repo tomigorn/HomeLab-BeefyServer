@@ -1,0 +1,35 @@
+server {
+  listen      8080;
+  server_name _;
+  server_tokens off;
+
+  # BOM uploads (SBOMs of large images run to tens of MB)
+  location /api/ {
+    proxy_pass              http://dt-apiserver:8080;
+    proxy_set_header        Host $host;
+    proxy_set_header        X-Forwarded-Proto $scheme;
+    client_max_body_size    100m;
+    proxy_read_timeout      300s;
+  }
+
+  location / {
+    root      /opt/owasp/dependency-track-frontend;
+    index     index.html;
+    try_files $uri $uri/ /index.html;
+
+    location ~ (config\.json|index\.html)$ {
+      add_header Cache-Control "max-age=0, no-cache, no-store, must-revalidate";
+      add_header Pragma "no-cache";
+      add_header Expires 0;
+    }
+
+    sub_filter '<base href=/'  '<base href=${BASE_PATH}';
+    sub_filter_once on;
+  }
+
+  error_page 500 502 503 504 /50x.html;
+
+  location = /50x.html {
+    root /usr/share/nginx/html;
+  }
+}

@@ -1,0 +1,138 @@
+# =========================================================
+# Services ================================================
+# =========================================================
+# OWASP Dependency-Track: CVE dashboard over the SBOMs that fastpi's security scanner
+# (HomeLab-FastPi Server/4-Security-Monitoring, group dt) uploads for every running image
+# and the host OS of fastpi and beefy. One published port (${DT_PORT}): the frontend's nginx
+# also proxies /api to the apiserver, so UI and API share one origin. The DOCKER-USER rule
+# drops it for everyone but fastpi.
+services:
+# #########################################################
+# POSTGRES ################################################
+# #########################################################
+  dt-db:
+    image: docker.io/library/postgres:18.6-alpine
+    container_name: dt-db
+    restart: unless-stopped
+    user: "70:70"   # the image postgres user, which owns PGDATA; no root entrypoint
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 5s
+    environment:
+      TZ: ${TZ}
+      POSTGRES_USER: dtrack
+      POSTGRES_DB: dtrack
+      POSTGRES_PASSWORD_FILE: /run/secrets/dt_db_password
+    secrets:
+      - dt_db_password
+    volumes:
+      - ${APPDATA_ROOT}/dependency-track-db:/var/lib/postgresql
+    networks:
+      - dependency-track
+
+# #########################################################
+# APISERVER ###############################################
+# #########################################################
+  dt-apiserver:
+    image: docker.io/dependencytrack/apiserver:${DT_TAG}
+    container_name: dt-apiserver
+    restart: unless-stopped
+    user: "65122:65122"   # the image user is 1000 = buntu (sudo) on this host
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # DT asks for 4.5 GB+: 4 GB heap plus metaspace, threads and direct buffers
+    mem_limit: 6g
+    environment:
+      TZ: ${TZ}
+      EXTRA_JAVA_OPTIONS: -Xmx4g -Djava.io.tmpdir=/tmp
+      ALPINE_DATABASE_MODE: external
+      ALPINE_DATABASE_URL: jdbc:postgresql://dt-db:5432/dtrack
+      ALPINE_DATABASE_DRIVER: org.postgresql.Driver
+      ALPINE_DATABASE_USERNAME: dtrack
+      ALPINE_DATABASE_PASSWORD_FILE: /run/secrets/dt_db_password
+      ALPINE_DATABASE_POOL_MAX_SIZE: 10
+      ALPINE_METRICS_ENABLED: "false"
+    secrets:
+      - dt_db_password
+    volumes:
+      - ${APPDATA_ROOT}/dependency-track:/data
+    tmpfs:
+      - /tmp:uid=65122,gid=65122,mode=0700,size=512m
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "3", "-o", "/dev/null", "http://127.0.0.1:8080/health/ready"]
+      start_period: 300s
+      interval: 30s
+      retries: 5
+      timeout: 10s
+    depends_on:
+      dt-db:
+        condition: service_healthy
+    networks:
+      - dependency-track
+
+# #########################################################
+# FRONTEND ################################################
+# #########################################################
+  dt-frontend:
+    image: docker.io/dependencytrack/frontend:${DT_TAG}
+    container_name: dt-frontend
+    restart: unless-stopped
+    user: "65123:65123"   # image user nginx (101); files are world-readable
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 128m
+    environment:
+      TZ: ${TZ}
+    # Own nginx template (adds the /api proxy) and config.json (API on the same origin); the entrypoint's writes into the image are skipped on the read-only fs.
+    volumes:
+      - ./config/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./config/config.json:/opt/owasp/dependency-track-frontend/static/config.json:ro
+    tmpfs:
+      - /tmp:uid=65123,gid=65123,mode=0700,size=16m
+      - /etc/nginx/conf.d:uid=65123,gid=65123,mode=0755,size=1m
+    ports:
+      - "${DT_PORT}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      start_period: 10s
+      interval: 30s
+      retries: 3
+      timeout: 5s
+    depends_on:
+      - dt-apiserver
+    networks:
+      - dependency-track
+
+# =========================================================
+# Networks ================================================
+# =========================================================
+networks:
+  dependency-track:
+    driver: bridge
+
+# =========================================================
+# Volumes =================================================
+# =========================================================
+# None. Data and database are bind mounts under APPDATA_ROOT (NVMe); both are derived data, rebuilt by the next upload.
+
+# =========================================================
+# Secrets =================================================
+# =========================================================
+# Gitignored files under ./secrets (README "Secrets").
+secrets:
+  dt_db_password:
+    file: ./secrets/dt_db_password
