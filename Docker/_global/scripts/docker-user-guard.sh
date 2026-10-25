@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# docker-user-guard.sh — beefy's container firewall (IPv4 DOCKER-USER + the IPv6 INPUT guard).
+# docker-user-guard.sh — beefy's container firewall (IPv4 DOCKER-USER + BEEFY-INPUT, the IPv6 INPUT guard).
 #
 # Inbound: published container ports answer only fastpi (Traefik, Prometheus, Portainer, Cup). Allowlist, so a newly published port is closed by default.
 # Outbound: containers may not open connections into the LAN, except Jellyfin/Seerr, Ryot and Dependency-Track → fastpi :443 (sso + tracker via extra_hosts).
+# Host: containers reach the beefy host itself only with replies and ping (BEEFY-INPUT on INPUT from docker0/br-+). The apps talk to each other by container name; observed 2026-10-25: no container opens connections to the host. LAN access to the host (enp6s0) is untouched.
 # IPv6: no container has IPv6, but docker-proxy listens on [::] for every published port, so only sshd is reachable over IPv6.
 #
 # Idempotent: rebuilds both chains on every run. `--persist` writes /etc/iptables/rules.v4 / rules.v6 with ONLY these two chains. Never `netfilter-persistent save`: it freezes Docker's own per-bridge rules, which come back at boot for bridges that no longer exist and silently drop traffic to reused container IPs (seen on fastpi 2026-10-24).
@@ -27,6 +28,17 @@ iptables -A DOCKER-USER -s "$DT_NET" -o "$IFACE" -d "$FASTPI" -p tcp --dport 443
 iptables -A DOCKER-USER -o "$IFACE" -d "$LAN" -j DROP
 iptables -A DOCKER-USER -j RETURN
 
+iptables -N BEEFY-INPUT 2>/dev/null || true
+iptables -F BEEFY-INPUT
+iptables -A BEEFY-INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+iptables -A BEEFY-INPUT -p icmp -j RETURN
+iptables -A BEEFY-INPUT -m limit --limit 6/min -j LOG --log-prefix "BEEFY-INPUT drop " --log-level 6
+iptables -A BEEFY-INPUT -j DROP
+for i in docker0 "br-+"; do
+  while iptables -C INPUT -i "$i" -j BEEFY-INPUT 2>/dev/null; do iptables -D INPUT -i "$i" -j BEEFY-INPUT; done
+  iptables -I INPUT -i "$i" -j BEEFY-INPUT
+done
+
 ip6tables -N BEEFY-INPUT6 2>/dev/null || true
 ip6tables -F BEEFY-INPUT6
 ip6tables -A BEEFY-INPUT6 -p tcp --dport 22 -j RETURN
@@ -38,20 +50,23 @@ ip6tables -I INPUT -i "$IFACE" -j BEEFY-INPUT6
 
 if [[ ${1:-} == --persist ]]; then
   d=${RULES_DIR:-/etc/iptables}
-  persist() {  # file, save-cmd, restore-cmd, chain, hook
-    local tmp; tmp=$(mktemp)
-    { echo "# Written by docker-user-guard.sh --persist: only $4, Docker builds its own chains."
-      echo "*filter"; echo ":$4 - [0:0]"; echo "$5"
-      "$2" -S "$4" | grep '^-A '
+  persist() {  # file, save-cmd, restore-cmd, then pairs of chain and its hook line(s)
+    local f=$1 save=$2 restore=$3 tmp i; shift 3; local a=("$@"); tmp=$(mktemp)
+    { echo "# Written by docker-user-guard.sh --persist: only our own chains, Docker builds its own."
+      echo "*filter"
+      for ((i = 0; i < ${#a[@]}; i += 2)); do echo ":${a[i]} - [0:0]"; done
+      for ((i = 0; i < ${#a[@]}; i += 2)); do echo "${a[i+1]}"; "$save" -S "${a[i]}" | grep '^-A '; done
       echo "COMMIT"; } > "$tmp"
-    "$3" --test < "$tmp"
-    [[ -e $1 ]] && cp -a "$1" "$1.bak-$(date +%Y%m%d-%H%M%S)"
-    install -m 640 "$tmp" "$1"; rm -f "$tmp"
+    "$restore" --test < "$tmp"
+    [[ -e $f ]] && cp -a "$f" "$f.bak-$(date +%Y%m%d-%H%M%S)"
+    install -m 640 "$tmp" "$f"; rm -f "$tmp"
   }
-  persist "$d/rules.v4" iptables iptables-restore DOCKER-USER "-A FORWARD -j DOCKER-USER"
+  persist "$d/rules.v4" iptables iptables-restore DOCKER-USER "-A FORWARD -j DOCKER-USER" \
+    BEEFY-INPUT "$(printf '%s\n' '-A INPUT -i docker0 -j BEEFY-INPUT' '-A INPUT -i br-+ -j BEEFY-INPUT')"
   persist "$d/rules.v6" ip6tables ip6tables-restore BEEFY-INPUT6 "-A INPUT -i $IFACE -j BEEFY-INPUT6"
   echo "persisted to $d/rules.v4 + rules.v6"
 fi
 
 iptables -L DOCKER-USER -n -v --line-numbers
+iptables -L BEEFY-INPUT -n -v --line-numbers
 ip6tables -L BEEFY-INPUT6 -n -v --line-numbers
