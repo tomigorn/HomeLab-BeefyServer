@@ -34,11 +34,20 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.command == "GET" and p == "/movie/5":
             return self.reply(200, {"id": 5, "title": "Night of the Living Dead", "year": 1968, "secondaryYear": state.get("secondary")})
         if self.command == "GET" and p == "/queue":
-            return self.reply(200, {"records": state["queue"]})
+            recs = state["queue"]
+            if "movieIds" in q:
+                recs = [r for r in recs if str(r.get("movieId")) == q["movieIds"]]
+            if q.get("includeUnknownMovieItems") != "true":
+                recs = [r for r in recs if r.get("movieId") is not None]
+            return self.reply(200, {"records": recs})
         if self.command == "DELETE" and p.startswith("/queue/"):
             return self.reply(200, {})
+        if self.command == "GET" and p == "/history/movie":
+            return self.reply(200, state.get("history", []))
+        if self.command == "POST" and p.startswith("/history/failed/"):
+            return self.reply(500 if state.get("fail_history") else 200, {})
         self.reply(404)
-    do_GET = do_DELETE = handle_any
+    do_GET = do_DELETE = do_POST = handle_any
 s = http.server.HTTPServer(("127.0.0.1", 0), H)
 open(os.path.join(T, "port"), "w").write(str(s.server_address[1]))
 s.serve_forever()
@@ -51,10 +60,12 @@ printf '<Config>\n  <Port>%s</Port>\n  <UrlBase></UrlBase>\n  <ApiKey>testkey</A
 # run <state json> <release title> <env...>: leaves the DELETEs in $T/deletes and the exit code in $RC
 run() {
   echo "$1" > "$T/state.json"; local title=$2; shift 2
-  : > "$T/requests"
-  env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 radarr_eventtype=Grab radarr_movie_id=5 radarr_movie_year=1968 \
+  : > "$T/requests"; rm -rf "$T/events"
+  env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_EVENTS="$T/events" radarr_eventtype=Grab radarr_movie_id=5 radarr_movie_year=1968 \
     radarr_release_title="$title" radarr_download_id=abc "$@" bash "$GUARD" > "$T/out" 2>&1; RC=$?
   grep '^DELETE ' "$T/requests" | cut -d' ' -f2- > "$T/deletes"
+  grep '^POST ' "$T/requests" | cut -d' ' -f2- > "$T/posts"
+  cat "$T"/events/*.json 2>/dev/null | jq -r '[.app, .action, .title, .year, .release, .releaseYear] | @tsv' > "$T/event"
 }
 Q='[{"id": 41, "downloadId": "other"}, {"id": 42, "downloadId": "abc"}]'
 
@@ -69,12 +80,31 @@ run "{\"parsed_year\": 1970, \"queue\": $Q}" "Night.of.the.Living.Dead.1970.1080
 assert_eq "two years off (premiere vs release year, Plan 9: TMDB 1957, names 1959) is kept" "" "$(cat "$T/deletes")"
 run "{\"parsed_year\": 1971, \"queue\": $Q}" "Night.of.the.Living.Dead.1971.1080p.BluRay.x264-GROUP"
 assert_eq "three years off is removed" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
+QU='[{"id": 41, "downloadId": "other", "movieId": 9}, {"id": 43, "downloadId": "abc", "movieId": null}]'
+run "{\"parsed_year\": 1990, \"queue\": $QU}" "Night.of.the.Living.Dead.1990.2160p.UHD.BluRay.x265-GROUP"
+assert_eq "queue item Radarr could not map to a movie (movieId null, the wrong-year case) is found and removed" "/api/v3/queue/43?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
 run "{\"parsed_year\": 1975, \"secondary\": 1975, \"queue\": $Q}" "Night.of.the.Living.Dead.1975.1080p.BluRay.x264-GROUP"
 assert_eq "the secondary year counts as right" "" "$(cat "$T/deletes")"
 run "{\"parsed_year\": 0, \"queue\": $Q}" "Night.of.the.Living.Dead.1080p.BluRay.x264-GROUP"
 assert_eq "no year in the name is kept" "" "$(cat "$T/deletes")"
 run "{\"parsed_year\": 1990, \"queue\": []}" "Night.of.the.Living.Dead.1990.2160p.UHD.BluRay.x265-GROUP"
 assert_eq "not in the queue after GG_WAIT: nothing deleted, exit non-zero" "|1" "$(cat "$T/deletes")|$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
+H='[{"id": 70, "eventType": "grabbed", "downloadId": "other"}, {"id": 71, "eventType": "downloadFolderImported", "downloadId": "abc"}, {"id": 72, "eventType": "grabbed", "downloadId": "abc"}]'
+REL=Night.of.the.Living.Dead.1990.2160p.UHD.BluRay.x265-GROUP
+run "{\"parsed_year\": 1990, \"queue\": $Q}" "$REL"
+assert_eq "event for a queue removal" "radarr	removed	Night of the Living Dead	1968	$REL	1990" "$(cat "$T/event")"
+run "{\"parsed_year\": 1990, \"queue\": [], \"history\": $H}" "$REL"
+assert_eq "not in the queue: the grabbed history record is marked failed" "/api/v3/history/failed/72" "$(cat "$T/posts")"
+assert_eq "  nothing deleted, exit 0" "|0" "$(cat "$T/deletes")|$RC"
+assert_eq "  log" "movie 5: grabbed '$REL' is from 1990, not 1968: not in the queue, marked failed in history, blocklisted, searching again" "$(cat "$T/out")"
+assert_eq "  event" "radarr	marked-failed	Night of the Living Dead	1968	$REL	1990" "$(cat "$T/event")"
+run "{\"parsed_year\": 1990, \"queue\": [], \"history\": []}" "$REL"
+assert_eq "no history record either: nothing posted, exit non-zero, event says check by hand" "|1|radarr	manual	Night of the Living Dead	1968	$REL	1990" "$(cat "$T/posts")|$([ "$RC" -ne 0 ] && echo 1 || echo 0)|$(cat "$T/event")"
+assert_eq "  stderr keeps the remove-by-hand error" "movie 5: grabbed '$REL' is from 1990, not 1968, but it is not in the queue or in history: remove it by hand" "$(cat "$T/out")"
+run "{\"parsed_year\": 1990, \"queue\": [], \"history\": $H, \"fail_history\": true}" "$REL"
+assert_eq "marking failed errors: exit non-zero, event says check by hand" "1|radarr	manual	Night of the Living Dead	1968	$REL	1990" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)|$(cat "$T/event")"
+run "{\"parsed_year\": 1970, \"queue\": $Q}" "$REL"
+assert_eq "kept grab writes no event and posts nothing" "||" "$(cat "$T/event")|$(cat "$T/posts")|$(ls "$T/events" 2>/dev/null)"
 run "{}" "x" radarr_eventtype=Test
 assert_eq "Test event exits 0 and calls nothing" "0|" "$RC|$(cat "$T/requests")"
 run "{}" "x" radarr_eventtype=Download

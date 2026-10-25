@@ -37,11 +37,20 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.command == "GET" and p == "/movie/7":
             return self.reply(200, {"id": 7, "title": "Night of the Living Dead", "year": 1968, "secondaryYear": None})
         if self.command == "GET" and p == "/queue":
-            return self.reply(200, {"records": state["queue"]})
+            recs = state["queue"]
+            if "seriesIds" in q:
+                recs = [r for r in recs if str(r.get("seriesId")) == q["seriesIds"]]
+            if "true" not in (q.get("includeUnknownSeriesItems"), q.get("includeUnknownMovieItems")):
+                recs = [r for r in recs if r.get("seriesId") is not None]
+            return self.reply(200, {"records": recs})
         if self.command == "DELETE" and p.startswith("/queue/"):
             return self.reply(200, {})
+        if self.command == "GET" and p == "/history/series":
+            return self.reply(200, state.get("history", []))
+        if self.command == "POST" and p.startswith("/history/failed/"):
+            return self.reply(500 if state.get("fail_history") else 200, {})
         self.reply(404)
-    do_GET = do_DELETE = handle_any
+    do_GET = do_DELETE = do_POST = handle_any
 s = http.server.HTTPServer(("127.0.0.1", 0), H)
 open(os.path.join(T, "port"), "w").write(str(s.server_address[1]))
 s.serve_forever()
@@ -54,10 +63,12 @@ printf '<Config>\n  <Port>%s</Port>\n  <UrlBase></UrlBase>\n  <ApiKey>testkey</A
 # run <state json> <release title> <env...>: leaves the DELETEs in $T/deletes and the exit code in $RC
 run() {
   echo "$1" > "$T/state.json"; local title=$2; shift 2
-  : > "$T/requests"
-  env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 sonarr_eventtype=Grab sonarr_series_id=4 \
+  : > "$T/requests"; rm -rf "$T/events"
+  env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_EVENTS="$T/events" sonarr_eventtype=Grab sonarr_series_id=4 \
     sonarr_release_title="$title" sonarr_download_id=abc "$@" bash "$GUARD" > "$T/out" 2>&1; RC=$?
   grep '^DELETE ' "$T/requests" | cut -d' ' -f2- > "$T/deletes"
+  grep '^POST ' "$T/requests" | cut -d' ' -f2- > "$T/posts"
+  cat "$T"/events/*.json 2>/dev/null | jq -r '[.app, .action, .title, .year, .release, .releaseYear] | @tsv' > "$T/event"
 }
 Q='[{"id": 41, "downloadId": "other"}, {"id": 42, "downloadId": "abc"}]'
 
@@ -66,6 +77,9 @@ run "{\"series_year\": 2017, \"parsed_year\": 1995, \"queue\": $Q}" "Money.Heist
 assert_eq "release of a same-named older series is removed and blocklisted" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
 assert_eq "  exit 0" 0 "$RC"
 assert_eq "  log" "series 4: grabbed 'Money.Heist.1995.S01E01.1080p.WEB.x264-GROUP' is from 1995, not 2017: removed, blocklisted, searching again" "$(cat "$T/out")"
+
+run "{\"series_year\": 2017, \"parsed_year\": 1995, \"queue\": [{\"id\": 43, \"downloadId\": \"abc\", \"seriesId\": null}]}" "Money.Heist.1995.S01E01.1080p.WEB.x264-GROUP"
+assert_eq "queue item Sonarr could not map to a series (seriesId null) is found and removed" "/api/v3/queue/43?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
 
 run "{\"series_year\": 2017, \"parsed_year\": 2017, \"queue\": $Q}" "Money.Heist.2017.S01E01.1080p.WEB.x264-GROUP"
 assert_eq "same series year is kept" "" "$(cat "$T/deletes")"
@@ -88,6 +102,16 @@ assert_eq "unknown series year is kept" "" "$(cat "$T/deletes")"
 run "{\"series_year\": 2017, \"parsed_year\": 1995, \"queue\": []}" "Money.Heist.1995.S01E01.1080p.WEB.x264-GROUP"
 assert_eq "not in the queue after GG_WAIT: nothing deleted, exit non-zero" "|1" "$(cat "$T/deletes")|$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
 
+H='[{"id": 80, "eventType": "grabbed", "downloadId": "abc"}, {"id": 81, "eventType": "grabbed", "downloadId": "abc"}]'
+REL=Money.Heist.1995.S01E01.1080p.WEB.x264-GROUP
+run "{\"series_year\": 2017, \"parsed_year\": 1995, \"queue\": $Q}" "$REL"
+assert_eq "event for a queue removal" "sonarr	removed	Money Heist	2017	$REL	1995" "$(cat "$T/event")"
+run "{\"series_year\": 2017, \"parsed_year\": 1995, \"queue\": [], \"history\": $H}" "$REL"
+assert_eq "not in the queue: grabbed history record marked failed once" "/api/v3/history/failed/80" "$(cat "$T/posts")"
+assert_eq "  exit 0, event" "0|sonarr	marked-failed	Money Heist	2017	$REL	1995" "$RC|$(cat "$T/event")"
+run "{\"series_year\": 2017, \"parsed_year\": 1995, \"queue\": [], \"history\": []}" "$REL"
+assert_eq "no history record: exit non-zero, check by hand" "1|sonarr	manual	Money Heist	2017	$REL	1995" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)|$(cat "$T/event")"
+
 run "{}" "x" sonarr_eventtype=Test
 assert_eq "Test event exits 0 and calls nothing" "0|" "$RC|$(cat "$T/requests")"
 
@@ -98,7 +122,7 @@ assert_eq "other events are ignored" "0|" "$RC|$(cat "$T/requests")"
 echo "$T/state.json" >/dev/null
 echo "{\"series_year\": 2017, \"parsed_year\": 1990, \"queue\": $Q}" > "$T/state.json"
 : > "$T/requests"
-env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 radarr_eventtype=Grab radarr_movie_id=7 \
+env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_EVENTS="$T/events" radarr_eventtype=Grab radarr_movie_id=7 \
   radarr_release_title="Night.of.the.Living.Dead.1990.2160p.UHD.BluRay.x265-GROUP" radarr_download_id=abc bash "$GUARD" > "$T/out" 2>&1; RC=$?
 grep '^DELETE ' "$T/requests" | cut -d' ' -f2- > "$T/deletes"
 assert_eq "Radarr grab still routed and removed by the shared guard" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"

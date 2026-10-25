@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Radarr + Sonarr Connect "Custom Script" (On Grab): an indexer that tags a search result with the searched title's IDs makes the app grab a same-titled release from another year (Treasure Maps: the 1990 remake for the 1968 Night of the Living Dead, or a same-named older/newer series). A grab more than 2 years off is removed, blocklisted and searched again (README "Wrong-film guard").
+# Radarr + Sonarr Connect "Custom Script" (On Grab): an indexer that tags a search result with the searched title's IDs makes the app grab a same-titled release from another year (Treasure Maps: the 1990 remake for the 1968 Night of the Living Dead, or a same-named older/newer series). A grab more than 2 years off is removed, blocklisted and searched again; one that never reaches the queue is marked failed through the grab history instead. Each case leaves an event file for scripts/queue-watchdog.py to send as a Telegram (README "Wrong-film guard").
 # Radarr compares the release year against the movie's year and secondary year. Sonarr compares the year parsed from the release title (the series' disambiguation year, always the series' start year) against the series' firstAired year, never the episode's air date, so a legitimately old episode of a long-running current series is kept.
 # Runs inside the Radarr/Sonarr container (bash, curl, jq); registered by scripts/language-policy.sh.
 set -euo pipefail
@@ -12,6 +12,7 @@ else
   exit 0
 fi
 WAIT=${GG_WAIT:-90}
+EVENTS=${GG_EVENTS:-/config/guard-events}
 
 CONFIG=${LP_CONFIG:-/config/config.xml}
 xml() { sed -n "s:.*<$1>\(.*\)</$1>.*:\1:p" "$CONFIG"; }
@@ -22,26 +23,53 @@ api() { local path=$1; shift; curl -sf -m 10 -H "X-Api-Key: $KEY" "$URL$path" "$
 enc=$(jq -rn --arg t "$title" '$t | @uri')
 case $app in
   radarr)
-    noun=movie; qparam=movieIds
+    noun=movie; qparam=includeUnknownMovieItems; hparam=movieId
     got=$(api "/parse?title=$enc" | jq -r '.parsedMovieInfo.year // 0')
-    read -r year second < <(api "/movie/$id" | jq -r '"\(.year // 0) \(.secondaryYear // 0)"')
+    meta=$(api "/movie/$id")
+    second=$(jq -r '.secondaryYear // 0' <<<"$meta")
     ;;
   sonarr)
-    noun=series; qparam=seriesIds; second=0
+    noun=series; qparam=includeUnknownSeriesItems; hparam=seriesId; second=0
     got=$(api "/parse?title=$enc" | jq -r '.parsedEpisodeInfo.seriesTitleInfo.year // 0')
-    year=$(api "/series/$id" | jq -r '.year // 0')
+    meta=$(api "/series/$id")
     ;;
 esac
+
+year=$(jq -r '.year // 0' <<<"$meta")
+mtitle=$(jq -r '.title // ""' <<<"$meta")
 
 near() { [ "$1" -gt 0 ] && [ $(( $2 > $1 ? $2 - $1 : $1 - $2 )) -le 2 ]; }
 if [ "$got" -eq 0 ] || [ "$year" -eq 0 ] || near "$year" "$got" || near "$second" "$got"; then exit 0; fi
 
-# The grab reaches the queue with the next download-client poll.
+# queue-watchdog.py turns the event file into the Telegram: the container holds no bot token.
+event() {
+  ( umask 002; mkdir -p "$EVENTS"; f=$EVENTS/$(date +%s)-$$.json
+    jq -n --arg app "$app" --arg action "$1" --arg title "$mtitle" --argjson year "$year" --arg release "$title" --argjson releaseYear "$got" \
+      '{app: $app, action: $action, title: $title, year: $year, release: $release, releaseYear: $releaseYear}' > "$f.tmp" && mv "$f.tmp" "$f" ) || true
+}
+
+# The grab reaches the queue with the next download-client poll. A release the app cannot map to the title (the wrong year) is queued with no movie/series id: it is neither returned by the movieIds/seriesIds filter nor without includeUnknown*Items, so match on the download id over the whole queue.
+qid=
 for _ in $(seq 0 5 "$WAIT"); do
-  qid=$(api "/queue?page=1&pageSize=100&$qparam=$id" | jq -r --arg d "$dlid" '.records[] | select(.downloadId == $d) | .id' | head -1)
+  qid=$(api "/queue?page=1&pageSize=1000&$qparam=true" | jq -r --arg d "$dlid" '.records[] | select(.downloadId == $d) | .id' | head -1) || qid=
   [ -n "$qid" ] && break
   sleep 5
 done
-[ -n "$qid" ] || { echo "$noun $id: grabbed '$title' is from $got, not $year, but it is not in the queue: remove it by hand" >&2; exit 1; }
-api "/queue/$qid?removeFromClient=true&blocklist=true&skipRedownload=false" -X DELETE >/dev/null
-echo "$noun $id: grabbed '$title' is from $got, not $year: removed, blocklisted, searching again"
+if [ -n "$qid" ]; then
+  api "/queue/$qid?removeFromClient=true&blocklist=true&skipRedownload=false" -X DELETE >/dev/null
+  event removed
+  echo "$noun $id: grabbed '$title' is from $got, not $year: removed, blocklisted, searching again"
+  exit 0
+fi
+
+# Not in the queue (a client slow to report): mark the grab failed through the history, which blocklists it and searches again.
+hid=
+[ -n "$dlid" ] && hid=$(api "/history/$noun?$hparam=$id" | jq -r --arg d "$dlid" '[.[] | select(.eventType == "grabbed" and .downloadId == $d)][0].id // empty') || hid=
+if [ -n "$hid" ] && api "/history/failed/$hid" -X POST >/dev/null; then
+  event marked-failed
+  echo "$noun $id: grabbed '$title' is from $got, not $year: not in the queue, marked failed in history, blocklisted, searching again"
+  exit 0
+fi
+event manual
+echo "$noun $id: grabbed '$title' is from $got, not $year, but it is not in the queue or in history: remove it by hand" >&2
+exit 1
