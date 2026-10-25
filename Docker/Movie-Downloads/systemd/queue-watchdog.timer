@@ -1,0 +1,10 @@
+[Unit]
+Description=Queue watchdog every 15 min while beefy is awake
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target
