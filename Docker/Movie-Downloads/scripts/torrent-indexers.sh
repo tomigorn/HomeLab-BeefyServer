@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Adds or updates the FlareSolverr indexer proxy and the torrent indexers (1337x, The Pirate Bay, EZTV, Knaben) in Prowlarr; Prowlarr syncs them to Radarr and Sonarr. Idempotent.
 #   ~/Projects/Docker/Movie-Downloads/scripts/torrent-indexers.sh
-# Priority 40 (usenet keeps 25), minimum seeders 1 per indexer (synced to Radarr/Sonarr as minimumSeeders). 1337x and EZTV (both Cloudflare-protected) go through the proxy via the tag "flaresolverr".
+# Priority 40 (usenet 25-30, README "Indexers"), minimum seeders 1 per indexer (synced to Radarr/Sonarr as minimumSeeders). 1337x and EZTV (both Cloudflare-protected) go through the proxy via the tag "flaresolverr".
 set -euo pipefail
 
 H=${H:-127.0.0.1}

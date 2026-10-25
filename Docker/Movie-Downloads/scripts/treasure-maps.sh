@@ -9,6 +9,7 @@ H=${H:-127.0.0.1}
 PK=$(grep -oP '(?<=<ApiKey>)[^<]+' /srv/appdata/prowlarr/config.xml)
 TK=$(tr -d '\n' < "$DIR/secrets/treasure-maps.apikey")
 NAME="Treasure Maps"
+PRIORITY=30   # README "Indexers": after the unlimited usenet indexers (27 once it is lifetime)
 PROFILE="Search only"
 
 p() { local path=$1; shift; curl -sf -H "X-Api-Key: $PK" -H 'Content-Type: application/json' "http://$H:9696/api/v1$path" "$@"; }
@@ -18,7 +19,7 @@ if [ -z "$profile_id" ]; then
   profile_id=$(p /appprofile -X POST -d "{\"name\":\"$PROFILE\",\"enableRss\":false,\"enableAutomaticSearch\":true,\"enableInteractiveSearch\":true,\"minimumSeeders\":1}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 fi
 
-body=$( { p /indexer/schema; echo; p /indexer; } | NAME=$NAME TK=$TK PROFILE_ID=$profile_id python3 -c '
+body=$( { p /indexer/schema; echo; p /indexer; } | NAME=$NAME TK=$TK PROFILE_ID=$profile_id PRIORITY=$PRIORITY python3 -c '
 import json, os, sys
 raw, dec = sys.stdin.read(), json.JSONDecoder()
 schema, end = dec.raw_decode(raw)
@@ -30,7 +31,7 @@ values = {"baseUrl": "https://treasure-maps.com", "apiPath": "/api", "apiKey": o
 for f in ix["fields"]:
     if f["name"] in values:
         f["value"] = values[f["name"]]
-ix.update(name=os.environ["NAME"], enable=True, priority=25, appProfileId=int(os.environ["PROFILE_ID"]), tags=[])
+ix.update(name=os.environ["NAME"], enable=True, priority=int(os.environ["PRIORITY"]), appProfileId=int(os.environ["PROFILE_ID"]), tags=[])
 ix.pop("presets", None)
 print(json.dumps(ix))
 ')
