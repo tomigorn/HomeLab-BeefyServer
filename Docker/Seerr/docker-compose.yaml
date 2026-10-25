@@ -30,11 +30,13 @@ services:
       - PORT=5055
     volumes:
       - ${APPDATA_ROOT}/seerr:/app/config
-    ports:
-      - "${SEERR_PORT}:5055"
+    # No published port: seerr-proxy below owns SEERR_PORT and reaches Seerr as seerr:5055 on seerr-front.
     networks:
-      - movie-downloads
-      - jellyfin
+      seerr-front: {}
+      movie-downloads: {}
+      jellyfin:
+        # default route stays on jellyfin: DOCKER-USER lets only that subnet reach sso on fastpi :443
+        gw_priority: 10
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://localhost:5055/api/v1/settings/public || exit 1
       start_period: 20s
@@ -42,12 +44,60 @@ services:
       interval: 15s
       retries: 3
 
+# #########################################################
+# SEERR-PROXY #############################################
+# #########################################################
+# Indexer bar (README "Indexer bar"): nginx in front of Seerr on SEERR_PORT. Passes everything
+# through and adds the bar's <link> + <script> to HTML pages; serves bar.js/bar.css and the
+# usage.json that scripts/indexer-usage.py (host timer) writes. Remove this service and give
+# seerr its port back to drop the bar.
+  seerr-proxy:
+    image: nginxinc/nginx-unprivileged:1.30.6-alpine3.24
+    container_name: seerr-proxy
+    restart: unless-stopped
+    user: "65124:65124"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # nginx directly: the image's entrypoint scripts want to rewrite conf.d
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    tmpfs:
+      - /tmp:uid=65124,gid=65124,mode=0700,size=64m
+    volumes:
+      - ./indexer-bar/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./indexer-bar/www:/srv/indexer-bar/www:ro
+      - ${APPDATA_ROOT}/indexer-bar:/srv/indexer-bar/data:ro
+    ports:
+      - "${SEERR_PORT}:8080"
+    networks:
+      - seerr-front
+    depends_on:
+      seerr:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8080/_indexer-bar/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    mem_limit: 64m
+    pids_limit: 64
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 # =========================================================
 # Networks ================================================
 # =========================================================
-# Both bridges already exist; Seerr joins them so it reaches radarr:7878,
+# movie-downloads and jellyfin already exist; Seerr joins them so it reaches radarr:7878,
 # sonarr:8989 and jellyfin:8096 by container name, with no host-port detour.
+# seerr-front: only seerr-proxy and seerr. Outbound into the LAN is dropped by DOCKER-USER.
 networks:
+  seerr-front:
+    name: seerr-front
   movie-downloads:
     external: true
   jellyfin:
