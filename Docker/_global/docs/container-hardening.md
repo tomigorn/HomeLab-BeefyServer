@@ -37,10 +37,11 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65121 | movie-autoheal (read_only) | | |
 | 65122 | dt-apiserver (read_only) | | |
 | 65123 | dt-frontend (read_only) | | |
+| 65124 | seerr-proxy (nginx, read_only) | | |
 | 65116 | gluetun files (PUID; process root) | | NET_ADMIN, NET_RAW, NET_BIND_SERVICE, DAC_OVERRIDE, CHOWN |
 | 0 | portainer_agent | | none (full socket by design, `AGENT_SECRET` required) |
 
-Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65124+.
+Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65125+.
 
 ## Root by design
 | Container | Why |
