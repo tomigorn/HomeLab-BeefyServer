@@ -137,6 +137,15 @@ class Decide(unittest.TestCase):
         [a] = self.run_app("radarr", [rec], T0 + 31 * MIN)
         self.assertIn("Tom &amp; &lt;b&gt;Jerry&lt;/b&gt;", a.text)
 
+    def test_message_is_a_titled_bullet_list_with_details_collapsed(self):
+        self.run_app("radarr", [BLOCKED], T0)
+        [a] = self.run_app("radarr", [BLOCKED], T0 + 31 * MIN)
+        head, body = a.text.split("\n\n", 1)
+        self.assertEqual(head, "🟠 <b>Radarr queue: blocked</b>")
+        self.assertTrue(body.startswith("• "))
+        self.assertTrue(a.text.endswith("Radarr → Activity → Queue</blockquote>"))
+        self.assertIn("<blockquote expandable>💡 Message: ", a.text)
+
 
 class Run(unittest.TestCase):
     def setUp(self):
@@ -203,6 +212,8 @@ class Run(unittest.TestCase):
         self.assertIn("marked failed", self.sent[1])
         self.assertIn("Sonarr", self.sent[1])
         self.assertIn("check by hand", self.sent[2])
+        self.assertTrue(first.startswith("🟠 <b>Wrong-film guard: Radarr</b>\n\n• "))
+        self.assertIn("<blockquote expandable>Radarr → Activity → Queue</blockquote>", self.sent[2])
 
     def test_guard_event_stays_when_the_send_fails(self):
         self.event()

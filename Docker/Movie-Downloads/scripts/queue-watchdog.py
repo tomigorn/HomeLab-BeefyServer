@@ -60,12 +60,12 @@ def message(app, rec, condition, since, now):
     msgs = "; ".join(f"{m.get('title')}: {' '.join(m.get('messages') or [])}".strip(": ") for m in rec.get("statusMessages") or [])
     state = f"{rec.get('status')} / {rec.get('trackedDownloadState')} / {rec.get('trackedDownloadStatus')}"
     app_name = app.capitalize()
-    lines = [f"<b>{app_name} queue: {condition}</b>", html.escape(label(app, rec)), f"Release: {html.escape(rec.get('title') or '')}", f"State: {html.escape(state)}"]
-    if msgs:
-        lines.append(f"Message: {html.escape(msgs)}")
+    icon = "🔴" if condition == "failed" else "🟠"
+    lines = [f"{icon} <b>{app_name} queue: {condition}</b>", "", f"• 🎬 {html.escape(label(app, rec))}", f"• Release: <code>{html.escape(rec.get('title') or '')}</code>", f"• State: {html.escape(state)}"]
     if since is not None:
-        lines.append(f"For: {duration(now - since)}")
-    lines.append(f"{app_name} → Activity → Queue")
+        lines.append(f"• For: {duration(now - since)}")
+    note = [f"💡 Message: {html.escape(msgs)}"] if msgs else []
+    lines.append("<blockquote expandable>" + "\n".join(note + [f"{app_name} → Activity → Queue"]) + "</blockquote>")
     return "\n".join(lines)
 
 
@@ -113,13 +113,17 @@ def evaluate(app, records, state, now, cfg):
 def event_text(ev):
     app = str(ev.get("app", "?")).capitalize()
     year = f" ({ev['year']})" if ev.get("year") else ""
-    return "\n".join([
-        f"<b>Wrong-film guard: {app}</b>",
-        f"{html.escape(str(ev.get('title', '?')))}{year}",
-        f"Grabbed: {html.escape(str(ev.get('release', '?')))} (release year {ev.get('releaseYear', '?')})",
-        f"Result: {ACTIONS.get(ev.get('action'), 'check by hand')}",
-        f"{app} → Activity → Queue" if ev.get("action") == "manual" else "",
-    ]).rstrip()
+    manual = ev.get("action") == "manual"
+    lines = [
+        f"{'🔴' if manual else '🟠'} <b>Wrong-film guard: {app}</b>",
+        "",
+        f"• 🎬 {html.escape(str(ev.get('title', '?')))}{year}",
+        f"• Grabbed: <code>{html.escape(str(ev.get('release', '?')))}</code> (release year {ev.get('releaseYear', '?')})",
+        f"• Result: {ACTIONS.get(ev.get('action'), 'check by hand')}",
+    ]
+    if manual:
+        lines.append(f"<blockquote expandable>{app} → Activity → Queue</blockquote>")
+    return "\n".join(lines)
 
 
 def send_events(dirs, send):
