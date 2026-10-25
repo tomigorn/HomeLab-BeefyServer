@@ -5,7 +5,8 @@
 # (HomeLab-FastPi Server/4-Security-Monitoring, group dt) uploads for every running image
 # and the host OS of fastpi and beefy. One published port (${DT_PORT}): the frontend's nginx
 # also proxies /api to the apiserver, so UI and API share one origin. The DOCKER-USER rule
-# drops it for everyone but fastpi.
+# drops it for everyone but fastpi. Public at https://dt.holy-grail.ch via fastpi's Traefik
+# (forward auth homelab-admins + wake gate), then DT's own "Sign in with Holy Grail" (OIDC).
 services:
 # #########################################################
 # POSTGRES ################################################
@@ -63,6 +64,17 @@ services:
       ALPINE_DATABASE_PASSWORD_FILE: /run/secrets/dt_db_password
       ALPINE_DATABASE_POOL_MAX_SIZE: 10
       ALPINE_METRICS_ENABLED: "false"
+      # Holy Grail login (Authentik app dt-login, public client): the apiserver validates the ID token; groups -> teams via DT's OIDC group mapping
+      ALPINE_OIDC_ENABLED: "true"
+      ALPINE_OIDC_ISSUER: ${DT_OIDC_ISSUER}
+      ALPINE_OIDC_CLIENT_ID: ${DT_OIDC_CLIENT_ID}
+      ALPINE_OIDC_USERNAME_CLAIM: preferred_username
+      ALPINE_OIDC_USER_PROVISIONING: "true"
+      ALPINE_OIDC_TEAMS_CLAIM: groups
+      ALPINE_OIDC_TEAM_SYNCHRONIZATION: "true"
+    # OIDC discovery + JWKS straight to fastpi's Traefik, not via Cloudflare (DOCKER-USER allows this subnet -> fastpi :443)
+    extra_hosts:
+      - "sso.holy-grail.ch:192.168.1.2"
     secrets:
       - dt_db_password
     volumes:
@@ -95,12 +107,14 @@ services:
     cap_drop:
       - ALL
     mem_limit: 128m
+    # Read by the nginx template, which serves /static/config.json (API on the same origin, OIDC); the image's own config.json rewrite is skipped on the read-only fs.
     environment:
       TZ: ${TZ}
-    # Own nginx template (adds the /api proxy) and config.json (API on the same origin); the entrypoint's writes into the image are skipped on the read-only fs.
+      OIDC_ISSUER: ${DT_OIDC_ISSUER}
+      OIDC_CLIENT_ID: ${DT_OIDC_CLIENT_ID}
+    # Own nginx template: /api proxy + config.json
     volumes:
       - ./config/default.conf.template:/etc/nginx/templates/default.conf.template:ro
-      - ./config/config.json:/opt/owasp/dependency-track-frontend/static/config.json:ro
     tmpfs:
       - /tmp:uid=65123,gid=65123,mode=0700,size=16m
       - /etc/nginx/conf.d:uid=65123,gid=65123,mode=0755,size=1m
@@ -121,8 +135,12 @@ services:
 # Networks ================================================
 # =========================================================
 networks:
+  # Pinned: the DOCKER-USER exception (-> fastpi :443 for sso) matches this subnet
   dependency-track:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.14.0/24
 
 # =========================================================
 # Volumes =================================================

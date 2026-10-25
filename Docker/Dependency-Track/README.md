@@ -9,24 +9,39 @@ OWASP Dependency-Track 4.x: one CVE dashboard over the SBOMs of every running im
 | Port | `8090`, reachable from fastpi only (DOCKER-USER rule) |
 | Data | `/srv/appdata/dependency-track` (NVD/OSV mirror, index), `/srv/appdata/dependency-track-db` (Postgres) |
 | Feed | `HomeLab-FastPi` `Server/4-Security-Monitoring/security_scan.py dt` (`security-dt.timer` 04:02), README there |
-| URL | none yet; stage 2 (dt.holy-grail.ch via fastpi's Traefik + waker + Holy Grail) is prepared, not applied |
+| URL | https://dt.holy-grail.ch (group `homelab-admins`, wakes beefy), see Access |
 
 ## Hardening
 
 | Container | uid | read-only root | writable |
 |---|---|---|---|
 | dt-apiserver | 65122 | yes | `/data` (bind), `/tmp` (tmpfs) |
-| dt-frontend | 65123 | yes | `/tmp`, `/etc/nginx/conf.d` (tmpfs); own `config/default.conf.template` + `config/config.json` mounted `:ro` (the entrypoint cannot rewrite them) |
+| dt-frontend | 65123 | yes | `/tmp`, `/etc/nginx/conf.d` (tmpfs); own `config/default.conf.template` mounted `:ro`, it also serves `/static/config.json` from the env (`OIDC_*`) |
 | dt-db | 70 | no | PGDATA |
 
-All: `cap_drop: ALL`, `no-new-privileges`, mem limits. Containers reach the internet (NVD, OSV, EPSS), not the LAN.
+All: `cap_drop: ALL`, `no-new-privileges`, mem limits. Containers reach the internet (NVD, OSV, EPSS), not the LAN; only exception: bridge `172.28.14.0/24` (pinned) → fastpi `:443` for `sso.holy-grail.ch` (`extra_hosts`, `_global/scripts/docker-user-guard.sh`).
+
+## Access
+
+| Step | What |
+|---|---|
+| 1 | fastpi Traefik `dynamic/dt.yml`: forward auth (Authentik app `dt`, group `homelab-admins`), then the beefy wake gate (`?port=8090`) |
+| 2 | DT login page: **Sign in with Holy Grail** (Authentik app `dt-login`, public client + PKCE, redirect `/static/oidc-callback.html`), silent on the existing session |
+| 3 | User provisioned on first login (`preferred_username`), teams synced from the `groups` claim at every login: `homelab-admins` → `Administrators` (`scripts/oidc-team-mapping.sh`, idempotent) |
+
+| Setting | Where |
+|---|---|
+| `DT_OIDC_ISSUER`, `DT_OIDC_CLIENT_ID` | `.env` (client id written by fastpi `Authentik/scripts/provision-dt-sso.py`) → apiserver `ALPINE_OIDC_*`, frontend `OIDC_*` |
+| Check | `curl -s http://127.0.0.1:8090/api/v1/oidc/available` → `true`; `curl -s http://127.0.0.1:8090/static/config.json` has issuer + client id |
+
+Break-glass: local user `admin` (password in `secrets/dt_admin_password`), on the same login page or directly at `http://127.0.0.1:8090` on beefy (`ssh -L 8090:127.0.0.1:8090 beefy-direct`). Use only when Holy Grail is down.
 
 ## Secrets
 
 | File | Owner / mode | Use |
 |---|---|---|
 | `secrets/dt_db_password` | `70:65122 0440` | Postgres + apiserver (`ALPINE_DATABASE_PASSWORD_FILE`) |
-| `secrets/dt_admin_password` | `buntu 0400` | UI login `admin` (default `admin/admin` replaced at first start) |
+| `secrets/dt_admin_password` | `buntu 0400` | break-glass UI login `admin` (default `admin/admin` replaced at first start); `scripts/oidc-team-mapping.sh` |
 | fastpi `/var/lib/security-scan/secrets/dt-api-key` | `pi 0600` | API key of team `fastpi-scanner` |
 
 Team `fastpi-scanner`: `BOM_UPLOAD`, `PROJECT_CREATION_UPLOAD`, `VIEW_PORTFOLIO`, `VIEW_VULNERABILITY`, `PORTFOLIO_MANAGEMENT` (deletes projects of removed images).
@@ -64,4 +79,4 @@ curl -s http://127.0.0.1:8090/api/version                # 4.14.5
 sudo docker logs dt-apiserver 2>&1 | grep -E 'ERROR|Mirror' | tail
 ```
 
-UI from a LAN device (stage 1): `ssh -L 8090:127.0.0.1:8090 beefy-direct` on fastpi, then http://localhost:8090 there.
+UI: https://dt.holy-grail.ch (Holy Grail, `homelab-admins`).

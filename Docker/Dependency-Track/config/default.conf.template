@@ -12,6 +12,13 @@ server {
     proxy_read_timeout      300s;
   }
 
+  # The frontend's runtime config; ${OIDC_*} are filled in from the container env at start
+  location = /static/config.json {
+    default_type application/json;
+    add_header Cache-Control "max-age=0, no-cache, no-store, must-revalidate";
+    return 200 '{"API_BASE_URL":"","API_WITH_CREDENTIALS":"false","OIDC_ISSUER":"${OIDC_ISSUER}","OIDC_CLIENT_ID":"${OIDC_CLIENT_ID}","OIDC_FLOW":"code","OIDC_SCOPE":"openid email profile","OIDC_LOGIN_BUTTON_TEXT":"Sign in with Holy Grail"}';
+  }
+
   location / {
     root      /opt/owasp/dependency-track-frontend;
     index     index.html;
