@@ -1,0 +1,11 @@
+[Unit]
+Description=Indexer bar: Prowlarr search/grab counts and subscription deadlines for the bar above Seerr
+Documentation=file:///home/buntu/Projects/Docker/Seerr/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStart=/home/buntu/Projects/Docker/Seerr/scripts/indexer-usage.py
+NoNewPrivileges=true
+PrivateTmp=true

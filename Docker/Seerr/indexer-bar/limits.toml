@@ -1,0 +1,42 @@
+# Indexer bar above Seerr (README "Indexer bar"). Read by scripts/indexer-usage.py every minute, no restart needed.
+# No secrets here: the repo is public.
+
+# Limits per Prowlarr indexer, by its name in Prowlarr. An indexer not listed here is unlimited (shown with ∞ under "more").
+# searches = API calls incl. RSS, downloads = grabs; leave one out = unlimited.
+# window = "rolling" (the last 24 h) or "day" (calendar day, Europe/Zurich, resets at midnight).
+# Keep Prowlarr's own Query/Grab Limit (indexer settings) the same, so Prowlarr stops before the indexer blocks the account.
+[indexers."Treasure Maps"]
+searches = 100
+downloads = 5
+window = "rolling"
+
+[indexers."NzbPlanet"]
+searches = 20000
+window = "day"
+
+# Paid or time-limited services: shown with days left. After a renewal change only the date.
+# expires = the day it ends (YYYY-MM-DD, no quotes), or lifetime = true.
+[[subscriptions]]
+name = "Treasure Maps"
+kind = "indexer"
+expires = 2026-11-18
+
+[[subscriptions]]
+name = "Eweka"
+kind = "Usenet provider"
+expires = 2026-11-18
+
+[[subscriptions]]
+name = "ProtonVPN Plus"
+kind = "VPN"
+expires = 2027-06-15
+
+[[subscriptions]]
+name = "NZBgeek"
+kind = "indexer"
+lifetime = true
+
+[[subscriptions]]
+name = "NzbPlanet"
+kind = "indexer"
+lifetime = true

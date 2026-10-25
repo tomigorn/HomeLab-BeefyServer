@@ -1,0 +1,11 @@
+[Unit]
+Description=Indexer bar usage every minute while beefy is awake
+Documentation=file:///home/buntu/Projects/Docker/Seerr/README.md
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
