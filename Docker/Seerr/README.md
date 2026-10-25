@@ -20,8 +20,8 @@ curl -s http://127.0.0.1:5055/api/v1/status     # preview: {"version":"develop-2
 
 | | |
 |---|---|
-| Port | `5055` on beefy, reachable from fastpi only (DOCKER-USER rule) |
-| Networks | joins `movie-downloads` and `jellyfin` (external): `radarr:7878`, `sonarr:8989`, `jellyfin:8096` |
+| Port | `5055` on beefy, reachable from fastpi only (DOCKER-USER rule); owned by `seerr-proxy` (nginx, [Indexer bar](#indexer-bar)), Seerr itself publishes nothing |
+| Networks | joins `movie-downloads` and `jellyfin` (external): `radarr:7878`, `sonarr:8989`, `jellyfin:8096`; `seerr-front` (own) with `seerr-proxy`. Default route stays on `jellyfin` (`gw_priority`): only that subnet may reach sso on fastpi |
 | Config | `/srv/appdata/seerr` (`settings.json` holds the API key and the Jellyfin token; `db/db.sqlite3`) |
 | Traefik / Authentik | `HomeLab-FastPi` -> `Traefik/traefik/dynamic/requests.yml`; Authentik apps `requests` (forward auth) and `requests-login` (OIDC, hidden tile), group **`streaming-requesters`** (`Authentik/scripts/provision-media-groups.py`) |
 | OIDC client | `SEERR_OIDC_CLIENT_ID` / `SEERR_OIDC_CLIENT_SECRET` in `.env` (gitignored), written from fastpi by the provisioning run (`HomeLab-FastPi` `Authentik/README.md`); `scripts/configure.sh` puts them into `settings.json` |
@@ -171,6 +171,49 @@ email) are not set up: Settings -> Notifications.
 - `lang-xx` and `bz-…` tags are set automatically: do not pick them.
 - `audio-` is a hard filter on the release name: no matching release = nothing is grabbed (Radarr/Sonarr → Activity / Interactive Search shows "Does not contain one of the required terms").
 - Tags changed after the request: add or change the tag (or profile) in Radarr/Sonarr, search; for `subs-` and `audio-swiss-german` tags run `../Movie-Downloads/scripts/language-policy.sh` once.
+
+## Indexer bar
+
+A thin bar at the top of every Seerr page (everyone who can open Requests sees it): limited indexers used / allowed, subscription deadlines; **more** lists everything. Collapsible (remembered per browser). Docs for users: wiki `apps/requests.md` "The indexer bar at the top" (HomeLab-FastPi).
+
+| Part | What |
+|---|---|
+| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
+| `/_indexer-bar/` | `indexer-bar/www/` (bar.js, bar.css, starting.html); `usage.json` from `/srv/appdata/indexer-bar/` |
+| Collector | `scripts/indexer-usage.py` as buntu, `systemd/indexer-usage.timer` every minute: Prowlarr `GET /api/v1/indexer` + `/api/v1/history/since`, counts queries + RSS (searches) and grabs (downloads) per indexer in its window. Writes names and counts only, no keys, no queries |
+| Limits + deadlines | `indexer-bar/limits.toml` (committed, no secrets); picked up on the next run, no restart |
+| Colours | limits: green < 70 %, amber 70-95 %, red ≥ 95 % with the reset time. Subscriptions: amber ≤ 14 days left, red ≤ 3 days or expired, `lifetime` without countdown |
+| Windows | `rolling`: last 24 h, resets when the oldest counted event ages out (Prowlarr's own rule). `day`: calendar day Europe/Zurich, resets at midnight (DST-aware) |
+| Failure | Prowlarr unreachable: "usage unavailable", subscriptions still shown. usage.json older than 10 min or missing: "usage unavailable". The bar never blocks Seerr (own script, all errors caught) |
+
+Change a limit or renew a subscription: edit `indexer-bar/limits.toml`, commit.
+
+```toml
+[[subscriptions]]
+name = "Eweka"
+kind = "Usenet provider"
+expires = 2026-12-18     # the day it ends; or: lifetime = true
+```
+
+Keep the indexer limits equal to Prowlarr's own Query/Grab Limit (`../Movie-Downloads/README.md` "Indexers").
+
+Install (once):
+
+```bash
+sudo install -d -o buntu -g buntu -m 0755 /srv/appdata/indexer-bar
+sudo install -m 0644 systemd/indexer-usage.service systemd/indexer-usage.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now indexer-usage.timer
+sudo docker compose up -d
+```
+
+| Check | Command |
+|---|---|
+| Tests | `python3 tests/test_indexer_usage.py` |
+| Injected | `curl -sL localhost:5055/ \| grep _indexer-bar` |
+| Data | `scripts/indexer-usage.py && python3 -m json.tool /srv/appdata/indexer-bar/usage.json \| head` |
+| Timer | `systemctl list-timers indexer-usage.timer; journalctl -u indexer-usage -n 5` |
+
+Remove the bar: delete the `seerr-proxy` service, put `ports: ["${SEERR_PORT}:5055"]` back on `seerr`, `sudo docker compose up -d --remove-orphans`, `sudo systemctl disable --now indexer-usage.timer`.
 
 ## Delete a title
 
