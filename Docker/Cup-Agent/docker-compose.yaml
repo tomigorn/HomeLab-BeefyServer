@@ -58,7 +58,7 @@ services:
 # Cup only accepts a UNIX socket path and ignores DOCKER_HOST, so the read-only
 # TCP endpoint is bridged back onto a unix socket it can use.
   socket-proxy-unix:
-    image: alpine/socat:latest
+    image: alpine/socat:1.8.1.3
     container_name: cup-socket-proxy-unix
     restart: unless-stopped
     user: "65115:65115"   # owns the cup_socket_bridge volume; the socket itself is mode 666
