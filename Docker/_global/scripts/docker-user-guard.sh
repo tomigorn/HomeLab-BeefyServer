@@ -12,7 +12,7 @@ IFACE=enp6s0
 LAN=192.168.1.0/24
 FASTPI=192.168.1.2/32
 JELLYFIN_NET=172.28.11.0/24   # jellyfin, seerr
-RYOT_NET=172.20.0.0/16        # ryot, ryot-go, ryot-db
+RYOT_NET=172.28.15.0/24       # ryot, ryot-go, ryot-db (pinned in Ryot compose)
 DT_NET=172.28.14.0/24         # dependency-track (apiserver: OIDC JWKS from sso)
 
 iptables -N DOCKER-USER 2>/dev/null || true

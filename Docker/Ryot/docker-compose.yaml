@@ -125,6 +125,10 @@ services:
 networks:
   ryot:
     driver: bridge
+    # pinned: the DOCKER-USER rule that lets Ryot reach the SSO names this subnet (_global/scripts/docker-user-guard.sh RYOT_NET)
+    ipam:
+      config:
+        - subnet: 172.28.15.0/24
 
 # =========================================================
 # Volumes =================================================
