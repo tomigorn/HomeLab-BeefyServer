@@ -60,6 +60,15 @@ Each is small and independent; a probe answers exactly "is *this* signal busy?"
    listening-port set means no per-app config and it ignores beefy's *outbound*
    connections (e.g. apt, telemetry to `:443`) and its automation SSH.
 
+   **Bridged containers (v1.2.0):** every app here is a bridged container, and
+   connections DNAT'ed into them never appear in the host's `ss`. The probe therefore
+   also counts `ESTABLISHED` flows in the conntrack table (`conntrack -L`, package
+   `conntrack`) whose original destination is a beefy address and a port in
+   `docker ps` (published ports), minus `EXCLUDE_PORTS`. A flow idle longer than
+   `CT_MAX_IDLE` (300 s) is ignored: conntrack keeps `ESTABLISHED` for 5 days, so a
+   peer that vanished without FIN must not pin beefy awake. Log shows `conns=host+ct`.
+   `9001` (Portainer agent, held open by fastpi permanently) is excluded.
+
 2. **Interactive presence** — busy if EITHER:
    - an interactive SSH login exists: an OpenSSH per-session title
      `sshd-session: <user>@pts/N` in `ps -eo args` (a real pty shell), OR
@@ -101,7 +110,8 @@ NET_BUSY_KBPS=200         # primary-NIC throughput
 DISK_BUSY_KBPS=2000       # data-disk read+write
 PRIMARY_NIC=enp6s0
 DATA_DISKS="sda sdb sdc"  # basenames in /proc/diskstats (tune to actual data disks)
-EXCLUDE_PORTS="22"        # ports the inbound-conn probe ignores
+EXCLUDE_PORTS="22 9001"   # ports the inbound-conn probe ignores
+CT_MAX_IDLE=300           # s a conntrack flow may idle and still count as in use
 INHIBIT_FILE=/run/beefy-keep-awake
 ```
 
@@ -114,7 +124,7 @@ Every cycle logs a one-line verdict to journald (`journalctl -u
 beefy-idle-watcher`), e.g.:
 
 ```
-idle=12m  conns=0 ssh=0 cpu=3% net=4kbps disk=0kbps inhibit=0  -> idle
+idle=12m  conns=0+0 ssh=0 cpu=3% net=4kbps disk=0kbps inhibit=0  -> idle
 busy: disk=5300kbps                                            -> reset (download)
 WOULD power off (idle 15m, dry-run)                            -> stay up
 ```

@@ -11,6 +11,7 @@ Stdlib only. The parser/decision functions are pure (unit-tested); the I/O glue
 is a thin layer that reads /proc, ss, who and calls systemctl poweroff.
 """
 import os
+import re
 import subprocess
 import sys
 import time
@@ -57,7 +58,50 @@ def count_inbound(ss_estab_text, listen_ports, exclude_ports):
     return n
 
 
-import re
+def parse_published_ports(docker_ports_text):
+    """TCP host ports Docker publishes, from `docker ps --format '{{.Ports}}'`."""
+    ports = set()
+    for m in re.finditer(r":(\d+)(?:-(\d+))?->\d+(?:-\d+)?/tcp", docker_ports_text):
+        lo = int(m.group(1))
+        hi = int(m.group(2) or lo)
+        ports.update(range(lo, hi + 1))
+    return ports
+
+
+def parse_local_addrs(ip_text):
+    """Own IPv4 addresses from `ip -o -4 addr show`."""
+    return set(re.findall(r"\binet (\d+\.\d+\.\d+\.\d+)/", ip_text))
+
+
+def count_ct_inbound(ct_text, local_addrs, published_ports, exclude_ports,
+                     est_timeout=None, max_idle=None):
+    """Count ESTABLISHED conntrack flows whose ORIGINAL destination is one of our
+    addresses and a Docker-published port.
+
+    Connections DNAT'ed into a bridged container never show up in the host's `ss`,
+    only in conntrack (`conntrack -L -p tcp --state ESTABLISHED`). The first
+    dst=/dport= pair on a line is the original direction. A flow idle longer than
+    max_idle seconds (conntrack keeps ESTABLISHED for est_timeout, 5 days) is
+    treated as stale: a peer that vanished without FIN must not pin beefy awake.
+    """
+    n = 0
+    for line in ct_text.splitlines():
+        if "ESTABLISHED" not in line:
+            continue
+        if est_timeout and max_idle is not None:
+            f = line.split()
+            if len(f) > 3 and f[2].isdigit() and est_timeout - int(f[2]) > max_idle:
+                continue
+        dst = re.search(r"\bdst=(\S+)", line)
+        dport = re.search(r"\bdport=(\d+)", line)
+        if not dst or not dport:
+            continue
+        port = int(dport.group(1))
+        if (dst.group(1) in local_addrs and port in published_ports
+                and port not in exclude_ports):
+            n += 1
+    return n
+
 
 _PTS_RE = re.compile(r"sshd[\w-]*:.*@pts/\d+")
 
@@ -194,6 +238,7 @@ _DEFAULTS = {
     "DATA_DISKS": ["sda", "sdb", "sdc"],
     "EXCLUDE_PORTS": {22},
     "INHIBIT_FILE": "/run/beefy-keep-awake",
+    "CT_MAX_IDLE": 300,
 }
 
 
@@ -214,7 +259,7 @@ def load_config(env):
     cfg = dict(_DEFAULTS)
     if "DRY_RUN" in env:
         cfg["DRY_RUN"] = _clean(env["DRY_RUN"]) not in ("0", "false", "False", "")
-    for key in ("IDLE_MINUTES", "SAMPLE_INTERVAL"):
+    for key in ("IDLE_MINUTES", "SAMPLE_INTERVAL", "CT_MAX_IDLE"):
         if key in env:
             cfg[key] = int(_clean(env[key]))
     for key in ("CPU_BUSY_PCT", "NET_BUSY_KBPS", "DISK_BUSY_KBPS"):
@@ -246,6 +291,13 @@ def _run(cmd):
         return None
 
 
+def _ct_est_timeout():
+    try:
+        return int(_read("/proc/sys/net/netfilter/nf_conntrack_tcp_timeout_established"))
+    except ValueError:
+        return None
+
+
 def _read(path):
     try:
         with open(path) as f:
@@ -258,7 +310,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.1.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.2.0"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -298,12 +350,19 @@ def main():
             listen = parse_listen_ports(_run(["ss", "-ltnH"]))
             conns = count_inbound(_run(["ss", "-tnH", "state", "established"]),
                                   listen, cfg["EXCLUDE_PORTS"])
+            ct = count_ct_inbound(
+                _run(["conntrack", "-L", "-p", "tcp", "--state", "ESTABLISHED"]),
+                parse_local_addrs(_run(["ip", "-o", "-4", "addr", "show"])),
+                parse_published_ports(
+                    _run(["docker", "ps", "--format", "{{.Ports}}"])),
+                cfg["EXCLUDE_PORTS"],
+                _ct_est_timeout(), cfg["CT_MAX_IDLE"])
             ps = _run(["ps", "-eo", "args"])
             ssh = count_interactive_ssh(ps)
             vscode = vscode_remote_active(ps)
             inhibit = os.path.exists(cfg["INHIBIT_FILE"])
             probes = {
-                "conns": conns > 0,
+                "conns": conns + ct > 0,
                 "ssh": ssh > 0,
                 "vscode": vscode,
                 "cpu": cpu > cfg["CPU_BUSY_PCT"],
@@ -311,9 +370,9 @@ def main():
                 "disk": disk > cfg["DISK_BUSY_KBPS"],
             }
             busy, reasons = evaluate(probes, inhibit)
-            stats = ("conns=%d ssh=%d vscode=%d cpu=%2.0f%% net=%.0fkB/s "
+            stats = ("conns=%d+%d ssh=%d vscode=%d cpu=%2.0f%% net=%.0fkB/s "
                      "disk=%.0fkB/s inhibit=%d"
-                     % (conns, ssh, int(vscode), cpu, net, disk, int(inhibit)))
+                     % (conns, ct, ssh, int(vscode), cpu, net, disk, int(inhibit)))
         except Exception as e:
             log("WARN probe cycle failed (%s) -> treating as BUSY" % e)
             busy, reasons, stats = True, ["probe_error"], "probe error"

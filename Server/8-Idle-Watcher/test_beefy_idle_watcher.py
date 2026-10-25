@@ -9,6 +9,7 @@ import beefy_idle_watcher as biw
 from beefy_idle_watcher import (
     parse_listen_ports, count_inbound, count_interactive_ssh, vscode_remote_active,
     cpu_busy_pct, net_kbps, disk_kbps,
+    parse_published_ports, parse_local_addrs, count_ct_inbound,
     evaluate, update_idle, should_sleep, load_config,
 )
 
@@ -31,6 +32,56 @@ class TestConnections(unittest.TestCase):
 
     def test_count_inbound_none(self):
         self.assertEqual(count_inbound("", {22, 9001}, {22}), 0)
+
+
+class TestConntrack(unittest.TestCase):
+    PORTS = ("0.0.0.0:8090->8080/tcp, [::]:8090->8080/tcp\n"
+             "8080/tcp\n"
+             "0.0.0.0:8080-8081->8080-8081/tcp, 0.0.0.0:9696->9696/tcp, 8388/udp\n"
+             "127.0.0.1:5000->5000/tcp, 0.0.0.0:53->53/udp\n")
+
+    def test_published_ports_tcp_only_expands_ranges(self):
+        self.assertEqual(parse_published_ports(self.PORTS),
+                         {8090, 8080, 8081, 9696, 5000})
+
+    def test_published_ports_empty(self):
+        self.assertEqual(parse_published_ports(""), set())
+
+    def test_local_addrs(self):
+        txt = ("2: enp6s0    inet 192.168.1.102/24 brd 192.168.1.255 scope global enp6s0\n"
+               "1: lo    inet 127.0.0.1/8 scope host lo\n"
+               "5: br-1    inet 172.28.14.1/24 brd 172.28.14.255 scope global br-1\n")
+        self.assertEqual(parse_local_addrs(txt),
+                         {"192.168.1.102", "127.0.0.1", "172.28.14.1"})
+
+    CT = (
+        "tcp 6 431992 ESTABLISHED src=192.168.1.2 dst=192.168.1.102 sport=53840 dport=8090 src=172.28.14.4 dst=192.168.1.2 sport=8080 dport=53840 [ASSURED] mark=0 use=1\n"
+        "tcp 6 431997 ESTABLISHED src=172.28.14.2 dst=172.65.90.26 sport=56090 dport=443 src=172.65.90.26 dst=192.168.1.102 sport=443 dport=56090 [ASSURED] mark=0 use=1\n"
+        "tcp 6 431990 ESTABLISHED src=192.168.1.2 dst=192.168.1.102 sport=38198 dport=9001 src=172.18.0.2 dst=192.168.1.2 sport=9001 dport=38198 [ASSURED] mark=0 use=1\n"
+        "tcp 6 431999 ESTABLISHED src=192.168.1.2 dst=192.168.1.102 sport=38102 dport=22 src=192.168.1.102 dst=192.168.1.2 sport=22 dport=38102 [ASSURED] mark=0 use=1\n"
+        "tcp 6 100 ESTABLISHED src=172.28.14.4 dst=192.168.1.2 sport=40000 dport=8090 src=192.168.1.2 dst=172.28.14.4 sport=8090 dport=40000 [ASSURED] mark=0 use=1\n"
+        "tcp 6 118 TIME_WAIT src=192.168.1.2 dst=192.168.1.102 sport=1 dport=8090 src=172.28.14.4 dst=192.168.1.2 sport=8080 dport=1 [ASSURED] mark=0 use=1\n")
+    LOCAL = {"192.168.1.102", "127.0.0.1"}
+
+    def test_counts_dnat_flow_to_published_port(self):
+        self.assertEqual(count_ct_inbound(self.CT, self.LOCAL, {8090, 9001}, {22, 9001}), 1)
+
+    def test_ignores_outbound_and_non_established_and_foreign_dst(self):
+        self.assertEqual(count_ct_inbound(self.CT, self.LOCAL, {8090}, set()), 1)
+
+    def test_exclude_port(self):
+        self.assertEqual(count_ct_inbound(self.CT, self.LOCAL, {8090, 9001}, {8090, 9001}), 0)
+
+    def test_stale_flow_ignored(self):
+        stale = self.CT.replace("431992", "431000")
+        self.assertEqual(count_ct_inbound(stale, self.LOCAL, {8090}, set(), 432000, 300), 0)
+        self.assertEqual(count_ct_inbound(self.CT, self.LOCAL, {8090}, set(), 432000, 300), 1)
+
+    def test_empty(self):
+        self.assertEqual(count_ct_inbound("", self.LOCAL, {8090}, set()), 0)
+
+    def test_unpublished_port_not_counted(self):
+        self.assertEqual(count_ct_inbound(self.CT, self.LOCAL, {9999}, set()), 0)
 
 
 class TestSessions(unittest.TestCase):
