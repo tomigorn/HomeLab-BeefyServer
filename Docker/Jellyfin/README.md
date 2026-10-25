@@ -430,4 +430,9 @@ Jellyfin's TV and phone apps have only the heart (favourite) and "played"; no ap
 - TV: rate later on the phone; the TV app has no rating.
 - Not built: hearts -> Ryot. Ryot's Jellyfin Sink ignores favourites; the way would be a per-member Ryot "Generic JSON" integration URL plus a nightly job that posts Jellyfin favourites into a Ryot collection. It needs each member's own URL (only creatable in their Ryot session) and a real test, so it waits for a decision.
 
+## IMDb link and rating (2026-10-25)
+- Film and series pages (web) show an **IMDb** and **TMDB** link row (`ExternalUrls`, built from `ProviderIds`); all 9 items have both IDs, nothing to fix. Apps show no link row.
+- IDs come from the TMDb provider on library scan / refresh. New item without IMDb link: Refresh metadata (not "Replace all") on the item.
+- Rating shown is the TMDb community rating. An IMDb rating needs the OMDb provider (own API key = account, not set up) or a third-party plugin (not installed).
+
 **Rebuild** (`jellyfin-local`, FROM `lscr.io/linuxserver/jellyfin` + the OpenCL mods image by digest): bump the tag in `Dockerfile` when Cup shows a newer linuxserver tag, then `sudo docker compose up -d --build --pull`; otherwise monthly.
