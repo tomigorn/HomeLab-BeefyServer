@@ -269,13 +269,20 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
 
 ### Indexers (Prowlarr)
 
-All Newznab, priority 25, synced by Prowlarr to Radarr (movie categories 2000-2090) and Sonarr (TV 5000-5090, anime 5070).
+All Newznab, synced by Prowlarr to Radarr (movie categories 2000-2090) and Sonarr (TV 5000-5090, anime 5070).
 
-| Indexer | Base URL | App profile | Limits | Added by |
-|---|---|---|---|---|
-| NZBgeek | `https://api.nzbgeek.info` | Standard (RSS + search) | none | UI |
-| NzbPlanet | `https://api.nzbplanet.net` | Standard (RSS + search) | none | UI |
-| Treasure Maps | `https://treasure-maps.com` | **Search only** (no RSS) | free tier: 100 API calls + 5 downloads per rolling 24 h, set as Prowlarr query/grab limit; API trial until ~2026-11-19 | `scripts/treasure-maps.sh` |
+| Indexer | Priority | Base URL | App profile | Limits (Prowlarr query/grab limit) | Added by |
+|---|---|---|---|---|---|
+| NZBgeek | 25 | `https://api.nzbgeek.info` | Standard (RSS + search) | none | UI |
+| NzbPlanet | 26 | `https://api.nzbplanet.net` | Standard (RSS + search) | 20,000 API calls per day (query limit 20000, unit Day) | UI |
+| Treasure Maps | 30 | `https://treasure-maps.com` | **Search only** (no RSS) | free tier: 100 API calls + 5 downloads per rolling 24 h (query 100, grab 5, unit Day); API trial until ~2026-11-19 | `scripts/treasure-maps.sh` |
+
+Priority (set 2026-10-26, owner):
+- Only a tie-breaker: Radarr/Sonarr pick by quality and custom format score first; priority decides only between equal releases. Lower = preferred.
+- Unlimited before limited: NZBgeek 25, NzbPlanet 26, Treasure Maps 30, torrents 40, NZBIndex 50. So the 5 Treasure Maps grabs a day go to releases the others do not have.
+- Treasure Maps becomes lifetime/unlimited: priority 27 (`PRIORITY` in `scripts/treasure-maps.sh`, re-run it).
+- Change: Prowlarr -> Indexers -> edit -> Indexer Priority (or the API), then `ApplicationIndexerSync`; Radarr/Sonarr follow. Check: `GET /api/v3/indexer` on both shows the same numbers.
+- The query/grab limits stop Prowlarr before the indexer blocks the account (Prowlarr counts a rolling 24 h for unit Day). The same limits feed the usage bar above Seerr: `../Seerr/README.md` "Indexer bar" (`../Seerr/indexer-bar/limits.toml`, keep both equal).
 
 - Treasure Maps is the German source: tags German releases with the standard category too (`2040` + `Movies - DE/HD`), so the normal sync categories find them. Knives Out 2019: 31 `German.DL` releases, the other two indexers 0.
 - RSS off because Radarr (every 30 min) + Sonarr (every 15 min) would use ~144 calls/day. Search costs ~3 calls per movie search.
