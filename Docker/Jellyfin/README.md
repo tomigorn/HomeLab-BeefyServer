@@ -433,6 +433,9 @@ Jellyfin's TV and phone apps have only the heart (favourite) and "played"; no ap
 ## IMDb link and rating (2026-10-25)
 - Film and series pages (web) show an **IMDb** and **TMDB** link row (`ExternalUrls`, built from `ProviderIds`); all 9 items have both IDs, nothing to fix. Apps show no link row.
 - IDs come from the TMDb provider on library scan / refresh. New item without IMDb link: Refresh metadata (not "Replace all") on the item.
-- Rating shown is the TMDb community rating. An IMDb rating needs the OMDb provider (own API key = account, not set up) or a third-party plugin (not installed).
+- Rating shown is the IMDb rating: plugin **IMDb Ratings NG 6.1.0** (repo `https://verybadsoldier.github.io/jellyfin-plugin-imdbratings-ng/manifest.json`, targetAbi 12.0.0.0). It reads IMDb's public datasets (`datasets.imdbws.com`, personal non-commercial use), no account or key, and writes CommunityRating.
+- Enabled as metadata downloader on Movies (Dashboard -> Libraries -> Movies); Shows use the defaults, which include it. Scheduled task "Update IMDb Ratings" runs daily at 03:00; ratings also apply on Refresh metadata.
+- Verified: Ikiru 8.314 -> 8.3, The Secret in Their Eyes 7.965 -> 8.2 (= IMDb dataset).
+- Rollback: stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/IMDb Ratings NG_*`, start. Pre-change backup: `/srv/appdata/jellyfin-pre-imdb-2026-10-25.tgz` (root, mode 600).
 
 **Rebuild** (`jellyfin-local`, FROM `lscr.io/linuxserver/jellyfin` + the OpenCL mods image by digest): bump the tag in `Dockerfile` when Cup shows a newer linuxserver tag, then `sudo docker compose up -d --build --pull`; otherwise monthly.
