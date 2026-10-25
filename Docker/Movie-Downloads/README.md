@@ -303,8 +303,38 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Kept | no year in the title, ±2 years (premiere vs release year: *Plan 9 from Outer Space* is 1957 on TMDB, 1959 in release names), unknown app-side year; Sonarr daily shows carry an air date, not a title year, so they are always kept |
 | Cost | each wrong grab uses one of Treasure Maps' 5 grabs/day and a few seconds of download |
 | Not covered | a remake / same-named show with the same title *and* year; a release whose title carries no year |
+| Queue lookup | by download id over the whole queue with `includeUnknownMovieItems=true` (Sonarr `includeUnknownSeriesItems`), never the `movieIds`/`seriesIds` filter: a release the app cannot map to the title (the wrong year, *A Separation* 2026 vs 2011, 2026-10-24) is queued with `movieId` null, which the filter and the default listing both hide, so the guard never saw it |
+| Fallback | not in the queue after `GG_WAIT` (90 s) → the `grabbed` history record with the same download id is marked failed (`POST /history/failed/{id}`: blocklist + new search); no record or the call fails → `check by hand` |
+| Telegram | every wrong-year case (removed / marked failed / check by hand) writes `<config dir>/guard-events/*.json` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`); [Queue watchdog](#queue-watchdog) sends it within 15 min and deletes the file. The containers hold no bot token: no secret mount, no outbound call from the apps |
 | Registered by | `scripts/language-policy.sh` (both apps, idempotent) |
 | Tests | `tests/test_grab_guard.sh`, `tests/test_grab_guard_sonarr.sh`; live: `sudo docker exec movie-radarr env radarr_eventtype=Grab radarr_movie_id=<id> radarr_release_title=<name> radarr_download_id=x GG_WAIT=0 bash /scripts/grab-guard.sh` (Sonarr: `movie-sonarr`, `sonarr_eventtype`, `sonarr_series_id`, `sonarr_release_title`, `sonarr_download_id`) |
+
+### Queue watchdog
+
+`scripts/queue-watchdog.py` (beefy host, `systemd/queue-watchdog.timer`, every 15 min, first run 15 min after boot) sends **one** Telegram per stuck Radarr/Sonarr queue item (unknown items included) and per wrong-film guard event.
+
+| Condition | Alert when |
+|---|---|
+| blocked | state `importBlocked` / `importPending` / `failedPending`, or status `warning` / `error`, for more than `QW_BLOCKED_MIN` (30 min) |
+| stalled | `downloading` / `queued` and `sizeleft` not smaller for more than `QW_STALL_HOURS` (6 h) |
+| failed | status `failed`, at once |
+| guard event | each `guard-events/*.json` from [Wrong-film guard](#wrong-film-guard) |
+
+| | |
+|---|---|
+| Message | app, title (+year / SxxExx), release, state, status messages, how long, hint `Radarr → Activity → Queue` (Sonarr: `Sonarr → …`) |
+| Once | per app + download id + condition; again only after the condition cleared and came back (or a failed Telegram: retried next run) |
+| State | `~/.local/state/movie-downloads/queue-watchdog.json`: first seen per condition, last `sizeleft`; entries of downloads that left the queue are dropped; an unreachable app keeps its entries (exit 1) |
+| Telegram | `../_global/scripts/oob-alert.sh` (direct to api.telegram.org, no edge); the token stays in `_global/secrets/` |
+| Env | `QW_BLOCKED_MIN`, `QW_STALL_HOURS`, `QW_STATE`, `QW_EVENTS` (colon-separated dirs), `QW_ALERT`, `QW_RADARR_CONFIG`, `QW_SONARR_CONFIG` |
+| Tests | `python3 tests/test_queue_watchdog.py` |
+
+```bash
+cd ~/Projects/Docker/Movie-Downloads/systemd
+sudo install -m 0644 queue-watchdog.service queue-watchdog.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now queue-watchdog.timer
+scripts/queue-watchdog.py; echo $?    # empty queue: no message, 0
+```
 
 ### Delete a title
 
@@ -827,7 +857,8 @@ Every language, profile and delete feature works the same for movies and series 
 | Clear Data wipe (torrents, SABnzbd, Jellyfin, files) | ✓ | ✓ verified 2026-10-23 | `clear-data-wipe.sh`, `title-wipe-hook.sh` |
 | Description scout | ✓ | ✓ since 2026-10-23 (episodes and season packs) | `description-scout.py` |
 | Unknown quality in the old & rare profiles (+ twins) | ✓ | ✓ | `recyclarr/recyclarr.yml` |
-| Wrong-film guard | ✓ year | ✓ series start year | `grab-guard.sh` |
+| Wrong-film guard (finds unmapped queue items, history fallback, Telegram) | ✓ year | ✓ series start year | `grab-guard.sh` |
+| Queue watchdog (Telegram: stuck, stalled, failed, guard events) | ✓ | ✓ new 2026-10-25 | `queue-watchdog.py`, [watchdog](#queue-watchdog) |
 | Live check | ✓ | ✓ since 2026-10-23 | `swiss-german-check.py` |
 | Swiss German not found alert (Telegram) | ✓ | ✓ new 2026-10-23 | `language-missing.py`, [alert](#swiss-german-not-found-alert) |
 | Weekly cutoff search | ✓ movies | ✓ episodes | `cutoff-search.sh` |
