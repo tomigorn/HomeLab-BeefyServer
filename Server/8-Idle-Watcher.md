@@ -88,6 +88,8 @@ Each is small and independent; a probe answers exactly "is *this* signal busy?"
    LAN throughput (`/proc/net/dev` delta on the primary NIC) > `NET_BUSY_KBPS`.
    Catches transcodes / library imports / byte-heavy work with no client attached.
 
+   **Torrent uploads don't count (v1.3.0, owner 2026-10-25):** beefy isn't a seedbox, so seeding never keeps it awake. Traffic of the VPN container (`VPN_CONTAINER`, its netns `/proc/<pid>/net/dev`) is subtracted except what arrives on the tunnel (`VPN_TUNNEL` rx = downloads, torrent and Usenet, still count). The same upload rate is subtracted from the disk probe: seeded bytes are read from the data disks first, through mergerfs, so per-process counters can't attribute them. Downloads' writes still count. Unreadable container or a restart in between subtracts nothing (stays awake). Logged as `ignored-vpn-up=`.
+
 4. **Active disk I/O** — sustained read+write across the data disks
    (`/proc/diskstats` delta) > `DISK_BUSY_KBPS`. Catches an in-progress download
    writing to disk. Aligns with HDD spindown: a parked disk does no I/O = idle.
@@ -113,6 +115,9 @@ DATA_DISKS="sda sdb sdc"  # basenames in /proc/diskstats (tune to actual data di
 EXCLUDE_PORTS="22 9001"   # ports the inbound-conn probe ignores
 CT_MAX_IDLE=300           # s a conntrack flow may idle and still count as in use
 INHIBIT_FILE=/run/beefy-keep-awake
+VPN_CONTAINER=movie-gluetun  # empty = off; its uploads are ignored
+VPN_UPLINK=eth0
+VPN_TUNNEL=tun0
 ```
 
 Thresholds are first-guess and **will be tuned from real dry-run logs** before
@@ -142,11 +147,7 @@ threshold tuning data-driven rather than guesswork.
   practice.
 - **Never sleeps** while an interactive SSH session exists or the inhibit file is
   present — you can't get powered off from under your own shell.
-- **Coverage gap (explicit):** a task that is simultaneously low-CPU, low-disk,
-  low-net, with no inbound client — e.g. idle-but-queued torrent *seeding* —
-  would read as idle. Out of scope now: beefy isn't the seedbox (fastpi is, per
-  the migration plan). If a public-torrent client later lands on beefy, add a
-  per-app probe (query its API for active transfers) as a fifth probe.
+- **Seeding is ignored on purpose** (v1.3.0): beefy uploads only while it is awake for something else.
 
 ## Install (the usual split — I stage, you run the one sudo step)
 

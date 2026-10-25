@@ -11,6 +11,7 @@ from beefy_idle_watcher import (
     cpu_busy_pct, net_kbps, disk_kbps,
     parse_published_ports, parse_local_addrs, count_ct_inbound,
     evaluate, update_idle, should_sleep, load_config,
+    vpn_upload_kbps,
 )
 
 
@@ -229,6 +230,41 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg["DRY_RUN"], True)
 
 
+class TestUploadsIgnored(unittest.TestCase):
+    # VPN container netns /proc/<pid>/net/dev: eth0 = encrypted uplink, tun0 = tunnel payload
+    def dev(self, eth_rx, eth_tx, tun_rx, tun_tx):
+        return ("    lo: 5 0 0 0 0 0 0 0 5 0\n"
+                "  eth0: %d 0 0 0 0 0 0 0 %d 0\n"
+                "  tun0: %d 0 0 0 0 0 0 0 %d 0\n" % (eth_rx, eth_tx, tun_rx, tun_tx))
+
+    def test_seeding_counts_as_vpn_upload(self):
+        a = self.dev(0, 0, 0, 0)
+        b = self.dev(40_000, 1_060_000, 30_000, 1_000_000)  # 1 MB/s seeding for 1 s, acks in
+        self.assertAlmostEqual(vpn_upload_kbps(a, b, "eth0", "tun0", 1), 1070.0, places=1)
+
+    def test_download_through_vpn_still_counts(self):
+        a = self.dev(0, 0, 0, 0)
+        b = self.dev(1_050_000, 30_000, 1_000_000, 20_000)  # 1 MB/s download for 1 s
+        self.assertAlmostEqual(vpn_upload_kbps(a, b, "eth0", "tun0", 1), 80.0, places=1)
+
+    def test_missing_vpn_namespace_subtracts_nothing(self):
+        self.assertEqual(vpn_upload_kbps(None, self.dev(9, 9, 0, 0), "eth0", "tun0", 1), 0.0)
+        self.assertEqual(vpn_upload_kbps(self.dev(0, 0, 0, 0), None, "eth0", "tun0", 1), 0.0)
+
+    def test_vpn_counter_reset_subtracts_nothing(self):
+        a = self.dev(9_000_000, 9_000_000, 0, 0)
+        b = self.dev(100, 100, 0, 0)  # container restarted: new netns, counters from 0
+        self.assertEqual(vpn_upload_kbps(a, b, "eth0", "tun0", 10), 0.0)
+
+
+    def test_config_defaults_off_and_overrides(self):
+        cfg = load_config({})
+        self.assertEqual(cfg["VPN_CONTAINER"], "")
+        cfg = load_config({"VPN_CONTAINER": "movie-gluetun", "VPN_UPLINK": "eth0", "VPN_TUNNEL": "tun0"})
+        self.assertEqual((cfg["VPN_CONTAINER"], cfg["VPN_UPLINK"], cfg["VPN_TUNNEL"]),
+                         ("movie-gluetun", "eth0", "tun0"))
+
+
 class TestVersion(unittest.TestCase):
     def test_version_is_set(self):
         self.assertTrue(biw.VERSION and biw.VERSION[0].isdigit())
@@ -252,7 +288,7 @@ class TestClock(unittest.TestCase):
         real = biw._now
         try:
             biw._now = lambda: 4242.0
-            self.assertEqual(biw._snapshot()["t"], 4242.0)
+            self.assertEqual(biw._snapshot(load_config({}))["t"], 4242.0)
         finally:
             biw._now = real
 

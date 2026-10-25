@@ -175,6 +175,27 @@ def net_kbps(dev_a, dev_b, nic, secs):
     return max(0, delta) / 1000.0 / secs   # clamp counter reset/re-init (negative) to 0
 
 
+def vpn_upload_kbps(vpn_a, vpn_b, uplink, tunnel, secs):
+    """VPN-container traffic that is not download, in kB/s, from two snapshots of its
+    netns /proc/<pid>/net/dev: uplink rx+tx minus tunnel rx.
+
+    Torrent uploads leave the primary NIC as encrypted uplink traffic. Subtracting this
+    from net_kbps and disk_kbps lets seeding go unseen while downloads (tunnel rx) still keep beefy
+    awake. A missing snapshot or a counter reset (container restarted) subtracts nothing.
+    """
+    if secs <= 0 or not vpn_a or not vpn_b:
+        return 0.0
+    up_rx_a, up_tx_a = _nic_rx_tx(vpn_a, uplink)
+    up_rx_b, up_tx_b = _nic_rx_tx(vpn_b, uplink)
+    tun_rx_a, _ = _nic_rx_tx(vpn_a, tunnel)
+    tun_rx_b, _ = _nic_rx_tx(vpn_b, tunnel)
+    uplink_delta = (up_rx_b - up_rx_a) + (up_tx_b - up_tx_a)
+    tun_rx_delta = tun_rx_b - tun_rx_a
+    if uplink_delta < 0 or tun_rx_delta < 0:
+        return 0.0
+    return max(0, uplink_delta - tun_rx_delta) / 1000.0 / secs
+
+
 def _disk_sectors(ds_text, disks):
     total = 0
     want = set(disks)
@@ -239,6 +260,9 @@ _DEFAULTS = {
     "EXCLUDE_PORTS": {22},
     "INHIBIT_FILE": "/run/beefy-keep-awake",
     "CT_MAX_IDLE": 300,
+    "VPN_CONTAINER": "",
+    "VPN_UPLINK": "eth0",
+    "VPN_TUNNEL": "tun0",
 }
 
 
@@ -271,8 +295,9 @@ def load_config(env):
         cfg["DATA_DISKS"] = _clean(env["DATA_DISKS"]).split()
     if "EXCLUDE_PORTS" in env:
         cfg["EXCLUDE_PORTS"] = {int(p) for p in _clean(env["EXCLUDE_PORTS"]).split()}
-    if "INHIBIT_FILE" in env:
-        cfg["INHIBIT_FILE"] = _clean(env["INHIBIT_FILE"])
+    for key in ("INHIBIT_FILE", "VPN_CONTAINER", "VPN_UPLINK", "VPN_TUNNEL"):
+        if key in env:
+            cfg[key] = _clean(env[key])
     return cfg
 
 
@@ -310,7 +335,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.2.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.3.0"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -319,12 +344,21 @@ VERSION = "1.2.0"   # bump on each release; logged at startup so journald record
 _now = time.monotonic
 
 
-def _snapshot():
+def _container_pid(name):
+    out = _run(["docker", "inspect", "-f", "{{.State.Pid}}", name]) if name else None
+    pid = (out or "").strip()
+    return pid if pid.isdigit() and pid != "0" else None
+
+
+def _snapshot(cfg):
+    vpn_pid = _container_pid(cfg["VPN_CONTAINER"])
     return {
         "t": _now(),
         "stat": _read("/proc/stat"),
         "dev": _read("/proc/net/dev"),
         "ds": _read("/proc/diskstats"),
+        "vpn_pid": vpn_pid,
+        "vpn_dev": _read("/proc/%s/net/dev" % vpn_pid) if vpn_pid else None,
     }
 
 
@@ -332,21 +366,25 @@ def main():
     cfg = load_config(os.environ)
     log(start_banner(VERSION, cfg))
 
-    prev = _snapshot()
+    prev = _snapshot(cfg)
     idle_since = _now()
     time.sleep(cfg["SAMPLE_INTERVAL"])
 
     while True:
         now = _now()
-        cur = _snapshot()
+        cur = _snapshot(cfg)
         secs = cur["t"] - prev["t"]
 
         # Any failure computing the probes (a failed ss/ps -> None, a malformed
         # /proc line -> ValueError, etc.) must fail BUSY, never silently idle.
         try:
             cpu = cpu_busy_pct(prev["stat"], cur["stat"])
-            net = net_kbps(prev["dev"], cur["dev"], cfg["PRIMARY_NIC"], secs)
-            disk = disk_kbps(prev["ds"], cur["ds"], cfg["DATA_DISKS"], secs)
+            same_vpn = prev["vpn_pid"] == cur["vpn_pid"]
+            vpn_up = vpn_upload_kbps(prev["vpn_dev"], cur["vpn_dev"], cfg["VPN_UPLINK"],
+                                     cfg["VPN_TUNNEL"], secs) if same_vpn else 0.0
+            net = max(0.0, net_kbps(prev["dev"], cur["dev"], cfg["PRIMARY_NIC"], secs) - vpn_up)
+            # uploaded bytes were read from the data disks first (through mergerfs, so not attributable per process)
+            disk = max(0.0, disk_kbps(prev["ds"], cur["ds"], cfg["DATA_DISKS"], secs) - vpn_up)
             listen = parse_listen_ports(_run(["ss", "-ltnH"]))
             conns = count_inbound(_run(["ss", "-tnH", "state", "established"]),
                                   listen, cfg["EXCLUDE_PORTS"])
@@ -371,8 +409,8 @@ def main():
             }
             busy, reasons = evaluate(probes, inhibit)
             stats = ("conns=%d+%d ssh=%d vscode=%d cpu=%2.0f%% net=%.0fkB/s "
-                     "disk=%.0fkB/s inhibit=%d"
-                     % (conns, ct, ssh, int(vscode), cpu, net, disk, int(inhibit)))
+                     "disk=%.0fkB/s inhibit=%d ignored-vpn-up=%.0fkB/s"
+                     % (conns, ct, ssh, int(vscode), cpu, net, disk, int(inhibit), vpn_up))
         except Exception as e:
             log("WARN probe cycle failed (%s) -> treating as BUSY" % e)
             busy, reasons, stats = True, ["probe_error"], "probe error"
