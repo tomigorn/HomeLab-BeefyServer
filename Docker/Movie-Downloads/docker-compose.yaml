@@ -441,7 +441,7 @@ services:
 # autoheal-mouse on fastpi. That covers gluetun without a forwarded port and the
 # namespace members after a gluetun restart (their healthcheck needs tun0).
 # No docker.sock here: it talks to movie-socket-proxy-heal on the internal network
-# movie-heal, which allows container list/inspect and start/stop/restart only.
+# movie-heal, which allows the label-scoped list and restart by ID only.
   autoheal:
     image: willfarrell/autoheal:latest
     container_name: movie-autoheal
@@ -464,9 +464,9 @@ services:
       - movie-heal
     mem_limit: 64m
 
-# Restart-only Docker API for autoheal: socket-proxy/autoheal-haproxy.cfg (copy of
-# fastpi's Docker-Socket-Proxy one). create, exec, kill, update, logs, images,
-# volumes, networks are 403. Only autoheal can reach it (internal network).
+# Default-deny Docker API for autoheal: socket-proxy/autoheal-haproxy.cfg (fastpi pattern): only the
+# autoheal-movie unhealthy list and restart by 64-hex ID, everything else 403.
+# Only autoheal can reach it (internal network).
   socket-proxy-heal:
     image: ghcr.io/tecnativa/docker-socket-proxy:0.3.0
     container_name: movie-socket-proxy-heal

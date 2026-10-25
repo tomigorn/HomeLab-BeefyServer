@@ -993,7 +993,7 @@ qBittorrent settings that matter here (in `/srv/appdata/qbittorrent`, not in git
 | gluetun restarted, namespace members cut off | port_updater restarts qBit + mousehole | their healthcheck needs `tun0` in `/proc/net/dev` → unhealthy → autoheal restarts them into the new namespace (measured 2026-10-23: ~2 min) |
 | A container hangs | autoheal-mouse | `movie-autoheal` (label `autoheal-movie=true`: gluetun, qBit, Prowlarr, SABnzbd, FlareSolverr, Radarr, Sonarr, vpn-status) |
 
-- Docker API: `movie-autoheal` → `movie-socket-proxy-heal` (internal network `movie-heal`, `socket-proxy/autoheal-haproxy.cfg` = copy of fastpi's): container list/inspect + start/stop/restart only; create, exec, kill, update, logs, delete, images, volumes, networks = 403 (tested 2026-10-23). No app container has docker.sock.
+- Docker API: `movie-autoheal` → `movie-socket-proxy-heal` (internal network `movie-heal`, `socket-proxy/autoheal-haproxy.cfg`, fastpi pattern with label `autoheal-movie`): default-deny, only the label-scoped unhealthy list and `POST /containers/<64-hex id>/restart`; inspect, names, stop, start, create, exec, kill, logs, images, volumes, networks = 403 (tested 2026-10-25). No app container has docker.sock.
 - gluetun's healthcheck reads the vpn-status API key (`secrets/vpn-status.apikey`, mounted read-only).
 - Proton without port forwarding for a long time = gluetun restarts every ~4 min, like mouse's stack restart.
 
