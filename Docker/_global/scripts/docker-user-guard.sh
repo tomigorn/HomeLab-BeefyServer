@@ -2,7 +2,7 @@
 # docker-user-guard.sh — beefy's container firewall (IPv4 DOCKER-USER + the IPv6 INPUT guard).
 #
 # Inbound: published container ports answer only fastpi (Traefik, Prometheus, Portainer, Cup). Allowlist, so a newly published port is closed by default.
-# Outbound: containers may not open connections into the LAN, except Jellyfin/Seerr and Ryot → fastpi :443 (sso + tracker via extra_hosts).
+# Outbound: containers may not open connections into the LAN, except Jellyfin/Seerr, Ryot and Dependency-Track → fastpi :443 (sso + tracker via extra_hosts).
 # IPv6: no container has IPv6, but docker-proxy listens on [::] for every published port, so only sshd is reachable over IPv6.
 #
 # Idempotent: rebuilds both chains on every run. `--persist` writes /etc/iptables/rules.v4 / rules.v6 with ONLY these two chains. Never `netfilter-persistent save`: it freezes Docker's own per-bridge rules, which come back at boot for bridges that no longer exist and silently drop traffic to reused container IPs (seen on fastpi 2026-10-24).
@@ -13,6 +13,7 @@ LAN=192.168.1.0/24
 FASTPI=192.168.1.2/32
 JELLYFIN_NET=172.28.11.0/24   # jellyfin, seerr
 RYOT_NET=172.20.0.0/16        # ryot, ryot-go, ryot-db
+DT_NET=172.28.14.0/24         # dependency-track (apiserver: OIDC JWKS from sso)
 
 iptables -N DOCKER-USER 2>/dev/null || true
 iptables -C FORWARD -j DOCKER-USER 2>/dev/null || iptables -I FORWARD -j DOCKER-USER
@@ -22,6 +23,7 @@ iptables -A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
 iptables -A DOCKER-USER -i "$IFACE" ! -s "$FASTPI" -j DROP
 iptables -A DOCKER-USER -s "$JELLYFIN_NET" -o "$IFACE" -d "$FASTPI" -p tcp --dport 443 -j RETURN
 iptables -A DOCKER-USER -s "$RYOT_NET" -o "$IFACE" -d "$FASTPI" -p tcp --dport 443 -j RETURN
+iptables -A DOCKER-USER -s "$DT_NET" -o "$IFACE" -d "$FASTPI" -p tcp --dport 443 -j RETURN
 iptables -A DOCKER-USER -o "$IFACE" -d "$LAN" -j DROP
 iptables -A DOCKER-USER -j RETURN
 
