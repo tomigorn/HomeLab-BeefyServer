@@ -282,7 +282,9 @@ services:
     ports:
       - "${RADARR_PORT}:7878"
     networks:
-      - movie-downloads
+      movie-downloads:
+        # pinned: qBittorrent lets this address in without a password (WebUI AuthSubnetWhitelist)
+        ipv4_address: 172.28.10.201
 
 # #########################################################
 # BAZARR ##################################################
@@ -352,7 +354,9 @@ services:
     ports:
       - "${SONARR_PORT}:8989"
     networks:
-      - movie-downloads
+      movie-downloads:
+        # pinned: qBittorrent lets this address in without a password (WebUI AuthSubnetWhitelist)
+        ipv4_address: 172.28.10.202
 
 # #########################################################
 # RECYCLARR ###############################################
@@ -432,7 +436,9 @@ services:
       # DOCKER-USER drops 8087 for everyone but fastpi. ssh -L 8087:127.0.0.1:8087 beefy still works.
       - "8087:8087"
     networks:
-      - movie-downloads
+      movie-downloads:
+        # pinned: qBittorrent lets this address in without a password (WebUI AuthSubnetWhitelist)
+        ipv4_address: 172.28.10.203
 
 # #########################################################
 # AUTOHEAL ################################################

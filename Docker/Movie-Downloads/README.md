@@ -146,6 +146,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 |---|---|---|
 | qBittorrent | category `radarr` save path | `/data/torrents/movies` |
 | qBittorrent | seed limits | **ratio 2.0 OR 30 days, then stop** (§14.0) |
+| qBittorrent | no-password bypass | only Radarr 172.28.10.201, Sonarr .202, vpn-status .203 (pinned in compose), the gateway .1 (host scripts), localhost (qbit-port.sh) and 192.168.1.2 (Traefik); ClamAV and the rest need the password (review M5, 2026-10-25). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist` |
 | SABnzbd | incomplete / complete | `/data/usenet/incomplete` / `/data/usenet/complete/movies` |
 | Radarr | root folder | `/data/media/movies` |
 | Radarr | **Use Hardlinks instead of Copy** | **on** (§13.6) |
