@@ -253,6 +253,16 @@ Title page → **Manage** (admin):
 - The library file sits 7 days in the recycle bin.
 - How it works (`clear-data-wipe.sh` timer): `../Movie-Downloads/README.md` "Delete a title".
 
+## Tracker (Floppy) webhook
+Seerr's Webhook agent posts pending, approved, auto-approved and available requests to Floppy (`http://192.168.1.102:8012/webhook/seerr/global/`, beefy-local, never Traefik). Floppy adds the title as Planning for every member who opted in with that Seerr name (`../Floppy/README.md` "Integrations"). The payload carries the shared secret `../Floppy/secrets/floppy_seerr_webhook_secret`.
+
+| Task | Command (in `scripts/`) |
+|---|---|
+| Apply / after a secret change | `python3 seerr-webhook.py apply` |
+| Show | `python3 seerr-webhook.py show` → `True 142 http://192.168.1.102:8012/webhook/seerr/global/` |
+| Test | `python3 seerr-webhook.py test`, Floppy log: `Missing requester` (secret OK) |
+| Off | Settings → Notifications → Webhook → disable |
+
 ## Scheduled jobs
 
 Seerr's own jobs run in beefy's maintenance window (`Server/9-Night-Schedule.md`), not at night while beefy sleeps. `scripts/night-jobs.py` sets them through the API (idempotent, `--dry-run`; tests `python3 -m unittest test_night_jobs`; stored in Seerr's settings, so re-run it after a fresh install).
