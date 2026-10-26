@@ -4,7 +4,7 @@ OWASP Dependency-Track 4.x: one CVE dashboard over the SBOMs of every running im
 
 | | |
 |---|---|
-| Images | `dependencytrack/apiserver:4.14.5`, `dependencytrack/frontend:4.14.5`, `postgres:18.6-alpine` |
+| Images | `dependencytrack/apiserver:4.14.6`, `dependencytrack/frontend:4.14.6`, `postgres:18.6-alpine` |
 | Containers | `dt-frontend` (host port `8090` → 8080, nginx: UI + `/api` proxied to the apiserver), `dt-apiserver` (no port, heap 4 GB, mem 6 GB), `dt-db` (no port), bridge `dependency-track` |
 | Port | `8090`, reachable from fastpi only (DOCKER-USER rule) |
 | Data | `/srv/appdata/dependency-track` (NVD/OSV mirror, index), `/srv/appdata/dependency-track-db` (Postgres) |
@@ -75,7 +75,7 @@ Then via the API (`http://127.0.0.1:8090/api`): `POST /v1/user/forceChangePasswo
 
 ```bash
 sudo docker compose ps                                   # 3 healthy
-curl -s http://127.0.0.1:8090/api/version                # 4.14.5
+curl -s http://127.0.0.1:8090/api/version                # 4.14.6
 sudo docker logs dt-apiserver 2>&1 | grep -E 'ERROR|Mirror' | tail
 ```
 
