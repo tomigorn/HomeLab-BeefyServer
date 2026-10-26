@@ -17,7 +17,7 @@ beefy sleeps (S5) and its timers cannot wake it. Everything recurring runs in on
 | 03:58 | window opens |
 | 04:00 | beefy-mover (+≤5 min), Seerr radarr-scan |
 | 04:01-04:06 | apt-daily, logrotate, dpkg-db-backup, Seerr download-sync-reset 04:03, fwupd-refresh 04:04, clamav-scan 04:05, Seerr sonarr-scan 04:05, sysstat-rotate/summary |
-| 04:07-04:12 | Sun clamav-hostscan 04:07, Jellyfin IMDb 04:08, Jellyfin scan + ryot-db-backup 04:10, auto-update 04:12 (+ Sun cutoff-search) |
+| 04:07-04:12 | Sun clamav-hostscan 04:07, Jellyfin IMDb 04:08, Jellyfin scan 04:10, auto-update 04:12 (+ Sun cutoff-search) |
 | 04:14-04:20 | description-scout 04:14, Recyclarr 04:15, nfo-scout 04:16, language-missing 04:18, original-audio sweep 04:20 (+ Sun image-cleanup) |
 | 04:22-04:29 | Seerr jellyfin-full-scan 04:22, Jellyfin trickplay 04:24, Sun fstrim 04:26, Sun xfs/e2 scrub 04:28/04:29 |
 | 04:30-04:44 | anacron 04:30 (`cron.daily` 04:35: chkrootkit, rkhunter), Jellyfin chapters 04:30, Seerr availability-sync 04:30, image-cache 04:32, segments 04:33, apt-daily-upgrade 04:34, Sun blocklisted-tags 04:34, man-db 04:36, tmpfiles-clean 04:40, update-notifier 04:41, Jellyfin daily tasks 04:35-04:44 |
@@ -47,3 +47,5 @@ fastpi pulls from beefy at 04:02-04:20 (never wakes it: `fetch_nowake`).
 | `pro config set apt_news=false` | ads in `apt upgrade` |
 
 Kept on purpose: the live pollers (`request-tags`, `clear-data-wipe`, `indexer-usage`, `hdd-spinstate`, `queue-watchdog`, `sysstat-collect`, `jellyfin-user-defaults`) run only while beefy is awake and never wake it. Radarr/Sonarr internal tasks and Bazarr's scheduler have fixed intervals and stay.
+
+Ryot is replaced by Floppy: `ryot-db-backup.timer` is disabled. Floppy snapshots its SQLite itself at 04:20 inside the container (no systemd timer).
