@@ -334,6 +334,8 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 
 | | |
 |---|---|
+| Indexers | `/health` of each app: **one** Telegram while indexers are disabled after failures (`IndexerStatusCheck`, `IndexerLongTermStatusCheck`: indexer names, disabled until / last error when `/indexerstatus` answers, fix `System → Status → test all indexers` or `POST /api/v3/indexer/testall`), a short ✅ when it clears. Never runs testall itself. State key `indexers/<app>` |
+| Indexer exceptions | no alert for Treasure Maps backoffs (grab limit: error empty or 429 / limit) and The Pirate Bay (flaky "no results", [Indexers](#indexers-prowlarr)); any other error on them alerts. Found 2026-10-26: 5 of 6 indexers sat in a 24 h backoff after 401s during a Prowlarr key rotation |
 | Message | app, title (+year / SxxExx), release, state, status messages, how long, hint `Radarr → Activity → Queue` (Sonarr: `Sonarr → …`) |
 | Once | per app + download id + condition; again only after the condition cleared and came back (or a failed Telegram: retried next run) |
 | State | `~/.local/state/movie-downloads/queue-watchdog.json`: first seen per condition, last `sizeleft`; entries of downloads that left the queue are dropped; an unreachable app keeps its entries (exit 1) |

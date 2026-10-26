@@ -2,6 +2,7 @@
 """Queue watchdog (README "Queue watchdog"): one Telegram per stuck Radarr/Sonarr queue item and per wrong-film guard event.
 Per (app, downloadId, condition), once until the condition clears and returns: blocked (importBlocked/importPending/failedPending state or warning/error status) for QW_BLOCKED_MIN minutes, stalled (downloading/queued, sizeleft not falling) for QW_STALL_HOURS hours, failed (status failed).
 Guard events: scripts/grab-guard.sh writes <config dir>/guard-events/*.json inside the containers (no bot token there); each becomes a message and the file is deleted. Sent with _global/scripts/oob-alert.sh. Run by systemd/queue-watchdog.timer.
+Indexers: /health of each app; one Telegram while indexers are disabled after failures (IndexerStatusCheck / IndexerLongTermStatusCheck), one when they recover. Expected backoffs are left out: Treasure Maps grab limit, The Pirate Bay "no results".
 Usage: scripts/queue-watchdog.py"""
 import html
 import json
@@ -27,6 +28,8 @@ ACTIONS = {
     "marked-failed": "not in the queue: marked failed in history, blocklisted, searching again",
     "manual": "could not be removed: check by hand",
 }
+INDEXER_CHECKS = {"IndexerStatusCheck", "IndexerLongTermStatusCheck"}
+EXPECTED = {"treasure maps": re.compile(r"429|limit|quota|too many", re.I), "the pirate bay": re.compile(r"no results", re.I)}
 Alert = namedtuple("Alert", "key condition text")
 
 
@@ -155,12 +158,80 @@ def fetch(app, api):
         page += 1
 
 
+def failed_indexers(health, status=None, indexers=()):
+    """{indexer name: None or {until, error, last}} for indexers the app disabled after failures."""
+    by_name = {i.get("name"): i.get("id") for i in indexers}
+    by_id = {r.get("indexerId"): r for r in status or []}
+    out = {}
+    for h in health:
+        msg = h.get("message") or ""
+        if h.get("source") not in INDEXER_CHECKS and "unavailable due to failures" not in msg:
+            continue
+        for name in msg.partition(": ")[2].split(", "):
+            name = name.strip()
+            rec = by_id.get(by_name.get(name))
+            out[name] = {"until": rec.get("disabledTill"), "error": rec.get("lastError"), "last": rec.get("mostRecentFailure")} if rec else None
+    return out
+
+
+def unexpected(failed):
+    """Failed indexers minus the expected backoffs; an unknown error counts as the expected one."""
+    out = {}
+    for name, info in failed.items():
+        pat = next((p for k, p in EXPECTED.items() if k in name.lower()), None)
+        error = (info or {}).get("error")
+        if pat and (not error or pat.search(error)):
+            continue
+        out[name] = info
+    return out
+
+
+def indexer_message(app, failed, now):
+    app_name = app.capitalize()
+    lines = [f"🟠 <b>{app_name}: indexers disabled after failures</b>", "", f"📅 {time.strftime('%Y-%m-%d %H:%M', time.localtime(now))}"]
+    lines += [f"• 🔍 {html.escape(name)}" for name in failed]
+    details = []
+    for name, info in failed.items():
+        info = info or {}
+        extra = [f"disabled until {info['until']}"] if info.get("until") else []
+        extra += [f"last error: {info['error']}"] if info.get("error") else []
+        if extra:
+            details.append(f"{html.escape(name)}: {html.escape('; '.join(extra))}")
+    details.append(f"💡 Fix: {app_name} → System → Status → test all indexers, or <code>POST /api/v3/indexer/testall</code>")
+    lines.append("<blockquote expandable>" + "\n".join(details) + "</blockquote>")
+    return "\n".join(lines)
+
+
+def indexer_check(app, api, state, send, now):
+    key = f"indexers/{app}"
+    try:
+        health = api("GET", "/health") or []
+        try:
+            status, indexers = api("GET", "/indexerstatus") or [], api("GET", "/indexer") or []
+        except ApiError:
+            status, indexers = [], []
+    except ApiError as e:
+        print(f"{app}: health API error, state kept: {e}", file=sys.stderr)
+        return 1
+    bad = unexpected(failed_indexers(health, status, indexers))
+    if bad and key not in state:
+        if not send(indexer_message(app, bad, now)):
+            return 1
+        state[key] = {"names": sorted(bad), "since": now}
+    elif not bad and key in state:
+        if not send(f"✅ <b>{app.capitalize()}: indexers recovered</b>\n\n📅 {time.strftime('%Y-%m-%d %H:%M', time.localtime(now))}\n• No indexer is disabled after failures any more"):
+            return 1
+        del state[key]
+    return 0
+
+
 def run(apps, state_path, event_dirs, send, cfg, now=None):
     now = time.time() if now is None else now
     state_path = pathlib.Path(state_path)
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     rc = 0
     for app, api in apps.items():
+        rc |= indexer_check(app, api, state, send, now)
         try:
             records = fetch(app, api)
         except ApiError as e:

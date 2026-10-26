@@ -23,13 +23,29 @@ EP = {"id": 7, "downloadId": "ep1", "title": "Show.S02E03.1080p-X", "status": "f
       "sizeleft": 5, "series": {"title": "Show", "year": 2019}, "episode": {"seasonNumber": 2, "episodeNumber": 3}, "statusMessages": []}
 
 
-def fake(records=(), fail=False):
+def fake(records=(), fail=False, health=(), status=None, indexers=(), health_fail=False):
     def call(method, path, query=None, body=None):
         if fail:
             raise qw.ApiError("down")
-        assert method == "GET" and path == "/queue", (method, path)
+        assert method == "GET", (method, path)
+        if path == "/health":
+            if health_fail:
+                raise qw.ApiError("health down")
+            return list(health)
+        if path == "/indexerstatus":
+            if status is None:
+                raise qw.ApiError("GET /indexerstatus: HTTP Error 404")
+            return list(status)
+        if path == "/indexer":
+            return list(indexers)
+        assert path == "/queue", (method, path)
         return {"totalRecords": len(records), "records": list(records)}
     return call
+
+
+def hc(names, source="IndexerStatusCheck", long=False):
+    pre = "Indexers unavailable due to failures" + (" for more than 6 hours" if long else "")
+    return {"source": source, "type": "warning", "message": f"{pre}: {', '.join(names)}", "wikiUrl": "https://wiki.servarr.com"}
 
 
 class Decide(unittest.TestCase):
@@ -252,6 +268,156 @@ class Run(unittest.TestCase):
         (self.events / "9.json.tmp").write_text("{}")
         self.go({"radarr": fake()}, T0)
         self.assertTrue((self.events / "9.json.tmp").exists())
+
+
+NZB, NZBP, TM, TPB = "NZBgeek (Prowlarr)", "NzbPlanet (Prowlarr)", "Treasure Maps (Prowlarr)", "The Pirate Bay (Prowlarr)"
+
+
+class IndexerHealth(unittest.TestCase):
+    def test_failure_names_come_from_both_health_checks(self):
+        self.assertEqual(qw.failed_indexers([hc([NZB, NZBP])]), {NZB: None, NZBP: None})
+        self.assertEqual(qw.failed_indexers([hc([NZB], "IndexerLongTermStatusCheck", True)]), {NZB: None})
+
+    def test_unrelated_health_entries_are_ignored(self):
+        other = {"source": "IndexerRssCheck", "type": "warning", "message": "No indexers available with RSS sync enabled"}
+        self.assertEqual(qw.failed_indexers([other, hc([NZB])]), {NZB: None})
+        self.assertEqual(qw.failed_indexers([]), {})
+
+    def test_status_records_add_disabled_until_and_last_error(self):
+        status = [{"indexerId": 1, "disabledTill": "2026-10-27T10:00:00Z", "mostRecentFailure": "2026-10-26T10:00:00Z", "lastError": "401 Unauthorized"}]
+        got = qw.failed_indexers([hc([NZB])], status, [{"id": 1, "name": NZB}])
+        self.assertEqual(got[NZB]["until"], "2026-10-27T10:00:00Z")
+        self.assertEqual(got[NZB]["error"], "401 Unauthorized")
+
+    def test_treasure_maps_grab_limit_is_expected(self):
+        for err in (None, "HTTP 429 Too Many Requests", "Daily grab limit reached"):
+            info = None if err is None else {"until": None, "error": err}
+            self.assertEqual(qw.unexpected({TM: info}), {}, err)
+
+    def test_treasure_maps_with_another_error_alerts(self):
+        self.assertEqual(list(qw.unexpected({TM: {"until": None, "error": "401 Unauthorized"}})), [TM])
+
+    def test_pirate_bay_flaky_no_results_is_expected(self):
+        for err in (None, "No results in configured categories"):
+            info = None if err is None else {"until": None, "error": err}
+            self.assertEqual(qw.unexpected({TPB: info}), {}, err)
+        self.assertEqual(list(qw.unexpected({TPB: {"until": None, "error": "Connection refused"}})), [TPB])
+
+    def test_other_indexers_are_never_exempt(self):
+        self.assertEqual(list(qw.unexpected({NZB: {"until": None, "error": "429 limit"}, TM: None, TPB: None})), [NZB])
+
+    def test_message_has_app_names_date_fix_and_collapsed_details(self):
+        text = qw.indexer_message("sonarr", {NZB: {"until": "2026-10-27T10:00:00Z", "error": "401 Unauthorized"}, NZBP: None}, T0)
+        head, body = text.split("\n\n", 1)
+        self.assertEqual(head, "🟠 <b>Sonarr: indexers disabled after failures</b>")
+        self.assertRegex(body, r"^📅 \d{4}-\d\d-\d\d \d\d:\d\d\n• ")
+        self.assertIn("<blockquote expandable>", text)
+        for part in (NZB, NZBP, "2026-10-27T10:00:00Z", "401 Unauthorized", "Sonarr → System → Status", "POST /api/v3/indexer/testall"):
+            self.assertIn(part, text)
+
+    def test_message_escapes_html(self):
+        self.assertIn("&lt;x&gt;", qw.indexer_message("radarr", {"<x>": None}, T0))
+
+
+class IndexerRun(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+        self.state = self.dir / "state.json"
+        self.sent = []
+        self.fail_send = False
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def send(self, text):
+        if self.fail_send:
+            return False
+        self.sent.append(text)
+        return True
+
+    def go(self, apps, now):
+        return qw.run(apps, self.state, [], self.send, qw.Config(), now)
+
+    def test_one_alert_then_silence_then_recovered(self):
+        bad = {"sonarr": fake(health=[hc([NZB, NZBP])])}
+        self.assertEqual(self.go(bad, T0), 0)
+        self.assertEqual(self.go(bad, T0 + 15 * MIN), 0)
+        self.assertEqual(self.go(bad, T0 + 30 * MIN), 0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("indexers disabled", self.sent[0])
+        self.assertEqual(self.go({"sonarr": fake()}, T0 + 45 * MIN), 0)
+        self.assertEqual(len(self.sent), 2)
+        self.assertTrue(self.sent[1].startswith("✅ <b>Sonarr: indexers recovered</b>"))
+        self.assertEqual(self.go({"sonarr": fake()}, T0 + 60 * MIN), 0)
+        self.assertEqual(len(self.sent), 2)
+
+    def test_alert_again_after_it_cleared_and_came_back(self):
+        bad = {"radarr": fake(health=[hc([NZB])])}
+        self.go(bad, T0)
+        self.go({"radarr": fake()}, T0 + 15 * MIN)
+        self.go(bad, T0 + 30 * MIN)
+        self.assertEqual(len(self.sent), 3)
+
+    def test_apps_are_tracked_separately(self):
+        self.go({"radarr": fake(health=[hc([NZB])]), "sonarr": fake(health=[hc([NZB])])}, T0)
+        self.assertEqual(len(self.sent), 2)
+
+    def test_only_exempt_indexers_send_nothing(self):
+        self.assertEqual(self.go({"radarr": fake(health=[hc([TM, TPB])])}, T0), 0)
+        self.assertEqual(self.sent, [])
+
+    def test_exempt_indexers_are_left_out_of_the_alert(self):
+        self.go({"radarr": fake(health=[hc([TM, NZB, TPB])])}, T0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn(NZB, self.sent[0])
+        self.assertNotIn("Treasure Maps", self.sent[0])
+        self.assertNotIn("Pirate Bay", self.sent[0])
+
+    def test_no_recovered_message_when_only_exempt_ones_remain(self):
+        self.go({"radarr": fake(health=[hc([NZB, TPB])])}, T0)
+        self.go({"radarr": fake(health=[hc([TPB])])}, T0 + 15 * MIN)
+        self.assertEqual(len(self.sent), 2)
+        self.assertIn("recovered", self.sent[1])
+        self.go({"radarr": fake(health=[hc([TPB])])}, T0 + 30 * MIN)
+        self.assertEqual(len(self.sent), 2)
+
+    def test_failed_send_is_retried_next_run(self):
+        bad = {"radarr": fake(health=[hc([NZB])])}
+        self.fail_send = True
+        self.assertEqual(self.go(bad, T0), 1)
+        self.fail_send = False
+        self.assertEqual(self.go(bad, T0 + 15 * MIN), 0)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_failed_recovered_send_is_retried(self):
+        self.go({"radarr": fake(health=[hc([NZB])])}, T0)
+        self.fail_send = True
+        self.assertEqual(self.go({"radarr": fake()}, T0 + 15 * MIN), 1)
+        self.fail_send = False
+        self.assertEqual(self.go({"radarr": fake()}, T0 + 30 * MIN), 0)
+        self.assertEqual(len(self.sent), 2)
+
+    def test_health_api_error_keeps_the_state_and_does_not_fake_a_recovery(self):
+        self.go({"radarr": fake(health=[hc([NZB])])}, T0)
+        self.assertEqual(self.go({"radarr": fake(health_fail=True)}, T0 + 15 * MIN), 1)
+        self.go({"radarr": fake(health=[hc([NZB])])}, T0 + 30 * MIN)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_missing_indexerstatus_endpoint_is_not_an_error(self):
+        self.assertEqual(self.go({"radarr": fake(health=[hc([NZB])], status=None)}, T0), 0)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_indexerstatus_details_reach_the_message(self):
+        status = [{"indexerId": 1, "disabledTill": "2026-10-27T10:00:00Z", "lastError": "401 Unauthorized"}]
+        self.go({"radarr": fake(health=[hc([NZB])], status=status, indexers=[{"id": 1, "name": NZB}])}, T0)
+        self.assertIn("401 Unauthorized", self.sent[0])
+
+    def test_indexer_state_does_not_disturb_queue_state(self):
+        self.go({"radarr": fake([BLOCKED], health=[hc([NZB])])}, T0)
+        self.go({"radarr": fake([BLOCKED], health=[hc([NZB])])}, T0 + 31 * MIN)
+        self.assertEqual(len(self.sent), 2)
+        self.assertIn("radarr:abc", json.loads(self.state.read_text()))
 
 
 if __name__ == "__main__":
