@@ -18,7 +18,7 @@ Per-user tracker for films, series, books and games (ratings, history, want-list
 | SSRF: users enter integration URLs, the server fetches them (LAN allowed upstream) | `docker-user-guard.sh` `FLOPPY_NET`: drops 10/8, 172.16/12, 192.168/16, 100.64/10, 169.254/16 from the `floppy` subnet; the host is `BEEFY-INPUT`. Only the internet is reachable (sso via Cloudflare) |
 | Webhook/calendar/Stremio/ListenBrainz URLs carry the user token = full API key | No webhooks in use. Traefik router `tracker-token-urls` answers 403 for `/webhook/`, `/calendar/download/`, `/stremio-addon/`, `/apis/listenbrainz/` |
 | Pickle cache in Redis | Redis only on the internal net, `requirepass` from `secrets/`, read-only fs |
-| Insecure defaults | `ALLOWED_HOSTS`, `URLS`, secure cookies, `USE_X_FORWARDED_PROTO` (port answers fastpi only), `SOCIALACCOUNT_ONLY`, `REDIRECT_LOGIN_TO_SSO`, admin/demo off |
+| Insecure defaults | `ALLOWED_HOSTS`, `URLS`, secure cookies, `USE_X_FORWARDED_PROTO` (port answers fastpi only), `SOCIALACCOUNT_ONLY`, admin/demo off |
 | Root container (no non-root mode) | `cap_drop: ALL` + CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, KILL; `no-new-privileges`; app processes run as `abc` = 65125. Root fs writable (the entrypoint runs `usermod`) |
 | Fast-moving, mostly AI-written upstream | Pinned by digest, `notify` tier only, update by hand after reading the release notes |
 | Shared metadata edits / TMDB proxy per user (no fix) | Only trusted members; check `tmdb_proxy_url` stays empty (below) |
@@ -28,7 +28,7 @@ Per-user tracker for films, series, books and games (ratings, history, want-list
 
 - Holy Grail forward auth, then Floppy jumps to **Sign in with Holy Grail** (OIDC `tracker-login`, allauth provider id `authentik`, callback `/accounts/oidc/authentik/login/callback/`).
 - `SOCIALACCOUNT_ONLY=True`: no passwords. `REGISTRATION=True`: an account is created on first login; only `streaming-users` get that far.
-- No user is admin (`/admin` off). Logout lands on `/accounts/login/?loggedout=1` (no auto-redirect there).
+- No user is admin (`/admin` off). Login page shows one "Holy Grail" button: `REDIRECT_LOGIN_TO_SSO` is off because Floppy's auto-submit sent the login 2-3 times and the extra callbacks failed ("Third-Party Login Failure").
 
 ## Secrets
 

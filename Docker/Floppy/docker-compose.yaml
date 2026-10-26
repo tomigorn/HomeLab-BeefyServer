@@ -57,7 +57,7 @@ services:
       SOCIAL_PROVIDERS: allauth.socialaccount.providers.openid_connect
       SOCIALACCOUNT_PROVIDERS_FILE: /run/secrets/floppy_oidc_providers
       SOCIALACCOUNT_ONLY: "True"
-      REDIRECT_LOGIN_TO_SSO: "True"
+      REDIRECT_LOGIN_TO_SSO: "False"
       REGISTRATION: "True"
       ADMIN_ENABLED: "False"
       DEMO_ACCOUNT_ENABLED: "False"
