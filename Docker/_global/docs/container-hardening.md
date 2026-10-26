@@ -38,10 +38,12 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65122 | dt-apiserver (read_only) | | |
 | 65123 | dt-frontend (read_only) | | |
 | 65124 | seerr-proxy (nginx, read_only) | | |
+| 65125 | floppy (app processes `abc` via PUID/PGID; supervisord + nginx master root) | | CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, KILL |
+| 65126 | floppy-redis (read_only) | | |
 | 65116 | gluetun files (PUID; process root) | | NET_ADMIN, NET_RAW, NET_BIND_SERVICE, DAC_OVERRIDE, CHOWN |
 | 0 | portainer_agent | | none (full socket by design, `AGENT_SECRET` required) |
 
-Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65125+.
+Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65127+.
 
 ## Root by design
 | Container | Why |
@@ -49,6 +51,7 @@ Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secre
 | jellyfin | image has no non-root mode (tested: s6 service always switches user) |
 | movie-gluetun | creates tun0 and iptables rules |
 | portainer_agent | needs the full Docker API; the socket is root anyway |
+| floppy | no non-root mode: the entrypoint runs `usermod`/`chown`, supervisord switches to `abc` (65125); root fs writable for the same reason |
 | clamav-hostscan | caps DAC_READ_SEARCH, DAC_OVERRIDE, CHOWN: weekly host scan reads everything (`/:/host:ro`); non-root cannot use DAC_READ_SEARCH. Safe because `network_mode: none`, read-only root fs, writes only state + textfile; the always-on `clamav` no longer mounts the host root |
 
 ## Images
@@ -74,6 +77,7 @@ Script: `_global/scripts/docker-user-guard.sh` (idempotent; `--persist` writes `
 |---|---|
 | LAN → published container ports | allowlist: only `192.168.1.2` (fastpi: Traefik, Prometheus, Portainer, Cup). A newly published port is closed by default |
 | containers → LAN | dropped, except `jellyfin` net (Jellyfin, Seerr) and `ryot` net → `192.168.1.2:443` (sso + tracker via `extra_hosts`). Container → beefy's own published ports is unaffected (DNAT, bridge to bridge) |
+| `floppy` net `172.28.16.0/24` | internet only: 10/8, 172.16/12 (other Docker networks, also via published ports), 192.168/16, 100.64/10, 169.254/16 dropped (user-supplied integration URLs = SSRF) |
 | gluetun namespace (qBit, SAB, Prowlarr) | same DOCKER-USER drop, and `FIREWALL_OUTBOUND_SUBNETS` = bridge only; replies to fastpi still leave via eth0 |
 | IPv6 | chain `BEEFY-INPUT6` on `enp6s0`: only tcp/22 accepts new connections (docker-proxy listens on `[::]` for every published port) |
 | DNS | not needed: containers resolve through dockerd in the host namespace (`127.0.0.53`) |

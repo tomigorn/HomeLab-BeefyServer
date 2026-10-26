@@ -6,3 +6,4 @@
 | Antivirus | ❌ | ❌ | | | |
 | Ryot | ❌ | ❌ | | | |
 | Dependency-Track | ❌ | ❌ | | | |
+| Floppy | ❌ | ❌ | | | |
