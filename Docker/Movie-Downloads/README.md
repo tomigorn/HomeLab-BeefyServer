@@ -526,18 +526,21 @@ Why this shape:
 |---|---|
 | Profiles | every Recyclarr profile `upgradeAllowed: true`; cutoff = best quality (Radarr Bluray-2160p, Sonarr WEB 2160p) + score 25000000 = HDR + original + English (twins 22000000; HD and anime 5000000); minimum upgrade step 1, see [Release scoring](#release-scoring) |
 | RSS | Radarr every 30 min, Sonarr every 15 min, NZBgeek + NzbPlanet (Treasure Maps is search-only). Runs only while beefy is awake: new releases that appear while it sleeps are missed by RSS |
-| Weekly search | `systemd/cutoff-search.timer`, Sunday 04:12 (inside the 03:55 wake): `scripts/cutoff-search.sh` searches the 10 least recently searched cutoff-unmet movies (`MoviesSearch`) and 10 episodes (`EpisodeSearch`) |
-| Indexer budget | ~3 Treasure Maps calls per title -> ≤ ~60 of its 100/day; Prowlarr's query limit stops the rest. Radarr's own `CutoffUnmetMoviesSearch` has no cap, hence the script |
+| Night search | `systemd/night-search.timer`, daily 04:17 (inside the 03:55 wake, after Recyclarr 04:15): `scripts/night-search.py`, 1 Treasure Maps call per movie or episode, ~3 per season |
+| Order | 1 episodes aired in the last 14 days without a file; 2 movies released (digital or physical) in the last 60 days without a file; 3 cutoff-unmet: 5 movies + 5 episodes. Monitored only, not in the queue, not searched in the last 20 h, least recently searched first. 3+ missing episodes of one season = one `SeasonSearch`, else `EpisodeSearch` |
+| Indexer budget | ≤ 30 Treasure Maps searches a night (`NS_TM_MAX`) and never above 70 % of its window (`NS_TM_MAX_PCT`, read from the indexer bar `usage.json`; bar missing or older than 15 min = 10, `NS_TM_FALLBACK`). Over budget: the rest is logged `skipped (budget)` and, being least recently searched, comes first next night. Radarr's own `CutoffUnmetMoviesSearch` has no cap, hence the script |
+| Downloads | land in the untagged night clients, `night-downloads.timer` (every 2 min) resumes them at once in the low tariff; the idle watcher counts download traffic as busy, and the script waits for its searches (cap 30 min), so the window holds beefy awake |
 
 ```bash
 cd ~/Projects/Docker/Movie-Downloads/systemd
-sudo install -m 0644 cutoff-search.service cutoff-search.timer /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now cutoff-search.timer
-sudo systemctl start cutoff-search.service; journalctl -u cutoff-search -n 5   # run now
+sudo install -m 0644 night-search.service night-search.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now night-search.timer && sudo systemctl disable --now cutoff-search.timer
+scripts/night-search.py --dry-run     # what it would search, TM estimate
+sudo systemctl start night-search.service; journalctl -u night-search -n 20   # run now
 ```
 
-- More or fewer per run: `Environment=CS_MOVIES=… CS_EPISODES=…` in the service (0 = skip).
-- Tests: `tests/test_cutoff_search.sh`. Verified 2026-10-20: `radarr: 2 of 2 cutoff-unmet searched: Bad Apples, The Ring Thing` -> Radarr `Completed search for 2 movies. 0 reports downloaded.`
+- Knobs (`Environment=` in the service): `NS_TM_MAX`, `NS_TM_MAX_PCT`, `NS_CUTOFF_MOVIES`, `NS_CUTOFF_EPISODES` (0 = skip), `NS_NEW_EPISODE_DAYS`, `NS_NEW_FILM_DAYS`, `NS_SEASON_MIN`, `NS_MIN_GAP_HOURS`.
+- Tests: `python3 tests/test_night_search.py`. Replaces the Sunday `cutoff-search.sh` (10 + 10): removed 2026-10-26.
 
 ### Release scoring
 
@@ -1031,7 +1034,7 @@ Every language, profile and delete feature works the same for movies and series 
 | Queue watchdog (Telegram: stuck, stalled, failed, guard events) | ✓ | ✓ new 2026-10-25 | `queue-watchdog.py`, [watchdog](#queue-watchdog) |
 | Live check | ✓ | ✓ since 2026-10-23 | `swiss-german-check.py` |
 | Swiss German not found alert (Telegram) | ✓ | ✓ new 2026-10-23 | `language-missing.py`, [alert](#swiss-german-not-found-alert) |
-| Weekly cutoff search | ✓ movies | ✓ episodes | `cutoff-search.sh` |
+| Night search (new, cutoff-unmet) | ✓ movies | ✓ episodes | `night-search.py` |
 
 Delete a title, verified 2026-10-23 with *Pioneer One* (TVDB 170551, added unmonitored without search) and fixtures that never download (a stopped magnet in category `sonarr`, recorded like a grab, plus an unrecorded decoy; a paused NZB in category `tv`, recorded): Seerr **Remove from Sonarr** → only the Sonarr entry gone, torrent, SABnzbd job and Seerr row kept; then **Clear Data** → within one cycle `torrent removed with files`, `SABnzbd queue entry … removed`, the stale Jellyfin item of the 2026-10-19 test removed, Seerr row gone; the decoy stayed.
 

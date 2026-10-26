@@ -1,0 +1,12 @@
+[Unit]
+Description=Night search: new episodes, new films and a few cutoff-unmet titles within the Treasure Maps budget (Radarr, Sonarr)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/night-search.py
+TimeoutStartSec=45min
+NoNewPrivileges=true
+PrivateTmp=true
