@@ -115,7 +115,7 @@ Monthly at most, by hand: read the release notes (migrations are one-way), then 
 ../_global/scripts/update-project.sh ~/Projects/Docker/Floppy pull /srv/appdata/floppy
 ```
 
-After the update: run  (Security, "Edge allow-list") and decide on every new prefix before adding it to .
+After the update: run `scripts/url-prefixes.py` (Security, "Edge allow-list") and decide on every new prefix before adding it to `tracker.yml`.
 
 Digest of a tag: `docker buildx imagetools inspect ghcr.io/dannyvfilms/floppy:<tag> --format '{{json .Manifest.Digest}}'`.
 
