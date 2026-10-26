@@ -313,7 +313,8 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Not covered | a remake / same-named show with the same title *and* year; a release whose title carries no year |
 | Queue lookup | by download id over the whole queue with `includeUnknownMovieItems=true` (Sonarr `includeUnknownSeriesItems`), never the `movieIds`/`seriesIds` filter: a release the app cannot map to the title (the wrong year, *A Separation* 2026 vs 2011, 2026-10-24) is queued with `movieId` null, which the filter and the default listing both hide, so the guard never saw it |
 | Fallback | not in the queue after `GG_WAIT` (90 s) → the `grabbed` history record with the same download id is marked failed (`POST /history/failed/{id}`: blocklist + new search); no record or the call fails → `check by hand` |
-| Telegram | every wrong-year case (removed / marked failed / check by hand) writes `<config dir>/guard-events/*.json` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`); [Queue watchdog](#queue-watchdog) sends it within 15 min and deletes the file. The containers hold no bot token: no secret mount, no outbound call from the apps |
+| Telegram | every wrong-year or dub-only case (removed / marked failed / check by hand) writes `<config dir>/guard-events/*.json` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`); [Queue watchdog](#queue-watchdog) sends it within 15 min and deletes the file. The containers hold no bot token: no secret mount, no outbound call from the apps |
+| Dub-only | the grabbed release title is on `/config/dub-only.json` ([NFO scout](#nfo-scout): ≥ 2 languages in the NFO, the original missing) with the same title id and younger than 30 days → same removal as above (queue lookup, remove + blocklist + re-search, history fallback), whatever the year. Exact title match only; no list or an unreadable one = no action. Telegram `Dub-only release removed` with title, release and languages |
 | Registered by | `scripts/language-policy.sh` (both apps, idempotent) |
 | Tests | `tests/test_grab_guard.sh`, `tests/test_grab_guard_sonarr.sh`; live: `sudo docker exec movie-radarr env radarr_eventtype=Grab radarr_movie_id=<id> radarr_release_title=<name> radarr_download_id=x GG_WAIT=0 bash /scripts/grab-guard.sh` (Sonarr: `movie-sonarr`, `sonarr_eventtype`, `sonarr_series_id`, `sonarr_release_title`, `sonarr_download_id`) |
 
@@ -807,6 +808,7 @@ Radarr/Sonarr read languages only from the release name, so `MULTi` = the origin
 | Source | NzbPlanet, Treasure Maps: `t=getnfo` (NFO text in the RSS item); NZBgeek: `t=details` `language` attributes (no getnfo: it answers with its newest releases). Direct to the indexer (Prowlarr's proxy: "No such function (getnfo)"), base URL + key from Prowlarr's DB, never logged; own user agent (Treasure Maps rejects a bare `Prowlarr`) |
 | Parse | audio only: values of `Audio` / `Language` / `Sprache` / `Ton` / `Idioma` / … keys and their indented continuation lines, MediaInfo `Audio #n` blocks. Dropped: `Subs` / `Untertitel` / `Sous-titres` / MediaInfo `Text`, the rest of a list after a subtitle word, keys like `Audio/Subs`. Names in EN/DE/FR/ES/IT, ISO 639-2 (`ger`, `eng`, `spa`), `VFF`/`VFQ` = French, upper-case `DE`/`EN`/`FR`/`IT` |
 | Push | ≥ 2 languages incl. the original → languages + `.NFO` after the marker: `The.Secret.In.Their.Eyes.2009.MULTi.French.Spanish.NFO.1080p.BluRay.x264-FHD`. `/parse` of the new name: exactly those languages, same quality, group and title, score ≥ 0 and higher than before, else not pushed. Extras the parser cannot name (Czech, Estonian) are dropped; original/English/German not nameable = no push. Same Prowlarr download link and indexer; the app decides |
+| Dub-only | NFO / details list ≥ 2 languages but not the title's original (nameable, `Spanish (Latino)` counts as Spanish) → the release is written to `<app config dir>/dub-only.json` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`; guid, exact title, indexer, languages, original, TMDB/TVDB id, time), read by the [Wrong-film guard](#wrong-film-guard). Also in a dry run; entries expire after 30 days. Never for releases without NFO data or with one language |
 | Not covered | NFOs without an audio list, a single listed language, Swiss German |
 
 | Env (unit) | Default | |
@@ -826,6 +828,7 @@ Radarr/Sonarr read languages only from the release name, so `MULTi` = the origin
 | File | |
 |---|---|
 | `~/.local/state/movie-downloads/nfo-scout.log` | every decision (also `journalctl -u nfo-scout`) |
+| `/srv/appdata/{radarr,sonarr}/dub-only.json` | dub-only list for the guard: in the app's `/config` (already mounted, read by the guard like `guard-events/`), no new mount, no restart; scripts/ is the git-tracked read-only code mount, not for state. Env `NS_RADARR_DUB_ONLY` / `NS_SONARR_DUB_ONLY` |
 | `~/.local/state/movie-downloads/nfo-scout.json` | per release (`<indexer>\|<id>`): `langs`/`none`/`skip`/`failed`, languages, pushed, approved; call counters, unsupported/refused indexers. Delete an entry to re-check it |
 
 ```bash
