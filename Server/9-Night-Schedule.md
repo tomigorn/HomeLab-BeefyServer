@@ -25,6 +25,15 @@ beefy sleeps (S5) and its timers cannot wake it. Everything recurring runs in on
 
 fastpi pulls from beefy at 04:02-04:20 (never wakes it: `fetch_nowake`).
 
+## Night downloads (22:00-06:00)
+
+| Time | What |
+|---|---|
+| 22:05 | fastpi `beefy-night-downloads-wake` wakes beefy only when paused downloads wait (`HomeLab-FastPi` `Docker/Beefy-Waker`); beefy awake anyway: `night-downloads.timer` 22:05 |
+| boot, every 2 min | `night-downloads.timer`: resumes paused night downloads in the low tariff (22:00-06:00, all Sunday); a download running at 06:00 finishes |
+
+Details: `Docker/Movie-Downloads/README.md` "Can wait: downloads at night".
+
 ## Not a systemd timer
 
 | What | How | Where |
@@ -46,6 +55,6 @@ fastpi pulls from beefy at 04:02-04:20 (never wakes it: `fetch_nowake`).
 | `snap.firmware-updater.firmware-notifier.timer` (user, masked) | desktop notifier |
 | `pro config set apt_news=false` | ads in `apt upgrade` |
 
-Kept on purpose: the live pollers (`request-tags`, `clear-data-wipe`, `indexer-usage`, `hdd-spinstate`, `queue-watchdog`, `sysstat-collect`, `jellyfin-user-defaults`) run only while beefy is awake and never wake it. Radarr/Sonarr internal tasks and Bazarr's scheduler have fixed intervals and stay.
+Kept on purpose: the live pollers (`request-tags`, `night-downloads`, `clear-data-wipe`, `indexer-usage`, `hdd-spinstate`, `queue-watchdog`, `sysstat-collect`, `jellyfin-user-defaults`) run only while beefy is awake and never wake it. Radarr/Sonarr internal tasks and Bazarr's scheduler have fixed intervals and stay.
 
 Ryot is replaced by Floppy: `ryot-db-backup.timer` is disabled. Floppy snapshots its SQLite itself at 04:20 inside the container (no systemd timer).

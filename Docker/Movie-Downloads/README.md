@@ -348,6 +348,42 @@ sudo systemctl daemon-reload && sudo systemctl enable --now queue-watchdog.timer
 scripts/queue-watchdog.py; echo $?    # empty queue: no message, 0
 ```
 
+### Can wait: downloads at night
+
+Downloads wait for the low tariff (22:00-06:00, all Sunday) unless the title carries the tag `download-now`. The search still runs at once; only the download is held. Seerr's request dialog has the checkbox (`../Seerr/README.md` "Can wait").
+
+| Download client (Radarr + Sonarr) | Tags | Category | Adds |
+|---|---|---|---|
+| `qBittorrent night` | none | `radarr-night` / `sonarr-night` | stopped (Initial State) |
+| `SABnzbd night` | none | `movies-night` / `tv-night` | paused (priority Paused) |
+| `qBittorrent`, `SABnzbd` | `download-now` | `radarr` / `sonarr`, `movies` / `tv` | started |
+
+Radarr/Sonarr use a tagged client only for a title with a matching tag, otherwise the untagged ones. Every grab path (Seerr, RSS, scouts, `request-tags`, cutoff search) ends there. Night categories use the same folders, so imports and hardlinks are unchanged.
+
+| Part | What |
+|---|---|
+| Resume | `scripts/night-downloads.py` (`systemd/night-downloads.timer`: boot, every 2 min, 22:05, as buntu): in the low tariff every paused item in the night categories resumes; any time, the paused items of `download-now` titles. Never pauses: a download running at 06:00 finishes |
+| State for fastpi | `~/.local/state/movie-downloads/night-downloads.json` (`pending`). fastpi copies it while beefy is awake and wakes beefy at 22:05 only when `pending > 0` (`HomeLab-FastPi` `Docker/Beefy-Waker/README.md` "Night downloads wake") |
+| First download only | Connect **Download now: first download only** (`scripts/download-now-hook.sh`, On Import/Upgrade) removes `download-now` after the first import; upgrades and later episodes wait again |
+| Existing titles | `scripts/request-tags.sh` copies `download-now` only onto a title that was in Radarr/Sonarr before the request; the paused item then resumes within 2 min |
+| By hand | Radarr/Sonarr: add the tag `download-now` to the title, or resume the item in qBittorrent/SABnzbd |
+| Setup | `scripts/night-downloads-setup.sh` (tag, clients, categories; idempotent), `scripts/language-policy.sh` (Connect script) |
+| Check | `scripts/night-downloads.py --dry-run` |
+| Tests | `python3 tests/test_night_downloads.py`, `tests/test_download_now_hook.sh`, `tests/test_request_tags.sh` |
+
+| Side effect | Behaviour |
+|---|---|
+| beefy sleep | paused items are idle: beefy sleeps by day, a resumed download keeps it awake |
+| Queue watchdog | `paused` is never stalled; the stall clock starts on resume |
+| Completion scan, Delete a title | unchanged: the scan runs when the download finishes; the wipe reads the categories of all clients |
+| Paused by hand in a night category | resumed at night like the rest |
+
+```bash
+cd ~/Projects/Docker/Movie-Downloads/systemd
+sudo install -m 0644 night-downloads.service night-downloads.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now night-downloads.timer
+```
+
 ### Delete a title
 
 | Seerr button (Manage panel, admin) | What goes |
@@ -403,7 +439,7 @@ The records of a wiped title stay in `title-wipe.tsv`: the wipe runs as buntu an
 | Recycle Bin | `/data/.recyclebin`, 7 days | |
 | Metadata (Kodi/Emby NFO) | **all off** | Jellyfin fetches its own from TMDB; two writers = duplicate/conflicting artwork |
 | Connect | `Jellyfin` (Emby/Jellyfin) | see below |
-| Connect (Custom Script) | `Language policy`, `Wrong-film guard`, `Title wipe` | [Languages](#languages), [Wrong-film guard](#wrong-film-guard), [Delete a title](#delete-a-title) |
+| Connect (Custom Script) | `Language policy`, `Wrong-film guard`, `Title wipe`, `Original audio`, `Download now: first download only` | [Languages](#languages), [Wrong-film guard](#wrong-film-guard), [Delete a title](#delete-a-title), [Can wait](#can-wait-downloads-at-night) |
 
 ### Naming (TRaSH "Jellyfin", TMDB flavour)
 
