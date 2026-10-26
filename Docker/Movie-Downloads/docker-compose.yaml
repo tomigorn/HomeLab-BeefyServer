@@ -386,9 +386,9 @@ services:
     volumes:
       # Writable: Recyclarr caches the guide repos and its sync state here.
       - ${APPDATA_ROOT}/recyclarr:/config
-      - ./recyclarr/recyclarr.yml:/config/recyclarr.yml:ro
-      - ./recyclarr/settings.yml:/config/settings.yml:ro
-      - ./recyclarr/custom-formats:/config/custom-formats:ro
+      # the whole folder, not single files: an edit that replaces a file would leave the container on the old inode (the 04:15 sync then restored old scores, 2026-10-26).
+      # recyclarr.yml, settings.yml and custom-formats in /config are relative symlinks into homelab/ (not repo/: Recyclarr deletes an old /config/repo on start).
+      - ./recyclarr:/config/homelab:ro
       # API keys for !secret in recyclarr.yml
       - ./secrets/recyclarr.yml:/config/secrets.yml:ro
     networks:

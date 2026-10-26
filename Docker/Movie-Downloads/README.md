@@ -540,7 +540,7 @@ Change it:
 
 | What | Where, then |
 |---|---|
-| HDR, `German DL`, `Anime Dual Audio`, rejects, cutoff, minimum upgrade step | `recyclarr/recyclarr.yml` → `docker compose run --rm recyclarr sync`; edit the file in place (or `docker compose up -d --force-recreate recyclarr`): the cron container bind-mounts the single file, a replaced file (new inode) is not seen and the 04:15 sync reapplies the old one (happened 2026-10-26) |
+| HDR, `German DL`, `Anime Dual Audio`, rejects, cutoff, minimum upgrade step | `recyclarr/recyclarr.yml` → `docker compose run --rm recyclarr sync`. The container mounts the whole `recyclarr/` folder at `/config/homelab` (`recyclarr.yml`, `settings.yml`, `custom-formats` in `/config` are symlinks into it), so any edit is seen by the 04:15 sync. Single-file mounts kept old inodes and restored old scores on 2026-10-26 |
 | `Language: Original + English`, extra-language score, which languages count | `scripts/language_formats.py` → `scripts/language-policy.sh`  |
 | Tests | `python3 tests/test_scoring_order.py` (offline, every profile) |
 | Live check | `scripts/scoring-check.py` (`GET /parse`, never searches or grabs) |
