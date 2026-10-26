@@ -7,7 +7,7 @@
 | Final dump first | `sudo docker compose start ryot-db && sleep 10 && scripts/ryot-db-backup.sh && sudo docker compose stop` |
 | Containers, image, network | `sudo docker compose down --rmi all` |
 | Database | `sudo rm -rf /srv/appdata/ryot-db` |
-| Backup timer | `systemctl --user disable --now ryot-db-backup.timer` |
+| Backup timer (disabled 2026-10-26, Ryot replaced by Floppy; stopped) | `systemctl --user disable --now ryot-db-backup.timer` |
 | Firewall | drop `RYOT_NET` from `_global/scripts/docker-user-guard.sh`, then `sudo _global/scripts/docker-user-guard.sh --persist` |
 | Secrets | `sudo rm -rf secrets/` (the OIDC client secret here is the one Floppy now uses: rotate it in `provision-tracker-sso.py` if the files leave beefy) |
 
