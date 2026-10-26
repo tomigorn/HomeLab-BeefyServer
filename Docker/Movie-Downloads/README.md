@@ -430,16 +430,16 @@ docker compose run --rm recyclarr sync             # apply now
 docker compose run --rm recyclarr config list templates   # TRaSH templates
 ```
 
-After the first sync on a rebuild, and after any sync that changes the Swiss German profile (Recyclarr resets its language to Original), run `scripts/language-policy.sh` (profile language Any, tags, hook).
+After the first sync on a rebuild, and after any sync that changes the Swiss German profile (Recyclarr resets its language to Original), run `scripts/language-policy.sh` (native language formats and their scores, profile language Any, tags, hook).
 
 | Profile | Use | Qualities (top wins) | Upgrade until |
 |---|---|---|---|
-| **4K HDR - UHD Bluray + WEB (1080p fallback)** — default | everything | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p | Bluray-2160p, CF score 20000 |
-| 4K HDR - … (1080p fallback) - English original | English-original titles, set by `scripts/language-policy.sh` | same | same; `Language: Original + English` 0 (see [Languages](#languages)) |
-| Any quality - old & rare (upgrades to 4K) (+ `- English original` twin) | old/niche titles, set automatically on add ([Old and rare titles](#old-and-rare-titles)) or picked per request | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p › HDTV-1080p › Bluray-720p › WEB-720p › HDTV-720p › Bluray-576p › Bluray-480p › WEB-480p › DVD › SDTV › Unknown | Bluray-2160p, 20000; scores identical to the default |
+| **4K HDR - UHD Bluray + WEB (1080p fallback)** — default | everything | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p | Bluray-2160p, CF score 5000000 (original + English, see [Release scoring](#release-scoring)) |
+| 4K HDR - … (1080p fallback) - English original | English-original titles, set by `scripts/language-policy.sh` | same | Bluray-2160p, 2000000 (English + German); `Language: Original + English` 0 (see [Languages](#languages)) |
+| Any quality - old & rare (upgrades to 4K) (+ `- English original` twin) | old/niche titles, set automatically on add ([Old and rare titles](#old-and-rare-titles)) or picked per request | Bluray-2160p › WEB-2160p › Bluray-1080p › WEB-1080p › HDTV-1080p › Bluray-720p › WEB-720p › HDTV-720p › Bluray-576p › Bluray-480p › WEB-480p › DVD › SDTV › Unknown | Bluray-2160p, 5000000 (twin 2000000); scores identical to the default |
 | Swiss German (Mundart) only - any quality | titles tagged `audio-swiss-german`, set by the hook ([Swiss German](#swiss-german)) | one group: Unknown, SDTV … Bluray-2160p, ranked by resolution scores (Unknown gets none, so it ranks last) | Swiss German + 2160p (score 1200000) |
-| HD Bluray + WEB | space saver, pick per movie | Bluray-1080p › WEB-1080p › Bluray-720p | Bluray-1080p, 20000 |
-| Anime - Remux + WEB 1080p | anime films, pick per movie (Seerr has no anime profile for movies) | Remux/Bluray-1080p › WEB-1080p › 720p … | Remux-1080p, 20000; TRaSH `[Anime] Remux-1080p`: anime group tiers, no Golden Rule (anime is x265 10-bit by default), minimum score 100 |
+| HD Bluray + WEB | space saver, pick per movie | Bluray-1080p › WEB-1080p › Bluray-720p | Bluray-1080p, 5000000 |
+| Anime - Remux + WEB 1080p | anime films, pick per movie (Seerr has no anime profile for movies) | Remux/Bluray-1080p › WEB-1080p › 720p … | Remux-1080p, 5000000; TRaSH `[Anime] Remux-1080p`: anime group tiers, no Golden Rule (anime is x265 10-bit by default), minimum score 100 |
 
 Why this shape:
 
@@ -451,17 +451,17 @@ Why this shape:
   automatically when one appears. Radarr always ranks **quality before score**, so
   any acceptable 2160p beats any 1080p. The HD Bluray tier scores are added so the
   fallback picks a good 1080p group.
-- **HDR**: `SDR` (−50000) rejects 2160p releases without HDR (usually upscales), so
+- **HDR**: `SDR` (−50000000) rejects 2160p releases without HDR (usually upscales), so
   "4K" here always means 4K HDR; without an HDR 4K the 1080p tier wins.
-  `DV (w/o HDR fallback)` (−50000) rejects Dolby Vision Profile 5 (no HDR10 base
+  `DV (w/o HDR fallback)` (−50000000) rejects Dolby Vision Profile 5 (no HDR10 base
   layer → green/purple on non-DV clients, and Jellyfin's tone mapping of P5 is
-  untested here). DV *with* HDR10 fallback (P7/P8, "DV HDR10") scores like HDR10.
+  untested here). DV *with* HDR10 fallback (P7/P8, "DV HDR10") scores like HDR10. HDR outranks languages: [Release scoring](#release-scoring).
   DV Boost / HDR10+ Boost are **not** enabled — turn on `DV Boost` if every TV in
   the house does Dolby Vision.
-- **Golden Rule**: x265 only for HDR/4K (`x265 (no HDR/DV)` −50000); 1080p stays x264,
+- **Golden Rule**: x265 only for HDR/4K (`x265 (no HDR/DV)` −50000000); 1080p stays x264,
   which direct-plays everywhere. Not applied to the anime profile.
-- **Unwanted**: BR-DISK, LQ groups, 3D, AV1, upscaled, extras, generated HDR, … −50000.
-- **Languages**: see [Languages](#languages) — the same scores in every profile.
+- **Unwanted**: BR-DISK, LQ groups, 3D, AV1, upscaled, extras, generated HDR, … −50000000.
+- **Languages**: see [Release scoring](#release-scoring) and [Languages](#languages) — the same scores in every profile.
 - **Old and rare titles**<a id="old-and-rare-titles"></a>: the 4K profiles allow nothing below 1080p, so a film that only exists on DVD (e.g. *The Ring Thing*, 2004) is rejected. `Any quality - old & rare (upgrades to 4K)` (Radarr and Sonarr) has every custom format and score of the default (languages, rejects, HDR rules, Golden Rule), but allows SDTV/DVD up to 2160p and upgrades until Bluray-2160p / WEB 2160p. Quality `Unknown` (e.g. `Title (2004) [XVID]`, no source in the name) is allowed but ranks lowest and is upgraded by any known quality; the same holds for the Swiss German profile. Not allowed: CAM/TS/screener, DVD-R/BR-DISK images, remuxes, Raw-HD. Its twin `… - English original` has `Language: Original + English` at 0, like the 4K twin.
   - **Automatic on add** (`language-policy-hook.sh`), only for titles added on the default 4K profile or its twin; any other profile picked in Seerr stays:
 
@@ -474,8 +474,8 @@ Why this shape:
   - Why: Radarr ranks quality first, so on Any quality an old title still gets the best release that exists (4K if there is one) and keeps upgrading; the only difference is that a DVD-only title is grabbed instead of rejected. ≤ 2014 is before UHD Bluray (2016) and 4K streaming; titles that old with no 1080p are exactly the DVD-only case. Votes catch obscure newer titles (*The Ring Thing*: 19 TMDB votes, popular films have thousands); the 2-year gate keeps brand-new films (few votes yet, early 480p/720p WEB rips) on the 4K profile.
   - English originals go to the Any twin, the rest to Any; `language-policy.sh` swaps existing titles between Any and its twin like the 4K pair (no age rule for existing titles).
   - Verified 2026-10-20: *Nosferatu* (1922, German) added on the default -> `movie 9: profile 7 -> 11 (old: 1922)` in the debug log.
-  - Golden Rule applies: an x265 SD/HD encode without HDR is rejected (−50000), as in the 1080p tier.
-  - Verified 2026-10-20: *The Ring Thing* (TMDB 10248) on this profile grabbed `The.Ring.Thing.Das.Ding.mit.dem.Ring.German.2004.AC3.DVDRiP.x264-IND` (DVD, score 20750, 0.96 GB, SABnzbd); the DVD9 image was rejected (DVD-R not wanted).
+  - Golden Rule applies: an x265 SD/HD encode without HDR is rejected (−50000000), as in the 1080p tier.
+  - Verified 2026-10-20: *The Ring Thing* (TMDB 10248) on this profile grabbed `The.Ring.Thing.Das.Ding.mit.dem.Ring.German.2004.AC3.DVDRiP.x264-IND` (DVD, score 20750 on the scale before 2026-10-26, 0.96 GB, SABnzbd); the DVD9 image was rejected (DVD-R not wanted).
 - The six stock Radarr profiles (Any, SD, HD-720p, …) cannot be disabled (the
   API has no such flag). The six stock profiles were DELETED 2026-10-22 (they were
   Recyclarr does not touch them. Delete them in the UI if they are in the way.
@@ -484,7 +484,7 @@ Why this shape:
 
 | | |
 |---|---|
-| Profiles | every Recyclarr profile `upgradeAllowed: true`; cutoff = best quality (Radarr Bluray-2160p, Sonarr WEB 2160p) + score 20000 |
+| Profiles | every Recyclarr profile `upgradeAllowed: true`; cutoff = best quality (Radarr Bluray-2160p, Sonarr WEB 2160p) + score 5000000 (twins 2000000); minimum upgrade step 1000000, see [Release scoring](#release-scoring) |
 | RSS | Radarr every 30 min, Sonarr every 15 min, NZBgeek + NzbPlanet (Treasure Maps is search-only). Runs only while beefy is awake: new releases that appear while it sleeps are missed by RSS |
 | Weekly search | `systemd/cutoff-search.timer`, Sunday 04:12 (inside the 03:55 wake): `scripts/cutoff-search.sh` searches the 10 least recently searched cutoff-unmet movies (`MoviesSearch`) and 10 episodes (`EpisodeSearch`) |
 | Indexer budget | ~3 Treasure Maps calls per title -> ≤ ~60 of its 100/day; Prowlarr's query limit stops the rest. Radarr's own `CutoffUnmetMoviesSearch` has no cap, hence the script |
@@ -499,31 +499,93 @@ sudo systemctl start cutoff-search.service; journalctl -u cutoff-search -n 5   #
 - More or fewer per run: `Environment=CS_MOVIES=… CS_EPISODES=…` in the service (0 = skip).
 - Tests: `tests/test_cutoff_search.sh`. Verified 2026-10-20: `radarr: 2 of 2 cutoff-unmet searched: Bad Apples, The Ring Thing` -> Radarr `Completed search for 2 movies. 0 reports downloaded.`
 
+### Release scoring
+
+Owner's order 2026-10-26, inside one quality (quality always ranks first: any allowed 2160p beats any 1080p). The same in Radarr and Sonarr, every profile except Swiss German (own scale, see [Swiss German](#swiss-german)).
+
+| # | Wins first | Score | Custom format |
+|---|---|---|---|
+| 0 | hard language tags | filter, no score | `audio-<language>` release profiles, Swiss German profile ([Per-request audio and subtitles](#per-request-audio-and-subtitles)) |
+| 1 | HDR (DV with HDR10 fallback, HDR10, HDR10+, HLG, PQ); SDR none | 20000000 | TRaSH `HDR` (the only HDR format synced); DV without fallback rejected |
+| 2 | language rung: original + English + German › original + English › original + German › original | 7000000 › 5000000 › 2000000 › 0 | `Language: Original + English` 5000000 + `German DL` / `German DL (undefined)` 2000000; twins: English + German 2000000 › English 0 ([Languages](#languages)) |
+| 3 | each further audio language | +10000 | `Extra audio: <language>`, one per app language except English and German (Radarr 55, Sonarr 44) |
+| 4 | audio format, group tier, streaming service, repack | < 10000 | TRaSH defaults (TrueHD Atmos 5000 + tier 1800 + …) |
+| – | reject | −50000000 | dub only, no original audio, SDR 2160p, x265 without HDR, DV without fallback, unwanted formats, VOSTFR (anime) |
+
+| Guarantee | Why it holds |
+|---|---|
+| HDR beats any SDR release | best without HDR: 7000000 + anime `Dual Audio` 5000000 + 55 × 10000 + audio ≈ 12600000 < 20000000 |
+| rungs before extras | smallest rung gap 2000000 > all extras + audio (≤ 560000) |
+| extras before audio | 10000 > best audio + group (≤ 6900) |
+| rejects stay rejected | −50000000 + best positive (≈ 33000000) < minimum 0; sums stay far inside int32 |
+| 2160p | `2160p: HDR bonus offset` −20000000 in the 4K and Any profiles: every allowed 2160p release is HDR (`SDR` rejects the rest), so the bonus ranks nothing there; taking it back keeps the cutoff at original + English |
+
+Upgrades (5 grabs/day on Treasure Maps):
+
+| | |
+|---|---|
+| Cutoff | original + English 5000000; English-original twins: English + German 2000000; Swiss German 1200000 (unchanged) |
+| Minimum upgrade step | 1000000 (`min_upgrade_format_score`): at the same quality only a new rung or HDR re-downloads; extra languages, audio, group or repack alone never do |
+| HDR | HDR wins at grab time. 2160p files: unaffected (all HDR). A 1080p SDR file below the cutoff is upgraded by a 1080p HDR release (as before). |
+| Trade-off | a 1080p HDR file reaches the cutoff through HDR, so it gets no same-quality language upgrade (the 2160p upgrade still comes). With one cutoff score and HDR above the languages this cannot be avoided; 1080p HDR is rare and the 1080p-only profiles reject x265. |
+
+Language detection (the apps see only the release name and the indexer):
+
+- `ITALIAN.ENGLISH.GERMAN` = 3 languages; `German.DL` = German + original; `German.ML` = German + English + original.
+- `MULTi`, `Multi-Audio` or no language word = the original only: no bonus. A multi release that lists no languages ranks like an original-only one.
+- `Extra audio: <original>` fires only when another language is present too: a constant +10000 on every multi-language release of that title, so it never changes the order, and an original-only release gets nothing (the anime minimum 100 still skips no-name groups).
+
+Change it:
+
+| What | Where, then |
+|---|---|
+| HDR, offset, `German DL`, `Anime Dual Audio`, rejects, cutoff, minimum upgrade step | `recyclarr/recyclarr.yml` → `docker compose run --rm recyclarr sync` |
+| `Language: Original + English`, extra-language score, which languages count | `scripts/language_formats.py` → `scripts/language-policy.sh` (exit 1 if the extras reach the minimum upgrade step: sync first) |
+| Tests | `python3 tests/test_scoring_order.py` (offline, every profile) |
+| Live check | `scripts/scoring-check.py` (`GET /parse`, never searches or grabs) |
+
+Recyclarr's nightly sync keeps the native scores (`except` / `except_patterns: ^Extra audio: `). After a rebuild: sync, then `scripts/language-policy.sh`.
+
+Verified 2026-10-26 (`scripts/scoring-check.py`, all checks passed; Radarr *Io Capitano*, Italian, 4K profile):
+
+| Release (…-GRP) | Score |
+|---|---|
+| `ITALIAN.ENGLISH.1080p.BluRay.DDP5.1.HDR.x265` | 25011750 |
+| `ITALIAN.ENGLISH.GERMAN.SPANISH.PORTUGUESE.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 7031750 |
+| `ITALIAN.ENGLISH.GERMAN.2160p.UHD.BluRay.TrueHD.Atmos.7.1.HDR.x265` | 7015000 |
+| `ITALIAN.ENGLISH.GERMAN.1080p.BluRay.DDP5.1.x264` | 7011750 |
+| `ITALIAN.ENGLISH.SPANISH.PORTUGUESE.FRENCH.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 5041750 |
+| `ITALIAN.ENGLISH.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 5011750 (cutoff) |
+| `ITALIAN.GERMAN.SPANISH.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 2021750 |
+| `ITALIAN.GERMAN.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 2011750 |
+| `ITALIAN.SPANISH.PORTUGUESE.FRENCH.2160p.UHD.BluRay.TrueHD.Atmos.7.1.HDR.x265` | 45000 |
+| `ITALIAN.ENGLISH.GERMAN.2160p.UHD.BluRay.DDP5.1.x265` (SDR) | −62988250 |
+| `GERMAN.2160p.UHD.BluRay.DDP5.1.HDR.x265` (dub only) | −99998250 |
+
+Sonarr (*Money Heist*, Spanish) ranks the same: `SPANISH.ENGLISH.GERMAN.FRENCH.PORTUGUESE` 7030150 › `SPANISH.ENGLISH.GERMAN` 7010150 › `SPANISH.ENGLISH` 5010150 › `SPANISH.GERMAN.PORTUGUESE` 2020150 (2160p NF WEB-DL HDR).
+
 ### Languages
 
 Policy (2026-10-19, order changed by the owner 2026-10-25): audio = the original language plus German plus English; if
 that does not exist, drop one (English first choice, German second); never a dub
 without the original track. Subtitles = English + German + the original language, every new subtitle synced to the original-language audio by Bazarr (below). Films, series and anime alike; existing titles below the cutoff upgrade to the new order.
 Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-policy.sh`
-(what Recyclarr cannot express: one native custom format, tags, Bazarr profiles),
+(what Recyclarr cannot express: the native language formats from `scripts/language_formats.py`, tags, Bazarr profiles),
 `scripts/request-tags.sh` (Seerr tags on existing titles), `../Seerr/scripts/configure.sh` (anime profile).
 
 | Rung | Audio | Score | How it is detected |
 |---|---|---|---|
-| 1 | original + German + English | 28000 | `German DL` + `Language: Original + English` |
-| 2 | original + English (non-English title) | 20000 | `Language: Original + English` (own CF: English, the original, and a language other than the original all present); anime also `Anime Dual Audio` 20000 (title says "Dual Audio"); 0 in the English-original profiles |
-| 3 | original + German | 8000 | TRaSH `German DL` (German + original audio), `German DL (undefined)`; the Swiss German profile keeps 20000 |
+| 1 | original + German + English | 7000000 | `German DL` + `Language: Original + English` |
+| 2 | original + English (non-English title) | 5000000 | `Language: Original + English` (own CF: English, the original, and a language other than the original all present); anime also `Anime Dual Audio` 5000000 (title says "Dual Audio"); 0 in the English-original profiles |
+| 3 | original + German | 2000000 | TRaSH `German DL` (German + original audio), `German DL (undefined)`; the Swiss German profile keeps 20000 |
 | 4 | original only | 0 | untagged releases count as the original language |
-| rejected | dub only (`German`, `Dubs Only`), no original track (`Language: Not Original`), every unwanted format | −50000 | Radarr additionally keeps profile language `Original` (rejects a release without the original audio, source-checked in Radarr 6: a multi-language release passes if the original is among its languages); Sonarr has no profile language, the CF does it |
+| + | each further language | +10000 | `Extra audio: <language>`, ties inside a rung only ([Release scoring](#release-scoring)) |
+| rejected | dub only (`German`, `Dubs Only`), no original track (`Language: Not Original`), every unwanted format | −50000000 | Radarr additionally keeps profile language `Original` (rejects a release without the original audio, source-checked in Radarr 6: a multi-language release passes if the original is among its languages); Sonarr has no profile language, the CF does it |
 
-- Rungs are ≥ 8000 apart and the audio + HDR + group-tier sum of a release is
-  ≤ ~7200, so language always wins over quality *within* the same quality tier
-  (quality itself still ranks first: any allowed 2160p beats any 1080p). Rejects are
-  −50000 rather than TRaSH's −10000 so the best possible sum (28000 + 7200) stays
-  below the minimum score of 0.
-- Anime: `Anime Dual Audio` and `Language: Original + English` add up when both match (40000), so a Japanese + English "Dual Audio" release beats a Japanese + German + English one named only "Multi" (28000). Rare, accepted.
+- Rungs, gaps and the reasons for the numbers: [Release scoring](#release-scoring). HDR ranks above the rungs, audio and group tiers below the extra languages.
+- Anime: `Anime Dual Audio` and `Language: Original + English` add up when both match (10000000), so a Japanese + English "Dual Audio" release beats a Japanese + German + English one named only "Multi" (7000000). Rare, accepted.
 - Subtitle sync (Bazarr, set by `scripts/language-policy.sh`): every downloaded subtitle is synced (ffsubsync) to the original-language audio track, with frame-rate correction (fixes the slowly growing lag of subtitles made for 24 vs 23.976 fps). One title by hand: Bazarr → the title → subtitle → Sync, or `PATCH /api/subtitles?action=sync&reference=a:<n>`.
-- English originals: a custom format cannot see that the original *is* English, so `Language: Original + English` fires on any extra dub (English + Portuguese got 8000). English-original titles therefore use the twin profiles `… - English original` (Radarr and Sonarr, 4K default and Any quality), identical except that CF at 0: English + German 20000 › English (+ any dub) 0.
+- English originals: a custom format cannot see that the original *is* English, so `Language: Original + English` would fire on any extra dub (English + Portuguese). English-original titles therefore use the twin profiles `… - English original` (Radarr and Sonarr, 4K default and Any quality), identical except that CF at 0: English + German 2000000 › English (+ any dub) 0; extra languages count there too.
   - `scripts/language-policy.sh` moves English originals on the main 4K profile to the twin and others back (existing titles).
   - Titles added later (Seerr, Radarr/Sonarr UI, import lists): Connect → Custom Script **Language policy** runs `scripts/language-policy-hook.sh` (mounted at `/scripts:ro` in both containers, registered by `language-policy.sh`) and does the same move for that one title (plus old/niche -> Any quality, see [Old and rare titles](#old-and-rare-titles)), before its first search.
 
@@ -536,9 +598,9 @@ Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-poli
   - Check: add a film in Seerr or Radarr, open its page: an English original shows `… - English original` within seconds; log: `grep language-policy-hook /srv/appdata/radarr/logs/radarr.debug.txt`.
   - Tests: `tests/test_language_policy_hook.sh` (fake API, needs bash, curl, jq, python3).
 - No German release for a title usually means the indexers do not carry one, not a filter: check with Prowlarr's search first.
-- 2160p German scene releases often omit `HDR` in the name (`GERMAN.DL.2160P.UHD.BLURAY.HEVC-UNDERTAKERS`): `SDR` (2160p without an HDR marker) rejects them (Radarr parse of such a Knives Out title: −22000).
-- Upgrade until score 20000 = German dual audio reached. A release that also has
-  English wins at grab time but is not chased afterwards.
+- 2160p German scene releases often omit `HDR` in the name (`GERMAN.DL.2160P.UHD.BLURAY.HEVC-UNDERTAKERS`): `SDR` (2160p without an HDR marker) rejects them (Radarr parse of such a Knives Out title: −22000 before 2026-10-26, now about −50000000).
+- Upgrade until score 5000000 = original + English reached. A release that also has
+  German wins at grab time but is not chased afterwards.
 - The TRaSH German guide uses profile language `Any` and accepts `German` dub-only
   (+10000); this setup deliberately does not.
 - Anime: Seerr sends everything TMDB calls anime to the Sonarr profile
@@ -558,8 +620,8 @@ Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-poli
   `Dual Audio`) are the standard way to get the extra lanes, and the scores above
   grab them whenever they exist.
 
-Verified 2026-10-19 (`GET /api/v3/parse?title=…`, never grabs; a title without a
-language tag is parsed as the original language):
+Verified 2026-10-19 on the scale before 2026-10-26 (`GET /api/v3/parse?title=…`, never grabs; a title without a
+language tag is parsed as the original language; current scores: [Release scoring](#release-scoring)):
 
 | Title | Radarr (Knives Out, English) | Sonarr (Money Heist, Spanish) | Sonarr (Frieren, anime, Japanese) |
 |---|---|---|---|
@@ -570,7 +632,7 @@ language tag is parsed as the original language):
 | `German` only | −99500 (`German`, `Not Original`) | −99925 | −100000 |
 | `English` only (non-English title) / `English.Dubbed` | — | −49925 | −100000 (`Dubs Only`) |
 
-English-original profile, Knives Out (2160p Bluray, same encode):
+English-original profile, Knives Out (2160p Bluray, same encode, scale before 2026-10-26):
 
 | Title | Main profile | English original |
 |---|---|---|
@@ -844,8 +906,8 @@ Quality profiles (Recyclarr, `recyclarr/recyclarr.yml` section `sonarr`):
 | Anime - Bluray + WEB 1080p | anime, set by Seerr (series type `anime`) | Bluray-1080p (remux or encode) › WEB 1080p › 720p … | TRaSH `[Anime] Remux-1080p`: anime group tiers, `[Streaming Services] Anime`, Anime Raws / LQ groups / Dubs Only rejected, no Golden Rule, minimum score 100 |
 | Swiss German (Mundart) only - any quality | series tagged `audio-swiss-german`, set by the hook | one group: Unknown, SDTV … Bluray-2160p, ranked by resolution scores | Swiss German + 2160p (1200000); same as the movie profile, see [Swiss German](#swiss-german) |
 
-Shared by all: the [Languages](#languages) scores (`German DL` 20000, `Language:
-Original + English` 8000, `Language: Not Original` and every reject −50000),
+Shared by all: the [Release scoring](#release-scoring) scores (HDR 20000000, `Language:
+Original + English` 5000000, `German DL` 2000000, `Extra audio: <language>` 10000, `Language: Not Original` and every reject −50000000),
 `[Streaming Services] HD/UHD boost` + `General`, `[Unwanted] Unwanted Formats`,
 TRaSH series size limits (one table per instance, `series`). The six stock Sonarr
 stock profiles were deleted 2026-10-22 (unused; they only cluttered the Seerr dropdown).
