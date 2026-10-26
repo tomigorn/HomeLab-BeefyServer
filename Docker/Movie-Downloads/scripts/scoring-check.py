@@ -122,6 +122,14 @@ def check_app(app, cfg):
         check(f"(k) season pack from no-name group beats single episode from WEB Tier 01 ({TIER01})", score(prof, [o, "English"], V2160, pack=True) > score(prof, [o, "English"], V2160, group=TIER01))
         check("(k) single episode original+English+German beats season pack original+English", score(prof, [o, "English", "German"], V2160) > score(prof, [o, "English"], V2160, pack=True))
         check("(k) 2160p HDR single episode beats 2160p SDR season pack", score(prof, [o, "English"], V2160) > score(prof, [o, "English"], V2160_SDR, pack=True))
+    # BlackBit (Bad Dual Groups) without a dash before the group escaped TRaSH's group match (1337x, 2026-10-26): own `Bad Group: BlackBit` rejects it everywhere.
+    dash = names(t, [o, "English", "German"], V2160, "DDP5.1", group="BlackBit")
+    for name in (dash, dash[:-len("-BlackBit")] + " BlackBit.mkv"):
+        cfs = [c["name"] for c in api("/parse", title=name).get("customFormats", [])]
+        check(f"(l) `{name}` matches `Bad Group: BlackBit`", "Bad Group: BlackBit" in cfs, cfs)
+        for prof, p in profiles.items():
+            s = {f["name"]: f["score"] for f in p["formatItems"]}
+            check(f"(l) BlackBit rejected in {prof}", sum(s.get(c, 0) for c in cfs) < p["minFormatScore"], sum(s.get(c, 0) for c in cfs))
     single = names(t, [o], V1080, "DDP5.1")
     score(cfg["profiles"]["4k"], [o], V1080)
     check("original-only release gets no extra-language bonus", not any(c.startswith("Extra audio: ") for c in cache[single][0]), cache[single][0])

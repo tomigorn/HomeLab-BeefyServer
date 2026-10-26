@@ -1,0 +1,19 @@
+{
+  "trash_id": "4304c778ba7faa6fbca38ef7ea376553",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "Bad Group: BlackBit",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+    {
+      "name": "BlackBit anywhere in the release name",
+      "implementation": "ReleaseTitleSpecification",
+      "negate": false,
+      "required": true,
+      "fields": {
+        "value": "\\bBlackBit\\b"
+      }
+    }
+  ]
+}

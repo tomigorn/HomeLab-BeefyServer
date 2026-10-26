@@ -356,6 +356,30 @@ class NativeFormats(unittest.TestCase):
                          [("English", 1, False), ("Original Language", -2, False), ("Not Only The Original Language", -2, True)])
 
 
+class OwnRejects(unittest.TestCase):
+    """BlackBit (TRaSH "Bad Dual Groups") escaped as `... H.265 BlackBit.mkv`: no dash, so no parsed release group (1337x, 2026-10-26)."""
+    NAME = "Bad Group: BlackBit"
+
+    def definition(self, app):
+        return next(d for d in (json.loads(f.read_text()) for f in (ROOT / "recyclarr" / "custom-formats" / app).glob("*.json")) if d["name"] == self.NAME)
+
+    def test_blackbit_matched_in_the_release_title_with_or_without_dash(self):
+        for app in PROFILES:
+            with self.subTest(app=app):
+                specs = self.definition(app)["specifications"]
+                self.assertEqual([(x["implementation"], x["negate"], x["required"]) for x in specs], [("ReleaseTitleSpecification", False, True)])
+                rx = re.compile(specs[0]["fields"]["value"], re.I)
+                for hit in ("Movie.2001.1080p.BluRay.DDP5.1.H.265 BlackBit.mkv", "Movie.2001.2160p.UHD.BluRay.HDR.x265-BlackBit", "Show.S01.1080p.WEB-DL.H.265.BLACKBIT", "Movie (2001) [BlackBit]"):
+                    self.assertTrue(rx.search(hit), hit)
+                for miss in ("Movie.2001.1080p.BluRay.x264-BlackBitter", "Movie.2001.1080p.BluRay.x264-Black.Bit", "Blackbitumen.2001.1080p.WEB-DL"):
+                    self.assertFalse(rx.search(miss), miss)
+
+    def test_blackbit_rejected_in_every_profile(self):
+        for app, kind, name in list(every_profile()) + [(app, "swiss", SWISS) for app in PROFILES]:
+            with self.subTest(app=app, profile=name):
+                self.assertEqual(profile(app, name)["scores"].get(self.NAME), -2000000 if name == SWISS else -50000000)
+
+
 class SwissGerman(unittest.TestCase):
     def test_g_swiss_profile_unchanged(self):
         for app in PROFILES:
