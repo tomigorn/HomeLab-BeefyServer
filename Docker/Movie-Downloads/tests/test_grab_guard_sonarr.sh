@@ -33,7 +33,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.command == "GET" and p == "/parse":
             return self.reply(200, {"title": q["title"], "parsedMovieInfo": {"year": state["parsed_year"]}, "parsedEpisodeInfo": {"seriesTitleInfo": {"year": state["parsed_year"]}}})
         if self.command == "GET" and p == "/series/4":
-            return self.reply(200, {"id": 4, "title": "Money Heist", "year": state["series_year"]})
+            return self.reply(200, {"id": 4, "title": "Money Heist", "year": state["series_year"], "tvdbId": 327417})
         if self.command == "GET" and p == "/movie/7":
             return self.reply(200, {"id": 7, "title": "Night of the Living Dead", "year": 1968, "secondaryYear": None})
         if self.command == "GET" and p == "/queue":
@@ -64,12 +64,15 @@ printf '<Config>\n  <Port>%s</Port>\n  <UrlBase></UrlBase>\n  <ApiKey>testkey</A
 run() {
   echo "$1" > "$T/state.json"; local title=$2; shift 2
   : > "$T/requests"; rm -rf "$T/events"
-  env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_EVENTS="$T/events" sonarr_eventtype=Grab sonarr_series_id=4 \
+  env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_EVENTS="$T/events" GG_DUBONLY="$T/dub-only.json" sonarr_eventtype=Grab sonarr_series_id=4 \
     sonarr_release_title="$title" sonarr_download_id=abc "$@" bash "$GUARD" > "$T/out" 2>&1; RC=$?
   grep '^DELETE ' "$T/requests" | cut -d' ' -f2- > "$T/deletes"
   grep '^POST ' "$T/requests" | cut -d' ' -f2- > "$T/posts"
   cat "$T"/events/*.json 2>/dev/null | jq -r '[.app, .action, .title, .year, .release, .releaseYear] | @tsv' > "$T/event"
+  cat "$T"/events/*.json 2>/dev/null | jq -r '[.reason // "", (.languages // [] | join(",")), .original // ""] | @tsv' > "$T/event2"
 }
+dub() { jq -n --arg t "$1" --argjson at "$(( $(date +%s) - ${2:-1} * 86400 ))" --argjson id "${3:-327417}" \
+  '[{guid: "https://x/details/abc", title: $t, indexer: "NzbPlanet", langs: ["French", "German"], original: "Spanish", titleId: $id, at: $at}]' > "$T/dub-only.json"; }
 Q='[{"id": 41, "downloadId": "other"}, {"id": 42, "downloadId": "abc"}]'
 
 echo "grab-guard (Sonarr)"
@@ -111,6 +114,22 @@ assert_eq "not in the queue: grabbed history record marked failed once" "/api/v3
 assert_eq "  exit 0, event" "0|sonarr	marked-failed	Money Heist	2017	$REL	1995" "$RC|$(cat "$T/event")"
 run "{\"series_year\": 2017, \"parsed_year\": 1995, \"queue\": [], \"history\": []}" "$REL"
 assert_eq "no history record: exit non-zero, check by hand" "1|sonarr	manual	Money Heist	2017	$REL	1995" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)|$(cat "$T/event")"
+
+DUBREL=Money.Heist.S01.MULTi.1080p.NF.WEB-DL.DDP5.1.x264-DUB
+run "{\"series_year\": 2017, \"parsed_year\": 2017, \"queue\": $Q}" "$DUBREL"
+assert_eq "dub-only: no list file, kept" "" "$(cat "$T/deletes")"
+dub "$DUBREL"
+run "{\"series_year\": 2017, \"parsed_year\": 0, \"queue\": $Q}" "$DUBREL"
+assert_eq "dub-only: listed season pack is removed and blocklisted" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
+assert_eq "  log" "series 4: grabbed '$DUBREL' lists only dubbed audio (French, German), not the original Spanish: removed, blocklisted, searching again" "$(cat "$T/out")"
+assert_eq "  event" "sonarr	removed	Money Heist	2017	$DUBREL	0|dub-only	French,German	Spanish" "$(cat "$T/event")|$(cat "$T/event2")"
+dub "$DUBREL" 1 111
+run "{\"series_year\": 2017, \"parsed_year\": 0, \"queue\": $Q}" "$DUBREL"
+assert_eq "dub-only: another tvdb id is kept" "" "$(cat "$T/deletes")"
+dub "$DUBREL" 40
+run "{\"series_year\": 2017, \"parsed_year\": 0, \"queue\": $Q}" "$DUBREL"
+assert_eq "dub-only: expired entry is ignored" "" "$(cat "$T/deletes")"
+rm -f "$T/dub-only.json"
 
 run "{}" "x" sonarr_eventtype=Test
 assert_eq "Test event exits 0 and calls nothing" "0|" "$RC|$(cat "$T/requests")"
