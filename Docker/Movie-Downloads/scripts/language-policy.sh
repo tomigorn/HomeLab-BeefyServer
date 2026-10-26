@@ -4,8 +4,8 @@
 # editing languages.tsv, or after adding subs-<language>/audio-<language> tags to existing titles.
 #   ~/Projects/Docker/Movie-Downloads/scripts/language-policy.sh
 #
-# Radarr + Sonarr: custom format "Language: Original + English" (20000 in every
-#   profile, 0 in the "- English original" ones), one `lang-xx` tag per language and
+# Radarr + Sonarr: custom formats "Language: Original + English" and "Extra audio: <language>", scored by
+#   language_formats.py (README "Release scoring"), one `lang-xx` tag per language and
 #   an auto-tagging rule that sets it from the title's original language.
 #   English-original titles on the main 4K profile and on Any quality move to their
 #   "- English original" twins, others move back; titles added later get the same
@@ -30,8 +30,9 @@ TSV=$HERE/languages.tsv
 # Bazarr code2 -> Radarr/Sonarr language name, every language with subtitles in languages.tsv.
 # English and German are in every profile and need no tag.
 LANGS=$(awk -F'\t' '!/^#/ && $4 == "yes" {printf "%s:%s ", $1, $2}' "$TSV")
+LF=$HERE/language_formats.py
 CF_NAME="Language: Original + English"
-CF_SCORE=20000
+PROBLEMS=0
 ENG_SUFFIX=" - English original"
 ANY="Any quality - old & rare (upgrades to 4K)"
 SWISS="Swiss German (Mundart) only - any quality"
@@ -51,29 +52,29 @@ py() { python3 -c "$@"; }
 
 for app in radarr sonarr; do
   echo "== $app"
-  # English audio in addition to the original one, for titles whose original
-  # language is not English: English present, the original present, and some
-  # language other than the original present (so an English-original release
-  # with only English audio does not match).
-  CF_ID=$(api $app /customformat | py 'import json,sys; r=[c["id"] for c in json.load(sys.stdin) if c["name"]==sys.argv[1]]; print(r[0] if r else "")' "$CF_NAME")
-  CF=$(py 'import json,sys
-spec=lambda name,value,exc,neg: {"name":name,"implementation":"LanguageSpecification","negate":neg,"required":True,"fields":[{"name":"value","value":value},{"name":"exceptLanguage","value":exc}]}
-print(json.dumps({"name":sys.argv[1],"includeCustomFormatWhenRenaming":False,"specifications":[spec("English",1,False,False),spec("Original Language",-2,False,False),spec("Not Only The Original Language",-2,True,False)]}))' "$CF_NAME")
-  if [ -n "$CF_ID" ]; then
-    api $app "/customformat/$CF_ID" -X PUT -d "$(echo "$CF" | py 'import json,sys; d=json.load(sys.stdin); d["id"]=int(sys.argv[1]); print(json.dumps(d))' "$CF_ID")" >/dev/null
-  else
-    CF_ID=$(api $app /customformat -X POST -d "$CF" | py 'import json,sys; print(json.load(sys.stdin)["id"])')
-  fi
-  echo "   custom format '$CF_NAME' id $CF_ID"
+  # Native language formats (scripts/language_formats.py, README "Release scoring"): "Language: Original + English"
+  # (English, the original and a language other than the original present, so an English-original release with only
+  # English audio does not match) and one "Extra audio: <language>" per app language except English and German.
+  EXISTING=$(api $app /customformat | py 'import json,sys; print(json.dumps({c["name"]:c["id"] for c in json.load(sys.stdin)}))')
+  IDS={}
+  while IFS= read -r CF; do
+    name=$(py 'import json,sys; print(json.loads(sys.argv[1])["name"])' "$CF")
+    CF_ID=$(py 'import json,sys; print(json.loads(sys.argv[1]).get(sys.argv[2], ""))' "$EXISTING" "$name")
+    if [ -n "$CF_ID" ]; then
+      api $app "/customformat/$CF_ID" -X PUT -d "$(py 'import json,sys; d=json.loads(sys.argv[1]); d["id"]=int(sys.argv[2]); print(json.dumps(d))' "$CF" "$CF_ID")" >/dev/null
+    else
+      CF_ID=$(api $app /customformat -X POST -d "$CF" | py 'import json,sys; print(json.load(sys.stdin)["id"])')
+    fi
+    IDS=$(py 'import json,sys; d=json.loads(sys.argv[1]); d[sys.argv[2]]=int(sys.argv[3]); print(json.dumps(d))' "$IDS" "$name" "$CF_ID")
+  done < <(api $app /language | python3 "$LF" formats | py 'import json,sys; [print(json.dumps(f)) for f in json.load(sys.stdin)]')
+  echo "   custom formats: $CF_NAME + $(py 'import json,sys; print(len(json.loads(sys.argv[1]))-1)' "$IDS") x Extra audio"
 
-  # Score it in every custom profile (the zz stock profiles were deleted 2026-10-22;
-  # 0 in the English-original ones, where it would fire on any extra dub.
-  for PID in $(api $app /qualityprofile | py 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin) if not p["name"].startswith("zz ")))'); do
-    api $app "/qualityprofile/$PID" | py 'import json,sys
-p=json.load(sys.stdin); cid=int(sys.argv[1]); score=0 if p["name"].endswith(sys.argv[3]) else int(sys.argv[2])
-for f in p["formatItems"]:
-    if f["format"]==cid: f["score"]=score
-print(json.dumps(p))' "$CF_ID" "$CF_SCORE" "$ENG_SUFFIX" | api $app "/qualityprofile/$PID" -X PUT -d @- | py 'import json,sys; p=json.load(sys.stdin); print("   profile", p["name"], "->", [f["score"] for f in p["formatItems"] if f["format"]==int(sys.argv[1])][0])' "$CF_ID"
+  # Their scores in every profile (language_formats.py): 0 in the English-original twins for Original + English, own scale in the Swiss German one.
+  for PID in $(api $app /qualityprofile | py 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin)))'); do
+    P=$(api $app "/qualityprofile/$PID" | python3 "$LF" profile "$IDS") || PROBLEMS=1
+    echo "$P" | api $app "/qualityprofile/$PID" -X PUT -d @- | py 'import json,sys
+p=json.load(sys.stdin); ids=json.loads(sys.argv[1]); s={f["format"]:f["score"] for f in p["formatItems"]}
+print("   profile", p["name"], "->", sys.argv[2], s[ids[sys.argv[2]]], "| extras", sorted({s[i] for n,i in ids.items() if n!=sys.argv[2]}), "| min upgrade step", p["minUpgradeFormatScore"])' "$IDS" "$CF_NAME"
   done
 
   # English originals on the main 4K profile and on Any quality -> their English-original twins, and back.
@@ -255,4 +256,5 @@ if [ "${#SCAN[@]}" -gt 0 ]; then
   done
   echo "   Bazarr rescanned: ${SCAN[*]}"
 fi
+if [ "$PROBLEMS" != 0 ]; then echo "scoring problems above (run the Recyclarr sync first?)" >&2; exit 1; fi
 echo "done"
