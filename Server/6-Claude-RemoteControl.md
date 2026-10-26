@@ -1,5 +1,7 @@
 # Claude Code Remote Control (always-on)
 
+> **Disabled 2026-10-26 (owner):** the service was crash-looping ("must be logged in") and remote access goes through fastpi instead. Units `claude-remote.service` and `claude-remote-restart.timer` (user buntu) are disabled. Re-enable: `claude auth login`, then `systemctl --user enable --now claude-remote.service claude-remote-restart.timer`.
+
 **beefy** runs **Claude Code Remote Control** as a persistent background service, so the
 host is always reachable from **[claude.ai/code](https://claude.ai/code)** and the
 **Claude mobile app** without touching the terminal (no VS Code, no SSH).
