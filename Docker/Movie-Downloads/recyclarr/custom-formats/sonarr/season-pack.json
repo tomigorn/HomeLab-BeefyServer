@@ -1,0 +1,19 @@
+{
+  "trash_id": "d6c516c4a7a4e901b94f24fab9252ac6",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "Season Pack",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+    {
+      "name": "Season Pack",
+      "implementation": "ReleaseTypeSpecification",
+      "negate": false,
+      "required": true,
+      "fields": {
+        "value": 3
+      }
+    }
+  ]
+}

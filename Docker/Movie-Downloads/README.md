@@ -508,15 +508,17 @@ Owner's order 2026-10-26, inside one quality (quality always ranks first: any al
 | 0 | hard language tags | filter, no score | `audio-<language>` release profiles, Swiss German profile ([Per-request audio and subtitles](#per-request-audio-and-subtitles)) |
 | 1 | HDR (DV with HDR10 fallback, HDR10, HDR10+, HLG, PQ); SDR none (2160p SDR allowed) | 20000000 | TRaSH `HDR` (the only HDR format synced); DV without fallback rejected |
 | 2 | language rung: original + English + German › original + English › original + German › original | 7000000 › 5000000 › 2000000 › 0 | `Language: Original + English` 5000000 + `German DL` / `German DL (undefined)` 2000000; twins: English + German 2000000 › English 0 ([Languages](#languages)) |
-| 3 | each further audio language | +10000 | `Extra audio: <language>`, one per app language except English and German (Radarr 55, Sonarr 44) |
-| 4 | audio format, group tier, streaming service, repack | < 10000 | TRaSH defaults (TrueHD Atmos 5000 + tier 1800 + …) |
+| 3 | Sonarr: one complete season pack | 2000 | own `Season Pack` (`recyclarr/custom-formats/sonarr/season-pack.json`, Release Type = Season Pack); 0 in the anime (TRaSH anime ranks by group tier) and Swiss German profiles |
+| 4 | audio format, group tier, streaming service, repack | Radarr < 7000, Sonarr < 2000 | TRaSH defaults (TrueHD Atmos 5000, Bluray tier 1800, WEB Tier 01 1700, streaming 75, …); the HD and anime templates score no audio formats |
+| 5 | each further audio language | +10 | `Extra audio: <language>`, one per app language except English and German (Radarr 55, Sonarr 44); tie-breaker only (owner 2026-10-26: an Italian dub must not beat a clean WEB Tier 01 release) |
 | – | reject | −50000000 | dub only, no original audio, x265 without HDR below 2160p, DV without fallback, unwanted formats (upscaled, BR-DISK, LQ, …), VOSTFR (anime) |
 
 | Guarantee | Why it holds |
 |---|---|
-| HDR beats any SDR release of the same quality (2160p too) | best without HDR: 7000000 + anime `Dual Audio` 5000000 + 55 × 10000 + audio ≈ 12600000 < 20000000 |
-| rungs before extras | smallest rung gap 2000000 > all extras + audio (≤ 560000) |
-| extras before audio | 10000 > best audio + group (≤ 6900) |
+| HDR beats any SDR release of the same quality (2160p too) | best without HDR: 7000000 + anime `Dual Audio` 5000000 + 55 × 10 + audio + season pack < 12010000 < 20000000 |
+| rungs before season pack, audio and extras | smallest rung gap 2000000 > season pack + audio + group + all extras (< 10000) |
+| season pack before single episodes (Sonarr) | 2000 > WEB Tier 01 1700 + streaming 75 + 5 extras 50; a multi-season pack stays rejected by Sonarr itself (a score cannot lift a rejection) |
+| audio, group and streaming before extras | one extra (10) < the smallest audio, group or streaming bonus (Radarr 15, Sonarr 75) |
 | rejects stay rejected | −50000000 + best positive (≈ 33000000) < minimum 0; sums stay far inside int32 |
 | 2160p SDR allowed | `SDR` 0 in the 4K and Any profiles (TRaSH's `SDR` matches only 2160p without an HDR marker); any allowed 2160p beats any 1080p (quality first) |
 
@@ -525,7 +527,7 @@ Upgrades (5 grabs/day on Treasure Maps):
 | | |
 |---|---|
 | Cutoff | 4K and Any: 2160p HDR + original + English 25000000; English-original twins: HDR + English + German 22000000. HD and anime (1080p top): original + English 5000000 (no HDR in the cutoff, see trade-offs). Swiss German 1200000 (unchanged) |
-| Minimum upgrade step | 1 (`min_upgrade_format_score`, Radarr's default; owner 2026-10-26): below the cutoff any better score re-downloads — HDR, a language rung, an extra language, better audio, group or repack. At or above the cutoff nothing upgrades |
+| Minimum upgrade step | 1 (`min_upgrade_format_score`, Radarr's default; owner 2026-10-26): below the cutoff any better score re-downloads — HDR, a language rung, a season pack, better audio, group or repack, an extra language (+10). At or above the cutoff nothing upgrades. Season pack and extras (≤ 2550) never bridge a cutoff gap (≥ 2990000 below each cutoff) |
 | HDR | HDR wins at grab time. A 2160p SDR file stays below the cutoff (best SDR ≈ 7600000) and is replaced by a 2160p HDR release; a 2160p HDR file without English (original + German 22000000) keeps upgrading to original + English. |
 | Trade-off | an SDR 4K is often an unmarked upscale or an HDR release that omits `HDR` in its name: it is taken now and replaced when a marked HDR 4K appears (one more download). A 2160p HDR file with original + English but without German is done (German is not chased, as before). |
 | Trade-off HD / anime | their top quality is 1080p, where HDR is rare (HD rejects x265, nearly every 1080p HDR is x265): a 25000000 cutoff would leave almost every file cutoff-unmet and the weekly search would chase it forever, so they keep 5000000. A 1080p HDR file there is done at once (also without English). |
@@ -534,7 +536,7 @@ Language detection (the apps see only the release name and the indexer):
 
 - `ITALIAN.ENGLISH.GERMAN` = 3 languages; `German.DL` = German + original; `German.ML` = German + English + original.
 - `MULTi`, `Multi-Audio` or no language word = the original only: no bonus. A multi release that lists no languages ranks like an original-only one, unless the [NFO scout](#nfo-scout) pushes it with the languages from its NFO.
-- `Extra audio: <original>` fires only when another language is present too: a constant +10000 on every multi-language release of that title, so it never changes the order, and an original-only release gets nothing (the anime minimum 100 still skips no-name groups).
+- `Extra audio: <original>` fires only when another language is present too: a constant +10 on every multi-language release of that title, so it never changes the order, and an original-only release gets nothing (the anime minimum 100 still skips no-name groups).
 
 Change it:
 
@@ -542,29 +544,30 @@ Change it:
 |---|---|
 | HDR, `German DL`, `Anime Dual Audio`, rejects, cutoff, minimum upgrade step | `recyclarr/recyclarr.yml` → `docker compose run --rm recyclarr sync`. The container mounts the whole `recyclarr/` folder at `/config/homelab` (`recyclarr.yml`, `settings.yml`, `custom-formats` in `/config` are symlinks into it), so any edit is seen by the 04:15 sync. Single-file mounts kept old inodes and restored old scores on 2026-10-26 |
 | `Language: Original + English`, extra-language score, which languages count | `scripts/language_formats.py` → `scripts/language-policy.sh`  |
+| `Season Pack` (Sonarr) | definition `recyclarr/custom-formats/sonarr/season-pack.json`, score `recyclarr/recyclarr.yml` → `docker compose run --rm recyclarr sync` |
 | Tests | `python3 tests/test_scoring_order.py` (offline, every profile) |
 | Live check | `scripts/scoring-check.py` (`GET /parse`, never searches or grabs) |
 
 Recyclarr's nightly sync keeps the native scores (`except` / `except_patterns: ^Extra audio: `). After a rebuild: sync, then `scripts/language-policy.sh`.
 
-Verified 2026-10-26 after 2160p SDR was allowed (`scripts/scoring-check.py`, all 87 checks passed; Radarr *Io Capitano*, Italian, 4K profile, cutoff 25000000). Quality ranks first: every 2160p row beats every 1080p row whatever the score.
+Verified 2026-10-26 after extras 10 and `Season Pack` (`scripts/scoring-check.py`, all 95 checks passed; Radarr *Io Capitano*, Italian, 4K profile, cutoff 25000000). Quality ranks first: every 2160p row beats every 1080p row whatever the score.
 
 | Release (…-GRP) | Score |
 |---|---|
-| `ITALIAN.ENGLISH.GERMAN.SPANISH.PORTUGUESE.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 27031750 |
-| `ITALIAN.ENGLISH.GERMAN.2160p.UHD.BluRay.TrueHD.Atmos.7.1.HDR.x265` | 27015000 |
-| `ITALIAN.ENGLISH.SPANISH.PORTUGUESE.FRENCH.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 25041750 |
-| `ITALIAN.ENGLISH.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 25011750 (cutoff) |
-| `ITALIAN.GERMAN.SPANISH.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 22021750 |
+| `ITALIAN.ENGLISH.GERMAN.2160p.UHD.BluRay.TrueHD.Atmos.7.1.HDR.x265` | 27005010 |
+| `ITALIAN.ENGLISH.GERMAN.SPANISH.PORTUGUESE.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 27001780 (audio beats 2 extras) |
+| `ITALIAN.ENGLISH.SPANISH.PORTUGUESE.FRENCH.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 25001790 |
+| `ITALIAN.ENGLISH.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 25001760 (cutoff) |
+| `ITALIAN.GERMAN.SPANISH.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 22001770 |
 | `ITALIAN.2160p.UHD.BluRay.DDP5.1.HDR.x265` | 20001750 |
-| `ITALIAN.ENGLISH.GERMAN.SPANISH.PORTUGUESE.2160p.UHD.BluRay.TrueHD.Atmos.7.1.x265` (SDR) | 7035000 (accepted, below the cutoff) |
-| `ITALIAN.ENGLISH.2160p.UHD.BluRay.DDP5.1.x265` (SDR) | 5011750 (accepted) |
-| `ITALIAN.ENGLISH.1080p.BluRay.DDP5.1.HDR.x265` | 25011750 (1080p: loses to any 2160p) |
-| `ITALIAN.ENGLISH.GERMAN.1080p.BluRay.DDP5.1.x264` | 7011750 |
-| `ITALIAN.ENGLISH.GERMAN.SPANISH.PORTUGUESE.1080p.BluRay.DDP5.1.x265` (x265 SDR 1080p) | −42968250 |
+| `ITALIAN.ENGLISH.GERMAN.SPANISH.PORTUGUESE.2160p.UHD.BluRay.TrueHD.Atmos.7.1.x265` (SDR) | 7005030 (accepted, below the cutoff) |
+| `ITALIAN.ENGLISH.2160p.UHD.BluRay.DDP5.1.x265` (SDR) | 5001760 (accepted) |
+| `ITALIAN.ENGLISH.1080p.BluRay.DDP5.1.HDR.x265` | 25001760 (1080p: loses to any 2160p) |
+| `ITALIAN.ENGLISH.GERMAN.1080p.BluRay.DDP5.1.x264` | 7001760 |
+| `ITALIAN.ENGLISH.GERMAN.SPANISH.PORTUGUESE.1080p.BluRay.DDP5.1.x265` (x265 SDR 1080p) | −42998220 |
 | `GERMAN.2160p.UHD.BluRay.DDP5.1.HDR.x265` (dub only) | −79998250 |
 
-Sonarr (*Money Heist*, Spanish, 2160p NF WEB-DL) ranks the same: `SPANISH.ENGLISH.GERMAN.FRENCH.PORTUGUESE` HDR 27030150 › `SPANISH.ENGLISH` HDR 25010150 (cutoff) › `SPANISH.GERMAN.PORTUGUESE` HDR 22020150 › `SPANISH` HDR 20000150 › `SPANISH.ENGLISH.GERMAN.PORTUGUESE.FRENCH` SDR TrueHD Atmos 7030150 › `SPANISH.ENGLISH` SDR 5010150.
+Sonarr (*Money Heist*, Spanish, 2160p NF WEB-DL) ranks the same: `SPANISH.ENGLISH.GERMAN.FRENCH.PORTUGUESE` HDR 27000180 › `SPANISH.ENGLISH` HDR season pack `S01` 25002160 › `SPANISH.ENGLISH` HDR from WEB Tier 01 (`-FLUX`) 25001860 › `SPANISH.ENGLISH.PORTUGUESE` HDR 25000170 › `SPANISH.ENGLISH` HDR 25000160 (cutoff) › `SPANISH.GERMAN.PORTUGUESE` HDR 22000170 › `SPANISH` HDR 20000150 › `SPANISH.ENGLISH.GERMAN.PORTUGUESE.FRENCH` SDR TrueHD Atmos 7000180 › `SPANISH.ENGLISH` SDR 5000160.
 
 ### Languages
 
@@ -581,10 +584,10 @@ Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-poli
 | 2 | original + English (non-English title) | 5000000 | `Language: Original + English` (own CF: English, the original, and a language other than the original all present); anime also `Anime Dual Audio` 5000000 (title says "Dual Audio"); 0 in the English-original profiles |
 | 3 | original + German | 2000000 | TRaSH `German DL` (German + original audio), `German DL (undefined)`; the Swiss German profile keeps 20000 |
 | 4 | original only | 0 | untagged releases count as the original language |
-| + | each further language | +10000 | `Extra audio: <language>`, ties inside a rung only ([Release scoring](#release-scoring)) |
+| + | each further language | +10 | `Extra audio: <language>`, tie-breaker below audio, group and streaming ([Release scoring](#release-scoring)) |
 | rejected | dub only (`German`, `Dubs Only`), no original track (`Language: Not Original`), every unwanted format | −50000000 | Radarr additionally keeps profile language `Original` (rejects a release without the original audio, source-checked in Radarr 6: a multi-language release passes if the original is among its languages); Sonarr has no profile language, the CF does it |
 
-- Rungs, gaps and the reasons for the numbers: [Release scoring](#release-scoring). HDR ranks above the rungs, audio and group tiers below the extra languages.
+- Rungs, gaps and the reasons for the numbers: [Release scoring](#release-scoring). HDR ranks above the rungs; season pack (Sonarr), audio, group and streaming tiers rank above the extra languages.
 - Anime: `Anime Dual Audio` and `Language: Original + English` add up when both match (10000000), so a Japanese + English "Dual Audio" release beats a Japanese + German + English one named only "Multi" (7000000). Rare, accepted.
 - Subtitle sync (Bazarr, set by `scripts/language-policy.sh`): every downloaded subtitle is synced (ffsubsync) to the original-language audio track, with frame-rate correction (fixes the slowly growing lag of subtitles made for 24 vs 23.976 fps). One title by hand: Bazarr → the title → subtitle → Sync, or `PATCH /api/subtitles?action=sync&reference=a:<n>`.
 - English originals: a custom format cannot see that the original *is* English, so `Language: Original + English` would fire on any extra dub (English + Portuguese). English-original titles therefore use the twin profiles `… - English original` (Radarr and Sonarr, 4K default and Any quality), identical except that CF at 0: English + German 2000000 › English (+ any dub) 0; extra languages count there too.
@@ -840,7 +843,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now nfo-scout.timer
 python3 ../tests/test_nfo_scout.py
 ```
 
-Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases):
+Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scores on the scale before extras became 10):
 
 | Title | Release (indexer, source) | NFO audio | Score |
 |---|---|---|---|
@@ -962,7 +965,7 @@ Quality profiles (Recyclarr, `recyclarr/recyclarr.yml` section `sonarr`):
 | Swiss German (Mundart) only - any quality | series tagged `audio-swiss-german`, set by the hook | one group: Unknown, SDTV … Bluray-2160p, ranked by resolution scores | Swiss German + 2160p (1200000); same as the movie profile, see [Swiss German](#swiss-german) |
 
 Shared by all: the [Release scoring](#release-scoring) scores (HDR 20000000, `Language:
-Original + English` 5000000, `German DL` 2000000, `Extra audio: <language>` 10000, `Language: Not Original` and every reject −50000000),
+Original + English` 5000000, `German DL` 2000000, `Season Pack` 2000 (not anime), `Extra audio: <language>` 10, `Language: Not Original` and every reject −50000000),
 `[Streaming Services] HD/UHD boost` + `General`, `[Unwanted] Unwanted Formats`,
 TRaSH series size limits (one table per instance, `series`). The six stock Sonarr
 stock profiles were deleted 2026-10-22 (unused; they only cluttered the Seerr dropdown).

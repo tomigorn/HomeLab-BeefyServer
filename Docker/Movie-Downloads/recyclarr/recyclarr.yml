@@ -14,15 +14,16 @@
 ##
 ## Release scoring (README "Release scoring"), identical in every profile, inside one quality:
 ##   HDR 20000000 > language tier (original + German + English 7000000 > original + English 5000000
-##   > original + German 2000000 > original only 0) > each extra language 10000 > audio/group (< 10000).
+##   > original + German 2000000 > original only 0) > Sonarr `Season Pack` 2000 > audio/group/streaming (Radarr < 7000, Sonarr < 2000)
+##   > each extra language 10 (tie-breaker only, owner 2026-10-26).
 ## `German DL` = German + original audio (2000000). `Language: Original + English` (5000000) and
-## `Extra audio: <language>` (10000 each) are native custom formats created by scripts/language-policy.sh,
+## `Extra audio: <language>` (10 each) are native custom formats created by scripts/language-policy.sh,
 ## not TRaSH ones, hence the `except`/`except_patterns` on every reset_unmatched_scores.
 ## Every reject is -50000000: the best possible positive sum (~33000000) must stay below the minimum score of 0.
 ## 2160p SDR is allowed (owner 2026-10-26: 4K SDR beats 1080p HDR); HDR still beats SDR inside one quality.
 ## Upgrades stop at 4K HDR + original + English (25000000; English-original twins: HDR + German 22000000); the 1080p-only
 ## HD and anime profiles at original + English (5000000). An upgrade at the
-## same quality needs +1 (min_upgrade_format_score, Radarr's default): below the cutoff better audio, group, repack or an extra language upgrades (owner 2026-10-26).
+## same quality needs +1 (min_upgrade_format_score, Radarr's default): below the cutoff better audio, group, repack, a season pack or an extra language upgrades (owner 2026-10-26).
 ## Exception: the profile `Swiss German (Mundart) only - any quality`, Radarr and
 ## Sonarr (Swiss German mandatory, see its comment and README "Swiss German").
 ################################################################################
@@ -246,7 +247,7 @@ radarr:
           - name: Swiss German (Mundart) only - any quality
 
       # German + original audio (TRaSH "German DL"): 2000000 beats any original-only
-      # release of the same quality, even with every extra language (<= 600000 with audio)
+      # release of the same quality, even with every extra language (< 10000 with audio)
       # but stays below original + English (5000000), owner's order 2026-10-25. "(undefined)" catches German-named
       # releases of German-original titles and DL/ML-tagged ones the parser
       # cannot resolve. The Swiss German profile keeps its own scale (20000).
@@ -693,6 +694,22 @@ sonarr:
         assign_scores_to:
           - name: Swiss German (Mundart) only - any quality
             score: -50000
+      # Own format (recyclarr/custom-formats/sonarr/season-pack.json): one complete season pack beats single episodes of the same quality and languages
+      # (2000 > WEB Tier 01 1700 + streaming 75), far below every language rung and HDR. Not in the anime profile (TRaSH anime ranks by group tier) nor Swiss German.
+      # Multi-season packs stay rejected by Sonarr itself; a score cannot lift a rejection.
+      - trash_ids:
+          - d6c516c4a7a4e901b94f24fab9252ac6  # Season Pack
+        assign_scores_to:
+          - name: 4K HDR - WEB-2160p (1080p fallback)
+            score: 2000
+          - name: Any quality - old & rare (upgrades to 4K)
+            score: 2000
+          - name: Any quality - old & rare (upgrades to 4K) - English original
+            score: 2000
+          - name: 4K HDR - WEB-2160p (1080p fallback) - English original
+            score: 2000
+          - name: WEB-1080p
+            score: 2000
       - trash_ids:
           - 418f50b10f1907201b6cfdf881f467b7  # Anime Dual Audio
         assign_scores_to:
