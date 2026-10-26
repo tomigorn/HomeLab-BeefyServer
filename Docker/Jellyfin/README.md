@@ -382,6 +382,7 @@ Per device (stored on the device, not on the server):
 Direct play (no transcode) is always best; the server transcodes only what the device cannot play.
 
 ## Tracker (Ryot): watch history per member (2026-10-20)
+**Ryot was replaced by Floppy on 2026-10-26** (`../Floppy/README.md`). The hooks below still post to `/_i/…`, which now ends at the forward auth (no data arrives); Floppy's Jellyfin sync is not set up yet. "Rate in Tracker" still works: Traefik redirects `/go/tmdb/…` to Floppy's TMDB page.
 Jellyfin posts each member's playback to their own Ryot account (`Docker/Ryot/` here on beefy, routed through fastpi Traefik). One webhook per Jellyfin user, bound by `UserId`, so one member's playback never lands in another member's Tracker.
 
 | Plugin | Repo | Version | Config |

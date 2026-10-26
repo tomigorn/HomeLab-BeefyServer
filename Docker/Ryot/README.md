@@ -1,4 +1,16 @@
-# Ryot (Tracker)
+# Ryot (Tracker) — retired
+
+**Stopped 2026-10-26, replaced by Floppy (`../Floppy/`) at the same URL, fresh start.** Containers and data are kept until the owner decides; nothing below runs any more.
+
+| Remove later (owner's yes: deletes data) | Command |
+|---|---|
+| Final dump first | `sudo docker compose start ryot-db && sleep 10 && scripts/ryot-db-backup.sh && sudo docker compose stop` |
+| Containers, image, network | `sudo docker compose down --rmi all` |
+| Database | `sudo rm -rf /srv/appdata/ryot-db` |
+| Backup timer | `systemctl --user disable --now ryot-db-backup.timer` |
+| Firewall | drop `RYOT_NET` from `_global/scripts/docker-user-guard.sh`, then `sudo _global/scripts/docker-user-guard.sh --persist` |
+| Secrets | `sudo rm -rf secrets/` (the OIDC client secret here is the one Floppy now uses: rotate it in `provision-tracker-sso.py` if the files leave beefy) |
+
 
 Per-user watch history & ratings that outlive Jellyfin's files. Dashboard tile **Tracker** (Media). Moved here from fastpi on 2026-10-20 (fastpi stays light); same database, same integration slugs.
 
