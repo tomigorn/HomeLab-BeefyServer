@@ -24,7 +24,7 @@ PROFILES = [{"id": 3, "name": "Anime - Bluray + WEB 1080p"},
             {"id": 20, "name": "4K HDR - WEB-2160p (1080p fallback) - English original"}]
 TAGS = [{"id": 1, "label": "lang-es"}, {"id": 21, "label": "audio-english"}, {"id": 22, "label": "audio-german"},
         {"id": 23, "label": "audio-spanish"}, {"id": 24, "label": "audio-swiss-german"}, {"id": 31, "label": "subs-french"}, {"id": 32, "label": "subs-italian"},
-        {"id": 40, "label": "bz-es-it"}]
+        {"id": 40, "label": "bz-es-it"}, {"id": 60, "label": "old-rare"}]
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def reply(self, code, body=None):
@@ -100,6 +100,8 @@ put() { echo "/base/api/v3/$1/editor {\"$2\":[$3],\"qualityProfileId\":$4}"; }
 # tagged <id> <profile> <language> <year> <tag ids>
 tagged() { echo "{\"$1\": {\"id\": $1, \"title\": \"T\", \"qualityProfileId\": $2, \"originalLanguage\": $3, \"year\": $4, \"ratings\": {\"votes\": 5000, \"tmdb\": {\"votes\": 5000}}, \"tags\": [$5]}}"; }
 tagput() { echo "/base/api/v3/$1/editor {\"$2\":[$3],\"tags\":[$4],\"applyTags\":\"$5\"}"; }
+# moved <kind> <ids field> <id> <profile>: profile move plus the old-rare tag (60) every Any quality title gets
+moved() { put "$@"; tagput "$1" "$2" "$3" 60 add; }
 bzprofile() { jq -c --arg t "$1" '.[] | select(.tag == $t) | [.name, ([.items[] | .language + (if .forced == "True" then "+f" else "" end)] | join(","))]' "$T/bazarr_profiles.json" 2>/dev/null; }
 EN='{"id": 1, "name": "English"}'; ES='{"id": 3, "name": "Spanish"}'
 
@@ -117,39 +119,40 @@ assert_eq "English original on the twin stays" "" "$(cat "$T/puts")"
 run "$(movie 5 3 "$EN")" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "English original on another profile (anime) stays" "" "$(cat "$T/puts")"
 run "$(movie 5 11 "$EN")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "English original on Any quality moves to its twin" "$(put movie movieIds 5 12)" "$(cat "$T/puts")"
+assert_eq "English original on Any quality moves to its twin" "$(moved movie movieIds 5 12)" "$(cat "$T/puts")"
 run "$(movie 5 11 "$ES")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "Spanish original on Any quality stays" "" "$(cat "$T/puts")"
+assert_eq "Spanish original on Any quality stays, gets the old-rare tag" "$(tagput movie movieIds 5 60 add)" "$(cat "$T/puts")"
 run "$(movie 5 12 "$ES")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "Spanish original on the Any twin moves back to Any" "$(put movie movieIds 5 11)" "$(cat "$T/puts")"
+assert_eq "Spanish original on the Any twin moves back to Any" "$(moved movie movieIds 5 11)" "$(cat "$T/puts")"
 
 echo "Radarr: old and niche films"
 run "$(film 5 7 "$ES" 2014 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "film from 2014 (now - 12) on main moves to Any quality" "$(put movie movieIds 5 11)" "$(cat "$T/puts")"
+assert_eq "film from 2014 (now - 12) on main moves to Any quality" "$(moved movie movieIds 5 11)" "$(cat "$T/puts")"
 run "$(film 5 7 "$EN" 1968 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "old English film on main moves to the Any twin" "$(put movie movieIds 5 12)" "$(cat "$T/puts")"
+assert_eq "old English film on main moves to the Any twin" "$(moved movie movieIds 5 12)" "$(cat "$T/puts")"
 run "$(film 5 10 "$EN" 1968 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "old English film on the twin moves to the Any twin" "$(put movie movieIds 5 12)" "$(cat "$T/puts")"
+assert_eq "old English film on the twin moves to the Any twin" "$(moved movie movieIds 5 12)" "$(cat "$T/puts")"
 run "$(film 5 7 "$ES" 2015 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "popular film from 2015 stays on main" "" "$(cat "$T/puts")"
 run "$(film 5 7 "$EN" 2020 99)" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "niche film (99 TMDB votes) moves to the Any twin" "$(put movie movieIds 5 12)" "$(cat "$T/puts")"
+assert_eq "niche film (99 TMDB votes) moves to the Any twin" "$(moved movie movieIds 5 12)" "$(cat "$T/puts")"
 run "$(film 5 7 "$ES" 2020 100)" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "100 TMDB votes is not niche" "" "$(cat "$T/puts")"
 run "$(film 5 7 "$ES" 2025 10)" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "few votes on a film from last year is not niche" "" "$(cat "$T/puts")"
 run "$(film 5 7 "$ES" 2024 10)" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "few votes on a film 2 years old is niche" "$(put movie movieIds 5 11)" "$(cat "$T/puts")"
+assert_eq "few votes on a film 2 years old is niche" "$(moved movie movieIds 5 11)" "$(cat "$T/puts")"
 run "$(film 5 7 "$ES" 0 0)" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "unknown year (0) stays on main" "" "$(cat "$T/puts")"
 run "{\"5\": {\"id\": 5, \"qualityProfileId\": 7, \"originalLanguage\": $ES, \"year\": 2020, \"ratings\": {}}}" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "no TMDB rating on an older film counts as niche" "$(put movie movieIds 5 11)" "$(cat "$T/puts")"
+assert_eq "no TMDB rating on an older film counts as niche" "$(moved movie movieIds 5 11)" "$(cat "$T/puts")"
 run "$(film 5 3 "$ES" 1968 5)" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "old niche film on another profile (anime) stays" "" "$(cat "$T/puts")"
 run "$(film 5 11 "$ES" 2025 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "new popular film put on Any quality by the requester stays" "" "$(cat "$T/puts")"
+assert_eq "new popular film put on Any quality by the requester stays, gets the old-rare tag" "$(tagput movie movieIds 5 60 add)" "$(cat "$T/puts")"
 run "$(film 5 7 "$EN" 1968 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "  the log line names the reason" "movie 5: profile 7 -> 12 (old: 1968, English original)" "$(cat "$T/out")"
+assert_eq "  the log line names the reason" "movie 5: profile 7 -> 12 (old: 1968, English original)
+movie 5: tag old-rare added (Any quality)" "$(cat "$T/out")"
 run "$(movie 5 7 null)" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "no original language counts as not English" "" "$(cat "$T/puts")"
 run "{}" radarr_eventtype=Test
@@ -171,13 +174,13 @@ assert_eq "Spanish original on the twin moves back to main" '/base/api/v3/series
 run "$(movie 8 3 "$EN")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "English anime-profile series stays" "" "$(cat "$T/puts")"
 run "$(movie 8 11 "$EN")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
-assert_eq "English series on Any quality moves to its twin" "$(put series seriesIds 8 12)" "$(cat "$T/puts")"
+assert_eq "English series on Any quality moves to its twin" "$(moved series seriesIds 8 12)" "$(cat "$T/puts")"
 run "$(show 8 17 "$ES" 2014 500000)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
-assert_eq "series from 2014 on main moves to Any quality" "$(put series seriesIds 8 11)" "$(cat "$T/puts")"
+assert_eq "series from 2014 on main moves to Any quality" "$(moved series seriesIds 8 11)" "$(cat "$T/puts")"
 run "$(show 8 17 "$EN" 2015 500000)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "popular English series from 2015 moves to the twin only" "$(put series seriesIds 8 20)" "$(cat "$T/puts")"
 run "$(show 8 20 "$EN" 2018 999)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
-assert_eq "niche English series (999 votes) moves to the Any twin" "$(put series seriesIds 8 12)" "$(cat "$T/puts")"
+assert_eq "niche English series (999 votes) moves to the Any twin" "$(moved series seriesIds 8 12)" "$(cat "$T/puts")"
 run "$(show 8 17 "$ES" 2018 1000)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "1000 votes is not niche" "" "$(cat "$T/puts")"
 run "$(show 8 3 "$ES" 1990 5)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
@@ -216,12 +219,12 @@ assert_eq "German film: German is always there, bz-fr" '{"label":"bz-fr"}' "$(ca
 run "$(tagged 5 7 "$HI" 2020 "31")" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "original without subtitle support (Hindi): bz-fr" '{"label":"bz-fr"}' "$(cat "$T/newtags")"
 run "$(tagged 5 7 "$ES" 1968 "1,31")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "old film with subs-french: profile and tag both change" "$(put movie movieIds 5 11)
+assert_eq "old film with subs-french: profile, old-rare and bz tag all change" "$(moved movie movieIds 5 11)
 $(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
 run "$(tagged 5 7 "$ES" 1968 "1,31")" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
 assert_eq "LP_TAGS_ONLY=1: only the tag changes" "$(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
 BZKEY="$T/nokey" run "$(tagged 5 7 "$ES" 1968 "1,31")" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "no Bazarr key: profile still changes, exit non-zero" "$(put movie movieIds 5 11)|1" "$(cat "$T/puts")|$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
+assert_eq "no Bazarr key: profile and old-rare still change, exit non-zero" "$(moved movie movieIds 5 11)|1" "$(cat "$T/puts")|$([ "$RC" -ne 0 ] && echo 1 || echo 0)"
 run "{\"tags\": [{\"id\": 33, \"label\": \"subs-spanish\"}], $(tagged 5 7 "$ES" 2020 "33" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "subs-spanish on a Spanish film keeps the Spanish profile: bz-es" '{"label":"bz-es"}' "$(cat "$T/newtags")"
 run "{\"tags\": [{\"id\": 31, \"label\": \"subs-french\"}, {\"id\": 51, \"label\": \"bz-fr\"}], \"bazarr\": [{\"profileId\": 3, \"name\": \"x\", \"tag\": \"bz-fr\", \"items\": []}], $(tagged 5 10 "$EN" 2020 "31,51" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
@@ -274,6 +277,33 @@ run "{$NOLANG, $(tagged 8 11 "$DE" 2004 "24" | sed 's/^{//')" sonarr_eventtype=S
 assert_eq "Sonarr: LP_TAGS_ONLY=1 (tag added later) moves too" "$(put series seriesIds 8 13)" "$(cat "$T/puts")"
 run "{\"profiles\": [{\"id\": 17, \"name\": \"4K HDR - WEB-2160p (1080p fallback)\"}, {\"id\": 20, \"name\": \"4K HDR - WEB-2160p (1080p fallback) - English original\"}], $(tagged 8 17 "$EN" 2020 "24" | sed 's/^{//')" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "no Swiss German profile (Recyclarr not synced yet): the usual twin move" "$(put series seriesIds 8 20)" "$(cat "$T/puts")"
+
+echo "old-rare tag: only titles on Any quality (and its twin) carry it"
+run "$(tagged 5 11 "$ES" 2004 "60")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "already tagged on Any quality: nothing changes" "|movie 5: profile 11 kept" "$(cat "$T/puts")|$(cat "$T/out")"
+run "$(tagged 5 7 "$ES" 2020 "60")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "tag on a title that stays on main is removed" "$(tagput movie movieIds 5 60 remove)" "$(cat "$T/puts")"
+assert_eq "  log line" "movie 5: profile 7 kept
+movie 5: tag old-rare removed (not on Any quality)" "$(cat "$T/out")"
+run "$(tagged 5 11 "$DE" 2004 "24,60")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "moved off Any quality to Swiss German: tag removed" "$(put movie movieIds 5 13)
+$(tagput movie movieIds 5 60 remove)" "$(cat "$T/puts")"
+run "$(tagged 5 3 "$JA" 1990 "60")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "tag on another profile (anime) is removed" "$(tagput movie movieIds 5 60 remove)" "$(cat "$T/puts")"
+run "$(tagged 5 12 "$EN" 2004 "")" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
+assert_eq "LP_TAGS_ONLY=1 (existing title) on the Any twin: tag added" "$(tagput movie movieIds 5 60 add)" "$(cat "$T/puts")"
+run "$(tagged 5 7 "$ES" 1968 "60")" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
+assert_eq "LP_TAGS_ONLY=1 on main (not moved): tag removed" "$(tagput movie movieIds 5 60 remove)" "$(cat "$T/puts")"
+run "{\"tags\": [{\"id\": 24, \"label\": \"audio-swiss-german\"}], $(film 5 7 "$ES" 2004 5000 | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "no old-rare tag in the app yet: created" '{"label":"old-rare"}' "$(cat "$T/newtags")"
+assert_eq "  and added" "$(put movie movieIds 5 11)
+$(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
+run "{\"tags\": [{\"id\": 24, \"label\": \"audio-swiss-german\"}], $(film 5 7 "$ES" 2020 5000 | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "no old-rare tag in the app and not on Any: nothing created" "|" "$(cat "$T/puts")|$(cat "$T/newtags")"
+run "$(tagged 8 17 "$ES" 2018 "60")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "Sonarr: tag on a series that stays on main is removed" "$(tagput series seriesIds 8 60 remove)" "$(cat "$T/puts")"
+run "$(tagged 8 11 "$ES" 1990 "")" sonarr_eventtype=SeriesAdd sonarr_series_id=8 LP_TAGS_ONLY=1
+assert_eq "Sonarr: LP_TAGS_ONLY=1 on Any quality: tag added" "$(tagput series seriesIds 8 60 add)" "$(cat "$T/puts")"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

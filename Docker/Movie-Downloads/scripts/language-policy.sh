@@ -15,6 +15,7 @@
 #   release name must name that language) and `subs-<language>` (the hook turns them into
 #   one `bz-<codes>` tag + Bazarr profile; `lang-xx` is not set while one is present).
 #   `audio-swiss-german` also moves the title to the Swiss German profile (hook, Radarr and Sonarr), whose language is set to Any here (Radarr; Sonarr profiles have none).
+#   `old-rare`: every title on Any quality (or its twin) gets it, every other title loses it (hook, README "Old and rare titles").
 # Bazarr: one subtitle profile per language ("English + German + <Language>",
 #   bound to the `lang-xx` tag), tag-based profile selection, OpenSubtitles.com
 #   without AI/machine translations, every new subtitle synced to the original-language audio (frame-rate fix on); its API key goes to secrets/hook/ for the hook.
@@ -232,7 +233,7 @@ fi
 rm -f "$HERE/../secrets/hook/seerr.apikey"
 unset SAK
 
-echo "== apply to existing titles (refresh = auto tags, hook for subs-<language> and audio-swiss-german tags, then Bazarr re-sync)"
+echo "== apply to existing titles (refresh = auto tags, hook for subs-<language>, audio-swiss-german and old-rare tags, then Bazarr re-sync)"
 api radarr /command -X POST -d '{"name":"RefreshMovie"}' >/dev/null
 api sonarr /command -X POST -d '{"name":"RefreshSeries"}' >/dev/null
 sleep 20
@@ -240,11 +241,19 @@ SCAN=()
 for app in radarr sonarr; do
   case $app in radarr) kind=movie; ev=radarr_eventtype=MovieAdded; idv=radarr_movie_id;; sonarr) kind=series; ev=sonarr_eventtype=SeriesAdd; idv=sonarr_series_id;; esac
   SUBS_IDS=$(api $app /tag | py 'import json,sys; print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if t["label"].startswith("subs-") or t["label"]=="audio-swiss-german"))')
-  for TID in $(api $app "/$kind" | py 'import json,sys; s=set(map(int,sys.argv[1].split())); print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if s & set(t.get("tags",[]))))' "$SUBS_IDS"); do
+  OLD_TAG=$(api $app /tag | py 'import json,sys; print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if t["label"]=="old-rare"))')
+  ANY_PIDS=$(api $app /qualityprofile | py 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin) if p["name"] in (sys.argv[1], sys.argv[1]+sys.argv[2])))' "$ANY" "$ENG_SUFFIX")
+  # one line per title: <id> <scan>; scan = 1 when Bazarr has to rescan it (subs/Swiss German tags)
+  while read -r TID RESCAN; do
     env "$ev" "$idv=$TID" LP_TAGS_ONLY=1 LP_CONFIG=/srv/appdata/$app/config.xml LP_LANGUAGES="$TSV" \
-      LP_BAZARR_URL="http://$H:6767" LP_BAZARR_KEY="$HERE/../secrets/hook/bazarr.apikey" bash "$HERE/language-policy-hook.sh" | sed 's/^/   /'
-    SCAN+=("$app:$TID")
-  done
+      LP_BAZARR_URL="http://$H:6767" LP_BAZARR_KEY="$HERE/../secrets/hook/bazarr.apikey" bash "$HERE/language-policy-hook.sh" </dev/null | sed 's/^/   /'
+    [ "$RESCAN" = 0 ] || SCAN+=("$app:$TID")
+  done < <(api $app "/$kind" | py 'import json,sys
+s, o, a = (set(map(int, x.split())) for x in sys.argv[1:4])
+for t in json.load(sys.stdin):
+    tags=set(t.get("tags",[]))
+    if s & tags or o & tags or t["qualityProfileId"] in a:
+        print(t["id"], 1 if s & tags else 0)' "$SUBS_IDS" "$OLD_TAG" "$ANY_PIDS")
 done
 bz "$B/system/tasks" -X POST --data-urlencode "taskid=update_movies" >/dev/null
 bz "$B/system/tasks" -X POST --data-urlencode "taskid=update_series" >/dev/null

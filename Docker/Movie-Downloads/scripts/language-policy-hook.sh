@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Radarr/Sonarr Connect "Custom Script" (On Movie Added / On Series Add): puts a new title on the right profile before its first search and turns its subs-<language> tags into one Bazarr profile (README "Languages", "Old and rare titles", "Per-request audio and subtitles", "Swiss German").
+# Radarr/Sonarr Connect "Custom Script" (On Movie Added / On Series Add): puts a new title on the right profile before its first search, gives titles on Any quality the old-rare tag (min. 1 seeder indexers) and turns its subs-<language> tags into one Bazarr profile (README "Languages", "Old and rare titles", "Per-request audio and subtitles", "Swiss German").
 # Runs inside the app container (bash, curl, jq); registered by scripts/language-policy.sh. LP_TAGS_ONLY=1 skips the profile part except the tag-driven Swiss German move (language-policy.sh, request-tags.sh: existing titles).
 set -euo pipefail
 
@@ -7,6 +7,7 @@ ENG_SUFFIX=" - English original"
 ANY="Any quality - old & rare (upgrades to 4K)"
 SWISS="Swiss German (Mundart) only - any quality"
 SWISS_TAG=audio-swiss-german
+OLD_RARE_TAG=old-rare
 OLD_YEARS=${LP_OLD_YEARS:-12}
 NICHE_MIN_AGE=2
 if [ -n "${radarr_eventtype:-}" ]; then
@@ -61,6 +62,7 @@ set_profile() {
   if [ "$target" != "$current" ]; then
     api "/$kind/editor" -X PUT -d "{\"$ids\":[$id],\"qualityProfileId\":$target}" >/dev/null
     echo "$kind $id: profile $current -> $target ($reason)"
+    current=$target
   else
     echo "$kind $id: profile $current kept"
   fi
@@ -76,6 +78,7 @@ swiss_profile() {
     if [ "$current" != "$SID" ]; then
       api "/$kind/editor" -X PUT -d "{\"$ids\":[$id],\"qualityProfileId\":$SID}" >/dev/null
       echo "$kind $id: profile $current -> $SID ($SWISS_TAG)"
+      current=$SID
     else
       echo "$kind $id: profile $current kept"
     fi
@@ -157,5 +160,23 @@ set_tags() {
   echo "$kind $id: tag $label added"
 }
 
+# The torrent indexer copies with minimum seeders 1 carry this tag, so only Any quality titles use them (README "Indexers").
+old_rare_tag() {
+  local on_any=false has=false tid
+  if [ "$AID" != 0 ] && [ "$current" = "$AID" ]; then on_any=true; fi
+  if [ "$AEN" != 0 ] && [ "$current" = "$AEN" ]; then on_any=true; fi
+  tid=$(api /tag | jq -r --arg l "$OLD_RARE_TAG" '.[] | select(.label == $l) | .id')
+  if [ -n "$tid" ] && jq -e --argjson t "$tid" '(.tags // []) | index($t)' <<<"$title" >/dev/null; then has=true; fi
+  if [ "$on_any" = true ] && [ "$has" = false ]; then
+    [ -n "$tid" ] || tid=$(api /tag -X POST -d "{\"label\":\"$OLD_RARE_TAG\"}" | jq -r .id)
+    edit_tag "$tid" add
+    echo "$kind $id: tag $OLD_RARE_TAG added (Any quality)"
+  elif [ "$on_any" = false ] && [ "$has" = true ]; then
+    edit_tag "$tid" remove
+    echo "$kind $id: tag $OLD_RARE_TAG removed (not on Any quality)"
+  fi
+}
+
 swiss_profile || [ "${LP_TAGS_ONLY:-}" = 1 ] || set_profile
+old_rare_tag
 set_tags
