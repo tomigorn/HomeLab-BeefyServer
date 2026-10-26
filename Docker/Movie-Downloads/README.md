@@ -532,7 +532,7 @@ Upgrades (5 grabs/day on Treasure Maps):
 Language detection (the apps see only the release name and the indexer):
 
 - `ITALIAN.ENGLISH.GERMAN` = 3 languages; `German.DL` = German + original; `German.ML` = German + English + original.
-- `MULTi`, `Multi-Audio` or no language word = the original only: no bonus. A multi release that lists no languages ranks like an original-only one.
+- `MULTi`, `Multi-Audio` or no language word = the original only: no bonus. A multi release that lists no languages ranks like an original-only one, unless the [NFO scout](#nfo-scout) pushes it with the languages from its NFO.
 - `Extra audio: <original>` fires only when another language is present too: a constant +10000 on every multi-language release of that title, so it never changes the order, and an original-only release gets nothing (the anime minimum 100 still skips no-name groups).
 
 Change it:
@@ -774,7 +774,7 @@ Sonarr, verified 2026-10-23 (series added unmonitored with the tag, no search; `
 | Match | the same `languages.tsv` regex, after decoding HTML entities and broken umlauts; a match after `Subtitles`/`Untertitel` on the same line does not count |
 | Push | seeders ≥ 1 → `POST /api/v3/release/push` to Radarr (tmdb/imdb id) or Sonarr (tvdb id) with the magnet, name + `.<Language>.DESC` (`The Ring Thing (2004) [XVID].Swissgerman.DESC`; the release profile and `Audio: Swiss German` accept it, `.DESC` marks it). The app decides (profile, quality, wrong-film guard, which episodes) |
 | Limits | 2 pushes and 15 description fetches per run, both apps together (`DS_MAX_PUSH`, `DS_MAX_FETCH`); each release pushed once; a failing fetch or push is retried 3 times, then dropped; a Prowlarr API error skips the run, a Radarr or Sonarr one skips that app; seeders 0 = not pushed, checked again next run (description not fetched again). `DS_APPS=radarr` scouts one app only |
-| Not covered | usenet (no descriptions in NZB results); series names Sonarr cannot map by name |
+| Not covered | usenet (no descriptions in NZB results; MULTi releases: [NFO scout](#nfo-scout)); series names Sonarr cannot map by name |
 
 | File | |
 |---|---|
@@ -794,6 +794,57 @@ python3 ../tests/test_description_scout.py
 - Another language: its `audio-` regex in `languages.tsv` must match the language name without spaces (`French`), then `Environment=DS_LANGUAGES=gsw,fr` in the service. Common words (`French`, `German`) appear in many descriptions as subtitle or menu lists: only add rare ones.
 - Verified 2026-10-23 (series, dry run): *Tschugger* (unmonitored, tagged) → 10 torrent results; `Tschugger - S01 (Eng subs)` (TPB) and `Tschugger   season 1 (Eng subs)` (1337x) say Swiss German in the description → would push `….Swissgerman.DESC` to Sonarr with tvdb id 412881 (30 and 6 seeders); the `SUBBED XviD-AFG` episodes and `S01-S02.1080p.WEB-DL.PlaySuisse` do not. *The Bachelor (CH)*: 369 results, none mapped by name, nothing fetched.
 - Verified 2026-10-23: *The Ring Thing* → TPB 3872789 description matches, seeders 0, not pushed. Payload checked with a push Radarr had to reject (original name, seeders 0): mapped to the movie, indexer `The Pirate Bay (Prowlarr)`, rejected for missing term, seeders < 1 and `Unknown is not wanted in profile`: an `[XVID]` name without source parses as quality Unknown, which the Swiss German profile does not allow.
+
+### NFO scout
+
+Radarr/Sonarr read languages only from the release name, so `MULTi` = the original only ([Release scoring](#release-scoring)). `scripts/nfo-scout.py` (timer every 6 h) reads the audio languages of MULTi-only usenet releases from the indexer and pushes them with the languages in the name. Not the per-indexer "Multi Languages" setting (owner).
+
+| Step | What |
+|---|---|
+| Titles | Radarr: monitored movies missing or below the cutoff (`/wanted/missing`, `/wanted/cutoff`); Sonarr: monitored series with such episodes; `audio-swiss-german` titles skipped ([Description scout](#description-scout)) |
+| Search | Prowlarr `/api/v1/search`, only the usenet indexers below; by IMDb id (movies) / TVDB id (series) where supported, else title (+ year). Treasure Maps only below 70 % of its window and max 10 searches/day |
+| Candidate | name has `MULTi` / `Multi-Audio`, `/parse` gives fewer than 2 languages, same title (the description scout's guards: `/parse` maps it, year); best quality first |
+| Source | NzbPlanet, Treasure Maps: `t=getnfo` (NFO text in the RSS item); NZBgeek: `t=details` `language` attributes (no getnfo: it answers with its newest releases). Direct to the indexer (Prowlarr's proxy: "No such function (getnfo)"), base URL + key from Prowlarr's DB, never logged; own user agent (Treasure Maps rejects a bare `Prowlarr`) |
+| Parse | audio only: values of `Audio` / `Language` / `Sprache` / `Ton` / `Idioma` / … keys and their indented continuation lines, MediaInfo `Audio #n` blocks. Dropped: `Subs` / `Untertitel` / `Sous-titres` / MediaInfo `Text`, the rest of a list after a subtitle word, keys like `Audio/Subs`. Names in EN/DE/FR/ES/IT, ISO 639-2 (`ger`, `eng`, `spa`), `VFF`/`VFQ` = French, upper-case `DE`/`EN`/`FR`/`IT` |
+| Push | ≥ 2 languages incl. the original → languages + `.NFO` after the marker: `The.Secret.In.Their.Eyes.2009.MULTi.French.Spanish.NFO.1080p.BluRay.x264-FHD`. `/parse` of the new name: exactly those languages, same quality, group and title, score ≥ 0 and higher than before, else not pushed. Extras the parser cannot name (Czech, Estonian) are dropped; original/English/German not nameable = no push. Same Prowlarr download link and indexer; the app decides |
+| Not covered | NFOs without an audio list, a single listed language, Swiss German |
+
+| Env (unit) | Default | |
+|---|---|---|
+| `NS_MAX_PUSH` | 3 | pushes per run, both apps |
+| `NS_MAX_FETCH` | 200 | NFO/details calls per indexer per run |
+| `NS_TM_MAX_DAY` | 5 | Treasure Maps NFO calls per rolling 24 h (2026-10-26: it refused getnfo after 6 in minutes, searches kept working) |
+| `NS_TM_MAX_PCT` | 70 | no Treasure Maps search or NFO call from searches used (bar, `/srv/appdata/indexer-bar/usage.json`) + own NFO calls ≥ 70 % of its limit; bar missing or older than 15 min = none |
+| `NS_TM_MAX_SEARCH_DAY` | 10 | Treasure Maps searches per 24 h |
+| `NS_CALL_DELAY` | 1 | seconds between calls to one indexer |
+| `NS_APPS` | `radarr,sonarr` | one app only: `radarr` |
+
+- NFO calls bypass Prowlarr: the bar does not count them (hence the own Treasure Maps budget).
+- Refused (newznab 1xx / 5xx, e.g. `500 Request limit reached`): no calls to that indexer for 24 h. Not that release (`202 No such function`, a feed): indexer unsupported for 30 days. Failing call: 3 tries, then dropped.
+- Each release read once (also in a dry run, so the real run does not fetch again) and pushed once.
+
+| File | |
+|---|---|
+| `~/.local/state/movie-downloads/nfo-scout.log` | every decision (also `journalctl -u nfo-scout`) |
+| `~/.local/state/movie-downloads/nfo-scout.json` | per release (`<indexer>\|<id>`): `langs`/`none`/`skip`/`failed`, languages, pushed, approved; call counters, unsupported/refused indexers. Delete an entry to re-check it |
+
+```bash
+cd ~/Projects/Docker/Movie-Downloads/systemd
+sudo install -m 0644 nfo-scout.service nfo-scout.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now nfo-scout.timer
+../scripts/nfo-scout.py --dry-run --tmdb 25376     # one movie, never pushes (--tvdb for a series)
+python3 ../tests/test_nfo_scout.py
+```
+
+Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases):
+
+| Title | Release (indexer, source) | NFO audio | Score |
+|---|---|---|---|
+| *The Secret in Their Eyes* | `…2009.MULTi.1080p.BluRay.x264-FHD` (NZBgeek, details) | French, Spanish | 0 → 20000 |
+| *A Separation* | `A.Separation.2011.MULTi.1080p.BluRay.x264-ROUGH` (NZBgeek, details) | French, Persian | 0 → 20000 |
+| *The Hunt* | `Jagten.2012.MULTi.1080p.VFi…-XSHD` (NZBgeek, details) | Danish, French | −49989250 (French only = not original) → 20750 |
+| *The Rivals of Amziah King* | `…2025.MULTi.CA.HDR.2160p.WEB.H265-SUPPLY` and 4 more (Treasure Maps, getnfo) | French, English | 0 → 10000 |
+| *I'm Still Here*, *Blue Ruin*, *Kneecap*, *The Brutalist*, *Money Heist* (41 episodes) | NZBgeek / NzbPlanet | not named | not pushed |
 
 ### Subtitles (Bazarr)
 
@@ -926,6 +977,7 @@ Every language, profile and delete feature works the same for movies and series 
 | Remove from Radarr/Sonarr = only that app | ✓ | ✓ verified 2026-10-23 | Seerr |
 | Clear Data wipe (torrents, SABnzbd, Jellyfin, files) | ✓ | ✓ verified 2026-10-23 | `clear-data-wipe.sh`, `title-wipe-hook.sh` |
 | Description scout | ✓ | ✓ since 2026-10-23 (episodes and season packs) | `description-scout.py` |
+| NFO scout (MULTi releases) | ✓ | ✓ new 2026-10-26 (episodes and season packs) | `nfo-scout.py`, [NFO scout](#nfo-scout) |
 | Unknown quality in the old & rare profiles (+ twins) | ✓ | ✓ | `recyclarr/recyclarr.yml` |
 | Wrong-film guard (finds unmapped queue items, history fallback, Telegram) | ✓ year | ✓ series start year | `grab-guard.sh` |
 | Queue watchdog (Telegram: stuck, stalled, failed, guard events) | ✓ | ✓ new 2026-10-25 | `queue-watchdog.py`, [watchdog](#queue-watchdog) |
