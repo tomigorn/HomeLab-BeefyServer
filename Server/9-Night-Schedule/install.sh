@@ -25,7 +25,7 @@ done
 
 echo "==> timers tracked in other projects, now inside the window"
 R="$HERE/../.."
-sudo install -m 0644 "$R"/Docker/Movie-Downloads/systemd/{description-scout,nfo-scout,language-missing,original-audio}.timer \
+sudo install -m 0644 "$R"/Docker/Movie-Downloads/systemd/{description-scout,nfo-scout,night-search,language-missing,original-audio}.timer \
     "$R"/Docker/Movie-Downloads/systemd/original-audio-import.{path,service} \
     "$R"/Server/3-Storage-Layout-and-Spindown/beefy-mover.timer "$R"/Docker/_global/systemd/{auto-update,image-cleanup}.timer \
     "$R"/Docker/Antivirus/systemd/clamav-{scan,hostscan}.timer /etc/systemd/system/
@@ -45,6 +45,6 @@ sudo systemctl daemon-reload
 user_ctl daemon-reload
 sudo systemctl enable --now beefy-maintenance-window.timer original-audio-import.path
 # a running timer keeps its old schedule until restarted
-sudo systemctl restart $(for d in "$HERE"/dropins/*.d; do u=$(basename "$d"); echo "${u%.d}"; done) description-scout.timer nfo-scout.timer language-missing.timer original-audio.timer beefy-mover.timer
+sudo systemctl restart $(for d in "$HERE"/dropins/*.d; do u=$(basename "$d"); echo "${u%.d}"; done) description-scout.timer nfo-scout.timer night-search.timer language-missing.timer original-audio.timer beefy-mover.timer
 user_ctl restart $(for d in "$HERE"/user-dropins/*.d; do u=$(basename "$d"); echo "${u%.d}"; done)
 systemctl list-timers --no-pager
