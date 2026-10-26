@@ -4,6 +4,7 @@
 # Inbound: published container ports answer only fastpi (Traefik, Prometheus, Portainer, Cup). Allowlist, so a newly published port is closed by default.
 # Outbound: containers may not open connections into the LAN, except Jellyfin/Seerr, Ryot and Dependency-Track → fastpi :443 (sso + tracker via extra_hosts).
 # Floppy: its users enter integration URLs that the server fetches (SSRF by design), so its subnet reaches the internet only, on tcp 80/443 (DNS goes through dockerd on the host): no LAN, no fastpi, no 10/8, 172.16/12 (other Docker networks, also beefy's published ports after DNAT), 192.168/16, 100.64/10, 169.254/16. The host itself is BEEFY-INPUT.
+# Floppy inbound: its port answers fastpi and the jellyfin subnet only (Jellyfin and Seerr webhooks via 192.168.1.102:8012, hairpin DNAT); other containers are dropped (FLOPPY-INGRESS). Floppy itself still cannot open anything into the LAN or Docker.
 # Host: containers reach the beefy host itself only with replies and ping (BEEFY-INPUT on INPUT from docker0/br-+). The apps talk to each other by container name; observed 2026-10-25: no container opens connections to the host. LAN access to the host (enp6s0) is untouched.
 # IPv6: no container has IPv6, but docker-proxy listens on [::] for every published port, so only sshd is reachable over IPv6.
 #
@@ -13,7 +14,7 @@ set -euo pipefail
 IFACE=enp6s0
 LAN=192.168.1.0/24
 FASTPI=192.168.1.2/32
-JELLYFIN_NET=172.28.11.0/24   # jellyfin, seerr
+JELLYFIN_NET=172.28.11.0/24   # jellyfin, seerr (the only containers that reach Floppy)
 RYOT_NET=172.28.15.0/24       # ryot, ryot-go, ryot-db (pinned in Ryot compose)
 DT_NET=172.28.14.0/24         # dependency-track (apiserver: OIDC JWKS from sso)
 FLOPPY_NET=172.28.16.0/24     # floppy (pinned in Floppy compose; its redis net is internal)
@@ -24,6 +25,9 @@ iptables -C FORWARD -j DOCKER-USER 2>/dev/null || iptables -I FORWARD -j DOCKER-
 iptables -F DOCKER-USER
 iptables -A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
 iptables -A DOCKER-USER -i "$IFACE" ! -s "$FASTPI" -j DROP
+iptables -A DOCKER-USER -s "$JELLYFIN_NET" -d "$FLOPPY_NET" -p tcp --dport 8000 -j RETURN
+iptables -A DOCKER-USER ! -i "$IFACE" ! -s "$FLOPPY_NET" -d "$FLOPPY_NET" -m limit --limit 6/min -j LOG --log-prefix "FLOPPY-INGRESS drop " --log-level 6
+iptables -A DOCKER-USER ! -i "$IFACE" ! -s "$FLOPPY_NET" -d "$FLOPPY_NET" -j DROP
 iptables -A DOCKER-USER -s "$FLOPPY_NET" -d "$FLOPPY_NET" -j RETURN
 for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16; do
   iptables -A DOCKER-USER -s "$FLOPPY_NET" -d "$net" -j DROP
