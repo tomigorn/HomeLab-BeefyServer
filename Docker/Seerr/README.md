@@ -230,6 +230,17 @@ Title page → **Manage** (admin):
 - The library file sits 7 days in the recycle bin.
 - How it works (`clear-data-wipe.sh` timer): `../Movie-Downloads/README.md` "Delete a title".
 
+## Scheduled jobs
+
+Seerr's own jobs run in beefy's maintenance window (`Server/9-Night-Schedule.md`), not at night while beefy sleeps. `scripts/night-jobs.py` sets them through the API (idempotent, `--dry-run`; tests `python3 -m unittest test_night_jobs`; stored in Seerr's settings, so re-run it after a fresh install).
+
+| Job | Time |
+|---|---|
+| radarr-scan / download-sync-reset / sonarr-scan | 04:00 / 04:03 / 04:05 |
+| jellyfin-full-scan / availability-sync / image-cache-cleanup | 04:22 / 04:30 / 04:32 |
+| process-blocklisted-tags | Sunday 04:34 |
+| download-sync (1 min), jellyfin-recently-added-scan (5 min) | live, unchanged |
+
 ## Related
 
 - `../Movie-Downloads` — Radarr, Sonarr, Prowlarr, download clients, Bazarr, Recyclarr
