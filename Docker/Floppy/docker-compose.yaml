@@ -62,6 +62,8 @@ services:
       ADMIN_ENABLED: "False"
       DEMO_ACCOUNT_ENABLED: "False"
       DEBUG: "False"
+      # Comics off: the comic-issue page renders the ComicVine/GCD synopsis unescaped (XSS). Empty key = no bundled ComicVine key; GCD has none by default.
+      COMICVINE_API: ""
       SECRET_FILE: /run/secrets/floppy_secret
       # Nightly verified SQLite snapshot into backups/database, inside beefy's 04:00-06:00 maintenance wake.
       DB_SNAPSHOT_HOUR: "4"
