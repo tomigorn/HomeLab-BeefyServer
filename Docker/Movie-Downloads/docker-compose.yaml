@@ -402,7 +402,7 @@ services:
 # this re-applies it (plus reannounce) when qBittorrent drifts, e.g. back to 6881 after a restart. No docker.sock:
 # zero-port and reattach recovery are healthchecks + autoheal. README "VPN status".
   vpn-status:
-    image: python:3.15.1-alpine3.24
+    image: python:3.15.2-alpine3.24
     container_name: movie-vpn-status
     restart: unless-stopped
     user: "65111:65111"

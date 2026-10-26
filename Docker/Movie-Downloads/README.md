@@ -1228,7 +1228,7 @@ ssh beefy curl -s localhost:8087/api/status   # vpn_ip, real_ip, forwarded_port,
 | History | `/srv/appdata/vpn-status/port-history.json`: `startup`, `port_update`, `mismatch`, `port_fix` / `port_fix_failed`, `zero_port`, one line per change (polled every 30 s while beefy is awake). `mismatch` + `port_fix` right after a stack start is normal: qBit starts on 6881 |
 
 - `8087` is published on the LAN for fastpi's Traefik (route `HomeLab-FastPi` `Docker/Traefik/traefik/dynamic/vpn-status-beefy.yml`) and is in the `DOCKER-USER` fastpi-only DROP rule (+ the IPv6 INPUT rule). The page has no login of its own, Authentik forward auth is the gate.
-- uid 65111, `read_only`, `cap_drop: ALL`, image `python:3.15.1-alpine3.24` (no build).
+- uid 65111, `read_only`, `cap_drop: ALL`, image `python:3.15.2-alpine3.24` (no build).
 - gluetun control server auth (since 2026-10-23): `/srv/appdata/gluetun/auth/config.toml` (600, not in git) gives role `vpn-status` (API key, header `X-API-Key`) only `GET /v1/portforward` and `GET /v1/publicip/ip`; every other route is 401, also `PUT /v1/vpn/status` (before, the routes were open to every container on the bridge). Key: `secrets/vpn-status.apikey` (gitignored, 400, uid 65111). New key: write both files, then `docker compose up -d --force-recreate gluetun qbittorrent prowlarr sabnzbd vpn-status` (the others share gluetun's namespace).
 - Tests: `python3 tests/test_vpn_status.py`, `tests/test_qbit_port.sh` (the hook).
 
