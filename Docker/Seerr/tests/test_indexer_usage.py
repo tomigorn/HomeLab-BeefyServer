@@ -142,6 +142,7 @@ class Unlimited(unittest.TestCase):
 class Subscriptions(unittest.TestCase):
     SUBS = [{"name": "A", "kind": "indexer", "expires": dt.date(2026, 11, 18)},
             {"name": "B", "kind": "VPN", "expires": dt.date(2026, 11, 1)},
+            {"name": "G", "kind": "VPN", "expires": dt.date(2026, 11, 25)},
             {"name": "C", "kind": "indexer", "expires": dt.date(2026, 10, 29)},
             {"name": "D", "kind": "Usenet provider", "expires": dt.date(2026, 10, 26)},
             {"name": "E", "kind": "indexer", "expires": dt.date(2026, 10, 20)},
@@ -149,16 +150,20 @@ class Subscriptions(unittest.TestCase):
 
     def test_days_left_and_levels(self):
         out = {s["name"]: s for s in iu.subscriptions(self.SUBS, dt.date(2026, 10, 26))}
-        self.assertEqual((out["A"]["daysLeft"], out["A"]["level"], out["A"]["expires"]), (23, "ok", "2026-11-18"))
-        self.assertEqual((out["B"]["daysLeft"], out["B"]["level"]), (6, "warn"))
-        self.assertEqual((out["C"]["daysLeft"], out["C"]["level"]), (3, "full"))
+        self.assertEqual((out["A"]["daysLeft"], out["A"]["level"], out["A"]["expires"]), (23, "yellow", "2026-11-18"))
+        self.assertEqual((out["B"]["daysLeft"], out["B"]["level"]), (6, "orange"))
+        self.assertEqual((out["C"]["daysLeft"], out["C"]["level"]), (3, "orange"))
+        self.assertEqual((out["G"]["daysLeft"], out["G"]["level"]), (30, "yellow"))
         self.assertEqual((out["D"]["daysLeft"], out["D"]["level"], out["D"]["expired"]), (0, "full", False))
         self.assertEqual((out["E"]["daysLeft"], out["E"]["level"], out["E"]["expired"]), (-6, "full", True))
         self.assertEqual((out["F"]["lifetime"], out["F"]["level"], out["F"]["daysLeft"], out["F"]["expires"]), (True, "ok", None, None))
 
-    def test_fourteen_days_is_amber_fifteen_is_green(self):
-        subs = [{"name": "X", "expires": dt.date(2026, 11, 9)}, {"name": "Y", "expires": dt.date(2026, 11, 10)}]
-        self.assertEqual([s["level"] for s in iu.subscriptions(subs, dt.date(2026, 10, 26))], ["warn", "ok"])
+    def test_threshold_boundaries(self):
+        today = dt.date(2026, 10, 26)
+        want = {31: "ok", 30: "yellow", 8: "yellow", 7: "orange", 1: "orange", 0: "full", -1: "full", -2: "full"}
+        for left, level in want.items():
+            subs = [{"name": "X", "expires": today + dt.timedelta(days=left)}]
+            self.assertEqual(iu.subscriptions(subs, today)[0]["level"], level, left)
 
     def test_today_is_the_zurich_date(self):
         self.assertEqual(iu.local_date(utc(2026, 10, 26, 23, 30)), dt.date(2026, 10, 27))

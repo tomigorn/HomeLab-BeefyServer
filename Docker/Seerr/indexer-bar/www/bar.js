@@ -4,7 +4,7 @@
   window.__indexerBar = true;
 
   var DATA = "/_indexer-bar/usage.json", REFRESH = 60000, STALE = 10 * 60000, KEY = "indexer-bar-mini";
-  var RANK = { ok: 0, warn: 1, full: 2 };
+  var RANK = { ok: 0, yellow: 1, warn: 2, orange: 3, full: 4 };
   var bar, data = null, panelOpen = false, mini = false;
 
   try { mini = localStorage.getItem(KEY) === "1"; } catch (e) {}
@@ -150,7 +150,7 @@
       bar.appendChild(title);
       var box = el("div", "ib-chips");
       if (mini) {
-        var txt = !d ? "usage unavailable" : level === "full" ? "something is used up or ending" : level === "warn" ? "getting close" : "all fine";
+        var txt = !d ? "usage unavailable" : level === "full" ? "something is used up or ending" : level !== "ok" ? "getting close" : "all fine";
         add(box, el("span", "ib-chip " + (level && level !== "ok" ? "ib-" + level + "-text" : "ib-muted"), txt));
       } else chips(box, d);
       bar.appendChild(box);

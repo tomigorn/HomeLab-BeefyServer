@@ -182,11 +182,13 @@ A thin bar at the top of every Seerr page (everyone who can open Requests sees i
 | `/_indexer-bar/` | `indexer-bar/www/` (bar.js, bar.css, starting.html); `usage.json` from `/srv/appdata/indexer-bar/` |
 | Collector | `scripts/indexer-usage.py` as buntu, `systemd/indexer-usage.timer` every minute: Prowlarr `GET /api/v1/indexer` + `/api/v1/history/since`, counts queries + RSS (searches) and grabs (downloads) per indexer in its window. Writes names and counts only, no keys, no queries |
 | Limits + deadlines | `indexer-bar/limits.toml` (committed, no secrets); picked up on the next run, no restart |
-| Colours | limits: green < 70 %, amber 70-95 %, red ≥ 95 % with the reset time. Subscriptions: amber ≤ 14 days left, red ≤ 3 days or expired, `lifetime` without countdown |
+| Colours | limits: green < 70 %, amber 70-95 %, red ≥ 95 % with the reset time. Subscriptions: yellow ≤ 30 days left, orange ≤ 7, red on the end date and after, `lifetime` without countdown (same stages as the Telegram alerts) |
 | Windows | `rolling`: last 24 h, resets when the oldest counted event ages out (Prowlarr's own rule). `day`: calendar day Europe/Zurich, resets at midnight (DST-aware) |
 | Failure | Prowlarr unreachable: "usage unavailable", subscriptions still shown. usage.json older than 10 min or missing: "usage unavailable". The bar never blocks Seerr (own script, all errors caught) |
 
 Change a limit or renew a subscription: edit `indexer-bar/limits.toml`, commit.
+
+Telegram warnings for the deadlines run on fastpi (beefy sleeps): 🟡 30 days, 🟠 7 days, 🔴 end date, 🔴 the day after, each once per end date. fastpi keeps a cached copy of `limits.toml` (refreshed over ssh whenever beefy is awake). Renewing = change `expires` and commit: the old date is never warned about again, the new date starts fresh. Details: `HomeLab-FastPi` `Docker/_global/scripts/README.md` "subscription-alerts".
 
 ```toml
 [[subscriptions]]

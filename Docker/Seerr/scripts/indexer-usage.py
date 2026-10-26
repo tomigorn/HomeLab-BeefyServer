@@ -23,8 +23,8 @@ SEARCH_EVENTS = {"indexerQuery", "indexerRss"}
 GRAB_EVENTS = {"releaseGrabbed"}
 WINDOWS = {"rolling", "day"}
 AMBER, RED = 0.70, 0.95
-SUB_AMBER_DAYS, SUB_RED_DAYS = 14, 3
-RANK = {"ok": 0, "warn": 1, "full": 2}
+SUB_YELLOW_DAYS, SUB_ORANGE_DAYS, SUB_RED_DAYS = 30, 7, 0
+RANK = {"ok": 0, "yellow": 1, "warn": 2, "orange": 3, "full": 4}
 
 
 class ApiError(Exception):
@@ -106,7 +106,7 @@ def subscriptions(subs, today):
         if not isinstance(expires, dt.date):
             raise ValueError(f"subscription {s.get('name')!r}: needs expires = YYYY-MM-DD or lifetime = true")
         left = (expires - today).days
-        lvl = "full" if left <= SUB_RED_DAYS else "warn" if left <= SUB_AMBER_DAYS else "ok"
+        lvl = "full" if left <= SUB_RED_DAYS else "orange" if left <= SUB_ORANGE_DAYS else "yellow" if left <= SUB_YELLOW_DAYS else "ok"
         out.append({"name": s["name"], "kind": s.get("kind"), "lifetime": False, "expires": expires.isoformat(), "daysLeft": left, "expired": left < 0, "level": lvl})
     return out
 

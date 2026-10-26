@@ -28,8 +28,12 @@ html.ib-on #__next .sticky.top-0 { top: var(--ib-h) !important; }
 #indexer-bar .ib-fill { height: 100%; border-radius: 3px; }
 .ib-ok .ib-fill, .ib-ok.ib-dot { background: #22c55e !important; }
 .ib-warn .ib-fill, .ib-warn.ib-dot { background: #f59e0b !important; }
+.ib-yellow .ib-fill, .ib-yellow.ib-dot { background: #eab308 !important; }
+.ib-orange .ib-fill, .ib-orange.ib-dot { background: #f97316 !important; }
 .ib-full .ib-fill, .ib-full.ib-dot { background: #ef4444 !important; }
 #indexer-bar .ib-warn-text { color: #fbbf24; }
+#indexer-bar .ib-yellow-text { color: #facc15; }
+#indexer-bar .ib-orange-text { color: #fb923c; }
 #indexer-bar .ib-full-text { color: #f87171; }
 #indexer-bar .ib-ok-text { color: #4ade80; }
 html.ib-mini #indexer-bar { font-size: 11px; }
