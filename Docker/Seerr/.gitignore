@@ -28,3 +28,6 @@ auth.json
 
 # This project keeps all container state OUTSIDE the repo (APPDATA_ROOT, DATA_ROOT),
 # so there is no config/ or data/ dir here to ignore.
+
+# JS test dependencies (tests/js: npm ci)
+tests/js/node_modules/
