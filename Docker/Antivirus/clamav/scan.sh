@@ -9,6 +9,11 @@ SCAN_HOST=${SCAN_HOST:-1}
 MAXBYTES=2146435072
 LIMITS="--max-filesize=2047M --max-scansize=2047M"
 TAB=$(printf '\t')
+USE_CLAMD=${USE_CLAMD:-0}
+CLAMD_CONF=${CLAMD_CONF:-/tmp/clamd-hostscan.conf}
+CLAMD_SOCK=${CLAMD_SOCK:-/tmp/clamd-hostscan.sock}
+CLAMD_THREADS=${CLAMD_THREADS:-$(nproc 2>/dev/null || echo 4)}
+CLAMD_WAIT=${CLAMD_WAIT:-600}
 
 usage() {
 	cat >&2 <<EOF
@@ -17,6 +22,7 @@ usage: scan.sh new        files under \$SCAN_ROOTS changed since the last good r
        scan.sh <path>...  quarantined when under \$SCAN_ROOTS, else report only
        scan.sh restore <file in quarantine>  move back to its original path and never flag it again
 exit:  0 clean, 1 infected, 2 errors
+env:   USE_CLAMD=1 runs \`all\` through a private clamd (multiscan, all cores); SCAN_EXCLUDE_DIRS = directories \`all\` skips
 EOF
 	exit 2
 }
@@ -88,8 +94,24 @@ list_find() {
 	! grep -qv 'No such file or directory$' "$STATE/find.err"
 }
 
+rx() {
+	printf '%s\n' "$1" | sed 's/[]\\.*^$+?(){}|[]/\\&/g'
+}
+
+count_files() {
+	mode=$1; shift
+	set -- "$@" -xdev '(' -path "$QUARANTINE"
+	for d in $SCAN_EXCLUDE_DIRS; do set -- "$@" -o -path "$d"; done
+	set -- "$@" ')' -prune -o -type f
+	case $mode in
+		large) set -- "$@" -size +"$MAXBYTES"c ;;
+		*) set -- "$@" -size +0c ! -size +"$MAXBYTES"c ;;
+	esac
+	find "$@" -print 2>/dev/null | wc -l | tr -d ' '
+}
+
 count_large() {
-	find "$@" -xdev -path "$QUARANTINE" -prune -o -type f -size +"$MAXBYTES"c -print 2>/dev/null | wc -l | tr -d ' '
+	count_files large "$@"
 }
 
 list_btrfs() {
@@ -129,11 +151,66 @@ run_new() {
 	[ "$LISTED" -gt 0 ] && clam --file-list="$list" -i --move="$QUARANTINE" $LIMITS
 }
 
+write_clamd_conf() {
+	cat <<EOF
+LocalSocket $CLAMD_SOCK
+Foreground yes
+DatabaseDirectory $DB_DIR
+TemporaryDirectory /tmp
+MaxThreads $CLAMD_THREADS
+CrossFilesystems no
+MaxFileSize 2047M
+MaxScanSize 2047M
+SelfCheck 0
+ExcludePath ^$(rx "$QUARANTINE")(/|\$)
+EOF
+	for d in $SCAN_EXCLUDE_DIRS; do echo "ExcludePath ^$(rx "$d")(/|\$)"; done
+	if [ -s "$ALLOW" ]; then
+		while IFS= read -r a; do echo "ExcludePath ^$(rx "$a")\$"; done < "$ALLOW"
+	fi
+}
+
+clamd_all() {
+	write_clamd_conf > "$CLAMD_CONF"
+	rm -f "$CLAMD_SOCK"
+	count_files scanned $targets > "$STATE/scanned.count" &
+	counter=$!
+	clamd --config-file="$CLAMD_CONF" > "$STATE/clamd.log" 2>&1 &
+	cpid=$!
+	i=0
+	until clamdscan -c "$CLAMD_CONF" --ping 1 > /dev/null 2>&1; do
+		i=$((i + 1))
+		if ! kill -0 "$cpid" 2> /dev/null || [ "$i" -gt "$CLAMD_WAIT" ]; then
+			echo "ERROR: clamd did not start" >> "$LOG"
+			sed 's/^/ERROR: clamd: /' "$STATE/clamd.log" | tail -5 >> "$LOG"
+			kill "$cpid" 2> /dev/null
+			wait "$cpid" 2> /dev/null
+			wait "$counter"
+			RC=2
+			return
+		fi
+		sleep 1
+	done
+	clamdscan -c "$CLAMD_CONF" --multiscan -i $targets >> "$LOG" 2>&1
+	r=$?
+	[ "$r" -gt "$RC" ] && RC=$r
+	kill "$cpid" 2> /dev/null
+	wait "$cpid" 2> /dev/null
+	wait "$counter"
+	echo "Scanned files: $(cat "$STATE/scanned.count")" >> "$LOG"
+}
+
 run_all() {
 	targets=$SCAN_ROOTS
 	[ "$SCAN_HOST" = 1 ] && targets="$targets /host"
 	SKIPPED=$(count_large $targets)
-	clam -r -i --cross-fs=no --exclude-dir="^$QUARANTINE" $LIMITS $targets
+	if [ "$USE_CLAMD" = 1 ]; then
+		clamd_all
+		return
+	fi
+	set --
+	for d in $SCAN_EXCLUDE_DIRS; do set -- "$@" "--exclude-dir=^$(rx "$d")(/|\$)"; done
+	clam -r -i --cross-fs=no --exclude-dir="^$QUARANTINE" "$@" $LIMITS $targets
 }
 
 run_paths() {
@@ -176,12 +253,14 @@ INFECTED=$(wc -l < "$HITS" | tr -d ' ')
 SCANNED=$(awk -F': ' '/^Scanned files:/ { s += $2 } END { print s + 0 }' "$LOG")
 [ -n "$LISTED" ] || LISTED=$SCANNED
 set -- $(awk '
+	/^ERROR: Can.t access file / { next }
 	/^ERROR: / { e++; next }
+	/: [^:]*No such file or directory\. ERROR$/ { v++; cv++; next }
 	/: No such file or directory$/ { p = $0; sub(/: No such file or directory$/, "", p); gone[p] = 1; next }
 	/^WARNING: .*: Can.t access file$/ { q = $0; sub(/^WARNING: /, "", q); sub(/: Can.t access file$/, "", q); if (q in gone) v++; else e++; next }
 	/^WARNING: / { e++ }
 	/^Total errors:/ { e += $3 }
-	END { print v + 0, e + 0 }' "$LOG")
+	END { e -= cv; print v + 0, (e > 0 ? e : 0) }' "$LOG")
 VANISHED=$((VANISHED + $1))
 ERRORS=0
 if [ "$RC" -ge 2 ]; then

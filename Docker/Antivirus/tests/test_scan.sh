@@ -13,6 +13,8 @@ ok()  { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; [ -n "$2" ] && printf '       %s\n' "$2"; }
 assert_eq()       { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$2] got [$3]"; fi; }
 assert_grep()     { if grep -q -- "$2" "$3" 2>/dev/null; then ok "$1"; else bad "$1" "no [$2] in $3"; fi; }
+assert_line()     { if grep -qxF -- "$2" "$3" 2>/dev/null; then ok "$1"; else bad "$1" "no line [$2] in $3"; fi; }
+esc() { printf '%s\n' "$1" | sed 's/[]\\.*^$+?(){}|[]/\\&/g'; }
 assert_no_grep()  { if grep -q -- "$2" "$3" 2>/dev/null; then bad "$1" "unexpected [$2] in $3"; else ok "$1"; fi; }
 metric() { awk -v n="$1" -v m="$2" '$1 ~ "^"n"[{ ]" && (m == "" || index($1, "mode=\""m"\"")) {print $2}' "$TEXTFILE/clamav.prom"; }
 
@@ -26,7 +28,7 @@ for a; do
   case $a in
     --file-list=*) cat "${a#*=}" >> "$targets" ;;
     --move=*) move=${a#*=} ;;
-    --exclude-dir=*) excl=${a#*=} ;;
+    --exclude-dir=*) excl=${a#*=}; printf '%s\n' "$excl" >> "$targets.excl" ;;
     --exclude=*) printf '%s\n' "${a#*=}" >> "$targets.excl" ;;
     -*) ;;
     *) printf '%s\n' "$a" >> "$targets" ;;
@@ -45,6 +47,7 @@ if [ -s "$targets.excl" ]; then
 fi
 while IFS= read -r f; do
   [ -n "$(find "$f" -size +2000k)" ] && continue
+  [ -s "$f" ] || continue
   [ "$f" = "$FAKE_DENY" ] && { denied=$((denied+1)); errors=$((errors+1)); continue; }
   scanned=$((scanned+1))
   if grep -q EICAR-STANDARD-ANTIVIRUS-TEST-FILE "$f"; then
@@ -64,13 +67,63 @@ cat > "$T/bin/sigtool" <<'EOF'
 #!/bin/sh
 printf 'File: %s\nBuild time: 19 Oct 2026 06:26 +0000\nVersion: 28158\n' "$2"
 EOF
-chmod +x "$T/bin/clamscan" "$T/bin/sigtool"
+cat > "$T/bin/clamd" <<'EOF'
+#!/bin/sh
+for a; do case $a in --config-file=*) conf=${a#*=} ;; esac; done
+[ -n "$FAKE_CLAMD_FAIL" ] && exit 1
+cp "$conf" "$FAKE_CLAMD_CONF"
+sock=$(awk '$1 == "LocalSocket" { print $2 }' "$conf")
+trap 'rm -f "$sock"; exit 0' TERM INT
+: > "$sock"
+while :; do sleep 0.1; done
+EOF
+cat > "$T/bin/clamdscan" <<'EOF'
+#!/bin/sh
+ARGS_SEEN="$*"; conf=; ping=0; targets=; multi=0
+while [ $# -gt 0 ]; do
+  case $1 in
+    -c) conf=$2; shift ;;
+    --config-file=*) conf=${1#*=} ;;
+    --ping) ping=1; shift ;;
+    --multiscan) multi=1 ;;
+    -*) ;;
+    *) targets="$targets
+$1" ;;
+  esac
+  shift
+done
+sock=$(awk '$1 == "LocalSocket" { print $2 }' "$conf")
+if [ "$ping" = 1 ]; then [ -e "$sock" ]; exit $?; fi
+echo "$conf $multi $ARGS_SEEN" >> "$FAKE_CLAMD_LOG"
+files=$(mktemp); infected=0; errors=0
+for t in $targets; do
+  if [ -d "$t" ]; then find "$t" -type f >> "$files"
+  elif [ -f "$t" ]; then echo "$t" >> "$files"
+  else echo "ERROR: Can't access file $t"; errors=$((errors+1)); fi
+done
+awk '$1 == "ExcludePath" { print $2 }' "$conf" > "$files.excl"
+while IFS= read -r re; do grep -Ev "$re" "$files" > "$files.x"; mv "$files.x" "$files"; done < "$files.excl"
+while IFS= read -r f; do
+  [ -n "$(find "$f" -size +2000k)" ] && continue
+  [ "$f" = "$FAKE_DENY" ] && { echo "$f: Access denied. ERROR"; errors=$((errors+1)); continue; }
+  grep -q EICAR-STANDARD-ANTIVIRUS-TEST-FILE "$f" && { infected=$((infected+1)); echo "$f: Eicar-Test-Signature FOUND"; }
+done < "$files"
+printf '\n----------- SCAN SUMMARY -----------\nInfected files: %s\n' "$infected"
+[ "$errors" -gt 0 ] && echo "Total errors: $errors"
+printf 'Time: 0.005 sec (0 m 0 s)\nStart Date: 2026:10:26 01:27:47\nEnd Date:   2026:10:26 01:27:47\n'
+rm -f "$files" "$files.excl" "$files.x"
+[ "$errors" -gt 0 ] && exit 2
+[ "$infected" -gt 0 ] && exit 1
+exit 0
+EOF
+chmod +x "$T/bin/clamscan" "$T/bin/sigtool" "$T/bin/clamd" "$T/bin/clamdscan"
 
 export PATH="$T/bin:$PATH" DB_DIR="$T/db" HOST=testhost FAKE_LOG="$T/clamscan.log"
+export FAKE_CLAMD_LOG="$T/clamdscan.log" FAKE_CLAMD_CONF="$T/clamd-used.conf" CLAMD_CONF="$T/clamd.conf" CLAMD_SOCK="$T/clamd.sock" CLAMD_THREADS=4
 export SCAN_ROOTS="$T/red $T/black" QUARANTINE="$T/red/antivirus-quarantine" STATE="$T/state" TEXTFILE="$T/textfile"
 
 reset() {
-  rm -rf "$T/red" "$T/black" "$T/state" "$T/textfile" "$T/outside" "$FAKE_LOG"
+  rm -rf "$T/red" "$T/black" "$T/state" "$T/textfile" "$T/outside" "$FAKE_LOG" "$FAKE_CLAMD_LOG" "$T/clamd.conf" "$T/clamd.sock"
   mkdir -p "$T/red/movies" "$T/black/books" "$QUARANTINE" "$T/textfile" "$T/outside"
 }
 old()   { mkdir -p "$(dirname "$1")"; echo clean > "$1"; touch -t 202001010000 "$1"; }
@@ -203,6 +256,56 @@ assert_eq "infected_last_run all" 1 "$(metric clamav_infected_last_run all)"
 rm -f "$FAKE_LOG"; run all > /dev/null
 assert_grep "/host scanned by default" "$T/black /host\$" "$FAKE_LOG"
 [ -e "$STATE/last-run" ] && bad "all leaves the new marker alone" || ok "all leaves the new marker alone"
+
+echo "== all: SCAN_EXCLUDE_DIRS with clamscan"
+reset; fresh "$T/red/movies/a.mkv"; fresh "$T/black/books/skipme/evil.exe" "$SIG"; fresh "$T/black/books/ok.epub"
+assert_eq "excluded dir hides the hit" 0 "$(SCAN_HOST=0 SCAN_EXCLUDE_DIRS="$T/black/books/skipme" run all)"
+grep -qF -- "--exclude-dir=^$(esc "$T/black/books/skipme")(/|\$)" "$FAKE_LOG" && ok "exclude-dir flag" || bad "exclude-dir flag"
+assert_eq "scanned without the excluded dir" 2 "$(metric clamav_files_scanned all)"
+
+echo "== all with clamd: same reporting as clamscan"
+reset; fresh "$T/red/movies/evil.exe" "$SIG"; old "$T/black/books/old.epub"; fresh "$T/black/books/skipme/other.exe" "$SIG"
+dd if=/dev/zero of="$T/red/movies/film.mkv" bs=1 count=0 seek=2146435073 2>/dev/null
+: > "$T/red/movies/empty.nfo"
+SCAN_HOST=0 SCAN_EXCLUDE_DIRS="$T/black/books/skipme" run all > /dev/null
+cp "$STATE/hits.tsv" "$T/hits.scan"; cp "$TEXTFILE/clamav.prom" "$T/prom.scan"; cp "$STATE/last-infected.txt" "$T/inf.scan"
+rm -f "$FAKE_LOG"
+assert_eq "hit exits 1" 1 "$(USE_CLAMD=1 SCAN_HOST=0 SCAN_EXCLUDE_DIRS="$T/black/books/skipme" run all)"
+[ -e "$FAKE_LOG" ] && bad "clamscan not used" || ok "clamscan not used"
+assert_grep "multiscan with its own config" "^$CLAMD_CONF 1 " "$FAKE_CLAMD_LOG"
+assert_no_grep "no --move" "--move" "$FAKE_CLAMD_LOG"
+assert_eq "hits.tsv identical" "$(cat "$T/hits.scan")" "$(cat "$STATE/hits.tsv")"
+assert_eq "last-infected identical" "$(cat "$T/inf.scan")" "$(cat "$STATE/last-infected.txt")"
+for m in clamav_files_listed clamav_files_scanned clamav_scan_errors clamav_files_vanished clamav_infected_last_run clamav_files_skipped_large; do
+  assert_eq "$m identical" "$(awk -v n=$m '$1 ~ "^"n"{" {print $2}' "$T/prom.scan")" "$(metric $m all)"
+done
+assert_eq "same set of metric names" "$(sed 's/ [0-9]*$//' "$T/prom.scan" | grep -v '^#' | sort)" "$(sed 's/ [0-9]*$//' "$TEXTFILE/clamav.prom" | grep -v '^#' | sort)"
+[ -e "$T/red/movies/evil.exe" ] && ok "nothing moved" || bad "nothing moved"
+[ -e "$CLAMD_SOCK" ] && bad "clamd stopped afterwards" || ok "clamd stopped afterwards"
+
+echo "== all with clamd: config"
+C=$FAKE_CLAMD_CONF
+assert_grep "database dir" "^DatabaseDirectory $DB_DIR\$" "$C"
+assert_grep "socket" "^LocalSocket $CLAMD_SOCK\$" "$C"
+assert_grep "threads" "^MaxThreads 4\$" "$C"
+assert_grep "one filesystem" "^CrossFilesystems no\$" "$C"
+assert_grep "size limits" "^MaxFileSize 2047M\$" "$C"
+assert_grep "no db reload" "^SelfCheck 0\$" "$C"
+assert_line "quarantine excluded" "ExcludePath ^$(esc "$QUARANTINE")(/|\$)" "$C"
+assert_line "excluded dir" "ExcludePath ^$(esc "$T/black/books/skipme")(/|\$)" "$C"
+assert_no_grep "no network socket" "TCPSocket" "$C"
+
+echo "== all with clamd: allow list, errors, startup failure"
+reset; fresh "$T/red/movies/my [odd] file.exe" "$SIG"; mkdir -p "$STATE"; printf '%s\n' "$T/red/movies/my [odd] file.exe" > "$STATE/allow.txt"
+assert_eq "allow-listed file is not reported" 0 "$(USE_CLAMD=1 SCAN_HOST=0 run all)"
+assert_line "allow entry escaped as ExcludePath" "ExcludePath ^$(esc "$T/red/movies/my [odd] file.exe")\$" "$FAKE_CLAMD_CONF"
+reset; fresh "$T/red/movies/a.mkv"; fresh "$T/red/movies/secret.mkv"
+assert_eq "unreadable file exits 2" 2 "$(FAKE_DENY="$T/red/movies/secret.mkv" USE_CLAMD=1 SCAN_HOST=0 run all)"
+assert_eq "error counted once" 1 "$(metric clamav_scan_errors all)"
+reset; fresh "$T/red/movies/a.mkv"
+assert_eq "clamd that does not start exits 2" 2 "$(FAKE_CLAMD_FAIL=1 CLAMD_WAIT=3 USE_CLAMD=1 SCAN_HOST=0 run all)"
+assert_eq "startup failure is an error" 1 "$(metric clamav_scan_errors all)"
+[ -e "$CLAMD_SOCK" ] && bad "no clamd left" || ok "no clamd left"
 
 echo "== <path>: move under roots, report elsewhere"
 reset
