@@ -716,7 +716,7 @@ Jellyfin plays the user's preferred language, else the track flagged *default* i
 - Every `.mkv` of Radarr / Sonarr: the one audio track in the original language (from the app) gets `flag-default` and the name `<existing name> (Original)` if it contains the language name, else `<Language> (Original)`, all other audio tracks lose `flag-default` (`mkvpropedit`, header edit in place, no remux, mtime restored). Idempotent.
 - Skipped and reported: not mkv, link count > 1 (still seeding, edited on a later run), no original-language track (dub only, `und`), several original-language tracks are not a skip: commentaries (name or flag) are dropped, then the track already flagged default wins, else the first; commentary tracks get `flag-commentary`.
 - Jellyfin: the changed items are refreshed (FullRefresh) afterwards.
-- `systemd/original-audio.timer`: 5 min after boot and daily 04:24. Install as above (`sudo install -m 0644 original-audio.service original-audio.timer /etc/systemd/system/`, `enable --now`). Needs `mkvtoolnix` (`sudo apt-get install -y mkvtoolnix`).
+- `systemd/original-audio.timer`: daily 04:20 in the maintenance window (sweep of the whole library, no boot trigger); `systemd/original-audio-import.path` runs `original-audio.py --queue` for the files Radarr/Sonarr queue on import/upgrade (Connect script `scripts/original-audio-hook.sh`, registered by `scripts/language-policy.sh`; a file still seeding, i.e. hard-linked, is dropped and left to the sweep). Tests: `python3 tests/test_original_audio.py`, `tests/test_original_audio_hook.sh`. Install as above (`sudo install -m 0644 original-audio.service original-audio.timer /etc/systemd/system/`, `enable --now`). Needs `mkvtoolnix` (`sudo apt-get install -y mkvtoolnix`).
 - By hand: `scripts/original-audio.py --dry-run`, then without `--dry-run`. Tests: `python3 tests/test_original_audio.py`.
 
 ### Swiss German
@@ -774,7 +774,7 @@ Sonarr, verified 2026-10-23 (series added unmonitored with the tag, no search; `
 
 ### Description scout
 
-`audio-<language>` matches only the release **name**. `scripts/description-scout.py` (timer every 3 h) also reads the **description** of torrent releases, for Radarr and Sonarr: *The Ring Thing* TPB `The Ring Thing (2004) [XVID]` says `Language: Schwyzerdütsch` only in its description.
+`audio-<language>` matches only the release **name**. `scripts/description-scout.py` (timer daily 04:14, in beefy's maintenance window; a request's search is done by `request-tags`) also reads the **description** of torrent releases, for Radarr and Sonarr: *The Ring Thing* TPB `The Ring Thing (2004) [XVID]` says `Language: Schwyzerdütsch` only in its description.
 
 | Step | What |
 |---|---|
@@ -808,7 +808,7 @@ python3 ../tests/test_description_scout.py
 
 ### NFO scout
 
-Radarr/Sonarr read languages only from the release name, so `MULTi` = the original only ([Release scoring](#release-scoring)). `scripts/nfo-scout.py` (timer every 6 h) reads the audio languages of MULTi-only usenet releases from the indexer and pushes them with the languages in the name. Not the per-indexer "Multi Languages" setting (owner).
+Radarr/Sonarr read languages only from the release name, so `MULTi` = the original only ([Release scoring](#release-scoring)). `scripts/nfo-scout.py` (timer daily 04:16, in beefy's maintenance window) reads the audio languages of MULTi-only usenet releases from the indexer and pushes them with the languages in the name. Not the per-indexer "Multi Languages" setting (owner).
 
 | Step | What |
 |---|---|
@@ -907,9 +907,8 @@ Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scor
   (media is read-only). Radarr writes no NFO/images.
 - HDD-friendly schedule (storage doc §13.10): trickplay is extracted during the
   scan, i.e. at import while the file is on SSD. The periodic tasks moved into the
-  04:00–06:00 window: Scan Media Library daily 04:10 (was every 12 h), Trickplay
-  04:25, Chapter Images 04:40 (chapter extraction is off anyway), Media Segment
-  Scan 04:50 (was every 12 h).
+  03:58–04:45 window (`../Jellyfin/scripts/night-tasks.py`, see the Jellyfin README): Scan Media Library daily 04:10, Trickplay
+  04:24, Chapter Images 04:30, Media Segment Scan 04:33.
 
 ### Test the pipeline (no download client involved)
 
@@ -1078,7 +1077,7 @@ A title tagged `audio-swiss-german` (movie or series) that still has no Swiss Ge
 | Counts | tagged, monitored, no file (series: missing monitored episodes), searched at least once, not downloading |
 | Since | first seen waiting (first run: the date the title was added); a file, unmonitor, untag or delete resets it |
 | Notified | since + 7 days (`LM_DAYS`); again only when the state changes: a new failed or blocklisted grab = a new `failed` label = one new Telegram |
-| beefy | `scripts/language-missing.py` (timer `language-missing.timer`, hourly, 12 min after boot) → `~/.local/state/movie-downloads/media-language.prom` (+ `language-missing.json` state) |
+| beefy | `scripts/language-missing.py` (timer `language-missing.timer`, daily 04:18 in the maintenance window) → `~/.local/state/movie-downloads/media-language.prom` (+ `language-missing.json` state) |
 | fastpi | `Server/4-Security-Monitoring/security_scan.py` group `media` (with `av`, 04:20/05:40/06:40) pulls it over ssh into node-exporter's textfile dir as `media_language_beefy.prom` → rule `grafana/prometheus/rules/media-language.yml` → Alertmanager route `AudioLanguageNotFound` → receiver `telegram-once` (no resolved message) |
 | Why this path | beefy has no Prometheus/Alertmanager and no exporter; fastpi already pulls beefy's ClamAV textfile this way (no new port, no firewall change, works while beefy sleeps: the file stays on fastpi, so the series never go stale) |
 | Once | the alert holds for 5 days after notify, then ends silently; the route's repeat interval is 168 h. A pull missed 5 days in a row loses it; two missed days already fire `SecurityScanStale` (subject `media-beefy`) |
