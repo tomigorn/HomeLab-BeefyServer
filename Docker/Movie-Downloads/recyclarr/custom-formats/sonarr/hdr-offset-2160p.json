@@ -1,0 +1,19 @@
+{
+  "trash_id": "f6fdce5bdc43c0d9ec746875babb05e6",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "2160p: HDR bonus offset",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+    {
+      "name": "2160p",
+      "implementation": "ResolutionSpecification",
+      "negate": false,
+      "required": true,
+      "fields": {
+        "value": 2160
+      }
+    }
+  ]
+}
