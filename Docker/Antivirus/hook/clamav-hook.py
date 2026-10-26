@@ -130,8 +130,24 @@ def is_media(path):
     return not head.startswith(RISKY_MAGIC)
 
 
-def quarantine(path, sig, where=None):
-    """Move path into the quarantine; index.txt records `where` (default path) as the place to restore to."""
+def append_line(path, line):
+    # 664: the hook (SABnzbd, qBittorrent) and clamav-queue all append to it.
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o664)
+    try:
+        try:
+            os.fchmod(fd, 0o664)
+        except OSError:
+            pass
+        os.write(fd, line.encode())
+    finally:
+        os.close(fd)
+
+
+def quarantine(path, sig, where=None, mode="hook", title=""):
+    """Move path into the quarantine; index.txt records `where` (default path) as the place to restore to.
+
+    index.txt keeps exactly 3 fields (scan.sh restore); who quarantined it (mode, job title) goes to TEXTFILE/clamav-hits.tsv.
+    """
     where = where or path
     base = os.path.basename(where)
     dest = os.path.join(QUARANTINE, base)
@@ -141,19 +157,16 @@ def quarantine(path, sig, where=None):
         dest = "%s.%03d" % (os.path.join(QUARANTINE, base), n)
     shutil.move(path, dest)
     now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    cpath = container_path(where)
     try:
-        # 664: the hook (SABnzbd, qBittorrent) and clamav-queue all append to it.
-        fd = os.open(os.path.join(QUARANTINE, "index.txt"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o664)
-        try:
-            try:
-                os.fchmod(fd, 0o664)
-            except OSError:
-                pass
-            os.write(fd, ("%s\t%s\t%s\n" % (now, container_path(where), sig)).encode())
-        finally:
-            os.close(fd)
+        append_line(os.path.join(QUARANTINE, "index.txt"), "%s\t%s\t%s\n" % (now, cpath, sig))
     except OSError as e:
-        print("ERROR: index.txt not written (%s): %s\t%s" % (e, container_path(where), sig))
+        print("ERROR: index.txt not written (%s): %s\t%s" % (e, cpath, sig))
+    title = " ".join(str(title or "").split())
+    try:
+        append_line(os.path.join(TEXTFILE, "clamav-hits.tsv"), "%s\t%s\t%s\t%s\t%s\n" % (now, mode, title, cpath, sig))
+    except OSError as e:
+        print("ERROR: clamav-hits.tsv not written (%s): %s\t%s" % (e, cpath, sig))
     return dest
 
 
@@ -301,7 +314,7 @@ def main(argv):
                 break
             continue
         if sig:
-            quarantine(p, sig)
+            quarantine(p, sig, mode="hook", title=title)
             hits.append((p, sig))
             print("%s: %s FOUND, moved to %s" % (p, sig, QUARANTINE))
 
@@ -378,7 +391,7 @@ def handle_hit(link, orig, sig, job):
             removed.append(p)
         except OSError as e:
             print("ERROR: could not remove %s: %s" % (p, e))
-    dest = quarantine(link, sig, where)
+    dest = quarantine(link, sig, where, mode="queue", title=job.get("title"))
     failed = len(others) - len(removed)
     if job.get("hash"):
         qbit(job["hash"])

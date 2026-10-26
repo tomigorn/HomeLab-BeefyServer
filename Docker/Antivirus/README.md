@@ -92,6 +92,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 |---|---|
 | `/srv/.disks/ssd-hot/quarantine/` (`/srv/video/quarantine` in the union, `/data/quarantine` in the apps) | quarantined files, group `media`, 2770; no library points at the union root |
 | `.../quarantine/index.txt` | date TAB original path as the `clamav` container sees it (`/scan/ssd-hot/...` = `/srv/.disks/ssd-hot/...`; the hook maps `/data` to it) TAB signature |
+| `/var/lib/clamav-scan/textfile/clamav-hits.tsv` | hook and queue hits only: date TAB mode (`hook`/`queue`) TAB job title TAB the same path TAB signature (same date as the index line); fastpi reads it for the `MalwareQuarantined` mode/title. `index.txt` keeps 3 fields: `scan.sh restore` matches `NF == 3` |
 
 False positive: `sudo docker exec clamav /scan.sh restore '<file name in quarantine>'` moves it back to its original path from `index.txt`, marks the line `restored <date>` and adds the path to `/var/lib/clamav-scan/allow.txt`, which every scan.sh mode skips.
 
@@ -102,7 +103,7 @@ False positive: `sudo docker exec clamav /scan.sh restore '<file name in quarant
 | `clamav.prom` | `scan.sh` | `host="beefy"`, `mode` = `new`/`all`/`path`; the same metrics as fastpi |
 | `clamav-hook.prom` | the hook (`mode="hook"`, per job) and `clamav-queue` (`mode="queue"`, per job) | `host="beefy"`: `clamav_files_scanned`, `clamav_files_skipped_large`, `clamav_infected_last_run`, `clamav_infected_total` (counter), `clamav_last_run_timestamp_seconds`, `clamav_scan_errors`; hook only `clamav_files_queued`; queue only `clamav_queue_jobs` (jobs left) |
 
-beefy has no node-exporter: fastpi pulls both files over ssh.
+beefy has no node-exporter: fastpi pulls both files (and `clamav-hits.tsv`, `index.txt`) over ssh.
 
 ## Tests
 

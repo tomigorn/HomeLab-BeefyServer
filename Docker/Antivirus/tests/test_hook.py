@@ -420,6 +420,65 @@ class HookTest(unittest.TestCase):
             os.umask(old)
         self.assertEqual(os.stat(os.path.join(self.quarantine, "index.txt")).st_mode & 0o777, 0o664)
 
+    # clamav-hits.tsv: who quarantined what (index.txt keeps its 3 fields for scan.sh restore)
+
+    def hits_log(self):
+        with open(os.path.join(self.textfile, "clamav-hits.tsv")) as f:
+            return [l.split("\t") for l in f.read().splitlines()]
+
+    def index(self):
+        with open(os.path.join(self.quarantine, "index.txt")) as f:
+            return [l.split("\t") for l in f.read().splitlines()]
+
+    def test_hook_hit_logs_time_mode_title_path_signature(self):
+        bad = self.write("setup.exe", EICAR)
+        self.sab()
+        self.assertEqual(self.hits_log(), [[self.index()[0][0], "hook", "Some Movie", bad, SIG]])
+        self.assertEqual(len(self.index()[0]), 3)
+
+    def test_qbit_hook_hit_logs_the_torrent_name_as_title(self):
+        self.write("setup.exe", EICAR)
+        self.run_hook("--qbit", "abc123", self.job)
+        self.assertEqual(self.hits_log()[0][1:3], ["hook", "Some.Movie.2026"])
+
+    def test_worker_hit_logs_queue_mode_job_title_and_the_index_path(self):
+        self.write("movie.mkv", EICAR)
+        self.queued()
+        self.worker()
+        time_, path, sig = self.index()[0]
+        self.assertEqual(self.hits_log(), [[time_, "queue", "Some Movie", path, sig]])
+
+    def test_hits_log_path_is_mapped_like_the_index(self):
+        self.write("setup.exe", EICAR)
+        self.sab(PATH_MAP="%s/data=/scan/ssd-hot" % self.t)
+        self.assertEqual(self.hits_log()[0][3], self.index()[0][1])
+        self.assertTrue(self.hits_log()[0][3].startswith("/scan/ssd-hot/"))
+
+    def test_hits_log_title_cannot_break_the_columns(self):
+        self.write("setup.exe", EICAR)
+        self.run_hook(self.job, "x.nzb", "Bad\tTitle\nInjected", "", "movies", "", "0")
+        self.assertEqual(len(self.hits_log()), 1)
+        self.assertEqual(self.hits_log()[0][2], "Bad Title Injected")
+
+    def test_hits_log_is_group_writable_for_the_other_writers(self):
+        self.write("setup.exe", EICAR)
+        old = os.umask(0o022)
+        try:
+            self.sab()
+        finally:
+            os.umask(old)
+        self.assertEqual(os.stat(os.path.join(self.textfile, "clamav-hits.tsv")).st_mode & 0o777, 0o664)
+
+    def test_unwritable_hits_log_still_quarantines_and_indexes(self):
+        bad = self.write("setup.exe", EICAR)
+        log = self.write("clamav-hits.tsv", b"", where=self.textfile)
+        os.chmod(log, 0o444)
+        r = self.sab()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(bad))
+        self.assertEqual(len(self.index()), 1)
+        self.assertIn("clamav-hits.tsv", r.stdout + r.stderr)
+
     def test_worker_hit_with_a_link_it_cannot_remove_is_an_error(self):
         mkv = self.write("movie.mkv", EICAR)
         self.queued()
