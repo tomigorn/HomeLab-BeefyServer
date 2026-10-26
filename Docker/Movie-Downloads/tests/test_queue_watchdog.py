@@ -97,6 +97,15 @@ class Decide(unittest.TestCase):
         self.run_app("radarr", [p], T0)
         self.assertEqual(self.run_app("radarr", [p], T0 + 7 * HOUR), [])
 
+    def test_night_download_paused_all_day_then_resumed_starts_a_fresh_stall_clock(self):
+        p = dict(DOWNLOADING, status="paused", title="Film.night.2020", downloadId="night1")
+        for h in range(0, 16):
+            self.assertEqual(self.run_app("radarr", [p], T0 + h * HOUR), [])
+        r = dict(p, status="downloading")
+        self.assertEqual(self.run_app("radarr", [r], T0 + 16 * HOUR), [])
+        self.assertEqual(self.run_app("radarr", [r], T0 + 21 * HOUR), [])
+        self.assertEqual(len(self.run_app("radarr", [r], T0 + 23 * HOUR)), 1)
+
     def test_failed_alerts_at_once(self):
         [a] = self.run_app("sonarr", [EP], T0)
         self.assertEqual(a.condition, "failed")

@@ -1,0 +1,11 @@
+[Unit]
+Description=Night downloads: at boot, every 2 minutes while beefy is awake, and 22:05
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+OnCalendar=*-*-* 22:05:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target

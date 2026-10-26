@@ -1,0 +1,11 @@
+[Unit]
+Description=Resume paused night downloads in the low tariff (22:00-06:00, Sunday) or for download-now titles
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/night-downloads.py
+NoNewPrivileges=true
+PrivateTmp=true
