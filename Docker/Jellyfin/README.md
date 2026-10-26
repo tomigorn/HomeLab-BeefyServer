@@ -241,10 +241,11 @@ Set via the API (they live in /config, not in this repo):
 - **Trickplay (seek previews):** hardware decode + hardware MJPEG encode, key frames only,
   generated **during library scans** (non-blocking). The default nightly 03:00 task would
   never run because beefy sleeps at night.
-- **Scheduled tasks moved into the 04:00–06:00 mover window (2026-10-19)** so the cold
-  HDD wakes once a night, not every 12 h (storage doc §13.10): Scan Media Library daily
-  04:10 (was every 12 h), Generate Trickplay Images 04:25, Extract Chapter Images 04:40,
-  Media Segment Scan 04:50 (was every 12 h). New movies do not wait for these: Radarr
+- **Scheduled tasks moved into beefy's maintenance window 03:58–04:45 (2026-10-26, was 04:00–06:00 on 2026-10-19)** so the cold
+  HDD wakes once a night and no task waits for a wake that never reaches its interval. `scripts/night-tasks.py` sets them (idempotent, `--dry-run`; tests `python3 -m unittest test_night_tasks`):
+  IMDb ratings 04:08, Scan Media Library 04:10, Trickplay 04:24, Chapter Images 04:30, Media Segment Scan 04:33,
+  subtitles 04:35, audio normalization 04:36, lyrics 04:37, channels 04:38, guide 04:39, cache/log/transcode clean 04:40-04:42, Update Plugins 04:43, Optimize database 04:44, Sunday: Refresh People 04:31, upcoming episodes 04:32.
+  The startup triggers of Clean Transcode and Update Plugins are gone (they ran on every day wake); JavaScript Injector Startup keeps its own. New movies do not wait for these: Radarr
   Connect triggers a refresh of the new folder on import (see
   `../Movie-Downloads/README.md` "Download → library pipeline"), and real-time
   monitoring stays on.
