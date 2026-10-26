@@ -6,6 +6,7 @@
 # A plain "image prune --filter until" dates by image build time, not by when it became unused, so this keeps its own first-seen-unused clock per image ID.
 # Any image carrying a tag with "rollback" in it (deliberate manual rollback tags) is never removed.
 # Images whose reference appears in the repo's compose files or scripts (REPO_DIR) are kept as well: they are something the stack pulls or runs on demand (scanners, parked projects).
+# IMAGE_CLEANUP_KEEP: space-separated repositories to always keep (images another host's scheduled job runs here).
 # Usage: image-cleanup.sh [--dry-run]
 # Env: KEEP_DAYS (14), REPO_DIR (the repo root), IMAGE_CLEANUP_STATE (/var/lib/image-cleanup), IMAGE_CLEANUP_TEXTFILE (/var/lib/node-exporter/textfile), DOCKER (docker command)
 set -uo pipefail
@@ -20,7 +21,7 @@ now=$(date +%s); keep=$((KEEP_DAYS * 86400)); seen="$STATE/first-seen"
 REPO_DIR=${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}
 corpus=$(mktemp)
 find "$REPO_DIR" -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.sh' -o -name '*.py' -o -name 'Dockerfile*' -o -name '*.service' \) ! -path '*/.git/*' ! -path '*/www/*' ! -path '*/tests/*' ! -name 'test_*' -exec cat {} + > "$corpus" 2>/dev/null
-protected() { local r tag; for r in ${1//,/ }; do [[ $r == *rollback* ]] && return 0; tag=${r##*:}; [[ $tag == "$r" || $r == */*:* && $tag == */* ]] && tag=latest
+protected() { local r tag; for r in ${1//,/ }; do [[ $r == *rollback* ]] && return 0; for k in ${IMAGE_CLEANUP_KEEP:-}; do [[ ${r%:*} == "$k" ]] && return 0; done; tag=${r##*:}; [[ $tag == "$r" || $r == */*:* && $tag == */* ]] && tag=latest
   grep -qF -- "$r" "$corpus" && return 0; grep -qF -- "${r%:*}:\${" "$corpus" && return 0; [[ $tag == latest ]] && grep -qF -- "${r%:*}" "$corpus" && return 0; done; return 1; }
 bootstrap=0; [[ -f $seen ]] || bootstrap=1
 log() { echo "$(date '+%F %T') $*"; }

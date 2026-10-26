@@ -79,6 +79,11 @@ printf 'sha256:used|%s|0001-01-01T00:00:00Z|100|app:1\nsha256:rb|%s|0001-01-01T0
 echo "sha256:rb $((NOW - 90*86400))" > "$IMAGE_CLEANUP_STATE/first-seen"
 : > "$T/log"; bash "$HERE/image-cleanup.sh" > "$T/out" 2>&1
 hasnt "rollback-tagged image never removed" '^image rm' "$T/log"
+printf '%s\n' sha256:used sha256:kp | sort > "$T/ids"
+printf 'sha256:used|%s|0001-01-01T00:00:00Z|100|app:1\nsha256:kp|%s|0001-01-01T00:00:00Z|100|scan/tool:latest\n' "$old" "$old" > "$T/inspect"
+echo "sha256:kp $((NOW - 90*86400))" > "$IMAGE_CLEANUP_STATE/first-seen"
+: > "$T/log"; IMAGE_CLEANUP_KEEP="scan/tool other/x" bash "$HERE/image-cleanup.sh" > "$T/out" 2>&1
+hasnt "IMAGE_CLEANUP_KEEP repository never removed" '^image rm' "$T/log"
 echo "dangling image removed by id once its window is over"
 echo "sha256:olddangling $((NOW - 20*86400))" >> "$IMAGE_CLEANUP_STATE/first-seen"
 printf '%s\n' sha256:used sha256:olddangling | sort > "$T/ids"
