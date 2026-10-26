@@ -17,8 +17,8 @@ Review `floppy-security-review.md` (2026-10-26), mitigated without code changes:
 
 | # | Sev | Finding | Needs | Status | Mitigation |
 |---|---|---|---|---|---|
-| 1 | High | SSRF: integration URLs may point anywhere | signed-in friend | mitigated | Egress of the `floppy` subnet: tcp 80/443 to the internet only, LAN/Docker/host/CGNAT/link-local dropped, rest dropped + logged `FLOPPY-EGRESS drop`. Every integration that takes a server URL is 403 at the edge: `/import/{audiobookshelf,kavita,komga,radarr,sonarr,mylar,kapowarr,storyteller,koreader,plex,koito,gpodder}`, `/jellyfin/`, `/seerr/`, `/settings/integrations/jellyseerr/` |
-| 2 | High | `User.token` in webhook/ICS/Stremio/RSS URLs = full API key | leaked URL | mitigated | 403 for `/webhook/`, `/calendar/download/`, `/stremio-addon/`, `/apis/`, `/rss/` and all of `/api/` (UI needs only `/api/cache-status/`); that router writes no access log. Port 8012 answers fastpi only |
+| 1 | High | SSRF: integration URLs may point anywhere | signed-in friend | mitigated | Egress of the `floppy` subnet: tcp 80/443 to the internet only, LAN/Docker/host/CGNAT/link-local dropped, rest dropped + logged `FLOPPY-EGRESS drop`. Every integration that takes a server URL is 403 at the edge: `/import/{audiobookshelf,kavita,komga,radarr,sonarr,mylar,kapowarr,storyteller,koreader,plex,koito,gpodder}`, `/jellyfin/`, `/seerr/`, `/settings/integrations/jellyseerr/`; open: only GET `/import/audiobookshelf/cover/<signed>` (cover art of a linked ABS). Integrations are wired on beefy (Integrations), none needs Floppy LAN egress |
+| 2 | High | `User.token` in webhook/ICS/Stremio/RSS URLs = full API key | leaked URL | mitigated | 403 for `/webhook/`, `/calendar/download/`, `/stremio-addon/`, `/apis/`, `/rss/` and all of `/api/` (UI needs only `/api/cache-status/`); that router writes no access log. Port 8012 answers fastpi and the `jellyfin` subnet only (Jellyfin and Seerr webhooks, beefy-local; other containers `FLOPPY-INGRESS drop`) |
 | 3 | Medium | Custom metadata / image override edit the shared item | signed-in friend | mitigated | `/details/metadata/`, `/details/image/` 403 (API blocked too); CSP `img-src` = Floppy + its approved artwork hosts, so a foreign image URL cannot track viewers |
 | 4 | Medium | One user's TMDB proxy applies instance-wide | signed-in friend | mitigated | `/update_tmdb_proxy` 403; check in "Checks" stays `0` |
 | 5 | Medium | Comic-issue synopsis rendered `\|safe` (XSS) | third-party data | mitigated | `COMICVINE_API=""` (no bundled ComicVine key), GCD has no login, credential pages and every comic URL 403 (`/…/(comic\|comicissue\|comicvine\|gcd)/`); CSP: `connect-src 'self'`, `object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'` |
@@ -44,7 +44,7 @@ sudo docker exec -i -u abc -w /floppy floppy python manage.py shell < scripts/ur
 
 Left out on purpose: `api` (except cache-status), `apis`, `health`, `ping`, `oauth`, `.well-known`, `webhook`, `stremio-addon`, `rss`, `jellyfin`, `seerr`, `update_tmdb_proxy`, the Plex webhook toggles (`*plex*`), `update_jellyfin_webhook_events`.
 
-To turn on one integration later (Jellyfin, ABS, Seerr): remove its path from `tracker-blocked`, add a narrow egress exception (host + port) in `docker-user-guard.sh`, keep webhooks inside beefy.
+New integrations: prefer a webhook into beefy:8012 (DOCKER-USER exception for the sender's subnet) or a public HTTPS URL; configure per user from a script here, not by opening the settings path at the edge.
 
 ### Residual risks (need code changes upstream)
 
@@ -70,6 +70,7 @@ Files under `secrets/` (gitignored); `docker inspect` shows no value. How-to: `.
 | `secrets/floppy_secret` | `65125:65125 0400` | Django `SECRET_FILE`. Keep it with the DB backup: it also encrypts saved integration credentials |
 | `secrets/floppy_redis_password` | `65126:65125 0440` | redis (config on tmpfs), floppy builds `REDIS_URL` in its compose `entrypoint` |
 | `secrets/floppy_oidc_providers` | `65125:65125 0400` | allauth `SOCIALACCOUNT_PROVIDERS_FILE`; written from fastpi by `provision-tracker-sso.py` |
+| `secrets/floppy_seerr_webhook_secret` | `65125:65125 0400` | `SEERR_GLOBAL_WEBHOOK_SECRET_FILE`; Seerr gets it from `../Seerr/scripts/seerr-webhook.py apply` |
 
 ## Deploy
 
@@ -88,6 +89,7 @@ sudo docker inspect -f '{{.State.Health.Status}}' floppy    # healthy (first sta
 | Egress blocked | `sudo docker exec floppy python3 -c 'import socket; socket.create_connection(("192.168.1.2",443),3)'` → timeout |
 | Egress internet | same with `("api.themoviedb.org",443)` → no error |
 | Token URLs | `curl -s -o /dev/null -w '%{http_code}' -X POST https://tracker.holy-grail.ch/webhook/jellyfin/x` → `403` |
+| Webhook path | `sudo docker exec jellyfin curl -s -o /dev/null -w '%{http_code}' http://192.168.1.102:8012/` → `302`; from another container → timeout |
 | Egress port | same with `("portquiz.net",8080)` → timeout; `sudo journalctl -k \| grep FLOPPY-EGRESS` shows drops |
 | Edge blocks | `curl -s -o /dev/null -w '%{http_code}' https://tracker.holy-grail.ch/api/v1/health/` → `403`; `/health/full/` (signed in) → `404` |
 | TMDB proxy unused | `sudo docker exec -u abc -w /floppy floppy python manage.py shell -c "from users.models import User; print(User.objects.exclude(tmdb_proxy_url='').count())"` → `0` |
@@ -119,10 +121,26 @@ After the update: run `scripts/url-prefixes.py` (Security, "Edge allow-list") an
 
 Digest of a tag: `docker buildx imagetools inspect ghcr.io/dannyvfilms/floppy:<tag> --format '{{json .Manifest.Digest}}'`.
 
-## Not set up yet
+## Integrations
 
-Blocked at the edge and by the egress firewall (Security, last paragraph of Edge allow-list):
+Per Floppy user. Floppy opens no connection into the LAN for any of them.
 
-- Jellyfin playback sync: Floppy's Jellyfin webhook (token URL) would need Jellyfin → Floppy inside beefy (a shared internal network), not through Traefik. The old Ryot hooks in Jellyfin still point at `/_i/…`, which now ends at the forward auth.
-- Audiobookshelf sync: ABS runs on fastpi (LAN); needs a narrow egress exception (fastpi ABS port only).
-- Seerr, *arr: same; Seerr is on beefy (`jellyfin` net).
+| Integration | Direction / path | Credential | Owner (tomigorn) |
+|---|---|---|---|
+| Jellyfin (playback, watched checkmark) | Jellyfin Webhooks plugin → `http://192.168.1.102:8012/webhook/jellyfin/<token>` (hairpin on beefy) | the user's Floppy token, bound to their Jellyfin user | on |
+| Seerr (request → Planning) | Seerr webhook → `http://192.168.1.102:8012/webhook/seerr/global/`, routed by requester name | shared secret (Secrets) | on |
+| Audiobookshelf (listening progress) | Floppy → `https://audiobookshelf.holy-grail.ch` (public URL, tcp 443), every 15 min | API key of a non-admin ABS user | not linked: tomigorn is ABS admin |
+
+Not used: Floppy → Jellyfin pull/push (would need egress to Jellyfin), request from Floppy (needs Seerr's single admin API key), ItemAdded/ItemDeleted (every new library item in every member's collection).
+
+### Link a member
+The member has signed in to the Tracker once (creates the Floppy user); usernames = Holy Grail usernames.
+
+| What | Command on beefy |
+|---|---|
+| Jellyfin | `cd ../Jellyfin/scripts && python3 tracker-webhook.py add <jellyfin-user> [<floppy-user>]` (also turns on MarkPlayed/MarkUnplayed) |
+| Seerr | `sudo docker exec -u abc -w /floppy floppy python manage.py shell -c "from users.models import User; User.objects.filter(username='<floppy-user>').update(jellyseerr_enabled=True, jellyseerr_allowed_usernames='<seerr-name>')"` |
+| ABS | ABS (admin) → Settings → API Keys → new key for the member's ABS user, then `scripts/audiobookshelf-link.sh link <floppy-user>` and paste it; refuses admin users (`ABS_ALLOW_ADMIN=1` overrides) |
+| ABS off | `scripts/audiobookshelf-link.sh unlink <floppy-user>` |
+
+Seerr name = Seerr display name (the Jellyfin username), case-insensitive. Test: mark a film played in Jellyfin → it shows as completed in the member's Tracker; `sudo docker logs floppy 2>&1 | grep -i -E "webhook_finished|Seerr accepted|Audiobookshelf" | tail`.
