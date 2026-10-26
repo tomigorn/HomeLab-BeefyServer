@@ -87,8 +87,11 @@ def check_app(app, cfg):
         hdr1080 = {a: x.replace("x265", "x264").replace("H.265", "H.264") for a, x in V1080_HDR.items()} if kind == "hd" else V1080_HDR
         check("(a) 1080p HDR original+English beats 1080p SDR original+English+German", score(prof, [o, "English"], hdr1080) > score(prof, [o, "English", "German"], V1080))
         if kind != "hd":
-            check("(a) 2160p HDR original+English beats 2160p SDR original+English+German (rejected)",
-                  score(prof, [o, "English"], V2160) > score(prof, [o, "English", "German"], V2160_SDR) and score(prof, [o, "English", "German"], V2160_SDR) < p["minFormatScore"])
+            check("(a) 2160p HDR original+English beats 2160p SDR original+English+German", score(prof, [o, "English"], V2160) > score(prof, [o, "English", "German"], V2160_SDR))
+            check("(h) 2160p SDR original+English accepted", score(prof, [o, "English"], V2160_SDR) >= p["minFormatScore"])
+            check(f"(i) 2160p HDR original only beats 2160p SDR original+English+German+{others[0]}+{others[1]} TrueHD Atmos",
+                  score(prof, [o], V2160) > score(prof, [o, "English", "German"] + others[:2], V2160_SDR, "TrueHD.Atmos.7.1"))
+            check("(j) 2160p SDR original+English+German+extras stays below the cutoff", score(prof, [o, "English", "German"] + others[:2], V2160_SDR, "TrueHD.Atmos.7.1") < p["cutoffFormatScore"])
         v = V2160 if kind != "hd" else V1080
         check(f"(b) original+English+German+{others[1]}+{others[0]} beats original+English+German", score(prof, [o, "English", "German", others[1], others[0]], v) > score(prof, [o, "English", "German"], v))
         check(f"(c) original+German+{others[0]} beats original+German", score(prof, [o, "German", others[0]], v) > score(prof, [o, "German"], v))
@@ -98,7 +101,7 @@ def check_app(app, cfg):
         check("(f) dub only (German) rejected", score(prof, ["German"], v) < p["minFormatScore"])
         if kind != "hd":
             check("(f) x265 1080p without HDR rejected", score(prof, [o, "English", "German"] + others[:2], {app: V1080[app].replace("x264", "x265").replace("H.264", "H.265")}) < p["minFormatScore"])
-        check("upgrade cutoff reached by original+English", score(prof, [o, "English"], v) >= p["cutoffFormatScore"])
+        check(f"{'(j) ' if kind != 'hd' else ''}upgrade cutoff reached by {'2160p HDR ' if kind != 'hd' else ''}original+English", score(prof, [o, "English"], v) >= p["cutoffFormatScore"])
         check("upgrade cutoff not reached by original+German+extras", score(prof, [o, "German"] + others[:3], v, "TrueHD.Atmos.7.1") < p["cutoffFormatScore"])
         gain = score(prof, [o] + others[:3], v, "TrueHD.Atmos.7.1") - score(prof, [o], v, "AAC")
         check("extras and audio alone upgrade below the cutoff", gain >= p["minUpgradeFormatScore"] == 1, gain)
@@ -113,7 +116,10 @@ def check_app(app, cfg):
         check("twin: 1080p HDR English beats 1080p SDR English+German", escore(twin, ["English"], V1080_HDR) > escore(twin, ["English", "German"], V1080))
         check("twin: English+German+2 extras beats English+German", escore(twin, ["English", "German", "Spanish", "French"], V2160) > escore(twin, ["English", "German"], V2160))
         check("twin: English+4 extras loses to English+German", escore(twin, ["English", "Spanish", "French", "Italian", "Portuguese"], V2160) < escore(twin, ["English", "German"], V2160))
-        check("twin: upgrade cutoff reached by English+German", escore(twin, ["English", "German"], V2160) >= profiles[twin]["cutoffFormatScore"])
+        check("twin: (h) 2160p SDR English accepted", escore(twin, ["English"], V2160_SDR) >= profiles[twin]["minFormatScore"])
+        check("twin: (i) 2160p HDR English beats 2160p SDR English+German+2 extras", escore(twin, ["English"], V2160) > escore(twin, ["English", "German", "Spanish", "French"], V2160_SDR))
+        check("twin: (j) 2160p SDR English+German+2 extras stays below the cutoff", escore(twin, ["English", "German", "Spanish", "French"], V2160_SDR) < profiles[twin]["cutoffFormatScore"])
+        check("twin: (j) upgrade cutoff reached by 2160p HDR English+German", escore(twin, ["English", "German"], V2160) >= profiles[twin]["cutoffFormatScore"])
         cache.update(ecache)
     print(" release name | languages parsed | custom formats | 4K profile score")
     for name, (cfs, langs) in cache.items():

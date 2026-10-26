@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Release ranking order (README "Release scoring") from recyclarr/recyclarr.yml + scripts/language_formats.py, both apps, every profile: HDR > language tier > extra languages > audio/group; rejects stay rejected; upgrades stop where they did; Swiss German unchanged.
+"""Release ranking order (README "Release scoring") from recyclarr/recyclarr.yml + scripts/language_formats.py, both apps, every profile: HDR > language tier > extra languages > audio/group; 2160p SDR allowed; rejects stay rejected; upgrades stop at 4K HDR + original + English; Swiss German unchanged.
 Custom formats are matched by a model: the native language formats are evaluated from their real definitions (Radarr's LanguageSpecification), TRaSH ones by their documented conditions.
 Usage: python3 tests/test_scoring_order.py   (needs python3-yaml)"""
 import json
@@ -98,10 +98,8 @@ def matched(app, original, langs, res=1080, hdr=False, audio=None, group=None, s
             out.add("German")
     if hdr:
         out.add("HDR")
-    if res == 2160:
-        out.add("2160p: HDR bonus offset")
-        if not hdr:
-            out.add("SDR")
+    if res == 2160 and not hdr:
+        out.add("SDR")
     out |= {x for x in (audio, group) if x}
     return out
 
@@ -187,14 +185,42 @@ class Order(Base):
             richest = matched(app, orig, [orig, "English", "German"] + self.extras(app, orig), hdr=True, **self.best(minor))
             top = score(p, richest) + (p["scores"].get("Anime Dual Audio", 0))
             for cf, s in p["scores"].items():
-                if s < 0 and cf not in MILD_NEGATIVES and cf != "2160p: HDR bonus offset":
+                if s < 0 and cf not in MILD_NEGATIVES:
                     with self.subTest(app=app, profile=name, reject=cf):
                         self.assertLess(top + s, p["min"])
             with self.subTest(app=app, profile=name, reject="dub only / no original audio"):
                 self.assertLess(score(p, matched(app, orig if orig != "German" else "French", ["German"])), p["min"])
+
+    def test_f_bad_formats_stay_rejected_at_2160p(self):
+        bad = {"radarr": ["DV (w/o HDR fallback)", "Upscaled", "BR-DISK", "LQ", "LQ (Release Title)", "Generated Dynamic HDR", "x265 (no HDR/DV)", "3D", "AV1"],
+               "sonarr": ["DV (w/o HDR fallback)", "Upscaled", "BR-DISK", "LQ", "LQ (Release Title)", "x265 (no HDR/DV)", "AV1"]}
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if kind in ("4k", "any"):
+                with self.subTest(app=app, profile=name):
+                    self.assertEqual({c: p["scores"].get(c) for c in bad[app]}, {c: -50000000 for c in bad[app]})
+
+    def test_h_2160p_sdr_accepted(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             if 2160 in resolutions:
-                with self.subTest(app=app, profile=name, reject="2160p SDR"):
-                    self.assertLess(score(p, matched(app, orig, [orig, "English", "German"] + self.extras(app, orig), 2160, hdr=False, **self.best(minor))), p["min"])
+                with self.subTest(app=app, profile=name):
+                    self.assertEqual(p["scores"].get("SDR", 0), 0)
+                    top = [orig, "German"] if twin else [orig, "English"]
+                    self.assertGreaterEqual(score(p, matched(app, orig, top, 2160, hdr=False)), p["min"])
+                    self.assertGreaterEqual(score(p, matched(app, orig, [orig], 2160, hdr=False)), p["min"])
+
+    def test_i_2160p_hdr_beats_2160p_sdr_with_more_languages(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if 2160 in resolutions:
+                with self.subTest(app=app, profile=name):
+                    hdr = score(p, matched(app, orig, [orig], 2160, hdr=True))
+                    sdr = score(p, matched(app, orig, [orig, "English", "German"] + self.extras(app, orig), 2160, hdr=False, **self.best(minor)))
+                    self.assertGreater(hdr, sdr)
+
+    def test_no_hdr_offset_left(self):
+        for app in PROFILES:
+            with self.subTest(app=app):
+                self.assertNotIn("2160p: HDR bonus offset", cf_names(app).values())
+                self.assertNotIn("2160p: HDR bonus offset", YML.read_text())
 
     def test_scores_fit_int32(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
@@ -204,14 +230,30 @@ class Order(Base):
 
 
 class Upgrades(Base):
-    def test_cutoff_at_original_plus_english(self):
+    def test_cutoff_values(self):
+        want = {"4k": (25000000, 22000000), "any": (25000000, 22000000), "hd": (5000000, None), "anime": (5000000, None)}
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            with self.subTest(app=app, profile=name):
+                self.assertEqual(p["cutoff"], want[kind][twin])
+
+    def test_j_4k_cutoff_at_hdr_plus_original_plus_english(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if 2160 not in resolutions:
+                continue
             top_tier, below = (self.tiers(twin, orig)[0], self.tiers(twin, orig)[1]) if twin else (self.tiers(twin, orig)[1], self.tiers(twin, orig)[2])
-            for res in resolutions:
-                hdr = res == 2160
-                with self.subTest(app=app, profile=name, res=res):
-                    self.assertGreaterEqual(score(p, matched(app, orig, top_tier, res, hdr=hdr)), p["cutoff"])
-                    self.assertLess(score(p, matched(app, orig, below + self.extras(app, orig), res, hdr=hdr, **self.best(minor))), p["cutoff"])
+            with self.subTest(app=app, profile=name):
+                self.assertGreaterEqual(score(p, matched(app, orig, top_tier, 2160, hdr=True)), p["cutoff"])
+                self.assertLess(score(p, matched(app, orig, below + self.extras(app, orig), 2160, hdr=True, **self.best(minor))), p["cutoff"])
+                richest_sdr = [orig, "English", "German"] + self.extras(app, orig)
+                self.assertLess(score(p, matched(app, orig, richest_sdr, 2160, hdr=False, **self.best(minor))), p["cutoff"])
+
+    def test_1080p_profiles_cutoff_at_original_plus_english(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if 2160 in resolutions:
+                continue
+            with self.subTest(app=app, profile=name):
+                self.assertGreaterEqual(score(p, matched(app, orig, [orig, "English"])), p["cutoff"])
+                self.assertLess(score(p, matched(app, orig, [orig, "German"] + self.extras(app, orig), **self.best(minor))), p["cutoff"])
 
     def test_extras_and_audio_upgrade_below_cutoff(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:

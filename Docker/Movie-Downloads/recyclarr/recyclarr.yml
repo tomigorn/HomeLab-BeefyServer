@@ -19,7 +19,9 @@
 ## `Extra audio: <language>` (10000 each) are native custom formats created by scripts/language-policy.sh,
 ## not TRaSH ones, hence the `except`/`except_patterns` on every reset_unmatched_scores.
 ## Every reject is -50000000: the best possible positive sum (~33000000) must stay below the minimum score of 0.
-## Upgrades stop at original + English (5000000; English-original twins: German 2000000); an upgrade at the
+## 2160p SDR is allowed (owner 2026-10-26: 4K SDR beats 1080p HDR); HDR still beats SDR inside one quality.
+## Upgrades stop at 4K HDR + original + English (25000000; English-original twins: HDR + German 22000000); the 1080p-only
+## HD and anime profiles at original + English (5000000). An upgrade at the
 ## same quality needs +1 (min_upgrade_format_score, Radarr's default): below the cutoff better audio, group, repack or an extra language upgrades (owner 2026-10-26).
 ## Exception: the profile `Swiss German (Mundart) only - any quality`, Radarr and
 ## Sonarr (Swiss German mandatory, see its comment and README "Swiss German").
@@ -69,9 +71,9 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
-          # Original + English reached = done. A release that also carries German
-          # wins at grab time (7000000) but is not chased afterwards.
-          until_score: 5000000
+          # 4K HDR + original + English reached = done. A release that also carries German
+          # wins at grab time (27000000) but is not chased afterwards.
+          until_score: 25000000
         min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
@@ -93,7 +95,7 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
-          until_score: 2000000
+          until_score: 22000000
         min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
@@ -120,7 +122,7 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
-          until_score: 5000000
+          until_score: 25000000
         min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
@@ -153,7 +155,7 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
-          until_score: 2000000
+          until_score: 22000000
         min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
@@ -302,7 +304,7 @@ radarr:
         assign_scores_to:
           - name: Anime - Remux + WEB 1080p
             score: 5000000
-      # HDR first: any HDR release beats any non-HDR one of the same quality, whatever its languages and audio.
+      # HDR first: any HDR release beats any non-HDR one of the same quality (2160p and 1080p), whatever its languages and audio.
       # TRaSH `HDR` is the one HDR format (DV with HDR10 fallback, HDR10, HDR10+, HLG, PQ); DV without fallback is rejected below.
       - trash_ids:
           - 493b6d1dbec3c3364c59d7607f7e3405  # HDR
@@ -319,19 +321,6 @@ radarr:
             score: 20000000
           - name: Anime - Remux + WEB 1080p
             score: 20000000
-      # At 2160p every allowed release is HDR (SDR rejects the rest), so the bonus ranks nothing there; taking it back keeps the
-      # upgrade cutoff at original + English for 2160p files (own format, recyclarr/custom-formats/radarr/hdr-offset-2160p.json).
-      - trash_ids:
-          - ab9c842010ce58520842ef3d996f8281  # 2160p: HDR bonus offset
-        assign_scores_to:
-          - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
-            score: -20000000
-          - name: Any quality - old & rare (upgrades to 4K)
-            score: -20000000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
-            score: -20000000
-          - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
-            score: -20000000
       # Dub only (`German`), no original audio, and every unwanted format: -50000000.
       - trash_ids:
           - 86bc3115eb4e9873ac96904a4a68e19e  # German
@@ -401,7 +390,6 @@ radarr:
       - trash_ids:
           - 839bea857ed2c0a8e084f3cbdbd65ecb  # x265 (no HDR/DV)
           - 923b6abef9b17f937fab56cfcf89e1f1  # DV (w/o HDR fallback)
-          - 9c38ebb7384dada637be8899efa68e6f  # SDR
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             score: -50000000
@@ -444,17 +432,8 @@ radarr:
             - name: Any quality - old & rare (upgrades to 4K) - English original
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             - name: Swiss German (Mundart) only - any quality
-        # "4K HDR wherever possible": a 2160p release without HDR is rejected, so
-        # an SDR-only 4K (usually an upscale) loses to the 1080p tier instead.
-        - trash_id: 47f0d69750de9e16855915fa73bb7b08  # [HDR Formats] SDR
-          select:
-            - 9c38ebb7384dada637be8899efa68e6f  # SDR
-          assign_scores_to:
-            - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
-            - name: Any quality - old & rare (upgrades to 4K)
-            - name: Any quality - old & rare (upgrades to 4K) - English original
-            - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
-            - name: Swiss German (Mundart) only - any quality
+        # No `[HDR Formats] SDR` group: 2160p SDR is allowed (owner 2026-10-26, 4K SDR beats 1080p HDR) and ranks below HDR by the HDR
+        # score alone; `SDR` stays only in the Swiss German profile (custom_formats above). Upscales stay rejected (`Upscaled`, Unwanted).
       # Default groups that stay ON: [Audio] Audio Formats, [HDR Formats] HDR,
       # [Streaming Services] General, and for the anime profile its own groups
       # ([Release Groups] Anime, [Required] Anime Versions).
@@ -505,7 +484,7 @@ sonarr:
         upgrade:
           allowed: true
           until_quality: WEB 2160p
-          until_score: 5000000
+          until_score: 25000000
         min_upgrade_format_score: 1
 
       # Same profile for English-original titles (scripts/language-policy.sh switches them).
@@ -519,7 +498,7 @@ sonarr:
         upgrade:
           allowed: true
           until_quality: WEB 2160p
-          until_score: 2000000
+          until_score: 22000000
         min_upgrade_format_score: 1
 
       # Old and rare series, picked per request in Seerr (see the Radarr profile).
@@ -534,7 +513,7 @@ sonarr:
         upgrade:
           allowed: true
           until_quality: WEB 2160p
-          until_score: 5000000
+          until_score: 25000000
         min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
@@ -567,7 +546,7 @@ sonarr:
         upgrade:
           allowed: true
           until_quality: WEB 2160p
-          until_score: 2000000
+          until_score: 22000000
         min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
@@ -735,18 +714,6 @@ sonarr:
             score: 20000000
           - name: Anime - Bluray + WEB 1080p
             score: 20000000
-      # Taken back at 2160p (all HDR there), as in Radarr (recyclarr/custom-formats/sonarr/hdr-offset-2160p.json).
-      - trash_ids:
-          - f6fdce5bdc43c0d9ec746875babb05e6  # 2160p: HDR bonus offset
-        assign_scores_to:
-          - name: 4K HDR - WEB-2160p (1080p fallback)
-            score: -20000000
-          - name: Any quality - old & rare (upgrades to 4K)
-            score: -20000000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
-            score: -20000000
-          - name: 4K HDR - WEB-2160p (1080p fallback) - English original
-            score: -20000000
       - trash_ids:
           - 8a9fcdbb445f2add0505926df3bb7b8a  # German
           - ae575f95ab639ba5d15f663bf019e3e8  # Language: Not Original
@@ -781,7 +748,6 @@ sonarr:
       - trash_ids:
           - 9b64dff695c2115facf1b6ea59c9bd07  # x265 (no HDR/DV)
           - 9b27ab6498ec0f31a3353992e19434ca  # DV (w/o HDR fallback)
-          - 2016d1676f5ee13a5b7257ff86ac9a93  # SDR
         assign_scores_to:
           - name: 4K HDR - WEB-2160p (1080p fallback)
             score: -50000000
@@ -821,18 +787,8 @@ sonarr:
         # BR-DISK, LQ groups, AV1, upscaled, extras, bad dual groups, ...
         - trash_id: 59c3af66780d08332fdc64e68297098f  # [Unwanted] Unwanted Formats
         # Same HDR policy as the movies: Dolby Vision without an HDR10 base layer is
-        # rejected (green/purple on non-DV clients), and a 2160p release without HDR
-        # (usually an upscale) loses to the 1080p tier.
+        # rejected (green/purple on non-DV clients); 2160p SDR is allowed (no SDR group).
         - trash_id: d776a1ea912a117d66d83b880ff2055d  # [HDR Formats] DV (w/o HDR fallback)
-          assign_scores_to:
-            - name: 4K HDR - WEB-2160p (1080p fallback)
-            - name: Any quality - old & rare (upgrades to 4K)
-            - name: Any quality - old & rare (upgrades to 4K) - English original
-            - name: 4K HDR - WEB-2160p (1080p fallback) - English original
-            - name: Swiss German (Mundart) only - any quality
-        - trash_id: e1053c0ef622df3749fa43c22865663a  # [HDR Formats] SDR
-          select:
-            - 2016d1676f5ee13a5b7257ff86ac9a93  # SDR
           assign_scores_to:
             - name: 4K HDR - WEB-2160p (1080p fallback)
             - name: Any quality - old & rare (upgrades to 4K)
