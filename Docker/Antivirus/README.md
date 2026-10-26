@@ -10,7 +10,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | `clamd` | always, `clamav:3310` on the `movie-downloads` bridge | container `clamav`; reloaded by freshclam |
 | Completion scan | a download finishes | `hook/clamav-hook.py`, run by SABnzbd and qBittorrent, see below |
 | `scan.sh new` | 04:05 daily | `clamav-scan.timer` → `clamav-scan.service` → `docker exec clamav /scan.sh new` |
-| `scan.sh all` of host folders | Sunday 04:07 | `clamav-hostscan.timer` → `clamav-hostscan.service` → `docker compose run --rm clamav-hostscan` (container without network, ~11 min) |
+| `scan.sh all` of host folders | Sunday 04:07 | `clamav-hostscan.timer` → `clamav-hostscan.service` → `docker compose run --rm clamav-hostscan` (container without network, private `clamd` multiscan on all cores) |
 | `scan.sh <path>…`, `scan.sh restore <file>` | by hand | see below |
 
 - 04:05: fastpi wakes beefy at 03:55 and it powers off about 04:25 when idle, so a later time never fires. A night asleep is skipped: the marker stays, the next run catches up.
@@ -25,6 +25,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | `sudo docker exec clamav /scan.sh /scan/ssd-hot/<path>` | the given files/folders | moved under `/scan/...` |
 
 - `/scan/ssd-hot` = `/srv/.disks/ssd-hot` (the SSD branch, where every download and import lands). `/srv/appdata` (app configs, owner-only since 2026-10-22) is not scanned: no outside files land there. The `/srv/video` union and the cold HDD are never scanned, so it stays spun down.
+- Weekly host scan engine: `USE_CLAMD=1` in the compose service (`clamdscan --multiscan`, `mem_limit: 3g`); `USE_CLAMD=0` is the old single-thread `clamscan -r`. Details: fastpi repo `Docker/antivirus/README.md`.
 - Exit codes `0` clean, `1` infected, `2` errors (marker kept, next run retries). Files over 2 GiB are skipped by ClamAV (`clamav_files_skipped_large`). Details: fastpi repo `Docker/antivirus/README.md`.
 - Logs: `journalctl -u clamav-scan`, `/var/lib/clamav-scan/last-<mode>.log`.
 

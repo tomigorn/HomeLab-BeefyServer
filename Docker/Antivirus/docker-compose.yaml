@@ -72,7 +72,7 @@ services:
     user: "0:0"   # a non-root uid has no effective capabilities in Docker, so DAC_READ_SEARCH only works for root
     network_mode: none
     read_only: true
-    mem_limit: 2g
+    mem_limit: 3g   # private clamd ~1 GB plus 4+ scan threads
     restart: "no"
     healthcheck:
       disable: true
@@ -89,6 +89,7 @@ services:
       - SCAN_HOST=0
       # Not the whole disk: / holds ~630k files (Docker layers, /usr) and a scan outlasts beefy's 04:00-04:25 window. These are the writable, user-reachable places.
       - SCAN_ROOTS=/host/home /host/root /host/etc /host/opt /host/usr/local /host/tmp /host/var/tmp /host/srv/appdata
+      - USE_CLAMD=1   # private clamd in this container (socket in /tmp, no network), multiscan on all cores
       - QUARANTINE=/tmp   # unused: `all` is report only, scan.sh just needs an existing directory
       - STATE=/state
       - TEXTFILE=/state/textfile
