@@ -1,0 +1,24 @@
+[Unit]
+Description=Weekly Docker image cleanup (unused images and build cache older than 14 days, rollback window kept)
+Documentation=file:///home/buntu/Projects/Docker/_global/docs/image-cleanup.md
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+Group=buntu
+SupplementaryGroups=docker
+StateDirectory=image-cleanup
+Environment=HOME=/home/buntu
+Environment=IMAGE_CLEANUP_STATE=/var/lib/image-cleanup
+Environment=IMAGE_CLEANUP_TEXTFILE=/var/lib/auto-update/textfile
+# Hold the idle watcher off only while running, and release only what this run took (as auto-update.service).
+ExecStartPre=+/bin/sh -c 'rm -f /run/image-cleanup-keep-awake; [ -e /run/beefy-keep-awake ] || { /usr/local/sbin/beefy-keep-awake on && touch /run/image-cleanup-keep-awake; }'
+ExecStart=/home/buntu/Projects/Docker/_global/scripts/image-cleanup.sh
+TimeoutStartSec=300
+ExecStopPost=+/bin/sh -c '[ -e /run/image-cleanup-keep-awake ] && /usr/local/sbin/beefy-keep-awake off; rm -f /run/image-cleanup-keep-awake'
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
