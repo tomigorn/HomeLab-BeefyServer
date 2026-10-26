@@ -215,6 +215,18 @@ class Run(unittest.TestCase):
         self.assertTrue(first.startswith("🟠 <b>Wrong-film guard: Radarr</b>\n\n• "))
         self.assertIn("<blockquote expandable>Radarr → Activity → Queue</blockquote>", self.sent[2])
 
+    def test_dub_only_event_message(self):
+        self.event(reason="dub-only", release="X.2011.MULTi.1080p-GRP", languages=["German", "French"], original="Persian", title="A Separation", releaseYear=2011)
+        self.event("2.json", reason="dub-only", action="manual", release="Y-GRP", languages=["German", "French"], original="Persian")
+        self.assertEqual(self.go({"radarr": fake()}, T0), 0)
+        first = self.sent[0]
+        self.assertTrue(first.startswith("🟠 <b>Dub-only release removed: Radarr</b>\n\n• "))
+        for part in ("A Separation (2011)", "<code>X.2011.MULTi.1080p-GRP</code>", "German, French", "Persian", "removed from the queue"):
+            self.assertIn(part, first)
+        self.assertNotIn("release year", first)
+        self.assertTrue(self.sent[1].startswith("🔴 <b>Dub-only release: Radarr</b>"))
+        self.assertIn("check by hand", self.sent[1])
+
     def test_guard_event_stays_when_the_send_fails(self):
         self.event()
         self.fail_send = True

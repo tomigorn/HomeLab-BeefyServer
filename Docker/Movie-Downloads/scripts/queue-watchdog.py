@@ -114,13 +114,16 @@ def event_text(ev):
     app = str(ev.get("app", "?")).capitalize()
     year = f" ({ev['year']})" if ev.get("year") else ""
     manual = ev.get("action") == "manual"
+    dub = ev.get("reason") == "dub-only"
     lines = [
-        f"{'🔴' if manual else '🟠'} <b>Wrong-film guard: {app}</b>",
+        f"{'🔴' if manual else '🟠'} <b>{('Dub-only release' if manual else 'Dub-only release removed') if dub else 'Wrong-film guard'}: {app}</b>",
         "",
         f"• 🎬 {html.escape(str(ev.get('title', '?')))}{year}",
-        f"• Grabbed: <code>{html.escape(str(ev.get('release', '?')))}</code> (release year {ev.get('releaseYear', '?')})",
-        f"• Result: {ACTIONS.get(ev.get('action'), 'check by hand')}",
+        f"• Grabbed: <code>{html.escape(str(ev.get('release', '?')))}</code>" + ("" if dub else f" (release year {ev.get('releaseYear', '?')})"),
     ]
+    if dub:
+        lines.append(f"• 🗣 Languages: {html.escape(', '.join(ev.get('languages') or []))} (original {html.escape(str(ev.get('original', '?')))} missing)")
+    lines.append(f"• Result: {ACTIONS.get(ev.get('action'), 'check by hand')}")
     if manual:
         lines.append(f"<blockquote expandable>{app} → Activity → Queue</blockquote>")
     return "\n".join(lines)
