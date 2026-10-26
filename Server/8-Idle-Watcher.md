@@ -199,3 +199,7 @@ never clobbers tuned values), then `systemctl daemon-reload && enable --now`.
   upgrades — re-verify after major updates.
 - **No second confirmation** before poweroff (the 15-min *continuous*-idle requirement is the
   safety). A confirmation re-check is a possible future hardening.
+
+## Nightly window hold
+
+`beefy-maintenance-window.service` (03:58, `Server/9-Night-Schedule.md`) holds `INHIBIT_FILE` until 04:45 and releases it after the window jobs, so the 15 idle minutes never cut the maintenance wake short.

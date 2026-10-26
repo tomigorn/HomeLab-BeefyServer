@@ -1,0 +1,22 @@
+#!/bin/sh
+# Body of beefy-maintenance-window.service: stays up for the hold time (the unit holds /run/beefy-keep-awake meanwhile), then waits until none of the window jobs runs any more, at most the drain cap. Always exits 0: the unit releases the hold either way.
+set -u
+HOLD=${BMW_HOLD_SECS:-2820}
+DRAIN_MAX=${BMW_DRAIN_MAX_SECS:-2700}
+POLL=${BMW_POLL_SECS:-20}
+SYSTEMCTL=${BMW_SYSTEMCTL:-systemctl}
+UNITS=${BMW_UNITS:-"auto-update.service apt-daily.service apt-daily-upgrade.service anacron.service beefy-mover.service clamav-scan.service clamav-hostscan.service original-audio.service original-audio-import.service image-cleanup.service cutoff-search.service xfs_scrub_all.service e2scrub_all.service fstrim.service man-db.service description-scout.service nfo-scout.service language-missing.service fwupd-refresh.service logrotate.service"}
+
+sleep "$HOLD"
+waited=0
+while [ "$waited" -lt "$DRAIN_MAX" ]; do
+    busy=
+    for u in $UNITS; do
+        if "$SYSTEMCTL" is-active --quiet "$u"; then busy="$busy $u"; fi
+    done
+    [ -n "$busy" ] || exit 0
+    sleep "$POLL"
+    waited=$((waited + POLL))
+done
+echo "drain cap of ${DRAIN_MAX}s reached, still active:$busy" >&2
+exit 0

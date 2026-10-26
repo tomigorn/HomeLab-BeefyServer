@@ -1,0 +1,15 @@
+[Unit]
+Description=beefy maintenance window 03:58-04:45: hold the host awake, wait for the window jobs, release
+Documentation=file:///home/buntu/Projects/Server/9-Night-Schedule.md
+After=beefy-idle-watcher.service
+
+[Service]
+Type=simple
+# Same pattern as auto-update: take the hold only when nobody holds it, release only what this run took (an owner's hold stays).
+ExecStartPre=+/bin/sh -c 'rm -f /run/maintenance-window-keep-awake; [ -e /run/beefy-keep-awake ] || { /usr/local/sbin/beefy-keep-awake on && touch /run/maintenance-window-keep-awake; }'
+ExecStart=/usr/local/sbin/beefy-maintenance-window
+ExecStopPost=+/bin/sh -c '[ -e /run/maintenance-window-keep-awake ] && /usr/local/sbin/beefy-keep-awake off; rm -f /run/maintenance-window-keep-awake'
+# 47 min hold + at most 45 min drain, plus margin.
+RuntimeMaxSec=95min
+NoNewPrivileges=true
+PrivateTmp=true

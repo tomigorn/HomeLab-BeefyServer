@@ -1,0 +1,11 @@
+[Unit]
+Description=Open beefy's nightly maintenance window (03:58, after the 03:55 wake)
+Documentation=file:///home/buntu/Projects/Server/9-Night-Schedule.md
+
+[Timer]
+# fastpi wakes beefy at 03:55 (beefy-maintenance-wake); a cold boot takes about 50 s. A night asleep is skipped, never a wake of its own.
+OnCalendar=*-*-* 03:58:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target

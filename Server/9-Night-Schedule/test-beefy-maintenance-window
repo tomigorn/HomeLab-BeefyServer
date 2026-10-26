@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Runs beefy-maintenance-window with a fake systemctl and short durations.
+# Usage: ./test-beefy-maintenance-window   (needs bash)
+HERE=$(cd "$(dirname "$0")" && pwd)
+W="$HERE/beefy-maintenance-window"
+PASS=0; FAIL=0
+T=$(mktemp -d)
+trap 'rm -rf "$T"' EXIT
+
+ok()  { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
+bad() { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; [ -n "$2" ] && printf '       %s\n' "$2"; }
+assert_eq() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$2] got [$3]"; fi; }
+
+# fake systemctl: "is-active --quiet <unit>" is active (exit 0) for the first $FAKE_ACTIVE_CALLS calls, then inactive
+cat > "$T/systemctl" <<'SH'
+#!/bin/sh
+n=$(cat "$FAKE_COUNT" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$FAKE_COUNT"
+[ "$n" -le "${FAKE_ACTIVE_CALLS:-0}" ]
+SH
+chmod +x "$T/systemctl"
+run() { rm -f "$T/count"; env BMW_SYSTEMCTL="$T/systemctl" FAKE_COUNT="$T/count" BMW_UNITS="a.service b.service" BMW_HOLD_SECS=1 BMW_POLL_SECS=1 "$@" sh "$W" 2>"$T/err"; }
+
+start=$(date +%s); run FAKE_ACTIVE_CALLS=0 BMW_DRAIN_MAX_SECS=5; rc=$?; el=$(( $(date +%s) - start ))
+assert_eq "no unit active: exits 0 right after the hold" "0" "$rc"
+[ "$el" -le 3 ] && ok "no unit active: only the hold is waited ($el s)" || bad "no unit active: only the hold is waited" "took $el s"
+
+start=$(date +%s); run FAKE_ACTIVE_CALLS=3 BMW_DRAIN_MAX_SECS=10; rc=$?; el=$(( $(date +%s) - start ))
+assert_eq "a unit active for a while: exits 0 once idle" "0" "$rc"
+[ "$el" -ge 2 ] && [ "$el" -le 6 ] && ok "waits for the active unit ($el s)" || bad "waits for the active unit" "took $el s"
+
+start=$(date +%s); run FAKE_ACTIVE_CALLS=1000 BMW_DRAIN_MAX_SECS=3; rc=$?; el=$(( $(date +%s) - start ))
+assert_eq "unit stuck active: gives up with 0 (release must follow)" "0" "$rc"
+[ "$el" -le 6 ] && ok "drain is capped ($el s)" || bad "drain is capped" "took $el s"
+grep -q "still active" "$T/err" && ok "names the units it gave up on" || bad "names the units it gave up on" "$(cat "$T/err")"
+
+printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+[ "$FAIL" = 0 ]
