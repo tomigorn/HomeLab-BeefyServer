@@ -31,6 +31,7 @@ USER_AGENT = "nfo-scout/1.0 (Movie-Downloads)"
 SWISS_TAG = "audio-swiss-german"
 NOT_LANGUAGES = {"Unknown", "Original", "Any"}
 DAY = 86400
+DUB_DAYS = 30
 
 LEXICON = {}
 for _name, _words in {
@@ -228,6 +229,10 @@ def guid_id(guid):
     return m.group(1).lower() if m else None
 
 
+def has_original(langs, original):
+    return original in langs or any(l.startswith(original + " (") for l in langs)
+
+
 def multi_marker(title):
     return MULTI.search(title or "")
 
@@ -320,7 +325,7 @@ class Budget:
 
 class Scout:
     def __init__(self, radarr, sonarr, prowlarr, fetch, state_path, log, dry_run=False, max_push=3, usage=None, now=None,
-                 max_fetch=200, tm_day=5, tm_pct=70, tm_search_day=10, retry_unsupported_days=30, call_delay=0):
+                 max_fetch=200, tm_day=5, tm_pct=70, tm_search_day=10, retry_unsupported_days=30, call_delay=0, dub_paths=None):
         self.radarr, self.sonarr, self.prowlarr, self.fetch, self.log = radarr, sonarr, prowlarr, fetch, log
         self.state_path = pathlib.Path(state_path)
         self.dry_run, self.max_push, self.tm_search_day = dry_run, max_push, tm_search_day
@@ -336,6 +341,34 @@ class Scout:
         self.refused = {k: v for k, v in self.state.get("refused", {}).items() if v > self.now - DAY}
         self.call_delay, self.last_call = call_delay, {}
         self.pushes = self.candidates = 0
+        self.dub_paths, self.dub = {k: pathlib.Path(v) for k, v in (dub_paths or {}).items()}, {}
+
+    def dub_load(self, app_name):
+        if app_name not in self.dub:
+            try:
+                entries = json.loads(self.dub_paths[app_name].read_text())
+                entries = [e for e in entries if e.get("at", 0) > self.now - DUB_DAYS * DAY]
+            except (OSError, ValueError, AttributeError):
+                entries = []
+            self.dub[app_name] = {e.get("guid"): e for e in entries}
+        return self.dub[app_name]
+
+    def dub_add(self, app_name, item, r, langs, original):
+        if app_name not in self.dub_paths or not original or original not in set(LEXICON.values()) or len(langs) < 2 or has_original(langs, original):
+            return
+        title_id = item.get("tvdbId" if app_name == "Sonarr" else "tmdbId")
+        entries = self.dub_load(app_name)
+        entries.setdefault(r["guid"], {"guid": r["guid"], "title": r["title"], "indexer": r["indexer"], "langs": langs, "original": original,
+                                       "titleId": title_id, "at": int(self.now)})
+
+    def dub_save(self):
+        for app_name, path in self.dub_paths.items():
+            entries = list(self.dub_load(app_name).values())
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(entries, indent=1))
+            tmp.chmod(0o664)
+            tmp.replace(path)
 
     def save(self):
         self.state["calls"] = self.budget.calls
@@ -358,6 +391,7 @@ class Scout:
         if self.sonarr and tmdb is None:
             rc |= self.run_app("Sonarr", self.sonarr, tvdb)
         self.save()
+        self.dub_save()
         fetched = ", ".join(f"{k} {v}" for k, v in sorted(self.budget.run.items())) or "none"
         self.log(f"run done: {self.candidates} MULTi-only candidate(s), indexer calls {fetched}, pushes {self.pushes}"
                  f", Treasure Maps {len(self.budget.calls.get(TM, []))}/{self.budget.tm_day} NFO calls in 24 h")
@@ -432,6 +466,7 @@ class Scout:
         parse = lambda t: app("GET", "/parse", {"title": t})
         mapping = (lambda p, imdb: ds.mapping_ok_series(item, p, imdb, wanted_eps)) if series else (lambda p, imdb: ds.mapping_ok(item, p, imdb))
         results = self.search(item, series)
+        original = (item.get("originalLanguage") or {}).get("name")
         cands = []
         for r in results:
             idx = r.get("indexer")
@@ -439,17 +474,20 @@ class Scout:
             if r.get("protocol") != "usenet" or idx not in SOURCES or not gid or not multi_marker(r.get("title")):
                 continue
             st = self.releases.get(f"{idx}|{gid}", {})
-            if st.get("pushed") or st.get("verdict") in ("none", "failed", "skip"):
+            earlier_dub = st.get("verdict") == "skip" and bool(original) and not has_original(st.get("langs") or [], original)
+            if (st.get("pushed") or st.get("verdict") in ("none", "failed", "skip")) and not earlier_dub:
                 continue
             p = parse(r["title"])
             if len(parsed_languages(p)) >= 2 or not mapping(p, r.get("imdbId") or None)[0]:
+                continue
+            if earlier_dub:
+                self.dub_add(app_name, item, r, st["langs"], original)
                 continue
             res = ((parsed_info(p).get("quality") or {}).get("quality") or {}).get("resolution") or 0
             cands.append((res, r.get("size") or 0, r, gid))
         cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
         self.log(f"{name}: {len(results)} usenet results, {len(cands)} MULTi-only to check")
         self.candidates += len(cands)
-        original = (item.get("originalLanguage") or {}).get("name")
         for _, _, r, gid in cands:
             idx, key = r["indexer"], f"{r['indexer']}|{gid}"
             langs = self.languages(name, r, gid, key)
@@ -459,6 +497,7 @@ class Scout:
             if original not in langs:
                 st.update(verdict="skip", why=f"no {original} audio in the NFO")
                 self.log(f"{name}: '{r['title']}' ({idx}): audio {', '.join(langs)} has no {original} (original), not pushed")
+                self.dub_add(app_name, item, r, langs, original)
                 continue
             title, used, why = verified_title(r["title"], langs, original, parse)
             if not title:
@@ -628,6 +667,7 @@ def main():
     pkey, _, _ = ds.config(env("NS_PROWLARR_CONFIG", "/srv/appdata/prowlarr/config.xml"))
     scout = Scout(clients.get("radarr"), clients.get("sonarr"), ds.client(env("NS_PROWLARR_URL", "http://127.0.0.1:9696") + "/api/v1", pkey),
                   indexer_fetch(env("NS_PROWLARR_DB", "/srv/appdata/prowlarr/prowlarr.db")), env("NS_STATE", STATE_DIR / "nfo-scout.json"), log,
+                  dub_paths={a.capitalize(): env(f"NS_{a.upper()}_DUB_ONLY", f"/srv/appdata/{a}/dub-only.json") for a in clients},
                   dry_run=a.dry_run, max_push=int(env("NS_MAX_PUSH", 3)), usage=read_usage(env("NS_USAGE", "/srv/appdata/indexer-bar/usage.json")),
                   max_fetch=int(env("NS_MAX_FETCH", 200)), tm_day=int(env("NS_TM_MAX_DAY", 5)), tm_pct=int(env("NS_TM_MAX_PCT", 70)),
                   tm_search_day=int(env("NS_TM_MAX_SEARCH_DAY", 10)), call_delay=float(env("NS_CALL_DELAY", 1)))

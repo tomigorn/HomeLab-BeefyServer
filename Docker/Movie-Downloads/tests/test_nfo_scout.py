@@ -256,15 +256,20 @@ class Scout(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.state = pathlib.Path(self.dir.name) / "state.json"
+        self.dub = pathlib.Path(self.dir.name) / "dub-only.json"
         self.log = []
 
     def tearDown(self):
         self.dir.cleanup()
 
     def run_scout(self, api, dry_run=False, max_push=3, u=None, **kw):
+        kw.setdefault("dub_paths", {"Radarr": self.dub})
         s = nfo.Scout(radarr=api.radarr, sonarr=None, prowlarr=api.prowlarr, fetch=api.fetch, state_path=self.state, log=self.log.append,
                       dry_run=dry_run, max_push=max_push, usage=u if u is not None else usage(), now=NOW, **kw)
         return s.run()
+
+    def dub_list(self):
+        return json.loads(self.dub.read_text()) if self.dub.exists() else []
 
     def test_pushes_best_quality_first_with_languages_and_marker(self):
         api = FakeApi([SECRET_GEEK, SECRET_PLANET, PLAIN], {("NZBgeek", "a" * 32): GEEK_DETAILS, ("NzbPlanet", "b" * 32): PLANET_NFO})
@@ -344,6 +349,55 @@ class Scout(unittest.TestCase):
         api = FakeApi([SECRET_PLANET], {("NzbPlanet", "b" * 32): RSS_NFO.replace("Persian", "German").replace(GID, "b" * 32)})
         self.run_scout(api)
         self.assertEqual(api.pushes, [])
+
+    def test_dub_only_release_is_listed_for_the_guard(self):
+        api = FakeApi([SECRET_PLANET], {("NzbPlanet", "b" * 32): PLANET_NFO.replace("Spanish, French", "German, French")})
+        self.run_scout(api)
+        self.assertEqual(api.pushes, [])
+        self.assertEqual(self.dub_list(), [{"guid": "https://api.nzbplanet.net/details/" + "b" * 32, "title": SECRET_PLANET["title"], "indexer": "NzbPlanet",
+                                            "langs": ["German", "French"], "original": "Spanish", "titleId": 25376, "at": int(NOW)}])
+        self.assertEqual(oct(self.dub.stat().st_mode & 0o777), "0o664")
+
+    def test_not_listed_when_the_original_is_there_or_the_nfo_is_thin(self):
+        for nfo_text in (PLANET_NFO, PLANET_NFO.replace("Spanish, French", "German"), PLANET_NFO.replace("Spanish, French", "Latino, English"),
+                         '<error code="300" description="No such item"/>'):
+            with self.subTest(nfo=nfo_text[:60]):
+                self.state.unlink(missing_ok=True)
+                self.run_scout(FakeApi([SECRET_PLANET], {("NzbPlanet", "b" * 32): nfo_text}), max_push=0)
+                self.assertEqual(self.dub_list(), [])
+
+    def test_original_the_parser_cannot_name_is_never_listed(self):
+        movie = dict(SECRET, originalLanguage={"name": "Tagalog"})
+        self.run_scout(FakeApi([SECRET_PLANET], {("NzbPlanet", "b" * 32): PLANET_NFO.replace("Spanish, French", "German, French")}, movies=(movie,)))
+        self.assertEqual(self.dub_list(), [])
+
+    def test_dry_run_still_lists_and_a_rerun_does_not_duplicate(self):
+        api = FakeApi([SECRET_PLANET], {("NzbPlanet", "b" * 32): PLANET_NFO.replace("Spanish, French", "German, French")})
+        self.run_scout(api, dry_run=True)
+        self.run_scout(FakeApi([SECRET_PLANET], {}))
+        self.assertEqual(len(self.dub_list()), 1)
+
+    def test_entries_expire_after_30_days_and_others_are_kept(self):
+        old = {"guid": "g1", "title": "Old", "indexer": "NZBgeek", "langs": ["German", "French"], "original": "Spanish", "titleId": 1, "at": int(NOW - 31 * 86400)}
+        new = dict(old, guid="g2", title="New", at=int(NOW - 29 * 86400))
+        self.dub.write_text(json.dumps([old, new]))
+        self.run_scout(FakeApi([], {}))
+        self.assertEqual([e["guid"] for e in self.dub_list()], ["g2"])
+
+    def test_release_skipped_in_an_earlier_run_is_listed_without_fetching(self):
+        api = FakeApi([SECRET_PLANET], {("NzbPlanet", "b" * 32): PLANET_NFO.replace("Spanish, French", "German, French")})
+        self.run_scout(api, dub_paths=None)
+        self.assertFalse(self.dub.exists())
+        api2 = FakeApi([SECRET_PLANET], {})
+        self.run_scout(api2)
+        self.assertEqual(api2.fetches, [])
+        self.assertEqual([e["title"] for e in self.dub_list()], [SECRET_PLANET["title"]])
+
+    def test_unreadable_list_is_rebuilt(self):
+        self.dub.write_text("{nope")
+        api = FakeApi([SECRET_PLANET], {("NzbPlanet", "b" * 32): PLANET_NFO.replace("Spanish, French", "German, French")})
+        self.run_scout(api)
+        self.assertEqual(len(self.dub_list()), 1)
 
     def test_titles_that_already_name_two_languages_or_other_movies_are_skipped(self):
         two = dict(SECRET_PLANET, title="The.Secret.In.Their.Eyes.2009.MULTi.French.Spanish.1080p-X")
