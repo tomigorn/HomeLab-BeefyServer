@@ -17,4 +17,7 @@ sudo grep -A4 -F '[[*]]' /srv/appdata/sabnzbd/sabnzbd.ini | grep 'script ='
 qbit() { sudo docker exec movie-gluetun wget -qO- "$@"; }
 PREFS=$(python3 -c 'import json; print(json.dumps({"autorun_enabled": True, "autorun_program": "/clamav-hook/clamav-hook.py --qbit \"%I\" \"%F\""}))')
 qbit --post-data "json=$PREFS" http://127.0.0.1:8080/api/v2/app/setPreferences
-qbit http://127.0.0.1:8080/api/v2/app/preferences | python3 -c 'import json,sys; p=json.load(sys.stdin); print("qbit autorun:", p["autorun_enabled"], p["autorun_program"])'
+# The background scan worker (clamav-queue, 172.28.10.204) stops and tags a torrent it finds infected: add it to the no-password whitelist.
+WL=$(qbit http://127.0.0.1:8080/api/v2/app/preferences | python3 -c 'import json,sys; w=json.load(sys.stdin)["bypass_auth_subnet_whitelist"].split("\n"); n="172.28.10.204/32"; print(json.dumps({"bypass_auth_subnet_whitelist": "\n".join(w if n in w else w + [n])}))')
+qbit --post-data "json=$WL" http://127.0.0.1:8080/api/v2/app/setPreferences
+qbit http://127.0.0.1:8080/api/v2/app/preferences | python3 -c 'import json,sys; p=json.load(sys.stdin); print("qbit autorun:", p["autorun_enabled"], p["autorun_program"]); print("qbit whitelist:", p["bypass_auth_subnet_whitelist"].replace("\n", ", "))'

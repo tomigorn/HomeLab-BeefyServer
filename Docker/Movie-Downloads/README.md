@@ -146,7 +146,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 |---|---|---|
 | qBittorrent | category `radarr` save path | `/data/torrents/movies` |
 | qBittorrent | seed limits | **ratio 2.0 OR 30 days, then stop** (§14.0) |
-| qBittorrent | no-password bypass | only Radarr 172.28.10.201, Sonarr .202, vpn-status .203 (pinned in compose), the gateway .1 (host scripts), localhost (qbit-port.sh) and 192.168.1.2 (Traefik); ClamAV and the rest need the password (review M5, 2026-10-25). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist` |
+| qBittorrent | no-password bypass | only Radarr 172.28.10.201, Sonarr .202, vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), the gateway .1 (host scripts), localhost (qbit-port.sh) and 192.168.1.2 (Traefik); the clamd container and the rest need the password (review M5, 2026-10-25). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist` |
 | SABnzbd | incomplete / complete | `/data/usenet/incomplete` / `/data/usenet/complete/movies` |
 | Radarr | root folder | `/data/media/movies` |
 | Radarr | **Use Hardlinks instead of Copy** | **on** (§13.6) |
@@ -1096,12 +1096,14 @@ Verified 2026-10-23: *The Ring Thing* (tagged, searched, no file) → `since` 20
 
 ## Completion scan
 
-Every finished download is scanned by ClamAV before Radarr/Sonarr import it: SABnzbd post-processing script and qBittorrent "run on torrent finished" call `../Antivirus/hook/clamav-hook.py`, which streams each file to `clamav:3310` (the `clamav` container from `../Antivirus` joins this bridge).
+Every finished download is scanned by ClamAV: SABnzbd post-processing script and qBittorrent "run on torrent finished" call `../Antivirus/hook/clamav-hook.py`, which streams executables, archives and unknown files to `clamav:3310` before the job ends (the `clamav` container from `../Antivirus` joins this bridge) and hands media files to the background queue (`clamav-queue`, 1 file at a time), so SABnzbd post-processing no longer waits ~2 min per episode.
 
 | | |
 |---|---|
 | Setup | `scripts/clamav-hooks.sh` (SABnzbd + qBittorrent APIs, idempotent); compose mounts `../Antivirus/hook` → `/clamav-hook:ro` and `/var/lib/clamav-scan/textfile` → `/clamav` in `sabnzbd` and `qbittorrent` |
+| Failed SABnzbd job | not scanned, PP ends at once, Sonarr/Radarr see the failure and search again |
 | Hit | file → `/data/quarantine` (`/srv/.disks/ssd-hot/quarantine`), SABnzbd job failed (no import), torrent stopped + tagged `infected` |
+| Background hit | already imported: library file and seeding copy removed, file quarantined, torrent stopped + tagged; `sudo docker logs clamav-queue` |
 | clamd down | job passes, the nightly scan covers it |
 | Test | `docker exec -u abc movie-sabnzbd /clamav-hook/clamav-hook.py /data/usenet/complete/movies/<job>` |
 
