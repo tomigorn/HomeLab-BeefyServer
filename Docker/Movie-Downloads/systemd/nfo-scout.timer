@@ -1,0 +1,11 @@
+[Unit]
+Description=NFO scout every 6 hours while beefy is awake (low indexer load)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Timer]
+OnBootSec=25min
+OnUnitActiveSec=6h
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

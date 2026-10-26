@@ -1,0 +1,12 @@
+[Unit]
+Description=Push MULTi usenet releases with the audio languages from their NFO to Radarr and Sonarr
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/nfo-scout.py
+TimeoutStartSec=30min
+NoNewPrivileges=true
+PrivateTmp=true
