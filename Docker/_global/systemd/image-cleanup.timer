@@ -2,7 +2,7 @@
 Description=Weekly Docker image cleanup
 
 [Timer]
-# Sunday 04:20: inside the 03:55-04:25 maintenance wake, after auto-update (04:12, hard stop 04:22 at the latest only on a bad night). A night asleep is skipped. Never a wake of its own.
+# Sunday 04:20: inside the 03:55-04:45 maintenance window, after auto-update (04:12, hard stop 04:22 at the latest only on a bad night). A night asleep is skipped. Never a wake of its own.
 OnCalendar=Sun *-*-* 04:20:00
 Persistent=false
 
