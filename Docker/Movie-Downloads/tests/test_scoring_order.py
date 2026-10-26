@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Release ranking order (README "Release scoring") from recyclarr/recyclarr.yml + scripts/language_formats.py, both apps, every profile: HDR > language tier > extra languages > audio/group; 2160p SDR allowed; rejects stay rejected; upgrades stop at 4K HDR + original + English; Swiss German unchanged.
+"""Release ranking order (README "Release scoring") from recyclarr/recyclarr.yml + scripts/language_formats.py, both apps, every profile: HDR > language tier > Sonarr season pack > audio/group/streaming > extra languages (tie-breaker); 2160p SDR allowed; rejects stay rejected; upgrades stop at 4K HDR + original + English; Swiss German unchanged.
 Custom formats are matched by a model: the native language formats are evaluated from their real definitions (Radarr's LanguageSpecification), TRaSH ones by their documented conditions.
 Usage: python3 tests/test_scoring_order.py   (needs python3-yaml)"""
 import json
@@ -34,6 +34,8 @@ MINOR = {
 }
 ANIME_MINOR = {"group": {"Anime BD Tier 01": 1400, "Remux Tier 01": 975, None: 0}, "small": {"VRV": 10, "CR": 6, "v4": 4, "Repack3": 7}}
 MILD_NEGATIVES = {"v0"}  # TRaSH ranking penalty (-51), not a reject
+SEASON_PACK = "Season Pack"
+SEASON_PACK_SCORE = 2000
 
 
 def load_yaml():
@@ -121,9 +123,12 @@ class Base(unittest.TestCase):
         for app, kind, name in every_profile():
             twin = name.endswith(TWIN)
             orig = "English" if twin else ("Italian" if app == "radarr" else "Spanish")
-            minor = ANIME_MINOR | {"audio": MINOR[app]["audio"]} if kind == "anime" else MINOR[app]
+            # The TRaSH HD and anime templates score no audio formats.
+            minor = ANIME_MINOR | {"audio": {None: 0}} if kind == "anime" else MINOR[app] | ({"audio": {None: 0}} if kind == "hd" else {})
             resolutions = (1080, 2160) if kind in ("4k", "any") else (1080,)
-            self.cases.append((app, kind, name, twin, orig, minor, resolutions, profile(app, name)))
+            prof = profile(app, name)
+            prof["scores"] = {k: v for group in minor.values() for k, v in group.items() if k} | prof["scores"]
+            self.cases.append((app, kind, name, twin, orig, minor, resolutions, prof))
 
     def tiers(self, twin, orig):
         """Language tiers, best first, without extras."""
@@ -133,7 +138,10 @@ class Base(unittest.TestCase):
         return [l["name"] for l in languages(app) if l["name"] not in lf.NOT_EXTRA and l["name"] != orig]
 
     def best(self, minor):
-        return {"audio": max(minor["audio"], key=lambda k: minor["audio"][k]), "group": max(minor["group"], key=lambda k: minor["group"][k]), "small": tuple(minor["small"])}
+        return {"audio": max(minor["audio"], key=lambda k: minor["audio"][k]), "group": max(minor["group"], key=lambda k: minor["group"][k]), "small": tuple(minor["small"]), "extra": (SEASON_PACK,)}
+
+    def best_single(self, minor):
+        return self.best(minor) | {"extra": ()}
 
 
 class Order(Base):
@@ -172,13 +180,32 @@ class Order(Base):
                     others = [l for l in ("Spanish", "French", "Italian", "Portuguese") if l != orig][:3]
                     self.assertLess(score(p, matched(app, orig, [orig, "English"] + others)), score(p, matched(app, orig, [orig, "English", "German"])))
 
-    def test_e_extra_language_beats_audio_and_group(self):
+    def test_e_audio_and_group_beat_extra_languages(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             with self.subTest(app=app, profile=name):
-                five = score(p, matched(app, orig, [orig, "English", "German", "Portuguese", "French"], audio="DD+" if app == "radarr" else None))
-                three = score(p, matched(app, orig, [orig, "English", "German"], **self.best(minor)))
-                self.assertGreater(five, three)
-                self.assertGreater(lf.EXTRA_SCORE, max(minor["audio"].values()) + max(minor["group"].values()) + sum(minor["small"].values()))
+                if max(minor["audio"].values()) > 0:
+                    five = score(p, matched(app, orig, [orig, "English", "German", "Portuguese", "French"], audio="DD+"))
+                    three = score(p, matched(app, orig, [orig, "English", "German"], audio="TrueHD ATMOS"))
+                else:
+                    five = score(p, matched(app, orig, [orig, "English", "German", "Portuguese", "French"]))
+                    three = score(p, matched(app, orig, [orig, "English", "German"], group=self.best(minor)["group"]))
+                self.assertGreater(three, five)
+                bonuses = [v for k in ("audio", "group") for v in minor[k].values() if v > 0]
+                if kind != "anime":
+                    bonuses += [v for k, v in minor["small"].items() if v > 0 and not k.startswith("Repack")]
+                self.assertLess(lf.EXTRA_SCORE, min(bonuses))
+
+    def test_e_streaming_web_tier_01_beats_an_extra_dub(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if app == "sonarr" and kind != "anime":
+                with self.subTest(profile=name):
+                    tier = [orig, "German"] if twin else [orig, "English"]
+                    dub = "Italian" if orig != "Italian" else "French"
+                    self.assertGreater(score(p, matched(app, orig, tier, 2160, hdr=True, group="WEB Tier 01", small=("UHD Streaming Boost",))),
+                                       score(p, matched(app, orig, tier + [dub], 2160, hdr=True)))
+
+    def test_extra_score(self):
+        self.assertEqual(lf.EXTRA_SCORE, 10)
 
     def test_f_negatives_still_reject(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
@@ -268,6 +295,45 @@ class Upgrades(Base):
                 self.assertTrue(any(re.match(pat, lf.EXTRA_PREFIX + "Spanish", re.I) for pat in p["except"].get("except_patterns") or []))
                 if not twin:
                     self.assertIn(lf.ORIGINAL_ENGLISH, p["except"].get("except") or [])
+
+
+class SeasonPack(Base):
+    def test_season_pack_format_is_a_sonarr_release_type(self):
+        d = json.loads((ROOT / "recyclarr" / "custom-formats" / "sonarr" / "season-pack.json").read_text())
+        self.assertEqual(d["name"], SEASON_PACK)
+        self.assertRegex(d["trash_id"], r"^[0-9a-f]{32}$")
+        self.assertEqual([(s["implementation"], s["negate"], s["required"], s["fields"]["value"]) for s in d["specifications"]], [("ReleaseTypeSpecification", False, True, 3)])
+        ids = [json.loads(f.read_text())["trash_id"] for a in ("radarr", "sonarr") for f in (ROOT / "recyclarr" / "custom-formats" / a).glob("*.json")]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_season_pack_scores(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            with self.subTest(app=app, profile=name):
+                want = SEASON_PACK_SCORE if app == "sonarr" and kind != "anime" else 0
+                self.assertEqual(p["scores"].get(SEASON_PACK, 0), want)
+        self.assertEqual(profile("sonarr", SWISS)["scores"].get(SEASON_PACK, 0), 0)
+
+    def test_season_pack_beats_the_best_single_episode(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if app == "sonarr" and kind != "anime":
+                for res in resolutions:
+                    with self.subTest(profile=name, res=res):
+                        tier = [orig, "German"] if twin else [orig, "English"]
+                        pack = score(p, matched(app, orig, tier, res, hdr=True, extra=(SEASON_PACK,)))
+                        single = score(p, matched(app, orig, tier + self.extras(app, orig)[:5], res, hdr=True, **self.best_single(minor)))
+                        self.assertGreater(pack, single)
+
+    def test_season_pack_never_beats_a_better_language_tier_or_hdr(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if app != "sonarr":
+                continue
+            tiers = self.tiers(twin, orig)
+            for hi, lo in zip(tiers, tiers[1:]):
+                with self.subTest(profile=name, higher=hi, lower=lo):
+                    self.assertGreater(score(p, matched(app, orig, hi)), score(p, matched(app, orig, lo, **self.best(minor))))
+            for res in resolutions:
+                with self.subTest(profile=name, res=res, case="HDR single episode beats SDR season pack"):
+                    self.assertGreater(score(p, matched(app, orig, [orig], res, hdr=True)), score(p, matched(app, orig, [orig, "English", "German"], res, **self.best(minor))))
 
 
 class NativeFormats(unittest.TestCase):

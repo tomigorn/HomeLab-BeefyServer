@@ -22,6 +22,8 @@ V2160 = {"radarr": "2160p.UHD.BluRay.{a}.HDR.x265", "sonarr": "2160p.NF.WEB-DL.{
 V2160_SDR = {"radarr": "2160p.UHD.BluRay.{a}.x265", "sonarr": "2160p.NF.WEB-DL.{a}.H.265"}
 V1080 = {"radarr": "1080p.BluRay.{a}.x264", "sonarr": "1080p.NF.WEB-DL.{a}.H.264"}
 V1080_HDR = {"radarr": "1080p.BluRay.{a}.HDR.x265", "sonarr": "1080p.NF.WEB-DL.{a}.HDR.H.265"}
+TIER01 = "FLUX"
+HD_TIER01 = "decibeL"
 fails = 0
 
 
@@ -60,14 +62,16 @@ def check_app(app, cfg):
         print("  no title with a common non-English original language in the library: skipped")
         return
 
-    def names(t, langs, video, audio):
-        return cfg["name"].format(t=dotted(t["title"]), y=t["year"], l=".".join(x.upper() for x in langs), v=video[app].format(a=audio))
+    def names(t, langs, video, audio, group="GRP", pack=False):
+        name = cfg["name"].format(t=dotted(t["title"]), y=t["year"], l=".".join(x.upper() for x in langs), v=video[app].format(a=audio))
+        name = name[:-len("GRP")] + group
+        return name.replace(".S01E01.", ".S01.") if pack else name
 
     def scorer(t):
         cache = {}
 
-        def score(profile, langs, video, audio="DDP5.1"):
-            name = names(t, langs, video, audio)
+        def score(profile, langs, video, audio="DDP5.1", group="GRP", pack=False):
+            name = names(t, langs, video, audio, group, pack)
             if name not in cache:
                 parsed = api("/parse", title=name)
                 cache[name] = ([c["name"] for c in parsed.get("customFormats", [])], [l["name"] for l in parsed.get("languages", [])])
@@ -96,8 +100,12 @@ def check_app(app, cfg):
         check(f"(b) original+English+German+{others[1]}+{others[0]} beats original+English+German", score(prof, [o, "English", "German", others[1], others[0]], v) > score(prof, [o, "English", "German"], v))
         check(f"(c) original+German+{others[0]} beats original+German", score(prof, [o, "German", others[0]], v) > score(prof, [o, "German"], v))
         check(f"(d) original+English+{'+'.join(others[:3])} loses to original+English+German", score(prof, [o, "English"] + others[:3], v) < score(prof, [o, "English", "German"], v))
-        if app == "radarr":
-            check("(e) 5 languages DD+ beats 3 languages TrueHD Atmos", score(prof, [o, "English", "German", others[0], others[1]], v, "DDP5.1") > score(prof, [o, "English", "German"], v, "TrueHD.Atmos.7.1"))
+        if app == "radarr" and kind == "hd":
+            check(f"(e) 3 languages from HD Bluray Tier 01 ({HD_TIER01}) beats 5 languages from no-name group (audio formats unscored here)", score(prof, [o, "English", "German"], v, group=HD_TIER01) > score(prof, [o, "English", "German", others[0], others[1]], v))
+        elif app == "radarr":
+            check("(e) 3 languages TrueHD Atmos beats 5 languages DD+", score(prof, [o, "English", "German"], v, "TrueHD.Atmos.7.1") > score(prof, [o, "English", "German", others[0], others[1]], v, "DDP5.1"))
+        else:
+            check(f"(e) original+English from WEB Tier 01 ({TIER01}) beats original+English+{others[0]} from no-name group", score(prof, [o, "English"], v, group=TIER01) > score(prof, [o, "English", others[0]], v))
         check("(f) dub only (German) rejected", score(prof, ["German"], v) < p["minFormatScore"])
         if kind != "hd":
             check("(f) x265 1080p without HDR rejected", score(prof, [o, "English", "German"] + others[:2], {app: V1080[app].replace("x264", "x265").replace("H.264", "H.265")}) < p["minFormatScore"])
@@ -105,6 +113,15 @@ def check_app(app, cfg):
         check("upgrade cutoff not reached by original+German+extras", score(prof, [o, "German"] + others[:3], v, "TrueHD.Atmos.7.1") < p["cutoffFormatScore"])
         gain = score(prof, [o] + others[:3], v, "TrueHD.Atmos.7.1") - score(prof, [o], v, "AAC")
         check("extras and audio alone upgrade below the cutoff", gain >= p["minUpgradeFormatScore"] == 1, gain)
+    if app == "sonarr":
+        prof = cfg["profiles"]["4k"]
+        pack = names(t, [o, "English"], V2160, "DDP5.1", pack=True)
+        score(prof, [o, "English"], V2160, pack=True)
+        check("(k) season pack is parsed as `Season Pack`", "Season Pack" in cache[pack][0], cache[pack][0])
+        check("(k) season pack beats the same release as a single episode", score(prof, [o, "English"], V2160, pack=True) > score(prof, [o, "English"], V2160))
+        check(f"(k) season pack from no-name group beats single episode from WEB Tier 01 ({TIER01})", score(prof, [o, "English"], V2160, pack=True) > score(prof, [o, "English"], V2160, group=TIER01))
+        check("(k) single episode original+English+German beats season pack original+English", score(prof, [o, "English", "German"], V2160) > score(prof, [o, "English"], V2160, pack=True))
+        check("(k) 2160p HDR single episode beats 2160p SDR season pack", score(prof, [o, "English"], V2160) > score(prof, [o, "English"], V2160_SDR, pack=True))
     single = names(t, [o], V1080, "DDP5.1")
     score(cfg["profiles"]["4k"], [o], V1080)
     check("original-only release gets no extra-language bonus", not any(c.startswith("Extra audio: ") for c in cache[single][0]), cache[single][0])
