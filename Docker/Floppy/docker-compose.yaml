@@ -1,0 +1,167 @@
+# =========================================================
+# Services ================================================
+# =========================================================
+# Floppy (media tracker: films, series, books, games), public at https://tracker.holy-grail.ch
+# through fastpi's Traefik (HomeLab-FastPi Docker/Traefik/traefik/dynamic/tracker.yml), which
+# reaches it at 192.168.1.102:${FLOPPY_PORT}. The DOCKER-USER rules drop that port for everyone
+# but fastpi, and drop every connection from the floppy subnet into the LAN, the host and
+# other Docker networks: users can enter integration URLs, so Floppy sees only the internet.
+services:
+# #########################################################
+# FLOPPY ##################################################
+# #########################################################
+  floppy:
+    image: ghcr.io/dannyvfilms/floppy:${FLOPPY_TAG}
+    container_name: floppy
+    restart: unless-stopped
+    # A celery task gets up to 60 s, gunicorn 30 s (upstream compose).
+    stop_grace_period: 150s
+    # Root by design: supervisord and the nginx master run as root, gunicorn and celery as abc (PUID/PGID).
+    # The entrypoint runs usermod and chown, so the root fs stays writable.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN          # entrypoint: chown of the data dirs to abc
+      - DAC_OVERRIDE   # root reads the abc-owned secrets and data
+      - FOWNER         # chmod/utime on abc-owned files
+      - SETUID         # supervisord and nginx switch to abc
+      - SETGID
+      - KILL           # supervisord stops the abc processes
+    mem_limit: 2g
+    pids_limit: 512
+    # REDIS_URL carries the Redis password: built here from the secret file, so docker inspect shows no value.
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        pw=$$(cat /run/secrets/floppy_redis_password)
+        export REDIS_URL="redis://:$$pw@floppy-redis:6379/0"
+        unset pw
+        exec /runtime-entrypoint.sh
+    environment:
+      TZ: ${TZ}
+      PUID: "65125"
+      PGID: "65125"
+      HOST_CONTAINERNAME: floppy
+      URLS: https://tracker.holy-grail.ch
+      ALLOWED_HOSTS: tracker.holy-grail.ch
+      SESSION_COOKIE_SECURE: "True"
+      CSRF_COOKIE_SECURE: "True"
+      # Safe only because the port answers fastpi's Traefik alone (DOCKER-USER), which sets the header itself.
+      USE_X_FORWARDED_PROTO: "True"
+      USE_X_FORWARDED_HOST: "False"
+      USE_X_FORWARDED_PORT: "False"
+      # Login only via Holy Grail (Authentik app tracker-login). Registration on: OIDC users are created on first login; only streaming-users get that far.
+      SOCIAL_PROVIDERS: allauth.socialaccount.providers.openid_connect
+      SOCIALACCOUNT_PROVIDERS_FILE: /run/secrets/floppy_oidc_providers
+      SOCIALACCOUNT_ONLY: "True"
+      REDIRECT_LOGIN_TO_SSO: "True"
+      REGISTRATION: "True"
+      ADMIN_ENABLED: "False"
+      DEMO_ACCOUNT_ENABLED: "False"
+      DEBUG: "False"
+      SECRET_FILE: /run/secrets/floppy_secret
+      # Nightly verified SQLite snapshot into backups/database, inside beefy's 04:00-06:00 maintenance wake.
+      DB_SNAPSHOT_HOUR: "4"
+      DB_SNAPSHOT_MINUTE: "20"
+    secrets:
+      - floppy_secret
+      - floppy_oidc_providers
+      - floppy_redis_password
+    volumes:
+      - ${APPDATA_ROOT}/floppy/db:/floppy/db
+      - ${APPDATA_ROOT}/floppy/backups:/floppy/backups
+    ports:
+      - "${FLOPPY_PORT}:8000"
+    depends_on:
+      floppy-redis:
+        condition: service_healthy
+    networks:
+      - floppy
+      - floppy-redis
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# #########################################################
+# REDIS ###################################################
+# #########################################################
+# Celery broker and Django cache (pickle serializer: whoever writes to it runs code in Floppy), so: internal network, password, never published.
+  floppy-redis:
+    image: docker.io/library/redis:${REDIS_TAG}
+    container_name: floppy-redis
+    restart: unless-stopped
+    user: "65126:65126"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 384m
+    pids_limit: 64
+    # The password goes into a config file on tmpfs, not into the command line (ps on the host).
+    command:
+      - sh
+      - -ec
+      - |
+        umask 077
+        printf 'requirepass %s\n' "$$(cat /run/secrets/floppy_redis_password)" > /tmp/redis.conf
+        exec redis-server /tmp/redis.conf --dir /data --appendonly yes --save "" --maxmemory 256mb --maxmemory-policy volatile-lru
+    secrets:
+      - floppy_redis_password
+    volumes:
+      - ${APPDATA_ROOT}/floppy-redis:/data
+    tmpfs:
+      - /tmp:uid=65126,gid=65126,mode=0700,size=1m
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$(cat /run/secrets/floppy_redis_password) redis-cli ping | grep -q PONG"]
+      start_period: 10s
+      interval: 30s
+      retries: 3
+      timeout: 5s
+    networks:
+      - floppy-redis
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# =========================================================
+# Networks ================================================
+# =========================================================
+networks:
+  # Pinned: docker-user-guard.sh FLOPPY_NET drops everything from this subnet to private, CGNAT and link-local ranges.
+  floppy:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.16.0/24
+  # Floppy <-> Redis only, no way out.
+  floppy-redis:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.17.0/24
+
+# =========================================================
+# Volumes =================================================
+# =========================================================
+# None. SQLite database, snapshots and Redis AOF are bind mounts under APPDATA_ROOT (NVMe).
+
+# =========================================================
+# Secrets =================================================
+# =========================================================
+# Gitignored files under ./secrets (README "Secrets").
+secrets:
+  floppy_secret:
+    file: ./secrets/floppy_secret
+  floppy_oidc_providers:
+    file: ./secrets/floppy_oidc_providers
+  floppy_redis_password:
+    file: ./secrets/floppy_redis_password
