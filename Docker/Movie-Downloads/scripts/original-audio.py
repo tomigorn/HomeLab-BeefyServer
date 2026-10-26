@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Original audio as the default track (README "Languages"): for every Radarr movie / Sonarr episode file (.mkv) the audio track in the title's original language gets flag-default and the name "<Language> (Original)", every other audio track loses flag-default.
 Jellyfin plays the preferred language, else the default-flagged track; German DL releases flag the German dub, this fixes the file. Files with more than one hard link (still seeding) are skipped until the seed is gone.
-Usage: scripts/original-audio.py [--dry-run]"""
+Usage: scripts/original-audio.py [--dry-run] [--queue]
+--queue: only the files Radarr/Sonarr queued on import/upgrade (scripts/original-audio-hook.sh writes <id><TAB><container path> to <appdata>/<app>/original-audio.queue); files still seeding are dropped, the nightly full run gets them."""
 import json
 import os
 import pathlib
@@ -126,6 +127,30 @@ def client(config):
     return call
 
 
+def parse_queue_line(line):
+    """(id, container path) of one queue line, None for blank or malformed ones."""
+    ident, _, path = line.strip("\r\n").partition("\t")
+    return (ident.strip(), path.strip()) if ident.strip() and path.strip() else None
+
+
+def claim_queue(path):
+    """Takes the queue file (renamed first, so the app can keep appending) and returns its unique (id, path) items in order."""
+    work = pathlib.Path(str(path) + ".work")
+    if pathlib.Path(path).exists():
+        with open(work, "a") as w:
+            w.write(pathlib.Path(path).read_text())
+        pathlib.Path(path).unlink()
+    if not work.exists():
+        return []
+    items = []
+    for line in work.read_text().splitlines():
+        item = parse_queue_line(line)
+        if item and item not in items:
+            items.append(item)
+    work.unlink()
+    return items
+
+
 def host_path(app_path):
     return str(pathlib.Path(DATA_HOST) / pathlib.Path(app_path).relative_to("/data"))
 
@@ -191,30 +216,49 @@ def refresh_jellyfin(paths):
     return len(paths) - missing
 
 
+def handle_file(app, label, lang, path, dry, changed):
+    """One file: decide, apply, print. Returns 1 on error, else 0."""
+    name = pathlib.Path(path).name
+    try:
+        st = os.stat(path)
+        tracks = parse_tracks(mkvmerge_info(path)) if path.lower().endswith(".mkv") and st.st_nlink == 1 and language_codes(lang) else []
+        plan = decide(lang, tracks, st.st_nlink, pathlib.Path(path).suffix)
+        if plan["action"] == "set" and not dry:
+            apply(path, plan)
+            changed.append(path)
+        print(f"{app}: {label}: {name}: {describe(plan, lang)}{' (dry run)' if dry and plan['action'] == 'set' else ''}")
+        return 0
+    except (ToolError, OSError, ValueError, subprocess.CalledProcessError) as e:
+        print(f"{app}: {label}: {name}: error: {e}", file=sys.stderr)
+        return 1
+
+
+def queued_files(app, api, config_dir):
+    """(label, language name, host path) per queued import; titles the app no longer knows are dropped."""
+    for ident, app_path in claim_queue(str(pathlib.Path(config_dir) / "original-audio.queue")):
+        try:
+            title = api(("/movie/" if app == "radarr" else "/series/") + ident)
+        except ToolError as e:
+            print(f"{app}: queued {app_path}: {e}", file=sys.stderr)
+            continue
+        yield title["title"], (title.get("originalLanguage") or {}).get("name"), host_path(app_path)
+
+
 def main(argv):
     dry = "--dry-run" in argv
+    queue = "--queue" in argv
     rc, changed = 0, []
     for app in ("radarr", "sonarr"):
+        config = os.environ.get(f"OA_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml")
         try:
-            api = client(os.environ.get(f"OA_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml"))
-            files = list(media_files(app, api))
+            api = client(config)
+            files = list(queued_files(app, api, pathlib.Path(config).parent) if queue else media_files(app, api))
         except (ToolError, OSError) as e:
             print(f"{app}: API error: {e}", file=sys.stderr)
             rc = 1
             continue
         for label, lang, path in files:
-            name = pathlib.Path(path).name
-            try:
-                st = os.stat(path)
-                tracks = parse_tracks(mkvmerge_info(path)) if path.lower().endswith(".mkv") and st.st_nlink == 1 and language_codes(lang) else []
-                plan = decide(lang, tracks, st.st_nlink, pathlib.Path(path).suffix)
-                if plan["action"] == "set" and not dry:
-                    apply(path, plan)
-                    changed.append(path)
-                print(f"{app}: {label}: {name}: {describe(plan, lang)}{' (dry run)' if dry and plan['action'] == 'set' else ''}")
-            except (ToolError, OSError, ValueError, subprocess.CalledProcessError) as e:
-                print(f"{app}: {label}: {name}: error: {e}", file=sys.stderr)
-                rc = 1
+            rc |= handle_file(app, label, lang, path, dry, changed)
     if changed:
         try:
             n = refresh_jellyfin(changed)

@@ -1,0 +1,11 @@
+[Unit]
+Description=Original audio default: a Radarr/Sonarr import or upgrade queued a file
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Path]
+PathChanged=/srv/appdata/radarr/original-audio.queue
+PathChanged=/srv/appdata/sonarr/original-audio.queue
+Unit=original-audio-import.service
+
+[Install]
+WantedBy=multi-user.target

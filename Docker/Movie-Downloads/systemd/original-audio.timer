@@ -1,10 +1,10 @@
 [Unit]
-Description=Original audio default: 5 min after boot and daily 04:24 while beefy is awake (04:20 fastpi pull is unaffected, the job is short)
+Description=Original audio default: full sweep daily 04:20 inside the beefy maintenance window (imports are handled by original-audio-import.path)
 Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
 
 [Timer]
-OnBootSec=5min
-OnCalendar=*-*-* 04:24:00
+OnCalendar=*-*-* 04:20:00 Europe/Zurich
+Persistent=false
 
 [Install]
 WantedBy=timers.target

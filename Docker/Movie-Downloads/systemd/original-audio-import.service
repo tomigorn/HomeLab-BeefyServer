@@ -1,0 +1,13 @@
+[Unit]
+Description=Original-language audio track as the default track of the files Radarr and Sonarr just imported (README Languages)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/original-audio.py --queue
+AmbientCapabilities=CAP_FOWNER
+CapabilityBoundingSet=CAP_FOWNER
+NoNewPrivileges=true
+PrivateTmp=true

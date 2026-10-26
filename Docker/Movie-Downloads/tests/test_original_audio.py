@@ -3,6 +3,7 @@
 Usage: python3 tests/test_original_audio.py"""
 import importlib.util
 import pathlib
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -154,6 +155,34 @@ class Describe(unittest.TestCase):
         p = {"edits": [("a1", ["flag-default=0"]), ("a2", ["flag-default=1", "name=S (Original)"])]}
         self.assertEqual(oa.propedit_args("/f.mkv", p), ["/f.mkv", "--edit", "track:a1", "--set", "flag-default=0",
                          "--edit", "track:a2", "--set", "flag-default=1", "--set", "name=S (Original)"])
+
+
+class Queue(unittest.TestCase):
+    def test_parse_line_id_and_path(self):
+        self.assertEqual(oa.parse_queue_line("12\t/data/media/movies/A (2020)/A.mkv"), ("12", "/data/media/movies/A (2020)/A.mkv"))
+
+    def test_parse_line_ignores_blank_and_malformed(self):
+        for line in ("", "   ", "no-tab-here", "\t/data/x.mkv", "7\t"):
+            self.assertIsNone(oa.parse_queue_line(line), line)
+
+    def test_claim_returns_unique_items_in_order_and_removes_the_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            q = pathlib.Path(d) / "original-audio.queue"
+            q.write_text("1\t/data/a.mkv\n\njunk\n2\t/data/b.mkv\n1\t/data/a.mkv\n")
+            self.assertEqual(oa.claim_queue(str(q)), [("1", "/data/a.mkv"), ("2", "/data/b.mkv")])
+            self.assertFalse(q.exists())
+            self.assertEqual(list(pathlib.Path(d).iterdir()), [])
+
+    def test_claim_missing_file_is_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(oa.claim_queue(str(pathlib.Path(d) / "none.queue")), [])
+
+    def test_claim_takes_a_leftover_work_file_too(self):
+        with tempfile.TemporaryDirectory() as d:
+            q = pathlib.Path(d) / "original-audio.queue"
+            (pathlib.Path(d) / "original-audio.queue.work").write_text("3\t/data/c.mkv\n")
+            q.write_text("4\t/data/d.mkv\n")
+            self.assertEqual(oa.claim_queue(str(q)), [("3", "/data/c.mkv"), ("4", "/data/d.mkv")])
 
 
 if __name__ == "__main__":
