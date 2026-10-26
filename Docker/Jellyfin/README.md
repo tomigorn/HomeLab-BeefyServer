@@ -381,36 +381,34 @@ Per device (stored on the device, not on the server):
 
 Direct play (no transcode) is always best; the server transcodes only what the device cannot play.
 
-## Tracker (Ryot): watch history per member (2026-10-20)
-**Ryot was replaced by Floppy on 2026-10-26** (`../Floppy/README.md`). The hooks below still post to `/_i/…`, which now ends at the forward auth (no data arrives); Floppy's Jellyfin sync is not set up yet. "Rate in Tracker" still works: Traefik redirects `/go/tmdb/…` to Floppy's TMDB page.
-Jellyfin posts each member's playback to their own Ryot account (`Docker/Ryot/` here on beefy, routed through fastpi Traefik). One webhook per Jellyfin user, bound by `UserId`, so one member's playback never lands in another member's Tracker.
+## Tracker (Floppy): watch history per member (2026-10-27)
+Jellyfin posts each member's playback to their own Floppy account (`../Floppy/`, README "Integrations"). One webhook per Jellyfin user, bound by `UserId`, so one member's playback never lands in another member's Tracker.
 
 | Plugin | Repo | Version | Config |
 |---|---|---|---|
-| Webhooks (shemanaev) | `https://raw.githubusercontent.com/shemanaev/jellyfin-plugin-repo/master/manifest.json` | 3.10.0.120000 (Jellyfin shows 3.10.0.0) | `/config/data/plugins/configurations/Jellyfin.Webhooks.xml`, holds the secret integration URLs, not in git |
+| Webhooks (shemanaev) | `https://raw.githubusercontent.com/shemanaev/jellyfin-plugin-repo/master/manifest.json` | 3.10.0.120000 (Jellyfin shows 3.10.0.0) | `/config/data/plugins/configurations/Jellyfin.Webhooks.xml`, holds the members' Floppy tokens (full API keys), not in git |
 | JavaScript Injector (n00bcodr) | `https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/12/manifest.json` | 4.0.0.0 | `/config/data/plugins/configurations/Jellyfin.Plugin.JavaScriptInjector.xml`, entry "Rate in Tracker" written by `tracker-link.py` |
 
 - Not the official "Webhook" plugin: its payload has only the episode's own ids, and 12.1 episodes have no TMDB id. shemanaev's "Default" format nests the series with its TMDB id, so episodes land on their show.
-- Route: `extra_hosts` sends `tracker.holy-grail.ch` to fastpi over the LAN; `/_i/` is LAN-only (403 via Cloudflare).
-- Hook per member: name `Tracker <user>`, format Default, events Play, Pause, Resume, Stop, Progress, MarkPlayed.
+- Route: `http://192.168.1.102:8012/webhook/jellyfin/<token>`, beefy's own published Floppy port (hairpin), never Traefik: `/webhook/` is 403 there. DOCKER-USER lets only the `jellyfin` subnet and fastpi reach that port.
+- Hook per member: name `Tracker <user>`, format Default, events Play, Stop, MarkPlayed, MarkUnplayed.
+- `extra_hosts` `tracker.holy-grail.ch` → fastpi is a leftover of Ryot (unused now).
 
 ### Add a household member
-1. Member is in Holy Grail (`streaming-users`, automatic on invite) and has signed in to Jellyfin once (creates the Jellyfin user).
-2. Member signs in to the Tracker tile once (creates the Ryot account).
-3. Member in Ryot: Settings → Integrations → Add → **Jellyfin Sink**, provider **TMDB**, username filter empty, "auto-pause on errors" **off** (items without TMDB id would pause it after 5 failures). Copy the URL, send it to the owner privately: it is a secret.
-4. Owner on beefy, paste the URL, Enter, Ctrl-D:
+1. Member is in Holy Grail (`streaming-users`, automatic on invite) and has signed in to Jellyfin and to the Tracker tile once (creates both users).
+2. Owner on beefy (reads the member's token from Floppy itself, nothing to copy):
    ```bash
-   cd ~/Projects/Docker/Jellyfin/scripts && python3 tracker-webhook.py add <jellyfin-user>
+   cd ~/Projects/Docker/Jellyfin/scripts && python3 tracker-webhook.py add <jellyfin-user> [<floppy-user>]
    ```
-5. Test: member plays something for 3 min → it shows in their Ryot history.
+3. Test: member marks a film played (or watches to the end) → it shows as completed in their Tracker.
 
 | Task | Command (in `scripts/`) |
 |---|---|
 | List hooks (URLs masked) | `python3 tracker-webhook.py list` |
-| New URL (regenerated in Ryot) | `python3 tracker-webhook.py add <user>` again, replaces the hook |
+| New token (rotated in Floppy) | `python3 tracker-webhook.py add <user>` again, replaces the hook |
 | Remove a member | `python3 tracker-webhook.py remove <user>` |
 | Tests | `python3 -m unittest -v` |
-| Not arriving | `sudo docker logs jellyfin 2>&1 \| grep -i webhook \| tail` here, `sudo docker logs ryot 2>&1 \| grep -i integration \| tail` |
+| Not arriving | `sudo docker logs jellyfin 2>&1 \| grep -i webhook \| tail` here, `sudo docker logs floppy 2>&1 \| grep webhook_finished \| tail` |
 
 ### "Rate in Tracker" link
 Film, series, season and episode pages in Jellyfin web get a "Rate in Tracker" link next to the TMDB/IMDb links. It opens `https://tracker.holy-grail.ch/go/tmdb/<movie|show>/<id>?title=…`; `ryot-go` (`Docker/Ryot/go/`) opens the Ryot item, or Ryot's search when the title is not in Ryot yet. Episodes and seasons link to their show. No TMDB id = no link. Web only, apps and TV have none.

@@ -7,13 +7,24 @@ _spec = importlib.util.spec_from_file_location("tracker_webhook", pathlib.Path(_
 tw = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(tw)
 
-URL = "https://tracker.holy-grail.ch/_i/int_x"
-URL2 = "https://tracker.holy-grail.ch/_i/int_y"
-EVENTS = ["Play", "Pause", "Resume", "Stop", "Progress", "MarkPlayed"]
+TOKEN = "tok_x"
+URL = "http://192.168.1.102:8012/webhook/jellyfin/tok_x"
+URL2 = "http://192.168.1.102:8012/webhook/jellyfin/tok_y"
+EVENTS = ["Play", "Stop", "MarkPlayed", "MarkUnplayed"]
 
 
 def without_id(hook):
     return {k: v for k, v in hook.items() if k != "Id"}
+
+
+class UrlTest(unittest.TestCase):
+    def test_url_from_token(self):
+        self.assertEqual(tw.webhook_url(TOKEN), URL)
+
+    def test_token_must_be_url_safe(self):
+        for bad in ["", "a/b", "a?b", "a b", "a#b"]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                tw.webhook_url(bad)
 
 
 class UpsertTest(unittest.TestCase):
@@ -30,6 +41,11 @@ class UpsertTest(unittest.TestCase):
         self.assertEqual(len(hooks), 1)
         self.assertEqual(hooks[0]["Url"], URL2)
         self.assertEqual(hooks[0]["Id"], hook_id)
+
+    def test_old_ryot_hook_replaced(self):
+        old = {"Id": "9", "Name": "Tracker anna", "Url": "https://tracker.holy-grail.ch/_i/int_x", "UserId": "a" * 32, "Format": "Default", "Events": ["Play", "Pause", "Resume", "Stop", "Progress", "MarkPlayed"]}
+        hooks = tw.upsert_hook({"Hooks": [old]}, "anna", "a" * 32, URL)["Hooks"]
+        self.assertEqual(hooks, [{"Id": "9", "Name": "Tracker anna", "Url": URL, "UserId": "a" * 32, "Format": "Default", "Events": EVENTS}])
 
     def test_other_hooks_untouched(self):
         other = {"Id": "1", "Name": "Other", "Url": "http://x/", "UserId": "", "Format": "Get", "Events": ["ItemAdded"]}
@@ -48,60 +64,79 @@ class UpsertTest(unittest.TestCase):
         self.assertEqual([h["Name"] for h in config["Hooks"]], ["Tracker bob"])
         self.assertEqual(tw.remove_hook(config, "anna"), config)
 
-    def test_url_must_be_tracker_integration(self):
-        for bad in ["http://tracker.holy-grail.ch/_i/int_x", "https://evil.example.com/_i/int_x", "https://tracker.holy-grail.ch/media/x", "https://tracker.holy-grail.ch/_i/", ""]:
+    def test_url_must_be_floppy_webhook_on_beefy(self):
+        for bad in ["https://tracker.holy-grail.ch/webhook/jellyfin/tok_x", "http://192.168.1.2:8012/webhook/jellyfin/tok_x", "http://192.168.1.102:8096/webhook/jellyfin/tok_x", "http://192.168.1.102:8012/webhook/plex/tok_x", "http://192.168.1.102:8012/webhook/jellyfin/", "http://192.168.1.102:8012/webhook/jellyfin/a/b", ""]:
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 tw.upsert_hook({"Hooks": []}, "anna", "a" * 32, bad)
 
 
-class CliTest(unittest.TestCase):
-    def test_unknown_user_refused(self):
-        calls = []
+def fake_api(posted, config=None):
+    def api(method, path, body=None):
+        if method == "POST":
+            posted.append((path, body))
+            return None
+        if path == "/Plugins":
+            return [{"Name": "Other", "Id": "p0"}, {"Name": "Webhooks", "Id": "p1"}]
+        return config if config is not None else {"Hooks": [], "Extra": 1}
+    return api
 
-        def api(method, path, body=None):
-            calls.append((method, path))
-            if path == "/Plugins":
-                return [{"Name": "Webhooks", "Id": "p1"}]
-            return {"Hooks": []}
+
+class CliTest(unittest.TestCase):
+    def test_unknown_jellyfin_user_refused(self):
+        posted = []
 
         def user_id(name):
             raise KeyError(name)
 
-        code = tw.main(["add", "ghost"], stdin=io.StringIO(URL + "\n"), out=io.StringIO(), api=api, user_id=user_id)
+        code = tw.main(["add", "ghost"], out=io.StringIO(), api=fake_api(posted), user_id=user_id, floppy=lambda u: TOKEN)
         self.assertNotEqual(code, 0)
-        self.assertFalse([c for c in calls if c[0] == "POST"])
+        self.assertFalse(posted)
 
-    def test_add_posts_whole_config(self):
+    def test_unknown_floppy_user_refused(self):
         posted = []
 
-        def api(method, path, body=None):
-            if method == "POST":
-                posted.append((path, body))
-                return None
-            if path == "/Plugins":
-                return [{"Name": "Other", "Id": "p0"}, {"Name": "Webhooks", "Id": "p1"}]
-            return {"Hooks": [], "Extra": 1}
+        def floppy(name):
+            raise KeyError(name)
+
+        code = tw.main(["add", "anna"], out=io.StringIO(), api=fake_api(posted), user_id=lambda n: "a" * 32, floppy=floppy)
+        self.assertNotEqual(code, 0)
+        self.assertFalse(posted)
+
+    def test_add_uses_floppy_token_of_named_user(self):
+        posted, asked = [], []
+
+        def floppy(name):
+            asked.append(name)
+            return TOKEN
 
         out = io.StringIO()
-        code = tw.main(["add", "anna"], stdin=io.StringIO(URL + "\n"), out=out, api=api, user_id=lambda n: "a" * 32)
+        code = tw.main(["add", "anna", "anna2"], out=out, api=fake_api(posted), user_id=lambda n: "a" * 32, floppy=floppy)
         self.assertEqual(code, 0)
+        self.assertEqual(asked, ["anna2"])
         self.assertEqual(posted[0][0], "/Plugins/p1/Configuration")
         self.assertEqual(posted[0][1]["Extra"], 1)
+        self.assertEqual(posted[0][1]["Hooks"][0]["Url"], URL)
         self.assertEqual(posted[0][1]["Hooks"][0]["UserId"], "a" * 32)
-        self.assertEqual(out.getvalue().strip(), "added Tracker anna")
-        self.assertNotIn("int_x", out.getvalue())
+        self.assertEqual(out.getvalue().strip(), "added Tracker anna -> Floppy anna2")
+        self.assertNotIn(TOKEN, out.getvalue())
+
+    def test_floppy_user_defaults_to_jellyfin_user(self):
+        asked = []
+        tw.main(["add", "anna"], out=io.StringIO(), api=fake_api([]), user_id=lambda n: "a" * 32, floppy=lambda u: asked.append(u) or TOKEN)
+        self.assertEqual(asked, ["anna"])
 
     def test_list_masks_urls(self):
         config = tw.upsert_hook({"Hooks": []}, "anna", "a" * 32, URL)
-
-        def api(method, path, body=None):
-            return [{"Name": "Webhooks", "Id": "p1"}] if path == "/Plugins" else config
-
         out = io.StringIO()
-        self.assertEqual(tw.main(["list"], stdin=io.StringIO(""), out=out, api=api, user_id=None), 0)
+        self.assertEqual(tw.main(["list"], out=out, api=fake_api([], config), user_id=None, floppy=None), 0)
         self.assertIn("Tracker anna", out.getvalue())
-        self.assertIn("…/_i/****", out.getvalue())
-        self.assertNotIn("int_x", out.getvalue())
+        self.assertIn("…/webhook/jellyfin/****", out.getvalue())
+        self.assertNotIn(TOKEN, out.getvalue())
+
+    def test_token_parsed_from_marker_line(self):
+        self.assertEqual(tw.parse_token("158 objects imported automatically\nFLOPPY_TOKEN=abc_-1\n"), "abc_-1")
+        with self.assertRaises(KeyError):
+            tw.parse_token("158 objects imported\nFLOPPY_TOKEN=\n")
 
 
 if __name__ == "__main__":
