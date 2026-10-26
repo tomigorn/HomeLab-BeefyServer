@@ -81,7 +81,7 @@ services:
 # CUP AGENT ###############################################
 # #########################################################
   cup-agent:
-    image: ghcr.io/sergi0g/cup:${CUP_IMAGE_TAG:-v3.5.1}
+    image: ghcr.io/sergi0g/cup:${CUP_IMAGE_TAG:-v3.6.0}
     container_name: cup-agent
     user: "65113:65113"
     command: -c /config/cup.json serve
