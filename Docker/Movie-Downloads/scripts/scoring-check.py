@@ -101,7 +101,7 @@ def check_app(app, cfg):
         check("upgrade cutoff reached by original+English", score(prof, [o, "English"], v) >= p["cutoffFormatScore"])
         check("upgrade cutoff not reached by original+German+extras", score(prof, [o, "German"] + others[:3], v, "TrueHD.Atmos.7.1") < p["cutoffFormatScore"])
         gain = score(prof, [o] + others[:3], v, "TrueHD.Atmos.7.1") - score(prof, [o], v, "AAC")
-        check("extras and audio alone stay below the minimum upgrade step", 0 < gain < p["minUpgradeFormatScore"], gain)
+        check("extras and audio alone upgrade below the cutoff", gain >= p["minUpgradeFormatScore"] == 1, gain)
     single = names(t, [o], V1080, "DDP5.1")
     score(cfg["profiles"]["4k"], [o], V1080)
     check("original-only release gets no extra-language bonus", not any(c.startswith("Extra audio: ") for c in cache[single][0]), cache[single][0])

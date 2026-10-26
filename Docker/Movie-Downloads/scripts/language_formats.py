@@ -44,16 +44,12 @@ def score(profile_name, format_name):
 
 
 def apply(profile, ids):
-    """Sets the scores; returns the problems: all extras plus audio/group (< one extra) must stay below the minimum upgrade step."""
+    """Sets the scores; returns the problems (none left since extras may upgrade below the cutoff)."""
     names = {i: n for n, i in ids.items()}
     for item in profile["formatItems"]:
         if item["format"] in names:
             item["score"] = score(profile["name"], names[item["format"]])
-    extras = sum(i["score"] for i in profile["formatItems"] if names.get(i["format"], "").startswith(EXTRA_PREFIX))
-    problems = []
-    if extras and extras + EXTRA_SCORE > profile.get("minUpgradeFormatScore", 1):
-        problems.append(f"{profile['name']}: extras {extras} + {EXTRA_SCORE} reach the minimum upgrade step {profile.get('minUpgradeFormatScore')}")
-    return problems
+    return []
 
 
 def main():

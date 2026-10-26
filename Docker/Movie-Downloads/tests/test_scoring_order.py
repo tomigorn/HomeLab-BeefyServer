@@ -213,14 +213,12 @@ class Upgrades(Base):
                     self.assertGreaterEqual(score(p, matched(app, orig, top_tier, res, hdr=hdr)), p["cutoff"])
                     self.assertLess(score(p, matched(app, orig, below + self.extras(app, orig), res, hdr=hdr, **self.best(minor))), p["cutoff"])
 
-    def test_extras_and_audio_alone_never_upgrade(self):
+    def test_extras_and_audio_upgrade_below_cutoff(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             with self.subTest(app=app, profile=name):
+                self.assertEqual(p["min_upgrade"], 1)
                 gain = score(p, matched(app, orig, [orig] + self.extras(app, orig), **self.best(minor))) - score(p, matched(app, orig, [orig]))
-                self.assertLess(gain, p["min_upgrade"])
-                for hi, lo in zip(self.tiers(twin, orig), self.tiers(twin, orig)[1:]):
-                    jump = score(p, matched(app, orig, hi)) - score(p, matched(app, orig, lo + self.extras(app, orig), **self.best(minor)))
-                    self.assertGreaterEqual(jump, p["min_upgrade"])
+                self.assertGreaterEqual(gain, p["min_upgrade"])
 
     def test_extra_scores_survive_the_recyclarr_reset(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:

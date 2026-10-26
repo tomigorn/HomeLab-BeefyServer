@@ -484,7 +484,7 @@ Why this shape:
 
 | | |
 |---|---|
-| Profiles | every Recyclarr profile `upgradeAllowed: true`; cutoff = best quality (Radarr Bluray-2160p, Sonarr WEB 2160p) + score 5000000 (twins 2000000); minimum upgrade step 1000000, see [Release scoring](#release-scoring) |
+| Profiles | every Recyclarr profile `upgradeAllowed: true`; cutoff = best quality (Radarr Bluray-2160p, Sonarr WEB 2160p) + score 5000000 (twins 2000000); minimum upgrade step 1, see [Release scoring](#release-scoring) |
 | RSS | Radarr every 30 min, Sonarr every 15 min, NZBgeek + NzbPlanet (Treasure Maps is search-only). Runs only while beefy is awake: new releases that appear while it sleeps are missed by RSS |
 | Weekly search | `systemd/cutoff-search.timer`, Sunday 04:12 (inside the 03:55 wake): `scripts/cutoff-search.sh` searches the 10 least recently searched cutoff-unmet movies (`MoviesSearch`) and 10 episodes (`EpisodeSearch`) |
 | Indexer budget | ~3 Treasure Maps calls per title -> ≤ ~60 of its 100/day; Prowlarr's query limit stops the rest. Radarr's own `CutoffUnmetMoviesSearch` has no cap, hence the script |
@@ -525,7 +525,7 @@ Upgrades (5 grabs/day on Treasure Maps):
 | | |
 |---|---|
 | Cutoff | original + English 5000000; English-original twins: English + German 2000000; Swiss German 1200000 (unchanged) |
-| Minimum upgrade step | 1000000 (`min_upgrade_format_score`): at the same quality only a new rung or HDR re-downloads; extra languages, audio, group or repack alone never do |
+| Minimum upgrade step | 1 (`min_upgrade_format_score`, Radarr's default; owner 2026-10-26): below the cutoff any better score re-downloads — HDR, a language rung, an extra language, better audio, group or repack. At or above the cutoff nothing upgrades |
 | HDR | HDR wins at grab time. 2160p files: unaffected (all HDR). A 1080p SDR file below the cutoff is upgraded by a 1080p HDR release (as before). |
 | Trade-off | a 1080p HDR file reaches the cutoff through HDR, so it gets no same-quality language upgrade (the 2160p upgrade still comes). With one cutoff score and HDR above the languages this cannot be avoided; 1080p HDR is rare and the 1080p-only profiles reject x265. |
 
@@ -540,7 +540,7 @@ Change it:
 | What | Where, then |
 |---|---|
 | HDR, offset, `German DL`, `Anime Dual Audio`, rejects, cutoff, minimum upgrade step | `recyclarr/recyclarr.yml` → `docker compose run --rm recyclarr sync` |
-| `Language: Original + English`, extra-language score, which languages count | `scripts/language_formats.py` → `scripts/language-policy.sh` (exit 1 if the extras reach the minimum upgrade step: sync first) |
+| `Language: Original + English`, extra-language score, which languages count | `scripts/language_formats.py` → `scripts/language-policy.sh`  |
 | Tests | `python3 tests/test_scoring_order.py` (offline, every profile) |
 | Live check | `scripts/scoring-check.py` (`GET /parse`, never searches or grabs) |
 

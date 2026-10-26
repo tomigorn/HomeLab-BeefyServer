@@ -20,7 +20,7 @@
 ## not TRaSH ones, hence the `except`/`except_patterns` on every reset_unmatched_scores.
 ## Every reject is -50000000: the best possible positive sum (~33000000) must stay below the minimum score of 0.
 ## Upgrades stop at original + English (5000000; English-original twins: German 2000000); an upgrade at the
-## same quality needs +1000000 (min_upgrade_format_score), so extra languages and audio alone never re-download.
+## same quality needs +1 (min_upgrade_format_score, Radarr's default): below the cutoff better audio, group, repack or an extra language upgrades (owner 2026-10-26).
 ## Exception: the profile `Swiss German (Mundart) only - any quality`, Radarr and
 ## Sonarr (Swiss German mandatory, see its comment and README "Swiss German").
 ################################################################################
@@ -72,7 +72,7 @@ radarr:
           # Original + English reached = done. A release that also carries German
           # wins at grab time (7000000) but is not chased afterwards.
           until_score: 5000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
           - name: Bluray-2160p
@@ -94,7 +94,7 @@ radarr:
           allowed: true
           until_quality: Bluray-2160p
           until_score: 2000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
           - name: Bluray-2160p
@@ -121,7 +121,7 @@ radarr:
           allowed: true
           until_quality: Bluray-2160p
           until_score: 5000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
           - name: Bluray-2160p
@@ -154,7 +154,7 @@ radarr:
           allowed: true
           until_quality: Bluray-2160p
           until_score: 2000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
           - name: Bluray-2160p
@@ -208,7 +208,7 @@ radarr:
           allowed: true
           until_quality: Bluray-1080p
           until_score: 5000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
 
       # Anime films, picked by hand (Seerr has no anime profile for movies): TRaSH
       # "[Anime] Remux-1080p" - Remux/Bluray 1080p first, WEB 1080p below. No
@@ -226,7 +226,7 @@ radarr:
           allowed: true
           until_quality: Remux 1080p
           until_score: 5000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
 
     # The 1080p fallback tier needs the HD group-tier scores that the plain UHD
     # profile has no use for, so a good 1080p Bluray encode beats a poor one.
@@ -506,7 +506,7 @@ sonarr:
           allowed: true
           until_quality: WEB 2160p
           until_score: 5000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
 
       # Same profile for English-original titles (scripts/language-policy.sh switches them).
       # `Language: Original + English` stays 0: on an English title it fires on any extra dub.
@@ -520,7 +520,7 @@ sonarr:
           allowed: true
           until_quality: WEB 2160p
           until_score: 2000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
 
       # Old and rare series, picked per request in Seerr (see the Radarr profile).
       - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7  # WEB-2160p (Combined)
@@ -535,7 +535,7 @@ sonarr:
           allowed: true
           until_quality: WEB 2160p
           until_score: 5000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
           - name: WEB 2160p
@@ -568,7 +568,7 @@ sonarr:
           allowed: true
           until_quality: WEB 2160p
           until_score: 2000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
           - name: WEB 2160p
@@ -620,7 +620,7 @@ sonarr:
           allowed: true
           until_quality: WEB 1080p
           until_score: 5000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
 
       # Anime: Seerr sends every series TMDB calls anime here (series type `anime`,
       # same root folder). TRaSH "[Anime] Remux-1080p": Bluray 1080p (remux or
@@ -639,7 +639,7 @@ sonarr:
           allowed: true
           until_quality: Bluray 1080p
           until_score: 5000000
-        min_upgrade_format_score: 1000000
+        min_upgrade_format_score: 1
 
     # Same language scoring as the movies (see the Radarr comments).
     custom_formats:
