@@ -289,14 +289,17 @@ Priority (set 2026-10-26, owner):
 - `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) on every run, enables the indexer and is idempotent. New key: replace the file, re-run the script. A rejected key makes it exit 1 and change nothing.
 - **Disabled since 2026-10-19:** the first account was blocked (duplicate after the site migration). Re-enable by running the script with the new account's key.
 
-Torrent indexers (`scripts/torrent-indexers.sh`, idempotent, also the FlareSolverr proxy):
+Torrent indexers (`scripts/torrent-indexers.sh`, idempotent, also the FlareSolverr proxy). Each one twice:
 
-| Indexer | Priority | Min. seeders | Via |
-|---|---|---|---|
-| 1337x, EZTV (Sonarr only) | 40 | 1 | FlareSolverr (tag `flaresolverr`, Cloudflare) |
-| The Pirate Bay, Knaben | 40 | 1 | direct |
+| Indexer | Priority | Min. seeders | App tag (Radarr/Sonarr) | Used for | Via |
+|---|---|---|---|---|---|
+| 1337x, EZTV (Sonarr only), The Pirate Bay, Knaben | 40 | 5 | none | every title | 1337x/EZTV: FlareSolverr (Prowlarr tag `flaresolverr`, Cloudflare); others direct |
+| same four, `<name> (old-rare)` | 40 | 1 | `old-rare` | only titles tagged `old-rare` (= on Any quality, [Old and rare titles](#old-and-rare-titles)) | same |
 
-- Min. seeders 1 (owner, 2026-10-23: rare releases may have one seeder); set in Prowlarr (`appMinimumSeeders`), synced to Radarr/Sonarr as `minimumSeeders`. Change: `MINSEEDERS` in the script, re-run it.
+- Owner 2026-10-26: 5 seeders for normal titles, 1 for old & rare (they may have one seeder). Usenet unchanged.
+- Radarr/Sonarr: a tagged indexer is used only for titles with a matching tag; untagged indexers for all. An old-rare title sees both copies (same results, the min-1 copy keeps the 1-seeder ones).
+- Prowlarr's sync (also "Sync App Indexers", forced) overwrites `minimumSeeders` in the apps but keeps app-side tags, and never pushes its own tags (tested 2026-10-26). So: seeders in Prowlarr (`appMinimumSeeders`), `old-rare` tag set app-side by the script after the sync. Change: `MINSEEDERS` / `RARE_MINSEEDERS` in the script, re-run it.
+- Radarr refuses an indexer whose empty test query returns nothing in movie categories ("No Results in configured categories"); The Pirate Bay hits this now and then. Re-run the script later; Prowlarr retries on its own sync too.
 
 ### Wrong-film guard
 
