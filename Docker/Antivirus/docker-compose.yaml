@@ -62,6 +62,66 @@ services:
       - movie-downloads
 
 # #########################################################
+# CLAMAV-QUEUE ############################################
+# #########################################################
+# Background scan of downloaded media (README "Completion scan"): the hook hardlinks media files into /data/.clamav-queue and returns; this worker streams them to clamd one at a time.
+  clamav-queue:
+    image: clamav-local:latest
+    container_name: clamav-queue
+    entrypoint: ["python3", "/clamav-hook/clamav-hook.py", "--worker"]
+    user: "65112:1100"   # primary gid media: /srv/video is mergerfs, and FUSE ignores supplementary groups
+    group_add:
+      - "65118"   # textfile-writers: clamav-hook.prom
+    read_only: true
+    tmpfs:
+      - /tmp:size=1m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    restart: unless-stopped
+    depends_on:
+      - clamav
+    environment:
+      - HOST=beefy
+      - CLAMD_HOST=clamav
+      - QUEUE=/data/.clamav-queue
+      - QUARANTINE=/data/quarantine
+      - TEXTFILE=/clamav
+      - QBIT_API=http://gluetun:8080
+      - PYTHONUNBUFFERED=1
+    # Touched before every file; one file takes at most a few minutes.
+    healthcheck:
+      test: ["CMD-SHELL", "test $$(( $$(date +%s) - $$(stat -c %Y /tmp/clamav-queue-alive) )) -lt 900"]
+      interval: 60s
+      retries: 3
+      start_period: 60s
+    volumes:
+      # The union, as SABnzbd/qBittorrent see it: a queued link and the imported library file have the same inode there.
+      - type: bind
+        source: /srv/video
+        target: /data
+        bind:
+          create_host_path: false
+      - ./hook:/clamav-hook:ro
+      - /etc/localtime:/etc/localtime:ro   # local time in index.txt, as the hook writes it
+      - type: bind
+        source: /var/lib/clamav-scan/textfile
+        target: /clamav
+        bind:
+          create_host_path: false
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      movie-downloads:
+        # pinned: qBittorrent lets this address in without a password (WebUI AuthSubnetWhitelist), to stop and tag an infected torrent
+        ipv4_address: 172.28.10.204
+
+# #########################################################
 # ClamAV whole-host scan ##################################
 # #########################################################
 # Weekly, started by clamav-hostscan.timer (`docker compose run --rm clamav-hostscan`), never by `up`. Reads the host, so it has no network.

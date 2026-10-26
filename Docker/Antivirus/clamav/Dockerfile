@@ -2,6 +2,9 @@ FROM alpine:latest
 
 RUN apk add --no-cache clamav-scanner clamav-libs freshclam clamav-daemon clamav-clamdscan
 
+# python3: the clamav-queue worker (hook/clamav-hook.py --worker) runs from this image.
+RUN apk add --no-cache python3
+
 # apk creates clamav as 100/101 (the host's syslog); pin it to a dedicated uid/gid.
 RUN deluser clamav 2>/dev/null; delgroup clamav 2>/dev/null; \
     addgroup -S -g 65112 clamav && \

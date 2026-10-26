@@ -2,6 +2,7 @@
 # Runs hook/clamav-hook.py against a fake clamd (INSTREAM) and a fake qBittorrent API.
 # Usage: python3 tests/test_hook.py   (host, or inside movie-sabnzbd / movie-qbittorrent)
 import http.server
+import json
 import os
 import socket
 import socketserver
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hook", "clamav-hook.py")
@@ -88,9 +90,11 @@ class HookTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.t = self.tmp.name
-        self.job = os.path.join(self.t, "data", "usenet", "complete", "movies", "Some.Movie.2026")
-        self.quarantine = os.path.join(self.t, "data", "quarantine")
+        self.data = os.path.join(self.t, "data")
+        self.job = os.path.join(self.data, "usenet", "complete", "movies", "Some.Movie.2026")
+        self.quarantine = os.path.join(self.data, "quarantine")
         self.textfile = os.path.join(self.t, "textfile")
+        self.queue = os.path.join(self.data, ".clamav-queue")
         os.makedirs(self.job)
         os.makedirs(self.quarantine)
         os.makedirs(self.textfile)
@@ -101,27 +105,42 @@ class HookTest(unittest.TestCase):
 
     def write(self, name, data, where=None):
         p = os.path.join(where or self.job, name)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "wb") as f:
             f.write(data)
         return p
 
     def run_hook(self, *args, **env):
         e = dict(os.environ)
+        e.pop("SAB_PP_STATUS", None)
+        # No queue directory by default: every file is scanned synchronously, as before the queue existed.
         e.update(CLAMD_HOST="127.0.0.1", CLAMD_PORT=str(self.clamd.server_address[1]), CLAMD_WAIT="0",
-                 PATH_MAP="", QUARANTINE=self.quarantine, TEXTFILE=self.textfile, HOST="beefy", QBIT_API="http://127.0.0.1:1")
+                 PATH_MAP="", QUARANTINE=self.quarantine, TEXTFILE=self.textfile, HOST="beefy", QBIT_API="http://127.0.0.1:1",
+                 QUEUE=os.path.join(self.t, "no-queue"), WALK_ROOT=self.data,
+                 HEARTBEAT=os.path.join(self.t, "alive"))
         e.update(env)
         return subprocess.run([sys.executable, HOOK, *args], env=e, capture_output=True, text=True, timeout=60)
 
-    def metric(self, name):
+    def metric(self, name, mode="hook"):
         with open(os.path.join(self.textfile, "clamav-hook.prom")) as f:
             for line in f:
-                if line.startswith(name + "{"):
+                if line.startswith('%s{host="beefy",mode="%s"}' % (name, mode)):
                     return line.split()[1]
         return None
 
-    def sab(self, **env):
+    def sab(self, status="0", **env):
         # SABnzbd: final dir, nzb name, clean name, indexer report, category, group, status
-        return self.run_hook(self.job, "Some.Movie.2026.nzb", "Some Movie", "", "movies", "", "0", **env)
+        return self.run_hook(self.job, "Some.Movie.2026.nzb", "Some Movie", "", "movies", "", status, **env)
+
+    def queued(self, **env):
+        os.makedirs(self.queue, exist_ok=True)
+        return self.sab(QUEUE=self.queue, **env)
+
+    def jobs(self):
+        return sorted(n for n in os.listdir(self.queue) if not n.startswith(".")) if os.path.isdir(self.queue) else []
+
+    def worker(self, **env):
+        return self.run_hook("--worker", "--once", QUEUE=self.queue, **env)
 
     def test_clean_job_exits_0_and_keeps_files(self):
         p = self.write("movie.mkv", b"clean video bytes")
@@ -255,6 +274,213 @@ class HookTest(unittest.TestCase):
     def test_no_path_is_a_usage_error(self):
         r = self.run_hook()
         self.assertEqual(r.returncode, 2)
+
+    # Failed SABnzbd jobs
+
+    def test_failed_sab_job_is_not_scanned_and_exits_0_at_once(self):
+        for status in ("1", "2", "3", "-1"):
+            p = self.write("movie.mkv", EICAR)
+            r = self.sab(status=status)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(self.clamd.streams, [])
+            self.assertTrue(os.path.exists(p))
+            self.assertIn("failed", r.stdout.strip().splitlines()[-1])
+        self.assertFalse(os.path.exists(os.path.join(self.textfile, "clamav-hook.prom")))
+
+    def test_failed_status_from_the_environment(self):
+        self.write("movie.mkv", b"clean")
+        r = self.run_hook(self.job, SAB_PP_STATUS="2")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.clamd.streams, [])
+
+    def test_status_0_from_the_environment_is_scanned(self):
+        self.write("movie.mkv", b"clean")
+        self.run_hook(self.job, SAB_PP_STATUS="0")
+        self.assertEqual(self.clamd.streams, [b"clean"])
+
+    # Media to the background queue, everything else synchronously
+
+    def test_media_files_go_to_the_queue_not_to_clamd(self):
+        mkv = self.write("movie.mkv", b"clean video")
+        srt = self.write("Subs/movie.en.srt", b"1\n00:00:01,000 --> 00:00:02,000\nHi\n")
+        r = self.queued()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.clamd.streams, [])
+        self.assertTrue(os.path.exists(mkv))
+        jobs = self.jobs()
+        self.assertEqual(len(jobs), 1)
+        self.assertFalse(jobs[0].endswith(".tmp"))
+        jobdir = os.path.join(self.queue, jobs[0])
+        with open(os.path.join(jobdir, "job.json")) as f:
+            job = json.load(f)
+        self.assertEqual(job["title"], "Some Movie")
+        self.assertEqual(job["hash"], None)
+        self.assertEqual(sorted(e["path"] for e in job["files"]), sorted([mkv, srt]))
+        for e in job["files"]:
+            self.assertTrue(os.path.samefile(os.path.join(jobdir, e["link"]), e["path"]))
+        self.assertEqual(self.metric("clamav_files_queued"), "2")
+        self.assertIn("queued", r.stdout.strip().splitlines()[-1])
+
+    def test_executable_and_archive_are_scanned_synchronously_and_block(self):
+        bad = self.write("setup.exe", EICAR)
+        rar = self.write("movie.part01.rar", b"Rar!\x1a\x07\x00 clean")
+        self.write("movie.mkv", b"clean video")
+        r = self.queued()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(bad))
+        self.assertTrue(os.path.exists(os.path.join(self.quarantine, "setup.exe")))
+        self.assertEqual(sorted(self.clamd.streams), sorted([EICAR, b"Rar!\x1a\x07\x00 clean"]))
+        self.assertTrue(os.path.exists(rar))
+
+    def test_unknown_extension_is_scanned_synchronously(self):
+        self.write("readme.xyz", b"clean")
+        self.write("noext", b"clean too")
+        r = self.queued()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(sorted(self.clamd.streams), [b"clean", b"clean too"])
+        self.assertEqual(self.jobs(), [])
+
+    def test_media_name_with_executable_content_is_synchronous(self):
+        bad = self.write("movie.mkv", b"MZ\x90\x00" + EICAR)
+        self.write("cover.jpg", b"PK\x03\x04 zip")
+        r = self.queued()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(bad))
+        self.assertEqual(len(self.clamd.streams), 2)
+        self.assertEqual(self.jobs(), [])
+
+    def test_qbit_media_goes_to_the_queue_with_the_hash(self):
+        self.write("movie.mkv", b"clean video")
+        os.makedirs(self.queue)
+        r = self.run_hook("--qbit", "abc123", self.job, QUEUE=self.queue)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.clamd.streams, [])
+        with open(os.path.join(self.queue, self.jobs()[0], "job.json")) as f:
+            job = json.load(f)
+        self.assertEqual(job["hash"], "abc123")
+        self.assertEqual(job["title"], "Some.Movie.2026")
+
+    # Background worker
+
+    def test_worker_scans_clean_media_and_empties_the_queue(self):
+        mkv = self.write("movie.mkv", b"clean video")
+        self.queued()
+        r = self.worker()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.clamd.streams, [b"clean video"])
+        self.assertEqual(self.jobs(), [])
+        self.assertTrue(os.path.exists(mkv))
+        self.assertEqual(self.metric("clamav_files_scanned", "queue"), "1")
+        self.assertEqual(self.metric("clamav_infected_last_run", "queue"), "0")
+        self.assertEqual(self.metric("clamav_queue_jobs", "queue"), "0")
+        self.assertIn("Some Movie", r.stdout)
+
+    def test_worker_hit_after_import_quarantines_and_removes_every_link(self):
+        mkv = self.write("movie.mkv", EICAR)
+        self.queued()
+        library = os.path.join(self.data, "media", "movies", "Some Movie (2026)", "Some Movie (2026).mkv")
+        seed = os.path.join(self.data, "torrents", "movies", "seed.mkv")
+        os.makedirs(os.path.dirname(library))
+        os.makedirs(os.path.dirname(seed))
+        os.rename(mkv, library)
+        os.link(library, seed)
+        r = self.worker()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(library))
+        self.assertFalse(os.path.exists(seed))
+        self.assertEqual(self.jobs(), [])
+        with open(os.path.join(self.quarantine, "index.txt")) as f:
+            date, path, sig = f.read().splitlines()[0].split("\t")
+        # The library path, so "scan.sh restore" puts it back where the app expects it.
+        self.assertEqual(path, library)
+        self.assertTrue(os.path.exists(os.path.join(self.quarantine, "Some Movie (2026).mkv")))
+        self.assertEqual(sig, SIG)
+        self.assertEqual(self.metric("clamav_infected_last_run", "queue"), "1")
+        self.assertEqual(self.metric("clamav_infected_total", "queue"), "1")
+        self.assertIn("Some Movie", [l for l in r.stdout.splitlines() if SIG in l][0])
+
+    def test_worker_hit_with_an_unwritable_index_still_removes_the_links(self):
+        mkv = self.write("movie.mkv", EICAR)
+        self.queued()
+        index = self.write("index.txt", b"", where=self.quarantine)
+        os.chmod(index, 0o444)
+        r = self.worker()
+        self.assertFalse(os.path.exists(mkv))
+        self.assertTrue(os.path.exists(os.path.join(self.quarantine, "movie.mkv")))
+        self.assertEqual(self.jobs(), [])
+        self.assertIn("index.txt", r.stdout + r.stderr)
+        self.assertEqual(self.metric("clamav_infected_last_run", "queue"), "1")
+
+    def test_index_is_group_writable_for_the_other_writers(self):
+        self.write("setup.exe", EICAR)
+        old = os.umask(0o022)
+        try:
+            self.sab()
+        finally:
+            os.umask(old)
+        self.assertEqual(os.stat(os.path.join(self.quarantine, "index.txt")).st_mode & 0o777, 0o664)
+
+    def test_worker_hit_with_a_link_it_cannot_remove_is_an_error(self):
+        mkv = self.write("movie.mkv", EICAR)
+        self.queued()
+        os.chmod(self.job, 0o555)
+        self.addCleanup(os.chmod, self.job, 0o755)
+        r = self.worker()
+        self.assertTrue(os.path.exists(mkv))
+        self.assertIn("could not remove", r.stdout)
+        self.assertEqual(self.metric("clamav_scan_errors", "queue"), "1")
+        self.assertEqual(self.metric("clamav_infected_last_run", "queue"), "1")
+
+    def test_worker_hit_of_a_torrent_stops_and_tags_it(self):
+        qbit = serve(FakeQbit())
+        self.addCleanup(qbit.server_close)
+        self.addCleanup(qbit.shutdown)
+        self.write("movie.mkv", EICAR)
+        os.makedirs(self.queue)
+        self.run_hook("--qbit", "abc123", self.job, QUEUE=self.queue)
+        self.worker(QBIT_API="http://127.0.0.1:%d" % qbit.server_address[1])
+        self.assertIn(("/api/v2/torrents/stop", "hashes=abc123"), qbit.calls)
+        self.assertIn(("/api/v2/torrents/addTags", "hashes=abc123&tags=infected"), qbit.calls)
+
+    def test_worker_keeps_the_job_while_clamd_is_unreachable(self):
+        self.write("movie.mkv", b"clean video")
+        self.queued()
+        r = self.worker(CLAMD_PORT=str(free_port()))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(len(self.jobs()), 1)
+        self.worker()
+        self.assertEqual(self.jobs(), [])
+        self.assertEqual(self.clamd.streams, [b"clean video"])
+
+    def test_worker_keeps_the_job_when_clamd_gives_no_verdict(self):
+        self.write("movie.mkv", b"clean video")
+        self.queued()
+        self.clamd.reply = b"\0"
+        self.worker()
+        self.assertEqual(len(self.jobs()), 1)
+        self.clamd.reply = None
+        self.worker()
+        self.assertEqual(self.jobs(), [])
+
+    def test_worker_takes_over_a_job_left_half_written(self):
+        mkv = self.write("movie.mkv", b"clean video")
+        stale = os.path.join(self.queue, "20260101T000000-1.tmp")
+        os.makedirs(stale)
+        os.link(mkv, os.path.join(stale, "0001.mkv"))
+        old = time.time() - 7200
+        os.utime(stale, (old, old))
+        self.worker()
+        self.assertEqual(self.jobs(), [])
+        self.assertEqual(self.clamd.streams, [b"clean video"])
+
+    def test_hook_and_worker_metrics_live_side_by_side(self):
+        self.write("movie.mkv", EICAR)
+        self.queued()
+        self.worker()
+        self.write("other.exe", b"clean")
+        self.queued()
+        self.assertEqual(self.metric("clamav_infected_last_run", "queue"), "1")
+        self.assertEqual(self.metric("clamav_infected_last_run", "hook"), "0")
 
 
 if __name__ == "__main__":
