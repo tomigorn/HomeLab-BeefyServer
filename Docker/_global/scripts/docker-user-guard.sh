@@ -3,7 +3,7 @@
 #
 # Inbound: published container ports answer only fastpi (Traefik, Prometheus, Portainer, Cup). Allowlist, so a newly published port is closed by default.
 # Outbound: containers may not open connections into the LAN, except Jellyfin/Seerr, Ryot and Dependency-Track → fastpi :443 (sso + tracker via extra_hosts).
-# Floppy: its users enter integration URLs that the server fetches (SSRF by design), so its subnet reaches the internet only: no LAN, no fastpi, no 10/8, 172.16/12 (other Docker networks, also beefy's published ports after DNAT), 192.168/16, 100.64/10, 169.254/16. The host itself is BEEFY-INPUT.
+# Floppy: its users enter integration URLs that the server fetches (SSRF by design), so its subnet reaches the internet only, on tcp 80/443 (DNS goes through dockerd on the host): no LAN, no fastpi, no 10/8, 172.16/12 (other Docker networks, also beefy's published ports after DNAT), 192.168/16, 100.64/10, 169.254/16. The host itself is BEEFY-INPUT.
 # Host: containers reach the beefy host itself only with replies and ping (BEEFY-INPUT on INPUT from docker0/br-+). The apps talk to each other by container name; observed 2026-10-25: no container opens connections to the host. LAN access to the host (enp6s0) is untouched.
 # IPv6: no container has IPv6, but docker-proxy listens on [::] for every published port, so only sshd is reachable over IPv6.
 #
@@ -28,6 +28,9 @@ iptables -A DOCKER-USER -s "$FLOPPY_NET" -d "$FLOPPY_NET" -j RETURN
 for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 169.254.0.0/16; do
   iptables -A DOCKER-USER -s "$FLOPPY_NET" -d "$net" -j DROP
 done
+iptables -A DOCKER-USER -s "$FLOPPY_NET" -p tcp -m multiport --dports 80,443 -j RETURN
+iptables -A DOCKER-USER -s "$FLOPPY_NET" -m limit --limit 6/min -j LOG --log-prefix "FLOPPY-EGRESS drop " --log-level 6
+iptables -A DOCKER-USER -s "$FLOPPY_NET" -j DROP
 iptables -A DOCKER-USER -s "$JELLYFIN_NET" -o "$IFACE" -d "$FASTPI" -p tcp --dport 443 -j RETURN
 iptables -A DOCKER-USER -s "$RYOT_NET" -o "$IFACE" -d "$FASTPI" -p tcp --dport 443 -j RETURN
 iptables -A DOCKER-USER -s "$DT_NET" -o "$IFACE" -d "$FASTPI" -p tcp --dport 443 -j RETURN
