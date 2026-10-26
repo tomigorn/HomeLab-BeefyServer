@@ -46,7 +46,8 @@ services:
       PGID: "65125"
       HOST_CONTAINERNAME: floppy
       URLS: https://tracker.holy-grail.ch
-      ALLOWED_HOSTS: tracker.holy-grail.ch
+      # 192.168.1.102: Jellyfin and Seerr post their webhooks to beefy:8012 (DOCKER-USER lets only the jellyfin subnet and fastpi in).
+      ALLOWED_HOSTS: tracker.holy-grail.ch,192.168.1.102
       SESSION_COOKIE_SECURE: "True"
       CSRF_COOKIE_SECURE: "True"
       # Safe only because the port answers fastpi's Traefik alone (DOCKER-USER), which sets the header itself.
@@ -68,10 +69,13 @@ services:
       # Nightly verified SQLite snapshot into backups/database, inside beefy's 04:00-06:00 maintenance wake.
       DB_SNAPSHOT_HOUR: "4"
       DB_SNAPSHOT_MINUTE: "20"
+      # Shared secret of Seerr's webhook to /webhook/seerr/global/ (no user token in that URL).
+      SEERR_GLOBAL_WEBHOOK_SECRET_FILE: /run/secrets/floppy_seerr_webhook_secret
     secrets:
       - floppy_secret
       - floppy_oidc_providers
       - floppy_redis_password
+      - floppy_seerr_webhook_secret
     volumes:
       - ${APPDATA_ROOT}/floppy/db:/floppy/db
       - ${APPDATA_ROOT}/floppy/backups:/floppy/backups
@@ -167,3 +171,5 @@ secrets:
     file: ./secrets/floppy_oidc_providers
   floppy_redis_password:
     file: ./secrets/floppy_redis_password
+  floppy_seerr_webhook_secret:
+    file: ./secrets/floppy_seerr_webhook_secret
