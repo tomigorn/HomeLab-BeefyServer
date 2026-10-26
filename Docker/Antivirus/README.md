@@ -14,7 +14,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | `scan.sh all` of host folders | Sunday 04:07 | `clamav-hostscan.timer` → `clamav-hostscan.service` → `docker compose run --rm clamav-hostscan` (container without network, private `clamd` multiscan on all cores) |
 | `scan.sh <path>…`, `scan.sh restore <file>` | by hand | see below |
 
-- 04:05: fastpi wakes beefy at 03:55 and it powers off about 04:25 when idle, so a later time never fires. A night asleep is skipped: the marker stays, the next run catches up.
+- 04:05: fastpi wakes beefy at 03:55 and the maintenance window (`Server/9-Night-Schedule.md`) holds it up until 04:45, so a later time never fires. A night asleep is skipped: the marker stays, the next run catches up.
 - Install / reinstall the units (both timers) and host folders: `Docker/Antivirus/install.sh`. Start: `sudo docker build --network host -t clamav-local:latest ./clamav && sudo docker compose up -d` (Movie-Downloads first: its network must exist).
 
 ## Nightly and manual scans
