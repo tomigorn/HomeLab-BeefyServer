@@ -1,0 +1,16 @@
+{
+ "scene-dotted.nfo": ["German", "English"],
+ "mediainfo.nfo": ["German", "English"],
+ "track-table.nfo": ["German", "English"],
+ "iso-codes.nfo": ["German", "English", "Spanish"],
+ "inline-subs.nfo": ["German", "English"],
+ "french.nfo": ["French", "English"],
+ "sprache.nfo": ["German", "English"],
+ "no-language.nfo": [],
+ "subtitles-only.nfo": [],
+ "spanish.nfo": ["Spanish", "English"],
+ "ansi.nfo": ["Italian", "English"],
+ "dts-es.nfo": ["English"],
+ "ambiguous-key.nfo": [],
+ "languages-key.nfo": ["Japanese", "English", "German"]
+}
