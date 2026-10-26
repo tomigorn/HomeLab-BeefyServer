@@ -149,6 +149,7 @@ email) are not set up: Settings -> Notifications.
 | Want | Do |
 |---|---|
 | a film or series | **Request**, leave the profile on the default (4K HDR, 1080p fallback) |
+| it now, not tonight | untick **Can wait — download tonight (cheaper power)** ([Can wait](#can-wait)) |
 | an old or niche title | nothing: on add it moves to **Any quality - old & rare (upgrades to 4K)** by itself (released ≤ 12 years ago, or ≥ 2 years old with few votes) |
 | force Any quality for a new title | **Advanced** → Quality Profile **Any quality - old & rare (upgrades to 4K)** |
 | a must-have audio language | **Advanced** → Tags `audio-<language>`: not grabbed without it |
@@ -178,8 +179,8 @@ A thin bar at the top of every Seerr page (everyone who can open Requests sees i
 
 | Part | What |
 |---|---|
-| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
-| `/_indexer-bar/` | `indexer-bar/www/` (bar.js, bar.css, starting.html); `usage.json` from `/srv/appdata/indexer-bar/` |
+| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` (and `can-wait.js`, `menu-links.js`: [Can wait](#can-wait), [Menu links](#menu-links)) before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
+| `/_indexer-bar/` | `indexer-bar/www/` (bar.js, bar.css, starting.html, can-wait.js, menu-links.js); `usage.json` from `/srv/appdata/indexer-bar/` |
 | Collector | `scripts/indexer-usage.py` as buntu, `systemd/indexer-usage.timer` every minute: Prowlarr `GET /api/v1/indexer` + `/api/v1/history/since`, counts queries + RSS (searches) and grabs (downloads) per indexer in its window. Writes names and counts only, no keys, no queries |
 | Limits + deadlines | `indexer-bar/limits.toml` (committed, no secrets); picked up on the next run, no restart |
 | Colours | limits: green < 70 %, amber 70-95 %, red ≥ 95 % with the reset time. Subscriptions: yellow ≤ 30 days left, orange ≤ 7, red on the end date and after, `lifetime` without countdown (same stages as the Telegram alerts) |
@@ -216,6 +217,28 @@ sudo docker compose up -d
 | Timer | `systemctl list-timers indexer-usage.timer; journalctl -u indexer-usage -n 5` |
 
 Remove the bar: delete the `seerr-proxy` service, put `ports: ["${SEERR_PORT}:5055"]` back on `seerr`, `sudo docker compose up -d --remove-orphans`, `sudo systemctl disable --now indexer-usage.timer`.
+
+## Can wait
+
+The request dialog has a checkbox, ticked by default: ☑ **Can wait — download tonight (cheaper power)**. Ticked: the download is added paused and starts in the low tariff (22:00-06:00, all Sunday). Unticked: the request carries the Radarr/Sonarr tag `download-now` and downloads at once (first download only). Everyone who may request may untick it. Mechanism: `../Movie-Downloads/README.md` "Can wait: downloads at night".
+
+| Part | What |
+|---|---|
+| Script | `indexer-bar/www/can-wait.js`, injected by `seerr-proxy` next to `bar.js` |
+| Box | added to a dialog whose title is "Request Movie/Series/Collection (in 4K)" or the German one ("Film anfragen" …), above the buttons; MutationObserver |
+| Tag | wraps `XMLHttpRequest`: an unticked box adds the `download-now` tag id of the request's Radarr/Sonarr server (`/api/v1/service/<radarr\|sonarr>`, default server for `is4k` when none is picked) to `tags` of `POST /api/v1/request`; tags picked under Advanced and server default tags stay |
+| Fallback | Seerr changed its dialog, tag missing, API error: no box or no tag, the request waits for the night. **Advanced → Tags → `download-now`** does the same as unticking |
+| After a Seerr update | open a request dialog: the box must be there |
+
+## Menu links
+
+`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds **Audiobooks** after Series in the desktop sidebar, the phone drawer and the phone bottom bar (5th item, while it has room and no "more" button; otherwise in the "more" list), opening `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, LAN/VPN, group `streaming-requesters`) in the same tab. Links and URL: `LINKS` at the top of the file. Seerr without a `/discover/tv` link: no entry, nothing breaks.
+
+| Check | Command |
+|---|---|
+| Tests (jsdom, Node ≥ 20) | `cd tests/js && npm ci && node --test` |
+| Injected | `curl -sL localhost:5055/ \| grep -o '_indexer-bar/[a-z-]*\.js'` |
+| After editing `indexer-bar/nginx.conf` | `sudo docker restart seerr-proxy` (a single-file bind mount keeps the old file on reload); scripts in `www/` are live at once |
 
 ## Delete a title
 
