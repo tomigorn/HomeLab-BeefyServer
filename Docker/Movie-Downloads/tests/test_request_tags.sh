@@ -36,6 +36,8 @@ class H(http.server.BaseHTTPRequestHandler):
         app, _, p = self.path.lstrip("/").partition("/api/v3")
         if self.headers.get("X-Api-Key") != app + "key":
             return self.reply(401)
+        if self.command == "GET" and p == "/tag":
+            return self.reply(200, [{"id": 13, "label": "audio-swiss-german"}, {"id": 70, "label": "download-now"}])
         if self.command == "GET" and p == "/qualityprofile":
             return self.reply(200, state.get(app + "_profiles", []))
         if self.command == "PUT" and p.startswith("/qualityprofile/"):
@@ -74,7 +76,7 @@ run() {
     bash "$SCRIPT" > "$T/out" 2>&1; RC=$?
 }
 reset() { rm -f "$T/done"; }
-req() { echo "{\"id\": $1, \"status\": $2, \"type\": \"$3\", \"tags\": [$4], \"media\": {\"externalServiceId\": $5}}"; }
+req() { echo "{\"id\": $1, \"status\": $2, \"type\": \"$3\", \"tags\": [$4], \"createdAt\": \"${6:-2026-10-26T12:00:00.000Z}\", \"media\": {\"externalServiceId\": $5}}"; }
 
 echo "Movies"
 reset
@@ -106,6 +108,15 @@ reset
 run "{\"requests\": [$(req 9 5 movie 13 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"T\", \"tags\": []}}}" RT_SEARCH=0
 assert_eq "RT_SEARCH=0: tags and hook, no search" 'PUT /radarr/api/v3/movie/editor {"movieIds":[8],"tags":[13],"applyTags":"add"}|MovieAdded 8 LP_TAGS_ONLY=1 LP_CONFIG=radarr.xml' "$(cat "$T/writes")|$(cat "$T/hooks")"
 assert_eq "  log line" "radarr: request 9, T: tags 13 added, not searched (RT_SEARCH=0)" "$(cat "$T/out")"
+
+echo "download-now"
+reset
+run "{\"requests\": [$(req 30 5 movie "13,70" 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"T\", \"tags\": [13], \"added\": \"2026-10-26T12:00:05Z\"}}}"
+assert_eq "film Seerr added with the request, download-now already removed after the first import: not added again" "||" "$(cat "$T/writes")|$(cat "$T/hooks")|$(cat "$T/out")"
+reset
+run "{\"requests\": [$(req 31 5 movie "70" 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"T\", \"tags\": [], \"added\": \"2026-10-01T08:00:00Z\"}}}"
+assert_eq "film already in Radarr before the request: download-now added, searched" 'PUT /radarr/api/v3/movie/editor {"movieIds":[8],"tags":[70],"applyTags":"add"}
+POST /radarr/api/v3/command {"name":"MoviesSearch","movieIds":[8]}' "$(cat "$T/writes")"
 
 echo "Series"
 reset

@@ -45,6 +45,8 @@ WIPE_NAME="Title wipe"
 WIPE_PATH=/scripts/title-wipe-hook.sh
 OA_NAME="Original audio"
 OA_PATH=/scripts/original-audio-hook.sh
+DN_NAME="Download now: first download only"
+DN_PATH=/scripts/download-now-hook.sh
 
 api() { # api <radarr|sonarr> <path> [curl args...]
   local app=$1 path=$2; shift 2
@@ -105,7 +107,7 @@ print(",".join(str(t["id"]) for t in items if t["qualityProfileId"]==m and eng(t
 
   # The same move for every title added from now on, before its first search:
   # Connect "Custom Script" on add, running scripts/language-policy-hook.sh.
-  # Radarr and Sonarr also get the wrong-film guard on grab (scripts/grab-guard.sh) and the title-wipe recorder on grab/import (scripts/title-wipe-hook.sh) and the original-audio queue on import/upgrade (scripts/original-audio-hook.sh).
+  # Radarr and Sonarr also get the wrong-film guard on grab (scripts/grab-guard.sh) and the title-wipe recorder on grab/import (scripts/title-wipe-hook.sh) and the original-audio queue on import/upgrade (scripts/original-audio-hook.sh) and the download-now removal on import/upgrade (scripts/download-now-hook.sh).
   connect() { # connect <app> <name> <on-event fields, comma-separated> <script path>
     local nid note
     nid=$(api $1 /notification | py 'import json,sys; r=[n["id"] for n in json.load(sys.stdin) if n["name"]==sys.argv[1]]; print(r[0] if r else "")' "$2")
@@ -121,8 +123,8 @@ print(json.dumps(n))' "$2" "$3" "$4" "$nid")
     echo "   connect: $(api $1 /notification | py 'import json,sys; [print(n["name"], n["fields"][0]["value"], ",".join(f+"="+str(n[f]) for f in sys.argv[1].split(","))) for n in json.load(sys.stdin) if n["name"]==sys.argv[2]]' "$3" "$2")"
   }
   case $app in
-    radarr) connect radarr "$HOOK_NAME" onMovieAdded "$HOOK_PATH"; connect radarr "$GUARD_NAME" onGrab "$GUARD_PATH"; connect radarr "$WIPE_NAME" onGrab,onDownload,onUpgrade "$WIPE_PATH"; connect radarr "$OA_NAME" onDownload,onUpgrade "$OA_PATH";;
-    sonarr) connect sonarr "$HOOK_NAME" onSeriesAdd "$HOOK_PATH"; connect sonarr "$GUARD_NAME" onGrab "$GUARD_PATH"; connect sonarr "$WIPE_NAME" onGrab,onDownload,onUpgrade "$WIPE_PATH"; connect sonarr "$OA_NAME" onDownload,onUpgrade "$OA_PATH";;
+    radarr) connect radarr "$HOOK_NAME" onMovieAdded "$HOOK_PATH"; connect radarr "$GUARD_NAME" onGrab "$GUARD_PATH"; connect radarr "$WIPE_NAME" onGrab,onDownload,onUpgrade "$WIPE_PATH"; connect radarr "$OA_NAME" onDownload,onUpgrade "$OA_PATH"; connect radarr "$DN_NAME" onDownload,onUpgrade "$DN_PATH";;
+    sonarr) connect sonarr "$HOOK_NAME" onSeriesAdd "$HOOK_PATH"; connect sonarr "$GUARD_NAME" onGrab "$GUARD_PATH"; connect sonarr "$WIPE_NAME" onGrab,onDownload,onUpgrade "$WIPE_PATH"; connect sonarr "$OA_NAME" onDownload,onUpgrade "$OA_PATH"; connect sonarr "$DN_NAME" onDownload,onUpgrade "$DN_PATH";;
   esac
 
   # Per-request tags. audio-<language>: a release profile scoped to the tag requires the

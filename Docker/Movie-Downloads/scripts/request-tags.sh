@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Seerr sends a request's tags only when it adds a new title; for a title already in Radarr/Sonarr ("Movie is already monitored") they are dropped. This copies them over, runs the language hook (Swiss German profile, subtitles) and searches (README "Per-request audio and subtitles"). Run by systemd/request-tags.timer.
+# download-now (Seerr "Can wait" unticked) is copied only onto a title that was in Radarr/Sonarr before the request: on a title Seerr added with the request, scripts/download-now-hook.sh removes it after the first import and it must stay removed.
 # Each approved request is handled once (RT_STATE), so a tag removed by hand later stays removed. RT_SEARCH=0: no search.
 # Also keeps the Swiss German profile on language Any, which Recyclarr resets to Original whenever it updates that profile.
 set -uo pipefail
@@ -19,7 +20,7 @@ unset key
 rc=0
 
 # Approved (2), failed (4) or completed (5), with tags and a Radarr/Sonarr id: "<request id> <type> <title id> <tag ids,>".
-while read -r rid type tid tags; do
+while read -r rid type tid created tags; do
   grep -qx "$rid" "$STATE" && continue
   case $type in
     movie) app=radarr; config=${RT_RADARR_CONFIG:-/srv/appdata/radarr/config.xml}; kind=movie; ids=movieIds; ev=(radarr_eventtype=MovieAdded "radarr_movie_id=$tid"); search="{\"name\":\"MoviesSearch\",\"movieIds\":[$tid]}";;
@@ -34,6 +35,11 @@ while read -r rid type tid tags; do
   if [ "$code" = 404 ]; then echo "$rid" >> "$STATE"; continue; fi
   title=$(api "/$kind/$tid") || { echo "$app: request $rid: API error" >&2; rc=1; continue; }
   missing=$(jq -c --argjson want "[$tags]" '$want - (.tags // [])' <<<"$title")
+  dn=$(api /tag | jq '[.[] | select(.label == "download-now") | .id][0] // empty') || dn=
+  if [ -n "$dn" ]; then
+    missing=$(jq -c --argjson m "$missing" --argjson dn "$dn" --arg c "$created" \
+      'def t: sub("\\.[0-9]+"; "") | fromdateiso8601; if ((.added // "") != "" and (.added | t) >= ($c | t)) then $m - [$dn] else $m end' <<<"$title")
+  fi
   if [ "$missing" != "[]" ]; then
     api "/$kind/editor" -X PUT -d "{\"$ids\":[$tid],\"tags\":$missing,\"applyTags\":\"add\"}" >/dev/null \
       || { echo "$app: request $rid: adding tags failed" >&2; rc=1; continue; }
@@ -49,7 +55,7 @@ while read -r rid type tid tags; do
   fi
   echo "$rid" >> "$STATE"
 done < <(jq -r '.results[] | select((.status == 2 or .status == 4 or .status == 5) and ((.tags // []) | length > 0) and .media.externalServiceId != null)
-  | "\(.id) \(.type) \(.media.externalServiceId) \(.tags | join(","))"' <<<"$requests")
+  | "\(.id) \(.type) \(.media.externalServiceId) \(.createdAt) \(.tags | join(","))"' <<<"$requests")
 config=${RT_RADARR_CONFIG:-/srv/appdata/radarr/config.xml}
 akey=$(sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' "$config")
 url="http://localhost:$(sed -n 's:.*<Port>\(.*\)</Port>.*:\1:p' "$config")$(sed -n 's:.*<UrlBase>\(.*\)</UrlBase>.*:\1:p' "$config")/api/v3"
