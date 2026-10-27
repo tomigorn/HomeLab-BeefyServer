@@ -104,7 +104,7 @@ Scripted changes go through the API (`GET`, edit, `POST` the *whole* object to
 `/System/Configuration/encoding`). The header must be
 `Authorization: MediaBrowser Token="<key>"` - `X-Emby-Token` is rejected. An API key
 named "automation (hw-transcode setup)" lives in `secrets/api-key` (gitignored, 600);
-delete it in Dashboard -> API Keys if you no longer want it.
+delete it in Dashboard -> API Keys if you no longer want it. A second key, "avatar-sync", lives on fastpi (`HomeLab-FastPi` `Avatar-Picker/secrets/jellyfin_api_key`) and sets user images after an avatar pick.
 
 ### Pipeline Jellyfin picks (4K HDR10 HEVC -> 1080p SDR H.264)
 

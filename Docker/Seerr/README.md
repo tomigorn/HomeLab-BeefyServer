@@ -55,7 +55,7 @@ sudo sqlite3 /srv/appdata/seerr/db/db.sqlite3 "SELECT l.userId, l.provider, l.us
 
 A duplicate account (signed in before linking): delete it under Users as admin, then link.
 
-Avatar of a Jellyfin-type user (the owner): Seerr refreshes it only on a Jellyfin login, which no longer happens, so `avatarVersion` stays empty and the proxy serves the grey fallback. One-time fix applied 2026-10-19: `sqlite3 db/db.sqlite3 "UPDATE user SET avatarVersion=1 WHERE id=1"`; the proxy then serves Jellyfin's current image (the Holy Grail avatar via the OIDC picture claim). After changing the avatar: hard-refresh; if it stays old, delete `cache/images/avatar`. Holy Grail-created users get the `picture` claim directly.
+Avatars: a pick in the Avatar Picker reaches Seerr without a new login, pushed from fastpi while beefy is up (`HomeLab-FastPi` `Avatar-Picker/README.md`, "How a pick reaches other apps"). Seerr's API cannot set an avatar, so that job updates the one `user` row as uid 65109: Jellyfin-type user (the owner): new `avatarVersion` (`/avatarproxy/<id>?v=<version>`) + empty `cache/images/avatar`; Holy Grail-created user: the new picker URL. Backup before the first run: `/srv/appdata/seerr/db.bak-avatar-sync-20261027.sqlite3`.
 
 ### Preview image (temporary)
 
