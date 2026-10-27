@@ -152,15 +152,17 @@ test("start: fetches settings and names, then renders after the page settles", a
     getUrl: (p, q) => { urls.push(p); return p + "?" + new URLSearchParams(q); },
     getJSON: (u) => Promise.resolve(u.startsWith("ModularHomeViews/UserSettings")
       ? { EnabledSections: ["MyMedia", "NextUp"] }
+      : u.startsWith("Users/") ? { Items: [] }
       : { Items: [{ Section: "MyMedia", DisplayText: "My Media" }, { Section: "NextUp", DisplayText: "Next Up" }] })
   };
   es.start(win);
   const c = win.document.querySelector(".homeSectionsContainer");
   c.innerHTML = section("MyMedia", 1, 2) + section("NextUp", 3, 0, true);
   await new Promise((r) => setTimeout(r, 1500));
-  assert.deepEqual(urls.sort(), ["ModularHomeViews/Sections", "ModularHomeViews/UserSettings"]);
+  assert.deepEqual(urls.sort(), ["ModularHomeViews/Sections", "ModularHomeViews/UserSettings", "Users/u1/Items", "Users/u1/Items"]);
   assert.equal(c.querySelector('[data-hss-placeholder="NextUp"] h2').textContent, "Next Up");
-  assert.equal(c.querySelectorAll("[data-hss-placeholder]").length, 1);
+  assert.equal(c.querySelector('[data-hss-placeholder="RecentlyWatched"] h2').textContent, "Recently Watched");
+  assert.equal(c.querySelectorAll("[data-hss-placeholder]").length, 2);
   win.close();
 });
 
@@ -280,6 +282,126 @@ test("watch again and because you watched say what the plugin needs", () => {
   assert.equal(es.hintFor("BecauseYouWatched", "de"), "Noch nichts hier – schau einen Film fertig, dann gibt es Empfehlungen.");
 });
 
+const RNOW = new Date("2026-10-27T22:00:00Z");
+const daysAgo = (d) => new Date(RNOW.getTime() - d * 86400000).toISOString();
+const movie = (id, d, extra) => ({ Id: id, Name: "Film " + id, Type: "Movie", ServerId: "s1", ProductionYear: 2025, ImageTags: { Thumb: "t" + id }, UserData: { Played: true, LastPlayedDate: d }, ...extra });
+const episode = (series, d) => ({ Id: "e" + series + d, Type: "Episode", SeriesId: series, UserData: { Played: true, LastPlayedDate: d } });
+
+test("recent: played films and series by last play, newest first, one card per series", () => {
+  const picks = es.pickRecent(
+    [movie("m1", daysAgo(0.1)), movie("m2", daysAgo(10))],
+    [episode("s1", daysAgo(1)), episode("s1", daysAgo(5)), episode("s2", daysAgo(20)), episode("s1", daysAgo(30))],
+    RNOW);
+  assert.deepEqual(picks, [{ Id: "m1", Type: "Movie" }, { Id: "s1", Type: "Series" }, { Id: "m2", Type: "Movie" }, { Id: "s2", Type: "Series" }]);
+});
+
+test("recent: only the last 60 days, no date = left out, at most 20", () => {
+  const old = es.pickRecent([movie("m1", daysAgo(61)), movie("m2", null), movie("m3", daysAgo(59))], [episode("s1", daysAgo(70))], RNOW);
+  assert.deepEqual(old, [{ Id: "m3", Type: "Movie" }]);
+  const many = Array.from({ length: 30 }, (_, i) => movie("m" + i, daysAgo(i)));
+  assert.equal(es.pickRecent(many, [], RNOW).length, 20);
+  assert.equal(es.RECENT_DAYS, 60);
+  assert.equal(es.RECENT_LIMIT, 20);
+});
+
+test("recent: sits right after Watch Again, else at the end", () => {
+  assert.deepEqual(es.withRecent(["NextUp", "WatchAgain", "BecauseYouWatched"]), ["NextUp", "WatchAgain", "RecentlyWatched", "BecauseYouWatched"]);
+  assert.deepEqual(es.withRecent(["NextUp", "MyList"]), ["NextUp", "MyList", "RecentlyWatched"]);
+  assert.deepEqual(es.withRecent(["WatchAgain", "RecentlyWatched"]), ["WatchAgain", "RecentlyWatched"]);
+});
+
+test("recent: name and hint in english and german", () => {
+  assert.equal(es.recentName("en"), "Recently Watched");
+  assert.equal(es.recentName("de-CH"), "Kürzlich angesehen");
+  assert.equal(es.hintFor("RecentlyWatched", "en"), "Nothing here yet — films and series you finish show up here.");
+  assert.equal(es.hintFor("RecentlyWatched", "de"), "Noch nichts hier – Filme und Serien, die du fertig schaust, erscheinen hier.");
+});
+
+const fakeApi = { getScaledImageUrl: (id, o) => `https://jf.example.com/Items/${id}/Images/${o.type}?tag=${o.tag}&fillWidth=${o.fillWidth}` };
+
+test("recent: cards link to the item, show name and year, use the thumb, names are text", () => {
+  const c = home(section("WatchAgain", 6, 0, true));
+  const items = [movie("m1", daysAgo(0), { Name: "<b>Sirāt</b>" }), { Id: "s1", Name: "Show", Type: "Series", ServerId: "s1", ProductionYear: 2019, BackdropImageTags: ["b1"], ImageTags: {} }];
+  es.syncRecent(c, items, "Recently Watched", fakeApi);
+  const sec = c.querySelector(".verticalSection.RecentlyWatched[data-hss-client]");
+  assert.equal(sec.querySelector("h2.sectionTitle").textContent, "Recently Watched");
+  const cards = sec.querySelectorAll(".itemsContainer > .card");
+  assert.equal(cards.length, 2);
+  assert.equal(cards[0].getAttribute("data-id"), "m1");
+  assert.equal(cards[0].getAttribute("data-type"), "Movie");
+  assert.equal(cards[0].getAttribute("data-serverid"), "s1");
+  assert.equal(cards[0].querySelector("a.cardImageContainer").getAttribute("href"), "#/details?id=m1&serverId=s1");
+  assert.match(cards[0].querySelector(".cardImageContainer").style.backgroundImage, /Images\/Thumb\?tag=tm1/);
+  assert.equal(cards[0].querySelector(".cardText-first bdi").textContent, "<b>Sirāt</b>");
+  assert.equal(cards[0].querySelector("b"), null);
+  assert.equal(cards[0].querySelector(".cardText-secondary bdi").textContent, "2025");
+  assert.equal(cards[0].querySelector('[data-action="resume"]') !== null, true);
+  assert.match(cards[1].querySelector(".cardImageContainer").style.backgroundImage, /Images\/Backdrop\?tag=b1/);
+  assert.equal(cards[1].getAttribute("data-isfolder"), "true");
+});
+
+test("recent: TV layout gets focusable button cards like Jellyfin's own", () => {
+  const c = home("");
+  c.ownerDocument.documentElement.classList.add("layout-tv");
+  es.syncRecent(c, [movie("m1", daysAgo(0))], "Recently Watched", fakeApi);
+  const card = c.querySelector(".RecentlyWatched .card");
+  assert.equal(card.tagName, "BUTTON");
+  assert.equal(card.getAttribute("data-action"), "link");
+  assert.ok(card.classList.contains("itemAction") && card.classList.contains("show-focus"));
+  assert.equal(card.querySelector("a"), null);
+});
+
+test("recent: no items = no row (placeholder instead), same items = untouched", () => {
+  const c = home("");
+  es.syncRecent(c, [movie("m1", daysAgo(0))], "Recently Watched", fakeApi);
+  const first = c.querySelector(".RecentlyWatched");
+  es.syncRecent(c, [movie("m1", daysAgo(0))], "Recently Watched", fakeApi);
+  assert.equal(c.querySelector(".RecentlyWatched"), first);
+  es.syncRecent(c, [], "Recently Watched", fakeApi);
+  assert.equal(c.querySelector(".RecentlyWatched"), null);
+});
+
+test("recent: render places the row right after Watch Again, empty = placeholder with hint", () => {
+  const enabled = es.withRecent(["NextUp", "WatchAgain", "BecauseYouWatched"]);
+  const names = { NextUp: "Next Up", WatchAgain: "Watch Again", BecauseYouWatched: "Because You Watched", RecentlyWatched: "Recently Watched" };
+  const c = home(section("NextUp", 3, 1) + section("WatchAgain", 6, 0, true) + section("BecauseYouWatched-x", 7, 2));
+  es.syncRecent(c, [movie("m1", daysAgo(0))], "Recently Watched", fakeApi);
+  es.render(c, enabled, names, "en");
+  assert.deepEqual(order(c), ["NextUp", "_WatchAgain", "RecentlyWatched", "BecauseYouWatched-x"]);
+  assert.equal(c.querySelector(".RecentlyWatched").style.order, "6");
+  es.syncRecent(c, [], "Recently Watched", fakeApi);
+  es.render(c, enabled, names, "en");
+  assert.deepEqual(order(c), ["NextUp", "_WatchAgain", "_RecentlyWatched", "BecauseYouWatched-x"]);
+  assert.equal(c.querySelector('[data-hss-placeholder="RecentlyWatched"] [data-hss-hint]').textContent, "Nothing here yet — films and series you finish show up here.");
+});
+
+test("recent: loads the user's played films and episodes, then the series", async () => {
+  const urls = [];
+  const api = {
+    getUrl: (p, q) => { urls.push([p, q]); return p + "?" + new URLSearchParams(q); },
+    getJSON: (u) => Promise.resolve(u.includes("IncludeItemTypes=Movie") ? { Items: [movie("m1", daysAgo(0))] }
+      : u.includes("IncludeItemTypes=Episode") ? { Items: [episode("s9", daysAgo(2))] }
+      : { Items: [{ Id: "s9", Name: "Show", Type: "Series", ServerId: "s1" }] })
+  };
+  const items = await es.loadRecent(api, "u1", RNOW);
+  assert.deepEqual(items.map((i) => i.Id), ["m1", "s9"]);
+  assert.deepEqual(urls.map((u) => u[0]), ["Users/u1/Items", "Users/u1/Items", "Users/u1/Items"]);
+  for (const [, q] of urls.slice(0, 2)) {
+    assert.equal(q.IsPlayed, true);
+    assert.equal(q.SortBy, "DatePlayed");
+    assert.equal(q.SortOrder, "Descending");
+    assert.equal(q.Recursive, true);
+  }
+  assert.equal(urls[2][1].Ids, "s9");
+});
+
+test("recent: no series played = no series request", async () => {
+  let calls = 0;
+  const api = { getUrl: (p, q) => p + "?" + new URLSearchParams(q), getJSON: (u) => { calls++; return Promise.resolve({ Items: [] }); } };
+  assert.deepEqual(await es.loadRecent(api, "u1", RNOW), []);
+  assert.equal(calls, 2);
+});
+
 test("start: a ticking clock (TV layout) does not hold the run back", async () => {
   const dom = new JSDOM('<html lang="en"><body><div class="currentTimeText"></div><div class="homeSectionsContainer"></div></body></html>');
   const win = dom.window;
@@ -299,4 +421,19 @@ test("start: a ticking clock (TV layout) does not hold the run back", async () =
   clearInterval(tick);
   assert.ok(c.querySelector('[data-hss-placeholder="NextUp"]'));
   win.close();
+});
+
+test("recent: a new row is inserted where its placeholder is, so Jellyfin's scroller is attached once", () => {
+  const enabled = es.withRecent(["NextUp", "WatchAgain", "BecauseYouWatched"]);
+  const c = home(section("NextUp", 3, 1) + section("WatchAgain", 6, 0, true) + section("BecauseYouWatched-x", 7, 2));
+  es.render(c, enabled, {}, "en");
+  const moved = [];
+  new c.ownerDocument.defaultView.MutationObserver((ms) => ms.forEach((m) => m.removedNodes.forEach((n) => n.classList && n.classList.contains("RecentlyWatched") && moved.push(n)))).observe(c, { childList: true });
+  es.syncRecent(c, [movie("m1", daysAgo(0))], "Recently Watched", fakeApi);
+  const sec = c.querySelector(".RecentlyWatched");
+  assert.equal(sec.nextSibling, c.querySelector('[data-hss-placeholder="RecentlyWatched"]'));
+  assert.equal(sec.style.order, "6");
+  es.render(c, enabled, {}, "en");
+  assert.deepEqual(order(c), ["NextUp", "_WatchAgain", "RecentlyWatched", "BecauseYouWatched-x"]);
+  return new Promise((r) => setTimeout(r, 0)).then(() => assert.equal(moved.length, 0));
 });
