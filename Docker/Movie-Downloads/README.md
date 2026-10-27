@@ -275,20 +275,20 @@ All Newznab, synced by Prowlarr to Radarr (movie categories 2000-2090) and Sonar
 |---|---|---|---|---|---|
 | NZBgeek | 25 | `https://api.nzbgeek.info` | Standard (RSS + search) | none | UI |
 | NzbPlanet | 26 | `https://api.nzbplanet.net` | Standard (RSS + search) | 20,000 API calls per day (query limit 20000, unit Day) | UI |
-| Treasure Maps | 30 | `https://treasure-maps.com` | **Search only** (no RSS) | Supporter until 2031-11-17: no search limit (query limit off), 400 downloads a day (grab 400, unit Day), max 5 requests/s ([rules](#treasure-maps-rules)) | `scripts/treasure-maps.sh` |
+| Treasure Maps | 27 | `https://treasure-maps.com` | Standard (RSS + search) | Supporter until 2031-11-17: no search limit (query limit off), 400 downloads a day (grab 400, unit Day), max 5 requests/s ([rules](#treasure-maps-rules)) | `scripts/treasure-maps.sh` |
 
 Priority (set 2026-10-26, owner):
 - Only a tie-breaker: Radarr/Sonarr pick by quality and custom format score first; priority decides only between equal releases. Lower = preferred.
-- Unlimited before limited: NZBgeek 25, NzbPlanet 26, Treasure Maps 30, torrents 40, NZBIndex 50. So the 5 Treasure Maps grabs a day go to releases the others do not have.
-- Treasure Maps is now unlimited for searches but not lifetime (Supporter to 2031-11-17), so it stays at 30; to prefer it: `PRIORITY` in `scripts/treasure-maps.sh`, re-run it.
+- Unlimited before limited: NZBgeek 25, NzbPlanet 26, Treasure Maps 27, torrents 40, NZBIndex 50 (owner 2026-10-28, Supporter: 400 grabs a day).
+- Treasure Maps 27 (was 30): set by `PRIORITY` in `scripts/treasure-maps.sh`, re-run it.
 - Change: Prowlarr -> Indexers -> edit -> Indexer Priority (or the API), then `ApplicationIndexerSync`; Radarr/Sonarr follow. Check: `GET /api/v3/indexer` on both shows the same numbers.
 - The query/grab limits stop Prowlarr before the indexer blocks the account (Prowlarr counts a rolling 24 h for unit Day). The same limits feed the usage bar above Seerr: `../Seerr/README.md` "Indexer bar" (`../Seerr/indexer-bar/limits.toml`, keep both equal).
 
 - Treasure Maps is the German source: tags German releases with the standard category too (`2040` + `Movies - DE/HD`), so the normal sync categories find them. Knives Out 2019: 31 `German.DL` releases, the other two indexers 0.
-- RSS off since the trial (~144 calls/day were too many then); with Supporter there is no search limit, so the profile "Search only" can be switched to RSS if wanted (still ≤ 5 requests/s).
+- RSS on since 2026-10-28 (Supporter, no search limit): profile "Standard" in the script; Radarr (30 min) and Sonarr (15 min) poll it, a few calls an hour, far under 5 requests/s. Prowlarr re-syncs enableRss from the profile.
 - Prowlarr spaces requests to one indexer by its own fixed minimum interval (observed ≥ 1 s between two queries), far under 5/s; there is no per-indexer rate field to raise.
 - `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) on every run, enables the indexer and is idempotent. New key: replace the file, re-run the script. A rejected key makes it exit 1 and change nothing.
-- **Enabled and in use** (priority 30, grab limit 400/day, no search limit). Account was replaced after the 2026-10-19 block (duplicate after the site migration).
+- **Enabled and in use** (priority 27, RSS on, grab limit 400/day, no search limit). Account was replaced after the 2026-10-19 block (duplicate after the site migration).
 
 ### Treasure Maps rules
 
@@ -560,7 +560,7 @@ Why this shape:
 | | |
 |---|---|
 | Profiles | every Recyclarr profile `upgradeAllowed: true`; cutoff = best quality (Radarr Bluray-2160p, Sonarr WEB 2160p) + score 25000000 = HDR + original + English (twins 20000000; HD and anime 5000000); minimum upgrade step 1, see [Release scoring](#release-scoring) |
-| RSS | Radarr every 30 min, Sonarr every 15 min, NZBgeek + NzbPlanet (Treasure Maps is search-only). Runs only while beefy is awake: new releases that appear while it sleeps are missed by RSS |
+| RSS | Radarr every 30 min, Sonarr every 15 min, NZBgeek + NzbPlanet + Treasure Maps. Runs only while beefy is awake: new releases that appear while it sleeps are missed by RSS |
 | Night search | `systemd/night-search.timer`, daily 04:17 (inside the 03:55 wake, after Recyclarr 04:15): `scripts/night-search.py`, 1 Treasure Maps call per movie or episode, ~3 per season |
 | Order | 1 episodes aired in the last 14 days without a file; 2 movies released (digital or physical) in the last 60 days without a file; 3 cutoff-unmet: 5 movies + 5 episodes. Monitored only, not in the queue, not searched in the last 20 h, least recently searched first. 3+ missing episodes of one season = one `SeasonSearch`, else `EpisodeSearch` |
 | Indexer budget | ≤ 200 Treasure Maps searches a night (`NS_TM_MAX`); with a search limit set in the bar also never above 70 % of its window (`NS_TM_MAX_PCT`); none set (Supporter) = just the cap; bar missing or older than 15 min = 10 (`NS_TM_FALLBACK`). Over budget: the rest is logged `skipped (budget)` and, being least recently searched, comes first next night. Radarr's own `CutoffUnmetMoviesSearch` has no cap, hence the script |

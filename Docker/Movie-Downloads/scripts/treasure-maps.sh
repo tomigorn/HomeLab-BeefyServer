@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Adds or updates the Newznab indexer "Treasure Maps" in Prowlarr; Prowlarr syncs it to Radarr and Sonarr. Idempotent.
 #   ~/Projects/Docker/Movie-Downloads/scripts/treasure-maps.sh
-# API key: secrets/treasure-maps.apikey (gitignored, 600), read on every run: replace the file and re-run to switch keys. Supporter until 2031-11-17: no search limit, 400 downloads a day, max 5 requests/s (README "Treasure Maps rules"). RSS stays off (app profile "Search only").
+# API key: secrets/treasure-maps.apikey (gitignored, 600), read on every run: replace the file and re-run to switch keys. Supporter until 2031-11-17: no search limit, 400 downloads a day, max 5 requests/s (README "Treasure Maps rules"). RSS on (app profile "Standard", Radarr 30 min, Sonarr 15 min, far under 5 requests/s).
 set -euo pipefail
 
 DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -9,14 +9,14 @@ H=${H:-127.0.0.1}
 PK=$(grep -oP '(?<=<ApiKey>)[^<]+' /srv/appdata/prowlarr/config.xml)
 TK=$(tr -d '\n' < "$DIR/secrets/treasure-maps.apikey")
 NAME="Treasure Maps"
-PRIORITY=30   # README "Indexers": after the unlimited usenet indexers (27 once it is lifetime)
-PROFILE="Search only"
+PRIORITY=27   # README "Indexers": after NZBgeek 25 and NzbPlanet 26, before torrents 40 and NZBIndex 50
+PROFILE="Standard"   # RSS + search; Prowlarr syncs enableRss to Radarr and Sonarr from it
 
 p() { local path=$1; shift; curl -sf -H "X-Api-Key: $PK" -H 'Content-Type: application/json' "http://$H:9696/api/v1$path" "$@"; }
 
 profile_id=$(p /appprofile | PROFILE=$PROFILE python3 -c 'import json,os,sys; print(next((a["id"] for a in json.load(sys.stdin) if a["name"]==os.environ["PROFILE"]), ""))')
 if [ -z "$profile_id" ]; then
-  profile_id=$(p /appprofile -X POST -d "{\"name\":\"$PROFILE\",\"enableRss\":false,\"enableAutomaticSearch\":true,\"enableInteractiveSearch\":true,\"minimumSeeders\":1}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+  profile_id=$(p /appprofile -X POST -d "{\"name\":\"$PROFILE\",\"enableRss\":true,\"enableAutomaticSearch\":true,\"enableInteractiveSearch\":true,\"minimumSeeders\":1}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 fi
 
 body=$( { p /indexer/schema; echo; p /indexer; } | NAME=$NAME TK=$TK PROFILE_ID=$profile_id PRIORITY=$PRIORITY python3 -c '
