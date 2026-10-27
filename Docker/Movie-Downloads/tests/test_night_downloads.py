@@ -91,6 +91,12 @@ class Day(unittest.TestCase):
         self.assertEqual(p.pause_nzos, ["j15", "j0", "jq"])
         self.assertEqual(p.pending, 3)
 
+    def test_waiting_for_seerr_are_the_pending_night_items_lowercase(self):
+        ts = [T_NIGHT, tor("T15", 2, "downloading", eta=15 * 60), tor("t14", 3, "downloading", eta=14 * 60), tor("urgp", 4)]
+        p = plan(TUE_0602, ts, [J_NIGHT, J_NOW], urgent={"urgp"})
+        self.assertEqual(sorted(p.waiting), ["aaa", "sabnzbd_nzo_1", "t15"])
+        self.assertEqual(len(p.waiting), p.pending)
+
     def test_sab_without_speed_pauses_everything(self):
         p = plan(TUE_0600, slots=[job("j", 0, "Downloading", timeleft="0:02:00")], kbps=0)
         self.assertEqual(p.pause_nzos, ["j"])
@@ -166,6 +172,10 @@ class Fifo(unittest.TestCase):
         p = plan(MON_2205, ts, urgent={"urg"})
         self.assertEqual((p.hashes, p.pause_hashes), (["urg"], []))
 
+    def test_nothing_waits_for_the_night_during_the_night(self):
+        p = plan(MON_2205, [T_NIGHT, tor("zzz", 300)], [J_NIGHT, job("SABnzbd_nzo_5", 1)])
+        self.assertEqual((p.pending, p.waiting), (2, []))
+
     def test_paused_item_outside_night_categories_is_never_touched(self):
         p = plan(MON_2205, [T_NOW_PAUSED], [J_NOW], {"ccc", "sabnzbd_nzo_2"})
         self.assertEqual((p.hashes, p.nzos, p.pending), ([], [], 0))
@@ -229,12 +239,13 @@ class Run(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.state = pathlib.Path(self.tmp.name) / "night-downloads.json"
+        self.public = pathlib.Path(self.tmp.name) / "seerr" / "night-waiting.json"
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def go(self, f, now, dry=False):
-        return nd.run(now, f.qbit, f.sab, {"radarr": f.arr("radarr"), "sonarr": f.arr("sonarr")}, self.state, dry_run=dry)
+        return nd.run(now, f.qbit, f.sab, {"radarr": f.arr("radarr"), "sonarr": f.arr("sonarr")}, self.state, dry_run=dry, public_path=self.public)
 
     def test_low_tariff_resumes_the_head_and_writes_pending(self):
         f = Fake([T_NIGHT, tor("zzz", 300)], [J_NIGHT, job("SABnzbd_nzo_5", 1)])
@@ -264,12 +275,31 @@ class Run(unittest.TestCase):
         self.go(f2, later)
         self.assertEqual(f2.actions(), [("qbit", "/torrents/start", {"hashes": "new"})])
 
+    def test_seerr_file_lists_the_waiting_ids_by_day(self):
+        f = Fake([T_NIGHT, T_NIGHT_V4], [J_NIGHT])
+        self.assertEqual(self.go(f, MON_DAY), 0)
+        pub = json.loads(self.public.read_text())
+        self.assertEqual((sorted(pub["waiting"]), pub["low_tariff"]), (["aaa", "sabnzbd_nzo_1"], False))
+        self.assertIsNotNone(datetime.datetime.fromisoformat(pub["updated"]).tzinfo)
+        self.assertEqual(self.public.stat().st_mode & 0o777, 0o644)
+        self.assertNotIn("waiting", json.loads(self.state.read_text()))
+
+    def test_seerr_file_is_empty_during_the_night(self):
+        self.go(Fake([T_NIGHT, tor("zzz", 300)], [J_NIGHT]), MON_2205)
+        self.assertEqual(json.loads(self.public.read_text())["waiting"], [])
+
+    def test_seerr_file_not_writable_fails_but_the_state_is_written(self):
+        self.public = pathlib.Path("/proc/nope/night-waiting.json")
+        self.assertEqual(self.go(Fake([T_NIGHT], [J_NIGHT]), MON_DAY), 1)
+        self.assertEqual(json.loads(self.state.read_text())["pending"], 2)
+
     def test_dry_run_changes_nothing(self):
         f = Fake([T_NIGHT, tor("t", 1, "downloading", eta=3600)], [J_NIGHT])
         self.assertEqual(self.go(f, MON_2205, dry=True), 0)
         self.assertEqual(self.go(f, TUE_0602, dry=True), 0)
         self.assertEqual(f.actions(), [])
         self.assertFalse(self.state.exists())
+        self.assertFalse(self.public.exists())
 
     def test_client_down_keeps_the_old_state_and_fails(self):
         self.state.write_text('{"pending": 4}')

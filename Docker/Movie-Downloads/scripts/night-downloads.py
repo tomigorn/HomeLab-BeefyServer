@@ -3,6 +3,7 @@
 Low tariff (22:00-06:00 and all Sunday): FIFO, one night download per client at a time (qBittorrent by added_on, SABnzbd by queue position, one title finished before the next); a torrent stalled for STALL_MIN lets the next one start too.
 Outside the low tariff: night items still downloading are paused unless their ETA is under GRACE_MIN; they resume at the next low tariff where they stopped. Any time: the night items of titles tagged download-now resume and are never paused.
 Writes ~/.local/state/movie-downloads/night-downloads.json ({"pending": n, "stalled": {hash: since}}), which fastpi reads to decide its 22:05 wake.
+Writes the download ids waiting for the night (outside the low tariff) to /srv/appdata/indexer-bar/night-waiting.json for Seerr's night label (../Seerr/README.md "Night label"; env ND_PUBLIC, empty = off).
 Run by systemd/night-downloads.timer (every 2 min while awake, and at boot). Usage: scripts/night-downloads.py [--dry-run]; ND_NOW=2026-10-27T22:10 simulates a clock (with --dry-run)."""
 import datetime
 import json
@@ -17,6 +18,7 @@ from dataclasses import dataclass, field
 
 HERE = pathlib.Path(__file__).resolve().parent
 STATE = pathlib.Path(os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".local" / "state")) / "movie-downloads" / "night-downloads.json"
+PUBLIC = "/srv/appdata/indexer-bar/night-waiting.json"
 NIGHT_QBIT = {"radarr-night", "sonarr-night"}
 NIGHT_SAB = {"movies-night", "tv-night"}
 TAG = "download-now"
@@ -41,6 +43,7 @@ class Plan:
     pause_nzos: list = field(default_factory=list)
     pending: int = 0
     stalled: dict = field(default_factory=dict)
+    waiting: list = field(default_factory=list)
 
 
 def low_tariff(dt):
@@ -104,6 +107,7 @@ def fifo(items, key, order, titles):
 def _client(p, low, items, key, eta, stalled_long, resume, pause, titles, order):
     taken = False
     for it in fifo(items, key, order, titles):
+        before = p.pending
         if it["_paused"]:
             if low and not taken:
                 resume.append(it[key])
@@ -122,6 +126,8 @@ def _client(p, low, items, key, eta, stalled_long, resume, pause, titles, order)
             p.pending += 1
         else:
             taken = True
+        if not low and p.pending > before:
+            p.waiting.append(it[key].lower())
 
 
 def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0):
@@ -154,7 +160,16 @@ def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0):
     return p
 
 
-def run(now, qbit, sab, apps, state_path, dry_run=False):
+def write_public(path, p, now):
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"waiting": p.waiting, "low_tariff": low_tariff(now), "updated": now.astimezone().isoformat(timespec="seconds")}) + "\n")
+    tmp.chmod(0o644)
+    tmp.replace(path)
+
+
+def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None):
     rc, urgent, titles = 0, set(), {}
     for app, api in apps.items():
         try:
@@ -203,6 +218,12 @@ def run(now, qbit, sab, apps, state_path, dry_run=False):
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps({"pending": p.pending, "low_tariff": low_tariff(now), "updated": now.isoformat(timespec="seconds"), "stalled": p.stalled}) + "\n")
     tmp.replace(state_path)
+    if public_path:
+        try:
+            write_public(public_path, p, now)
+        except OSError as e:
+            print(f"Seerr night label not written: {e}", file=sys.stderr)
+            rc = 1
     return rc
 
 
@@ -261,7 +282,7 @@ def main():
     qbit = qbit_client(os.environ.get("ND_QBIT_URL", "http://127.0.0.1:8080") + "/api/v2")
     sab = sab_client(os.environ.get("ND_SAB_URL", "http://127.0.0.1:8081"), os.environ.get("ND_SAB_KEY", HERE.parent / "secrets" / "hook" / "sabnzbd.apikey"))
     apps = {app: arr_client(app, os.environ.get(f"ND_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml")) for app in APPS}
-    return run(now_from(os.environ), qbit, sab, apps, os.environ.get("ND_STATE", STATE), dry_run=dry)
+    return run(now_from(os.environ), qbit, sab, apps, os.environ.get("ND_STATE", STATE), dry_run=dry, public_path=os.environ.get("ND_PUBLIC", PUBLIC))
 
 
 if __name__ == "__main__":
