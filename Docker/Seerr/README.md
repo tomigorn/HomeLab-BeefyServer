@@ -232,7 +232,7 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 
 ## Menu links
 
-`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds **Audiobooks** after Series in the desktop sidebar, the phone drawer and the phone bottom bar (5th item, while it has room and no "more" button; otherwise in the "more" list), opening `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, LAN/VPN, group `streaming-requesters`) in the same tab. Links and URL: `LINKS` at the top of the file. Seerr without a `/discover/tv` link: no entry, nothing breaks.
+`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds **Audiobooks** after Series in the desktop sidebar, the phone drawer and the phone bottom bar (5th item, while it has room and no "more" button; otherwise in the "more" list), opening `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, public via Cloudflare, Holy Grail login, group `streaming-requesters`) in the same tab. Links and URL: `LINKS` at the top of the file. Seerr without a `/discover/tv` link: no entry, nothing breaks.
 
 | Check | Command |
 |---|---|
