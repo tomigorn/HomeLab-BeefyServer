@@ -422,7 +422,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.4.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.5.0"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
