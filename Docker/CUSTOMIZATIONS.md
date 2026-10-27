@@ -103,6 +103,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Pinned subnet 172.28.16.0/24, internal redis net | compose | compose | `floppy.subnet`: → 172.28.16.0/24 172.28.16.x internal-redis=true | |
 | Egress: internet 80/443 only, no LAN/Docker | `_global/scripts/docker-user-guard.sh` | `sudo docker-user-guard.sh --persist` | `floppy.egress-lan-blocked`: → blocked; `floppy.egress-internet`: tmdb 443 → open | subnet change escapes the rule |
 | Ingress: fastpi + jellyfin subnet only (webhooks via 192.168.1.102:8012) | docker-user-guard.sh | docker-user-guard.sh | `floppy.ingress-narrowed`: → jellyfin=open seerr=open sonarr=blocked | |
+| ABS progress pushed, no ABS pull: no recurring ABS import task, account rows hold a placeholder, not a key | `scripts/abs-push*.py`, `systemd/floppy-abs-push.*`, keys `secrets/abs-push/` | README "Audiobookshelf push" | `floppy.abs-pull-off`: → 0 tasks 0 keys; `floppy.abs-push-selftest`: → ok dry-run; `floppy.abs-push-timer`: → enabled success | importer internals renamed (`AudiobookshelfImporter`, `client.get_me/get_library_item`, `decrypt_or_raise`, `image_cache.store_cover`, cover key `abs-cover:<account>:<item>`) |
 
 ## Antivirus
 

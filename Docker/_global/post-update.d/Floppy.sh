@@ -1,4 +1,5 @@
 # Floppy customizations (Docker/CUSTOMIZATIONS.md "Floppy"). Sourced by post-update-check.sh.
+FLOPPY_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../Floppy" && pwd)
 fl_page() { curl -s -m 8 -H 'Host: tracker.holy-grail.ch' -H 'X-Forwarded-Proto: https' "http://127.0.0.1:8012$1"; }
 fl_ip() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' floppy | tr ' ' '\n' | grep '^172\.28\.16\.' | head -1; }
 if want floppy; then
@@ -10,4 +11,7 @@ if want floppy; then
   check floppy.egress-lan-blocked '^blocked$' "$(docker exec floppy nc -zw2 192.168.1.2 443 >/dev/null 2>&1 && echo open || echo blocked)"
   check floppy.egress-internet '^open$' "$(docker exec floppy nc -zw4 api.themoviedb.org 443 >/dev/null 2>&1 && echo open || echo blocked)"
   check floppy.ingress-narrowed '^jellyfin=open seerr=open sonarr=blocked$' "$(for c in jellyfin seerr movie-sonarr; do printf '%s=%s ' "${c#movie-}" "$(docker exec "$c" nc -zw2 192.168.1.102 8012 >/dev/null 2>&1 && echo open || echo blocked)"; done | xargs)"
+  check floppy.abs-pull-off '^0 tasks 0 keys$' "$(docker exec -u abc -w /floppy floppy python manage.py shell -c "from django_celery_beat.models import PeriodicTask; from integrations.models import AudiobookshelfAccount; print(PeriodicTask.objects.filter(task__icontains='audiobookshelf').count(), 'tasks', AudiobookshelfAccount.objects.exclude(api_token='pushed-by-abs-push').count(), 'keys')" 2>&1 | tail -1)"
+  check floppy.abs-push-selftest '^ok dry-run$' "$("$FLOPPY_DIR/scripts/abs-push.py" selftest 2>&1 | tail -1)"
+  check floppy.abs-push-timer '^enabled success$' "$(systemctl is-enabled floppy-abs-push.timer 2>&1) $(systemctl show -p Result --value floppy-abs-push.service 2>&1)"
 fi
