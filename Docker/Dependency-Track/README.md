@@ -69,7 +69,7 @@ Then via the API (`http://127.0.0.1:8090/api`): `POST /v1/user/forceChangePasswo
 
 ## Update
 
-`notify` tier in `_global/auto-update.conf` (DB migrates one way). Both images share one tag (`DT_TAG`). Before: `sudo docker exec dt-db pg_dump -U dtrack -Fc dtrack > ~/backups/dt-$(date +%F).dump`. DT 5.x is a new architecture (migration guide), not a tag bump.
+`notify` tier in `_global/auto-update.conf` (DB migrates one way). Both images share one tag (`DT_TAG`). Before: `sudo docker exec dt-db pg_dump -U dtrack -Fc dtrack > ~/backups/dt-$(date +%F).dump`. DT 5.x is a new architecture, not a tag bump: [docs/v5-cutover.md](docs/v5-cutover.md).
 
 ## Check
 
