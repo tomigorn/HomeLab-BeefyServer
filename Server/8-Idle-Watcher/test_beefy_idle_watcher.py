@@ -265,6 +265,74 @@ class TestUploadsIgnored(unittest.TestCase):
                          ("movie-gluetun", "eth0", "tun0"))
 
 
+class TestIdleMetrics(unittest.TestCase):
+    def test_render_marks_active_reasons(self):
+        out = biw.render_idle_metrics(["conns", "net"], "192.168.1.50:55512", 1000)
+        self.assertIn('beefy_idle_busy{reason="conns"} 1', out)
+        self.assertIn('beefy_idle_busy{reason="net"} 1', out)
+        self.assertIn('beefy_idle_busy{reason="disk"} 0', out)
+        self.assertIn('beefy_idle_info{detail="192.168.1.50:55512"} 1', out)
+        self.assertIn("beefy_idle_updated_timestamp_seconds 1000", out)
+
+    def test_render_idle_has_all_zero_and_empty_detail(self):
+        out = biw.render_idle_metrics([], "", 5)
+        self.assertNotIn("} 1\n", out.replace("beefy_idle_info{detail=\"\"} 1\n", ""))
+        self.assertIn('beefy_idle_info{detail=""} 1', out)
+
+    def test_render_covers_every_reason_label(self):
+        out = biw.render_idle_metrics([], "", 5)
+        for r in ("conns", "ssh", "vscode", "cpu", "net", "disk", "inhibit", "probe_error"):
+            self.assertIn('beefy_idle_busy{reason="%s"} 0' % r, out)
+
+    def test_detail_is_sanitised_and_short(self):
+        out = biw.render_idle_metrics(["conns"], 'a"b\\c\nd{e}' + "x" * 200, 5)
+        line = [l for l in out.splitlines() if l.startswith("beefy_idle_info")][0]
+        detail = line.split('"')[1]
+        self.assertLessEqual(len(detail), 80)
+        for ch in '"\\{}\n':
+            self.assertNotIn(ch, detail)
+
+    def test_first_inbound_peer_from_ss(self):
+        txt = ("ESTAB 0 0 192.168.1.102:22 192.168.1.2:39778\n"
+               "ESTAB 0 0 192.168.1.102:8096 192.168.1.50:55512\n")
+        self.assertEqual(biw.first_inbound_peer(txt, {22, 8096}, {22}, ""), "192.168.1.50:55512")
+
+    def test_first_inbound_peer_falls_back_to_conntrack(self):
+        ct = ("tcp 6 431992 ESTABLISHED src=192.168.1.2 dst=192.168.1.102 sport=53840 "
+              "dport=8090 src=172.28.14.4 dst=192.168.1.2 sport=8080 dport=53840 [ASSURED]\n")
+        self.assertEqual(
+            biw.first_inbound_peer("", {22}, {22}, ct, {"192.168.1.102"}, {8090}),
+            "192.168.1.2:53840")
+
+    def test_first_inbound_peer_none(self):
+        self.assertEqual(biw.first_inbound_peer("", {22}, {22}, ""), "")
+
+    def test_detail_text_per_reason(self):
+        self.assertEqual(biw.idle_detail(["inhibit"], "", {}), "keep-awake file")
+        self.assertEqual(biw.idle_detail(["vscode"], "", {}), "VS Code Remote")
+        self.assertEqual(biw.idle_detail(["conns"], "1.2.3.4:5", {}), "conn from 1.2.3.4:5")
+        self.assertEqual(biw.idle_detail(["ssh"], "", {"ssh": 2}), "interactive ssh x2")
+        self.assertEqual(biw.idle_detail(["cpu", "net"], "", {"cpu": 31.4, "net": 512.0}),
+                         "cpu 31%, net 512 kB/s")
+        self.assertEqual(biw.idle_detail([], "", {}), "")
+
+    def test_write_idle_metrics_is_atomic_and_readable(self):
+        import os, tempfile
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "idle.prom")
+        biw.write_idle_metrics(path, "x 1\n")
+        self.assertEqual(open(path).read(), "x 1\n")
+        self.assertEqual(os.listdir(d), ["idle.prom"])
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
+
+    def test_write_failure_is_swallowed(self):
+        biw.write_idle_metrics("/nonexistent-dir/idle.prom", "x\n")
+
+    def test_config_metrics_file(self):
+        self.assertEqual(load_config({}) ["METRICS_FILE"], "/run/beefy-idle.prom")
+        self.assertEqual(load_config({"METRICS_FILE": "/tmp/x.prom"})["METRICS_FILE"], "/tmp/x.prom")
+
+
 class TestVersion(unittest.TestCase):
     def test_version_is_set(self):
         self.assertTrue(biw.VERSION and biw.VERSION[0].isdigit())

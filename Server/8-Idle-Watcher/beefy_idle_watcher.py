@@ -217,6 +217,79 @@ def disk_kbps(ds_a, ds_b, disks, secs):
     return max(0, delta) * 512 / 1000.0 / secs   # clamp counter reset (negative) to 0
 
 
+IDLE_REASONS = ("conns", "ssh", "vscode", "cpu", "net", "disk", "inhibit", "probe_error")
+_SAFE = re.compile(r"[^A-Za-z0-9 .,:_%/+-]")
+
+
+def first_inbound_peer(ss_estab_text, listen_ports, exclude_ports, ct_text,
+                       local_addrs=(), published_ports=()):
+    """peer ip:port of the first inbound connection (ss first, then conntrack), else ''."""
+    for line in ss_estab_text.splitlines():
+        toks = [t for t in line.split()
+                if t.rpartition(":")[2].isdigit() and t.rpartition(":")[0]]
+        if len(toks) < 2:
+            continue
+        lport = int(toks[0].rpartition(":")[2])
+        if lport in listen_ports and lport not in exclude_ports:
+            return toks[1]
+    for line in ct_text.splitlines():
+        if "ESTABLISHED" not in line:
+            continue
+        src = re.search(r"\bsrc=(\S+)", line)
+        sport = re.search(r"\bsport=(\d+)", line)
+        dst = re.search(r"\bdst=(\S+)", line)
+        dport = re.search(r"\bdport=(\d+)", line)
+        if not (src and sport and dst and dport):
+            continue
+        port = int(dport.group(1))
+        if dst.group(1) in local_addrs and port in published_ports and port not in exclude_ports:
+            return "%s:%s" % (src.group(1), sport.group(1))
+    return ""
+
+
+def idle_detail(reasons, peer, stats):
+    """Short human text for what keeps beefy awake."""
+    parts = []
+    if "inhibit" in reasons:
+        parts.append("keep-awake file")
+    if "vscode" in reasons:
+        parts.append("VS Code Remote")
+    if "conns" in reasons and peer:
+        parts.append("conn from %s" % peer)
+    if "ssh" in reasons:
+        parts.append("interactive ssh x%d" % stats.get("ssh", 1))
+    if "cpu" in reasons:
+        parts.append("cpu %.0f%%" % stats.get("cpu", 0))
+    if "net" in reasons:
+        parts.append("net %.0f kB/s" % stats.get("net", 0))
+    if "disk" in reasons:
+        parts.append("disk %.0f kB/s" % stats.get("disk", 0))
+    return ", ".join(parts)
+
+
+def render_idle_metrics(reasons, detail, ts):
+    """node-exporter textfile body: one 0/1 per reason, the detail, the write time."""
+    safe = _SAFE.sub("", str(detail))[:80]
+    lines = ["# TYPE beefy_idle_busy gauge"]
+    lines += ['beefy_idle_busy{reason="%s"} %d' % (r, int(r in reasons)) for r in IDLE_REASONS]
+    lines += ["# TYPE beefy_idle_info gauge", 'beefy_idle_info{detail="%s"} 1' % safe,
+              "# TYPE beefy_idle_updated_timestamp_seconds gauge",
+              "beefy_idle_updated_timestamp_seconds %d" % ts]
+    return "\n".join(lines) + "\n"
+
+
+def write_idle_metrics(path, body):
+    """Atomic write; a failure never affects the idle decision."""
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            f.write(body)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except OSError as e:
+        log("WARN: metrics write failed: %s" % e)
+
+
 def evaluate(probes, inhibit):
     """(busy, reasons) from per-probe booleans + the inhibit flag."""
     reasons = []
@@ -263,6 +336,7 @@ _DEFAULTS = {
     "VPN_CONTAINER": "",
     "VPN_UPLINK": "eth0",
     "VPN_TUNNEL": "tun0",
+    "METRICS_FILE": "/run/beefy-idle.prom",
 }
 
 
@@ -295,7 +369,7 @@ def load_config(env):
         cfg["DATA_DISKS"] = _clean(env["DATA_DISKS"]).split()
     if "EXCLUDE_PORTS" in env:
         cfg["EXCLUDE_PORTS"] = {int(p) for p in _clean(env["EXCLUDE_PORTS"]).split()}
-    for key in ("INHIBIT_FILE", "VPN_CONTAINER", "VPN_UPLINK", "VPN_TUNNEL"):
+    for key in ("INHIBIT_FILE", "METRICS_FILE", "VPN_CONTAINER", "VPN_UPLINK", "VPN_TUNNEL"):
         if key in env:
             cfg[key] = _clean(env[key])
     return cfg
@@ -335,7 +409,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.3.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.4.0"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -386,15 +460,13 @@ def main():
             # uploaded bytes were read from the data disks first (through mergerfs, so not attributable per process)
             disk = max(0.0, disk_kbps(prev["ds"], cur["ds"], cfg["DATA_DISKS"], secs) - vpn_up)
             listen = parse_listen_ports(_run(["ss", "-ltnH"]))
-            conns = count_inbound(_run(["ss", "-tnH", "state", "established"]),
-                                  listen, cfg["EXCLUDE_PORTS"])
-            ct = count_ct_inbound(
-                _run(["conntrack", "-L", "-p", "tcp", "--state", "ESTABLISHED"]),
-                parse_local_addrs(_run(["ip", "-o", "-4", "addr", "show"])),
-                parse_published_ports(
-                    _run(["docker", "ps", "--format", "{{.Ports}}"])),
-                cfg["EXCLUDE_PORTS"],
-                _ct_est_timeout(), cfg["CT_MAX_IDLE"])
+            estab = _run(["ss", "-tnH", "state", "established"])
+            conns = count_inbound(estab, listen, cfg["EXCLUDE_PORTS"])
+            ct_text = _run(["conntrack", "-L", "-p", "tcp", "--state", "ESTABLISHED"])
+            local_addrs = parse_local_addrs(_run(["ip", "-o", "-4", "addr", "show"]))
+            published = parse_published_ports(_run(["docker", "ps", "--format", "{{.Ports}}"]))
+            ct = count_ct_inbound(ct_text, local_addrs, published, cfg["EXCLUDE_PORTS"],
+                                  _ct_est_timeout(), cfg["CT_MAX_IDLE"])
             ps = _run(["ps", "-eo", "args"])
             ssh = count_interactive_ssh(ps)
             vscode = vscode_remote_active(ps)
@@ -408,13 +480,18 @@ def main():
                 "disk": disk > cfg["DISK_BUSY_KBPS"],
             }
             busy, reasons = evaluate(probes, inhibit)
+            peer = first_inbound_peer(estab, listen, cfg["EXCLUDE_PORTS"], ct_text,
+                                      local_addrs, published) if conns + ct > 0 else ""
+            detail = idle_detail(reasons, peer, {"ssh": ssh, "cpu": cpu, "net": net, "disk": disk})
             stats = ("conns=%d+%d ssh=%d vscode=%d cpu=%2.0f%% net=%.0fkB/s "
                      "disk=%.0fkB/s inhibit=%d ignored-vpn-up=%.0fkB/s"
                      % (conns, ct, ssh, int(vscode), cpu, net, disk, int(inhibit), vpn_up))
         except Exception as e:
             log("WARN probe cycle failed (%s) -> treating as BUSY" % e)
             busy, reasons, stats = True, ["probe_error"], "probe error"
+            detail = "probe error"
 
+        write_idle_metrics(cfg["METRICS_FILE"], render_idle_metrics(reasons, detail, int(time.time())))
         idle_since = update_idle(busy, idle_since, now)
         idle_min = (now - idle_since) / 60.0
         log("idle=%4.1fm %s -> %s%s"
