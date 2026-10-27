@@ -5,7 +5,7 @@ HOLD=${BMW_HOLD_SECS:-2820}
 DRAIN_MAX=${BMW_DRAIN_MAX_SECS:-2700}
 POLL=${BMW_POLL_SECS:-20}
 SYSTEMCTL=${BMW_SYSTEMCTL:-systemctl}
-UNITS=${BMW_UNITS:-"auto-update.service apt-daily.service apt-daily-upgrade.service anacron.service beefy-mover.service clamav-scan.service clamav-hostscan.service original-audio.service original-audio-import.service image-cleanup.service night-search.service xfs_scrub_all.service e2scrub_all.service fstrim.service man-db.service description-scout.service nfo-scout.service language-missing.service fwupd-refresh.service logrotate.service"}
+UNITS=${BMW_UNITS:-"auto-update.service apt-daily.service apt-daily-upgrade.service anacron.service beefy-mover.service clamav-scan.service clamav-hostscan.service original-audio.service original-audio-import.service image-cleanup.service night-search.service xfs_scrub_all.service e2scrub_all.service fstrim.service man-db.service description-scout.service nfo-scout.service language-missing.service subtitle-check.service fwupd-refresh.service logrotate.service"}
 
 sleep "$HOLD"
 waited=0

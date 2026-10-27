@@ -19,7 +19,7 @@ beefy sleeps (S5) and its timers cannot wake it. Everything recurring runs in on
 | 04:01-04:06 | apt-daily, logrotate, dpkg-db-backup, Seerr download-sync-reset 04:03, fwupd-refresh 04:04, clamav-scan 04:05, Seerr sonarr-scan 04:05, sysstat-rotate/summary |
 | 04:07-04:12 | Sun clamav-hostscan 04:07, Jellyfin IMDb 04:08, Jellyfin scan 04:10, auto-update 04:12 |
 | 04:14-04:20 | description-scout 04:14, Recyclarr 04:15, nfo-scout 04:16, night-search 04:17 (new episodes/films + cutoff-unmet, Treasure Maps ≤ 30), language-missing 04:18, original-audio sweep 04:20 (+ Sun image-cleanup) |
-| 04:22-04:29 | Seerr jellyfin-full-scan 04:22, Jellyfin trickplay 04:24, Sun fstrim 04:26, Sun xfs/e2 scrub 04:28/04:29 |
+| 04:21-04:29 | subtitle-check 04:21 (subtitles changed since the last run, SSD only; findings to the queue-watchdog digest), Seerr jellyfin-full-scan 04:22, Jellyfin trickplay 04:24, Sun fstrim 04:26, Sun xfs/e2 scrub 04:28/04:29 |
 | 04:30-04:44 | anacron 04:30 (`cron.daily` 04:35: chkrootkit, rkhunter), Jellyfin chapters 04:30, Seerr availability-sync 04:30, image-cache 04:32, segments 04:33, apt-daily-upgrade 04:34, Sun blocklisted-tags 04:34, man-db 04:36, tmpfiles-clean 04:40, update-notifier 04:41, Jellyfin daily tasks 04:35-04:44 |
 | 04:45 | window releases (after the listed jobs), idle watcher powers off ~15 min later |
 
