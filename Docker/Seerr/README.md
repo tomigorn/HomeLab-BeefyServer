@@ -151,8 +151,8 @@ email) are not set up: Settings -> Notifications.
 | a film or series | **Request**, leave the profile on the default (4K HDR, 1080p fallback) |
 | it now, not tonight | untick **Can wait — download tonight (cheaper power)** ([Can wait](#can-wait)) |
 | it now, at daytime power price (already requested, admins) | **Manage** → **⚡ Download now — at daytime power price** ([Download now](#download-now)) |
-| an old or niche title | nothing: on add it moves to **Any quality - old & rare (upgrades to 4K)** by itself (released ≤ 12 years ago, or ≥ 2 years old with few votes) |
-| force Any quality for a new title | **Advanced** → Quality Profile **Any quality - old & rare (upgrades to 4K)** |
+| an old or niche title | nothing: on add it moves to **4K preferred · older versions allowed** by itself (released ≤ 12 years ago, or ≥ 2 years old with few votes) |
+| force the older-versions profile for a new title | **Advanced** → Quality Profile **4K preferred · older versions allowed** |
 | a must-have audio language | **Advanced** → Tags `audio-<language>`: not grabbed without it |
 | Swiss German (Mundart), hard | **Advanced** → Tags `audio-swiss-german` (or, for a title not yet in Radarr/Sonarr, Quality Profile **Swiss German (Mundart) only - any quality**: same effect): only Swiss German, any quality, also over a better High German; none = nothing grabbed, and after 7 days one Telegram "Swiss German not found" |
 | extra subtitles | **Advanced** → Tags `subs-<language>`: Bazarr fetches them on top of EN + DE + original |

@@ -12,9 +12,9 @@ import urllib.request
 
 APPS = {
     "radarr": {"config": os.environ.get("SC_RADARR_CONFIG", "/srv/appdata/radarr/config.xml"), "titles": "/movie", "name": "{t}.{y}.{l}.{v}-GRP",
-               "profiles": {"4k": "4K HDR - UHD Bluray + WEB (1080p fallback)", "any": "Any quality - old & rare (upgrades to 4K)", "hd": "HD Bluray + WEB"}},
+               "profiles": {"4k": "4K HDR - UHD Bluray + WEB (1080p fallback)", "any": "4K preferred · older versions allowed", "hd": "HD Bluray + WEB"}},
     "sonarr": {"config": os.environ.get("SC_SONARR_CONFIG", "/srv/appdata/sonarr/config.xml"), "titles": "/series", "name": "{t}.S01E01.{l}.{v}-GRP",
-               "profiles": {"4k": "4K HDR - WEB-2160p (1080p fallback)", "any": "Any quality - old & rare (upgrades to 4K)", "hd": "WEB-1080p"}},
+               "profiles": {"4k": "4K HDR - WEB-2160p (1080p fallback)", "any": "4K preferred · older versions allowed", "hd": "WEB-1080p"}},
 }
 TWIN = " - English original"
 PREFERRED = ["Italian", "Spanish", "French", "Japanese", "Portuguese", "Danish", "Korean"]

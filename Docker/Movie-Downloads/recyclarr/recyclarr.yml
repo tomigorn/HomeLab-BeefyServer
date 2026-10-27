@@ -113,7 +113,7 @@ radarr:
       # exists on DVD is grabbed now and upgraded towards 4K when better appears.
       # language-policy-hook.sh puts new old/niche titles here (README "Old and rare titles"); English originals use the twin below.
       - trash_id: 64fb5f9858489bdac2af690e27c8f42f  # UHD Bluray + WEB
-        name: Any quality - old & rare (upgrades to 4K)
+        name: 4K preferred · older versions allowed
         reset_unmatched_scores:
           enabled: true
           except:
@@ -148,7 +148,7 @@ radarr:
 
       # Same profile for English-original titles (language-policy.sh and the hook switch them), `Language: Original + English` 0.
       - trash_id: 64fb5f9858489bdac2af690e27c8f42f  # UHD Bluray + WEB
-        name: Any quality - old & rare (upgrades to 4K) - English original
+        name: 4K preferred · older versions allowed - English original
         reset_unmatched_scores:
           enabled: true
           except_patterns:
@@ -241,8 +241,8 @@ radarr:
           - 5608c71bcebba0a5e666223bae8c9227  # HD Bluray Tier 03
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
-          - name: Any quality - old & rare (upgrades to 4K)
-          - name: Any quality - old & rare (upgrades to 4K) - English original
+          - name: 4K preferred · older versions allowed
+          - name: 4K preferred · older versions allowed - English original
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
           - name: Swiss German (Mundart) only - any quality
 
@@ -257,9 +257,9 @@ radarr:
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             score: 2000000
-          - name: Any quality - old & rare (upgrades to 4K)
+          - name: 4K preferred · older versions allowed
             score: 2000000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
+          - name: 4K preferred · older versions allowed - English original
             score: 2000000
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: 2000000
@@ -312,9 +312,9 @@ radarr:
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             score: 20000000
-          - name: Any quality - old & rare (upgrades to 4K)
+          - name: 4K preferred · older versions allowed
             score: 20000000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
+          - name: 4K preferred · older versions allowed - English original
             score: 20000000
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: 20000000
@@ -344,9 +344,9 @@ radarr:
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             score: -50000000
-          - name: Any quality - old & rare (upgrades to 4K)
+          - name: 4K preferred · older versions allowed
             score: -50000000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
+          - name: 4K preferred · older versions allowed - English original
             score: -50000000
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: -50000000
@@ -399,9 +399,9 @@ radarr:
         assign_scores_to:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
             score: -50000000
-          - name: Any quality - old & rare (upgrades to 4K)
+          - name: 4K preferred · older versions allowed
             score: -50000000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
+          - name: 4K preferred · older versions allowed - English original
             score: -50000000
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: -50000000
@@ -418,8 +418,8 @@ radarr:
         - trash_id: ff204bbcecdd487d1cefcefdbf0c278d  # [Optional] Golden Rule UHD
           assign_scores_to:
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
-            - name: Any quality - old & rare (upgrades to 4K)
-            - name: Any quality - old & rare (upgrades to 4K) - English original
+            - name: 4K preferred · older versions allowed
+            - name: 4K preferred · older versions allowed - English original
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             - name: Swiss German (Mundart) only - any quality
         - trash_id: f8bf8eab4617f12dfdbd16303d8da245  # [Optional] Golden Rule HD
@@ -434,8 +434,8 @@ radarr:
         - trash_id: 7fc2751eef7e6bdc70b74136e5e35c76  # [HDR Formats] DV (w/o HDR fallback)
           assign_scores_to:
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
-            - name: Any quality - old & rare (upgrades to 4K)
-            - name: Any quality - old & rare (upgrades to 4K) - English original
+            - name: 4K preferred · older versions allowed
+            - name: 4K preferred · older versions allowed - English original
             - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             - name: Swiss German (Mundart) only - any quality
         # No `[HDR Formats] SDR` group: 2160p SDR is allowed (owner 2026-10-26, 4K SDR beats 1080p HDR) and ranks below HDR by the HDR
@@ -509,7 +509,7 @@ sonarr:
 
       # Old and rare series, picked per request in Seerr (see the Radarr profile).
       - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7  # WEB-2160p (Combined)
-        name: Any quality - old & rare (upgrades to 4K)
+        name: 4K preferred · older versions allowed
         reset_unmatched_scores:
           enabled: true
           except:
@@ -544,7 +544,7 @@ sonarr:
 
       # Same profile for English-original titles (language-policy.sh and the hook switch them), `Language: Original + English` 0.
       - trash_id: c4cadd6b35b95f62c3d47a408e53e2f7  # WEB-2160p (Combined)
-        name: Any quality - old & rare (upgrades to 4K) - English original
+        name: 4K preferred · older versions allowed - English original
         reset_unmatched_scores:
           enabled: true
           except_patterns:
@@ -634,9 +634,9 @@ sonarr:
         assign_scores_to:
           - name: 4K HDR - WEB-2160p (1080p fallback)
             score: 2000000
-          - name: Any quality - old & rare (upgrades to 4K)
+          - name: 4K preferred · older versions allowed
             score: 2000000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
+          - name: 4K preferred · older versions allowed - English original
             score: 2000000
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: 2000000
@@ -709,9 +709,9 @@ sonarr:
         assign_scores_to:
           - name: 4K HDR - WEB-2160p (1080p fallback)
             score: 2000
-          - name: Any quality - old & rare (upgrades to 4K)
+          - name: 4K preferred · older versions allowed
             score: 2000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
+          - name: 4K preferred · older versions allowed - English original
             score: 2000
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: 2000
@@ -728,9 +728,9 @@ sonarr:
         assign_scores_to:
           - name: 4K HDR - WEB-2160p (1080p fallback)
             score: 20000000
-          - name: Any quality - old & rare (upgrades to 4K)
+          - name: 4K preferred · older versions allowed
             score: 20000000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
+          - name: 4K preferred · older versions allowed - English original
             score: 20000000
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: 20000000
@@ -753,9 +753,9 @@ sonarr:
         assign_scores_to:
           - name: 4K HDR - WEB-2160p (1080p fallback)
             score: -50000000
-          - name: Any quality - old & rare (upgrades to 4K)
+          - name: 4K preferred · older versions allowed
             score: -50000000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
+          - name: 4K preferred · older versions allowed - English original
             score: -50000000
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: -50000000
@@ -777,9 +777,9 @@ sonarr:
         assign_scores_to:
           - name: 4K HDR - WEB-2160p (1080p fallback)
             score: -50000000
-          - name: Any quality - old & rare (upgrades to 4K)
+          - name: 4K preferred · older versions allowed
             score: -50000000
-          - name: Any quality - old & rare (upgrades to 4K) - English original
+          - name: 4K preferred · older versions allowed - English original
             score: -50000000
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: -50000000
@@ -795,8 +795,8 @@ sonarr:
         - trash_id: e3f37512790f00d0e89e54fe5e790d1c  # [Optional] Golden Rule UHD
           assign_scores_to:
             - name: 4K HDR - WEB-2160p (1080p fallback)
-            - name: Any quality - old & rare (upgrades to 4K)
-            - name: Any quality - old & rare (upgrades to 4K) - English original
+            - name: 4K preferred · older versions allowed
+            - name: 4K preferred · older versions allowed - English original
             - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             - name: Swiss German (Mundart) only - any quality
         - trash_id: 158188097a58d7687dee647e04af0da3  # [Optional] Golden Rule HD
@@ -817,8 +817,8 @@ sonarr:
         - trash_id: d776a1ea912a117d66d83b880ff2055d  # [HDR Formats] DV (w/o HDR fallback)
           assign_scores_to:
             - name: 4K HDR - WEB-2160p (1080p fallback)
-            - name: Any quality - old & rare (upgrades to 4K)
-            - name: Any quality - old & rare (upgrades to 4K) - English original
+            - name: 4K preferred · older versions allowed
+            - name: 4K preferred · older versions allowed - English original
             - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             - name: Swiss German (Mundart) only - any quality
       # Default groups that stay ON: [HDR Formats] HDR, [Streaming Services] General,

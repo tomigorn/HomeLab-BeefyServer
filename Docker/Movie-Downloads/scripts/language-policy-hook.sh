@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ENG_SUFFIX=" - English original"
-ANY="Any quality - old & rare (upgrades to 4K)"
+ANY="4K preferred · older versions allowed"
 SWISS="Swiss German (Mundart) only - any quality"
 SWISS_TAG=audio-swiss-german
 OLD_RARE_TAG=old-rare

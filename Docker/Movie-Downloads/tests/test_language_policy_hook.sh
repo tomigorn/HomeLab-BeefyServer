@@ -17,8 +17,8 @@ T = sys.argv[1]
 PROFILES = [{"id": 3, "name": "Anime - Bluray + WEB 1080p"},
             {"id": 7, "name": "4K HDR - UHD Bluray + WEB (1080p fallback)"},
             {"id": 10, "name": "4K HDR - UHD Bluray + WEB (1080p fallback) - English original"},
-            {"id": 11, "name": "Any quality - old & rare (upgrades to 4K)"},
-            {"id": 12, "name": "Any quality - old & rare (upgrades to 4K) - English original"},
+            {"id": 11, "name": "4K preferred · older versions allowed"},
+            {"id": 12, "name": "4K preferred · older versions allowed - English original"},
             {"id": 13, "name": "Swiss German (Mundart) only - any quality"},
             {"id": 17, "name": "4K HDR - WEB-2160p (1080p fallback)"},
             {"id": 20, "name": "4K HDR - WEB-2160p (1080p fallback) - English original"}]

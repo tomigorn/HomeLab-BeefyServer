@@ -18,9 +18,9 @@ YML = ROOT / "recyclarr" / "recyclarr.yml"
 SWISS = lf.SWISS
 TWIN = lf.ENGLISH_ORIGINAL_SUFFIX
 PROFILES = {
-    "radarr": {"4k": "4K HDR - UHD Bluray + WEB (1080p fallback)", "any": "Any quality - old & rare (upgrades to 4K)",
+    "radarr": {"4k": "4K HDR - UHD Bluray + WEB (1080p fallback)", "any": "4K preferred · older versions allowed",
                "hd": "HD Bluray + WEB", "anime": "Anime - Remux + WEB 1080p"},
-    "sonarr": {"4k": "4K HDR - WEB-2160p (1080p fallback)", "any": "Any quality - old & rare (upgrades to 4K)",
+    "sonarr": {"4k": "4K HDR - WEB-2160p (1080p fallback)", "any": "4K preferred · older versions allowed",
                "hd": "WEB-1080p", "anime": "Anime - Bluray + WEB 1080p"},
 }
 # TRaSH default scores Recyclarr syncs and recyclarr.yml does not override (as synced 2026-10-26): audio, group tiers, streaming, repacks.
