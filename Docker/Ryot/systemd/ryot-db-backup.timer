@@ -1,9 +1,0 @@
-[Unit]
-Description=Ryot database dump daily at 04:10 (inside the beefy maintenance window)
-
-[Timer]
-OnCalendar=*-*-* 04:10:00 Europe/Zurich
-Persistent=false
-
-[Install]
-WantedBy=timers.target

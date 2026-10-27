@@ -1,6 +1,0 @@
-[Unit]
-Description=Nightly Ryot database dump to ~/backups/ryot (keeps 14)
-
-[Service]
-Type=oneshot
-ExecStart=%h/Projects/Docker/Ryot/scripts/ryot-db-backup.sh
