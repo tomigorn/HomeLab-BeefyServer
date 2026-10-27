@@ -357,27 +357,61 @@ class NativeFormats(unittest.TestCase):
 
 
 class OwnRejects(unittest.TestCase):
-    """BlackBit (TRaSH "Bad Dual Groups") escaped as `... H.265 BlackBit.mkv`: no dash, so no parsed release group (1337x, 2026-10-26)."""
-    NAME = "Bad Group: BlackBit"
+    """Groups TRaSH's group match misses when the tag has no dash (`... H.265 BlackBit.mkv`, 1337x): own title-regex rejects, same shape for each."""
+    GROUPS = {"Bad Group: BlackBit": "BlackBit", "Bad Group: Vyndros": "Vyndros"}
 
-    def definition(self, app):
-        return next(d for d in (json.loads(f.read_text()) for f in (ROOT / "recyclarr" / "custom-formats" / app).glob("*.json")) if d["name"] == self.NAME)
+    def definition(self, app, name):
+        return next(d for d in (json.loads(f.read_text()) for f in (ROOT / "recyclarr" / "custom-formats" / app).glob("*.json")) if d["name"] == name)
 
-    def test_blackbit_matched_in_the_release_title_with_or_without_dash(self):
+    def test_group_matched_in_the_release_title_in_every_tag_shape(self):
         for app in PROFILES:
-            with self.subTest(app=app):
-                specs = self.definition(app)["specifications"]
-                self.assertEqual([(x["implementation"], x["negate"], x["required"]) for x in specs], [("ReleaseTitleSpecification", False, True)])
-                rx = re.compile(specs[0]["fields"]["value"], re.I)
-                for hit in ("Movie.2001.1080p.BluRay.DDP5.1.H.265 BlackBit.mkv", "Movie.2001.2160p.UHD.BluRay.HDR.x265-BlackBit", "Show.S01.1080p.WEB-DL.H.265.BLACKBIT", "Movie (2001) [BlackBit]"):
-                    self.assertTrue(rx.search(hit), hit)
-                for miss in ("Movie.2001.1080p.BluRay.x264-BlackBitter", "Movie.2001.1080p.BluRay.x264-Black.Bit", "Blackbitumen.2001.1080p.WEB-DL"):
-                    self.assertFalse(rx.search(miss), miss)
+            for name, g in self.GROUPS.items():
+                with self.subTest(app=app, group=g):
+                    specs = self.definition(app, name)["specifications"]
+                    self.assertEqual([(x["implementation"], x["negate"], x["required"]) for x in specs], [("ReleaseTitleSpecification", False, True)])
+                    rx = re.compile(specs[0]["fields"]["value"], re.I)
+                    hits = [
+                        f"Movie.2001.2160p.UHD.BluRay.HDR.x265-{g}",
+                        f"Movie.2001.1080p.BluRay.DDP5.1.H.265 {g}.mkv",
+                        f"Movie.2001.1080p.BluRay.x265.{g}",
+                        f"Movie.2001.1080p.BluRay.x265_{g}",
+                        f"Movie.2001.1080p.BluRay.x265-{g}.mkv",
+                        f"Movie.2001.1080p.BluRay.x265 - {g}",
+                        f"Movie (2001) [{g}]",
+                        f"Movie (2001) ({g})",
+                        f"Movie (2001) 1080p x265 HEVC 10bit DDP 5.1 {g}",
+                        f"Movie.2001.1080p.WEB-DL.H.265.{g.upper()}",
+                        f"Movie.2001.1080p.WEB-DL.H.265-{g.lower()}",
+                        f"{g}",
+                        f"{g} Movie.2001.1080p",
+                    ]
+                    for hit in hits:
+                        self.assertTrue(rx.search(hit), hit)
+                    misses = [
+                        f"Movie.2001.1080p.BluRay.x264-{g}er",
+                        f"Movie.2001.1080p.BluRay.x264-{g}s",
+                        f"Movie.2001.1080p.BluRay.x264-X{g}",
+                        f"Movie.2001.1080p.BluRay.x264-{g}2",
+                        f"Movie.2001.1080p.BluRay.x264-1{g}",
+                        f"Movie.2001.1080p.BluRay.x264-{g[:-1]}",
+                        f"{g}um.2001.1080p.WEB-DL",
+                        "Black Bitch (2001) 1080p WEB-DL",
+                        "Movie.2001.1080p.BluRay.x264-NTb",
+                    ]
+                    for miss in misses:
+                        self.assertFalse(rx.search(miss), miss)
 
-    def test_blackbit_rejected_in_every_profile(self):
-        for app, kind, name in list(every_profile()) + [(app, "swiss", SWISS) for app in PROFILES]:
-            with self.subTest(app=app, profile=name):
-                self.assertEqual(profile(app, name)["scores"].get(self.NAME), -2000000 if name == SWISS else -50000000)
+    def test_blackbit_does_not_match_vyndros_and_back(self):
+        for app in PROFILES:
+            rx = {n: re.compile(self.definition(app, n)["specifications"][0]["fields"]["value"], re.I) for n in self.GROUPS}
+            self.assertFalse(rx["Bad Group: BlackBit"].search("Movie.2001.x265-Vyndros"))
+            self.assertFalse(rx["Bad Group: Vyndros"].search("Movie.2001.x265-BlackBit"))
+
+    def test_group_rejected_in_every_profile(self):
+        for name in self.GROUPS:
+            for app, kind, prof in list(every_profile()) + [(app, "swiss", SWISS) for app in PROFILES]:
+                with self.subTest(app=app, profile=prof, cf=name):
+                    self.assertEqual(profile(app, prof)["scores"].get(name), -2000000 if prof == SWISS else -50000000)
 
 
 class SwissGerman(unittest.TestCase):

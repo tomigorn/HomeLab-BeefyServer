@@ -464,7 +464,7 @@ HDR10 releases show `[HDR10]`, DV ones `[DV HDR10]`.
 formats, scores, quality profiles, quality sizes and naming into Radarr every
 night at `RECYCLARR_CRON` (04:15, inside the nightly window beefy is woken for).
 **Edit `recyclarr/recyclarr.yml`, not the Radarr UI** — Recyclarr overwrites what
-it manages. API keys: `secrets/recyclarr.yml` (`!secret radarr_api_key` / `sonarr_api_key`, "Secrets"). Own custom formats (Swiss German, resolution, `Bad Group: BlackBit`): `recyclarr/custom-formats/radarr/*.json` and `…/sonarr/*.json` (same patterns, own ids; Sonarr has no `Resolution: DVD`, its DVD quality is 480p and counts as SD), loaded through `recyclarr/settings.yml` (local resource provider); both are mounted into the container.
+it manages. API keys: `secrets/recyclarr.yml` (`!secret radarr_api_key` / `sonarr_api_key`, "Secrets"). Own custom formats (Swiss German, resolution, `Bad Group: BlackBit`, `Bad Group: Vyndros`): `recyclarr/custom-formats/radarr/*.json` and `…/sonarr/*.json` (same patterns, own ids; Sonarr has no `Resolution: DVD`, its DVD quality is 480p and counts as SD), loaded through `recyclarr/settings.yml` (local resource provider); both are mounted into the container.
 
 ```bash
 docker compose run --rm recyclarr sync --preview   # what would change
@@ -556,7 +556,7 @@ Owner's order 2026-10-26, inside one quality (quality always ranks first: any al
 | 3 | Sonarr: one complete season pack | 2000 | own `Season Pack` (`recyclarr/custom-formats/sonarr/season-pack.json`, Release Type = Season Pack); 0 in the anime (TRaSH anime ranks by group tier) and Swiss German profiles |
 | 4 | audio format, group tier, streaming service, repack | Radarr < 7000, Sonarr < 2000 | TRaSH defaults (TrueHD Atmos 5000, Bluray tier 1800, WEB Tier 01 1700, streaming 75, …); the HD and anime templates score no audio formats |
 | 5 | each further audio language | +10 | `Extra audio: <language>`, one per app language except English and German (Radarr 55, Sonarr 44); tie-breaker only (owner 2026-10-26: an Italian dub must not beat a clean WEB Tier 01 release) |
-| – | reject | −50000000 | dub only, no original audio, x265 without HDR below 2160p, DV without fallback, unwanted formats (upscaled, BR-DISK, LQ, …), VOSTFR (anime), own `Bad Group: BlackBit` |
+| – | reject | −50000000 | dub only, no original audio, x265 without HDR below 2160p, DV without fallback, unwanted formats (upscaled, BR-DISK, LQ, …), VOSTFR (anime), own `Bad Group: BlackBit` / `Bad Group: Vyndros` (4K SDR x265 re-encodes of HDR sources) |
 
 | Guarantee | Why it holds |
 |---|---|
@@ -595,7 +595,7 @@ Change it:
 
 Recyclarr's nightly sync keeps the native scores (`except` / `except_patterns: ^Extra audio: `). After a rebuild: sync, then `scripts/language-policy.sh`.
 
-Own reject `Bad Group: BlackBit` (`recyclarr/custom-formats/*/bad-group-blackbit.json`, release title `\bBlackBit\b`): TRaSH `Bad Dual Groups` matches only a parsed group (`-BlackBit`), so 1337x names like `… H.265 BlackBit.mkv` escaped it (2026-10-26). −50000000 everywhere, Swiss German −2000000. Checked by `tests/test_scoring_order.py` and `scripts/scoring-check.py` (l); verified 2026-10-26: all 127 checks passed.
+Own rejects `Bad Group: BlackBit` and `Bad Group: Vyndros` (`recyclarr/custom-formats/*/bad-group-{blackbit,vyndros}.json`): TRaSH `Bad Dual Groups` matches only a parsed group (`-BlackBit`), so 1337x names like `… H.265 BlackBit.mkv` escaped it (2026-10-26); Vyndros (4K SDR x265 re-encodes of HDR sources, ~2 GB/episode) added 2026-10-27. −50000000 everywhere, Swiss German −2000000. Release-title regex `(?<![A-Za-z0-9])<Group>(?![A-Za-z0-9])`, case-insensitive: matches with dash, space, dot, underscore, brackets/parentheses, at the end or before `.mkv`; no match inside longer words (`BlackBitter`, `XVyndros`, `Blackbitumen`) or on separated spellings (`Black Bit`). Checked by `tests/test_scoring_order.py` (`OwnRejects`) and `scripts/scoring-check.py` (l, live `/parse`); verified 2026-10-27: all checks passed.
 
 Verified 2026-10-26 after extras 10 and `Season Pack` (`scripts/scoring-check.py`, all 95 checks passed; Radarr *Io Capitano*, Italian, 4K profile, cutoff 25000000). Quality ranks first: every 2160p row beats every 1080p row whatever the score.
 

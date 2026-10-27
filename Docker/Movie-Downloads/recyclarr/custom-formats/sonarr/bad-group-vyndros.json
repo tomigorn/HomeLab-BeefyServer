@@ -1,0 +1,19 @@
+{
+  "trash_id": "af93a4d9184fb8153393c361ff283db2",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "Bad Group: Vyndros",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+    {
+      "name": "Vyndros anywhere in the release name",
+      "implementation": "ReleaseTitleSpecification",
+      "negate": false,
+      "required": true,
+      "fields": {
+        "value": "(?<![A-Za-z0-9])Vyndros(?![A-Za-z0-9])"
+      }
+    }
+  ]
+}
