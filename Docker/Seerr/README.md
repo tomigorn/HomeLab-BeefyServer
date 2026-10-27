@@ -190,6 +190,8 @@ A thin bar at the top of every Seerr page (everyone who can open Requests sees i
 
 Change a limit or renew a subscription: edit `indexer-bar/limits.toml`, commit.
 
+Treasure Maps (Supporter until 2031-11-17): no search limit, so only `downloads = 400` is listed (the bar shows downloads used / 400 and the subscription countdown; searches are counted but unlimited). Real limits: Newznab `t=user` (`downloadrequests`). Rules (burst 5 requests/s → 429, per-tier NZB limit, key personal, no redistribution): Movie-Downloads README "Treasure Maps rules".
+
 Telegram warnings for the deadlines run on fastpi (beefy sleeps): 🟡 30 days, 🟠 7 days, 🔴 end date, 🔴 the day after, each once per end date. fastpi keeps a cached copy of `limits.toml` (refreshed over ssh whenever beefy is awake). Renewing = change `expires` and commit: the old date is never warned about again, the new date starts fresh. Details: `HomeLab-FastPi` `Docker/_global/scripts/README.md` "subscription-alerts".
 
 ```toml

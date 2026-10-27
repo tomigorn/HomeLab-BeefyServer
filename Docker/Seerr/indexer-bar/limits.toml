@@ -6,8 +6,7 @@
 # window = "rolling" (the last 24 h) or "day" (calendar day, Europe/Zurich, resets at midnight).
 # Keep Prowlarr's own Query/Grab Limit (indexer settings) the same, so Prowlarr stops before the indexer blocks the account.
 [indexers."Treasure Maps"]
-searches = 100
-downloads = 5
+downloads = 400
 window = "rolling"
 
 [indexers."NzbPlanet"]
@@ -19,7 +18,7 @@ window = "day"
 [[subscriptions]]
 name = "Treasure Maps"
 kind = "indexer"
-expires = 2026-11-18
+expires = 2031-11-17
 
 [[subscriptions]]
 name = "Eweka"

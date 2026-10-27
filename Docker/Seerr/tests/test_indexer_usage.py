@@ -25,6 +25,7 @@ LIMITS = {
     "Treasure Maps": {"searches": 100, "downloads": 5, "window": "rolling"},
     "NzbPlanet": {"searches": 20000, "window": "day"},
 }
+DOWNLOADS_ONLY = {"Treasure Maps": {"downloads": 400, "window": "rolling"}}
 
 
 def utc(*a):
@@ -42,6 +43,13 @@ def row(result, name):
 
 class Rolling(unittest.TestCase):
     NOW = utc(2026, 10, 26, 12, 0, 0)
+
+    def test_downloads_only_limit_leaves_searches_unlimited(self):
+        h = [ev(3, self.NOW - dt.timedelta(hours=1)) for _ in range(150)] + [ev(3, self.NOW - dt.timedelta(hours=2), "releaseGrabbed")]
+        r = row(iu.usage(INDEXERS, h, DOWNLOADS_ONLY, self.NOW), "Treasure Maps")
+        self.assertEqual((r["searches"]["used"], r["searches"]["limit"], r["searches"]["level"]), (150, None, "ok"))
+        self.assertEqual((r["downloads"]["used"], r["downloads"]["limit"], r["downloads"]["level"]), (1, 400, "ok"))
+        self.assertTrue(r["limited"])
 
     def test_counts_queries_rss_and_grabs_inside_24h(self):
         h = [ev(3, self.NOW - dt.timedelta(hours=1)), ev(3, self.NOW - dt.timedelta(hours=2), "indexerRss"),
@@ -176,7 +184,7 @@ class Subscriptions(unittest.TestCase):
 class Config(unittest.TestCase):
     def test_repo_config_loads(self):
         cfg = iu.load_config(ROOT / "indexer-bar" / "limits.toml")
-        self.assertEqual(cfg["indexers"]["Treasure Maps"], {"searches": 100, "downloads": 5, "window": "rolling"})
+        self.assertEqual(cfg["indexers"]["Treasure Maps"], {"downloads": 400, "window": "rolling"})
         self.assertEqual(cfg["indexers"]["NzbPlanet"], {"searches": 20000, "window": "day"})
         self.assertEqual({s["name"] for s in cfg["subscriptions"]}, {"Treasure Maps", "Eweka", "ProtonVPN Plus", "NZBgeek", "NzbPlanet"})
 
