@@ -76,8 +76,14 @@ def plausible(ch, n, lead, enc, lowered, cyrillic, seg):
     return cp >= 0x1F000
 
 
+LEADS = {c for enc in ("cp1252", "cp1251") for c in bytes(range(0xC2, 0xF5)).decode(enc, errors="ignore")}
+LEADS |= {c.upper() for c in LEADS}
+
+
 def match_at(text, i, cyrillic):
     lead_ch = text[i]
+    if lead_ch not in LEADS:
+        return None
     variants = [(lead_ch, False)] + ([(lead_ch.lower(), True)] if lead_ch.lower() != lead_ch else [])
     for enc in ("cp1252", "cp1251"):
         for v, lowered in variants:
