@@ -952,6 +952,7 @@ Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scor
 | Log | `/srv/appdata/bazarr/subtitle-check/hook.log` (every hook run) |
 | Digest | every repair and finding: `…/subtitle-check/events/*.json` → [Queue watchdog](#queue-watchdog) → fastpi 06:30 digest (`subtitle_repaired`, `subtitle_suspect`) |
 | Hook | Bazarr post-processing, no score threshold: `/scripts/subtitle-check.py "{{subtitles}}" "{{provider}}" "{{subtitle_id}}"`; runs after ffsubsync for every downloaded, upgraded and uploaded subtitle; mount `./scripts:/scripts:ro` |
+| Bazarr mod | **common** only (Settings → Subtitles → Modifications, "Common Fixes": music symbols, double apostrophes, spacing). Off on purpose: `remove_HI` (would drop HI lines), `OCR_fixes` (only for OCR'd subtitles). Cannot read mojibake, hence the hook |
 | Setup | `scripts/subtitle-check-setup.sh` (idempotent: state dirs owned by Bazarr's uid 65104, group buntu; Bazarr settings through `/api/system/settings`) |
 | By hand | `sudo docker exec movie-bazarr /scripts/subtitle-check.py [--dry-run] "/data/media/…/<file>.en.srt"` |
 | Tests | `python3 tests/test_subtitle_check.py` (fixtures in `tests/fixtures/subtitles/`) |
