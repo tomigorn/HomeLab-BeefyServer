@@ -938,6 +938,24 @@ Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scor
 - Missing-subs search every 24 h for movies and series (series was still 6 h until 2026-10-20): providers that hash the file read it,
   which would wake the HDD for demoted movies.
 
+### Subtitle check
+
+`scripts/subtitle-check.py` (Python stdlib only): broken text encoding in subtitle files. Found 2026-10-27: OpenSubtitles.com upload 955197 (*The Hunt*, 2012) had every ♪ as `в™Є` / `В™Є` (valid UTF-8, broken at the uploader); 1 of 62 files then.
+
+| | |
+|---|---|
+| Finds | not UTF-8, U+FFFD, C1 control characters, mojibake (UTF-8 read as cp1252 / latin-1 / cp1251 and saved again: `в™Є` `В™Є` → ♪, `Ã¤` → ä, `Г¤` → ä, `â€™` → ’, also twice over) |
+| Repairs | only when unambiguous: each sequence turned back into bytes must decode as UTF-8 to an expected character (Latin-1 letter or symbol after `Â` `Ã` `В` `Г`, typographic punctuation or ♪ after `â` `в`, emoji), and the file is written only when nothing suspicious is left. Cyrillic-language files: no cp1251 two-byte repairs |
+| Reports only | everything else: not UTF-8, U+FFFD, leftovers (`â€` alone), C1 characters, UTF-16 |
+| Skips | binary VobSub `.sub`, `.idx`, symlinks |
+| Original | `/srv/appdata/bazarr/subtitle-check/backup/<date>_<time> <folder> -- <file>`: outside the library, so Jellyfin and Bazarr never see it; kept |
+| Log | `/srv/appdata/bazarr/subtitle-check/hook.log` (every hook run) |
+| Digest | every repair and finding: `…/subtitle-check/events/*.json` → [Queue watchdog](#queue-watchdog) → fastpi 06:30 digest (`subtitle_repaired`, `subtitle_suspect`) |
+| Hook | Bazarr post-processing, no score threshold: `/scripts/subtitle-check.py "{{subtitles}}" "{{provider}}" "{{subtitle_id}}"`; runs after ffsubsync for every downloaded, upgraded and uploaded subtitle; mount `./scripts:/scripts:ro` |
+| Setup | `scripts/subtitle-check-setup.sh` (idempotent: state dirs owned by Bazarr's uid 65104, group buntu; Bazarr settings through `/api/system/settings`) |
+| By hand | `sudo docker exec movie-bazarr /scripts/subtitle-check.py [--dry-run] "/data/media/…/<file>.en.srt"` |
+| Tests | `python3 tests/test_subtitle_check.py` (fixtures in `tests/fixtures/subtitles/`) |
+
 ### Jellyfin
 
 - Radarr Connect **Emby / Jellyfin** works with Jellyfin 12: Radarr 6 sends the

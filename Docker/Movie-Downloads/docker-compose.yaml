@@ -309,6 +309,8 @@ services:
     volumes:
       - ${APPDATA_ROOT}/bazarr:/config
       - ${DATA_ROOT}:/data
+      # Post-processing hook scripts/subtitle-check.py (README "Subtitle check").
+      - ./scripts:/scripts:ro
     ports:
       - "${BAZARR_PORT}:6767"
     networks:
