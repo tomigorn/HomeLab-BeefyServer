@@ -1,0 +1,25 @@
+# Jellyfin customizations (Docker/CUSTOMIZATIONS.md "Jellyfin"). Sourced by post-update-check.sh.
+jf_api() { curl -s -m 8 -H "Authorization: MediaBrowser Token=\"$(cat "$DIR/../../Jellyfin/secrets/api-key")\"" "http://127.0.0.1:8096$1"; }
+jf_plugin() { jf_api /Plugins | jq -r --arg n "$1" '[.[] | select(.Name == $n) | "\(.Status) \(.Version)"] | first // "missing"' 2>&1; }
+if want jellyfin; then
+  check jf.local-build '^jellyfin-local:' "$(docker inspect -f '{{.Config.Image}}' jellyfin 2>&1)"
+  check jf.opencl 'intel\.icd intel_legacy1\.icd' "$(docker exec jellyfin ls /etc/OpenCL/vendors 2>&1 | xargs)"
+  check jf.render-device '^ok$' "$(docker exec jellyfin sh -c 'test -w /dev/dri/renderD128 && echo ok' 2>&1)"
+  check jf.encoding '^\["qsv",true,true,true,true,true\]$' "$(jf_api /System/Configuration/encoding | jq -c '[.HardwareAccelerationType,.EnableHardwareEncoding,.EnableIntelLowPowerH264HwEncoder,.EnableIntelLowPowerHevcHwEncoder,.EnableVppTonemapping,.EnableTonemapping]' 2>&1)"
+  check jf.fallback-font '^true NotoSansJP-Regular\.otf$' "$(jf_api /System/Configuration/encoding | jq -r .EnableFallbackFont 2>&1) $(docker exec jellyfin ls /config/fonts 2>&1 | xargs)"
+  check jf.network '^\[\["192\.168\.1\.2"\],\["192\.168\.1\.0/24","172\.24\.255\.5/32"\]\]$' "$(jf_api /System/Configuration/network | jq -c '[.KnownProxies,.LocalNetworkSubnets]' 2>&1)"
+  check jf.trickplay-hw '^true$' "$(jf_api /System/Configuration | jq -c .TrickplayOptions.EnableHwAcceleration 2>&1)"
+  check jf.plugin-oidc '^Active 0\.3\.' "$(jf_plugin 'OIDC Authentication')"
+  check jf.oidc-sso-only '^\[true,"DisableForAllUsers","Holy Grail",false\]$' "$(jf_api /Plugins/4c5b9b9680cd4c3d9e3d23fa4ebf6ce4/Configuration | jq -c '[.Enabled,.PasswordLoginMode,.ProviderName,.RedirectSignInPageToProvider]' 2>&1)"
+  check jf.users-password-disabled '^\["Jellyfin\.Plugin\.Oidc\.Identity\.OidcPasswordDisabledProvider"\]$' "$(jf_api /Users | jq -c '[.[].Policy.AuthenticationProviderId] | unique' 2>&1)"
+  check jf.plugin-js-injector '^Active ' "$(jf_plugin 'JavaScript Injector')"
+  check jf.js-injector-index '^JavaScriptInjector/public\.js' "$(curl -s -m 8 http://127.0.0.1:8096/web/index.html | grep -o 'JavaScriptInjector/public\.js' | head -1)"
+  check jf.rate-in-tracker '^true$' "$(jf_api /Plugins/f5a34f7b2e8a4e6aa7223a216a81b374/Configuration | jq -c '[.CustomJavaScripts[] | select(.Name == "Rate in Tracker") | .Enabled] | first' 2>&1)"
+  check jf.plugin-webhooks '^Active ' "$(jf_plugin 'Webhooks')"
+  check jf.webhooks-floppy '^[1-9][0-9]* hooks$' "$(jf_api /Plugins/d8ca599bab3c41b0a4ea6de1d52b9996/Configuration | jq -r '[.Hooks[] | select(.Url | startswith("http://192.168.1.102:8012/webhook/jellyfin/"))] | "\(length) hooks"' 2>&1)"
+  check jf.plugin-imdb '^Active ' "$(jf_plugin 'IMDb Ratings NG')"
+  check jf.night-tasks '^0 task\(s\) would change' "$(python3 "$DIR/../../Jellyfin/scripts/night-tasks.py" --dry-run 2>&1 | tail -1)"
+  check jf.api-keys '^ok$' "$(jf_api /Auth/Keys | jq -r '[.Items[].AppName] as $k | if ($k | index("avatar-sync")) and ($k | index("Seerr")) then "ok" else ($k | join(",")) end' 2>&1)"
+  check jf.extra-hosts '^192\.168\.1\.2$' "$(docker exec jellyfin getent ahostsv4 sso.holy-grail.ch 2>&1 | awk 'NR==1{print $1}')"
+  check jf.user-defaults-timer '^active$' "$(XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user is-active jellyfin-user-defaults.timer 2>&1)"
+fi
