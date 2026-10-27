@@ -47,8 +47,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | API keys avatar-sync (fastpi) and Seerr | Jellyfin DB | Dashboard → API Keys | `jf.api-keys`: → ok | DB migration |
 | extra_hosts sso → fastpi | compose | compose | `jf.extra-hosts`: getent ahostsv4 → 192.168.1.2 | |
 | New-user defaults (user timer): audio = original (empty + default track), subtitles Smart | `Jellyfin/scripts/user-defaults.py` | README "Audio and subtitle language" | `jf.user-defaults-timer`: → active; `jf.user-defaults-config`: script defaults → original/Smart | user API change (script errors) |
-
-Not registered: Home Screen Sections, File Transformation, Plugin Pages: not installed (2026-10-27, work in progress, uncommitted `Jellyfin/scripts/home-sections.py` + `post-update-check.sh`). Add rows and checks when they go live.
+| Home Screen Sections 3.0.3 + File Transformation 3.0.2 + Plugin Pages 3.0.2 (IAmParadox27), sections on for all users, Upcoming from Sonarr/Radarr | `Jellyfin.Plugin.HomeScreenSections.xml` (600, holds the arr API keys) | Dashboard → Plugins → Catalog, restart, `Jellyfin/scripts/home-sections.py` | `jf.plugin-file-transformation`, `jf.plugin-plugin-pages`, `jf.plugin-home-sections`: → Active 3.x; `jf.home-sections-index`: index.html → HSS script; `jf.home-sections-config`: --dry-run → unchanged | new ABI marks them NotSupported = vanilla home; web client change breaks the loadSections patch |
 
 ## Movie-Downloads
 

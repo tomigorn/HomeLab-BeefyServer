@@ -429,6 +429,47 @@ Jellyfin's TV and phone apps have only the heart (favourite) and "played"; no ap
 - TV: rate later on the phone; the TV app has no rating.
 - Not built: hearts -> Tracker. The webhook events carry no favourite change.
 
+## Home screen sections (2026-10-27)
+A Netflix-like home screen for every user. The plugin replaces the home screen wholesale, so the vanilla rows are re-created by it.
+
+| Plugin (IAmParadox27) | Version | Why |
+|---|---|---|
+| Home Screen Sections | 3.0.3.0 (targetAbi 12.2) | the sections |
+| File Transformation | 3.0.2.0 | required: rewrites the served web client in memory, no file on disk changes |
+| Plugin Pages | 3.0.2.0 | required: the user's "Modular Home" settings page |
+
+- Repo: `https://www.iamparadox.dev/jellyfin/plugins/manifest.json` ("IAmParadox27"). The nightly "Update Plugins" task (04:43) updates them like the other plugins.
+- Config: `/config/data/plugins/configurations/Jellyfin.Plugin.HomeScreenSections.xml` (600). It holds the **Sonarr and Radarr API keys** (full keys: the arrs have no read-only key), not in git. Admins see them in Dashboard -> Plugins -> Home Screen Sections.
+- Set by `scripts/home-sections.py` (idempotent, `--dry-run`, never prints keys; tests `python3 -m unittest test_home_sections`). Rerun after changing the order or rotating an arr key.
+
+| # | Section (id) | Shows |
+|---|---|---|
+| 1 | My Media (`MyMedia`) | library tiles, as vanilla |
+| 2 | Continue Watching (`ContinueWatching`) | as vanilla |
+| 3 | Next Up (`NextUp`) | as vanilla |
+| 4 | Recently Added Movies (`RecentlyAddedMovies`) | vanilla "Latest" for Movies |
+| 5 | Recently Added Shows (`RecentlyAddedShows`) | vanilla "Latest" for Shows |
+| 6 | Watch Again (`WatchAgain`) | finished shows and collections, from the start |
+| 7 | Because You Watched (`BecauseYouWatched`) | 1-2 rows, similar to something watched |
+| 8 | Hidden Gems (`HiddenGems`) | rated 7.5+ (IMDb rating), not watched yet |
+| 9 | Finish These Collections (`FinishTheseCollections`) | started collections, closest to done first |
+| 10 | Upcoming Shows (`UpcomingShows`) | Sonarr calendar, next week |
+| 11 | Upcoming Movies (`UpcomingMovies`) | Radarr calendar (digital release), next 3 months |
+
+- Off on purpose: Jellyseerr Discover / Trending / My Requests, and every other section.
+- Default for all users (`Enabled`): users without own settings get the list above. Users may change it (hamburger menu -> Modular Home; `AllowUserOverride`).
+- Upcoming: Jellyfin calls `http://192.168.1.102:8989` / `:7878`, beefy's own published ports (DNAT bridge to bridge, no firewall rule, no shared network).
+
+| Client | Shows the sections |
+|---|---|
+| Web, Jellyfin Android / iOS app, Samsung TV (Tizen) app (wrap the web client) | yes (force-reload once) |
+| Android TV app, Swiftfin, Infuse (native) | no, vanilla home |
+
+| Task | Command (in `Docker/Jellyfin/`) |
+|---|---|
+| Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-home-sections`, `jf.home-sections-*`; `../CUSTOMIZATIONS.md`) |
+| Rollback | stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/{Home Screen Sections,Plugin Pages,File Transformation}_*`, start. Pre-change backup: `/srv/appdata/jellyfin-pre-hss-2026-10-27.tgz` (root, 600) |
+
 ## IMDb link and rating (2026-10-25)
 - Film and series pages (web) show an **IMDb** and **TMDB** link row (`ExternalUrls`, built from `ProviderIds`); all 9 items have both IDs, nothing to fix. Apps show no link row.
 - IDs come from the TMDb provider on library scan / refresh. New item without IMDb link: Refresh metadata (not "Replace all") on the item.
