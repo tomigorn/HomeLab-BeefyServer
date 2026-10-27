@@ -21,7 +21,7 @@
 ## not TRaSH ones, hence the `except`/`except_patterns` on every reset_unmatched_scores.
 ## Every reject is -50000000: the best possible positive sum (~33000000) must stay below the minimum score of 0.
 ## 2160p SDR is allowed (owner 2026-10-26: 4K SDR beats 1080p HDR); HDR still beats SDR inside one quality.
-## Upgrades stop at 4K HDR + original + English (25000000; English-original twins: HDR + German 22000000); the 1080p-only
+## Upgrades stop at 4K HDR + original + English (25000000; English-original twins: HDR + original/English 20000000, German DL is taken at grab time but not chased); the 1080p-only
 ## HD and anime profiles at original + English (5000000). An upgrade at the
 ## same quality needs +1 (min_upgrade_format_score, Radarr's default): below the cutoff better audio, group, repack, a season pack or an extra language upgrades (owner 2026-10-26).
 ## Exception: the profile `Swiss German (Mundart) only - any quality`, Radarr and
@@ -96,7 +96,7 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
-          until_score: 22000000
+          until_score: 20000000
         min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
@@ -156,7 +156,7 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
-          until_score: 22000000
+          until_score: 20000000
         min_upgrade_format_score: 1
         min_format_score: 0
         qualities:
@@ -504,7 +504,7 @@ sonarr:
         upgrade:
           allowed: true
           until_quality: WEB 2160p
-          until_score: 22000000
+          until_score: 20000000
         min_upgrade_format_score: 1
 
       # Old and rare series, picked per request in Seerr (see the Radarr profile).
@@ -552,7 +552,7 @@ sonarr:
         upgrade:
           allowed: true
           until_quality: WEB 2160p
-          until_score: 22000000
+          until_score: 20000000
         min_upgrade_format_score: 1
         min_format_score: 0
         qualities:

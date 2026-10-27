@@ -258,7 +258,7 @@ class Order(Base):
 
 class Upgrades(Base):
     def test_cutoff_values(self):
-        want = {"4k": (25000000, 22000000), "any": (25000000, 22000000), "hd": (5000000, None), "anime": (5000000, None)}
+        want = {"4k": (25000000, 20000000), "any": (25000000, 20000000), "hd": (5000000, None), "anime": (5000000, None)}
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             with self.subTest(app=app, profile=name):
                 self.assertEqual(p["cutoff"], want[kind][twin])
@@ -267,10 +267,15 @@ class Upgrades(Base):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             if 2160 not in resolutions:
                 continue
-            top_tier, below = (self.tiers(twin, orig)[0], self.tiers(twin, orig)[1]) if twin else (self.tiers(twin, orig)[1], self.tiers(twin, orig)[2])
+            top_tier, below = ([orig], None) if twin else (self.tiers(twin, orig)[1], self.tiers(twin, orig)[2])
             with self.subTest(app=app, profile=name):
                 self.assertGreaterEqual(score(p, matched(app, orig, top_tier, 2160, hdr=True)), p["cutoff"])
-                self.assertLess(score(p, matched(app, orig, below + self.extras(app, orig), 2160, hdr=True, **self.best(minor))), p["cutoff"])
+                if twin:
+                    self.assertEqual(p["cutoff"], 20000000)
+                    self.assertGreater(score(p, matched(app, orig, [orig, "German"], 2160, hdr=True)), score(p, matched(app, orig, [orig], 2160, hdr=True)))
+                    self.assertGreaterEqual(score(p, matched(app, orig, [orig, "German"], 2160, hdr=True)), p["cutoff"])
+                else:
+                  self.assertLess(score(p, matched(app, orig, below + self.extras(app, orig), 2160, hdr=True, **self.best(minor))), p["cutoff"])
                 richest_sdr = [orig, "English", "German"] + self.extras(app, orig)
                 self.assertLess(score(p, matched(app, orig, richest_sdr, 2160, hdr=False, **self.best(minor))), p["cutoff"])
 

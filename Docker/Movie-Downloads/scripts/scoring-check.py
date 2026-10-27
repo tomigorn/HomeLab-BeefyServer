@@ -149,7 +149,8 @@ def check_app(app, cfg):
         check("twin: (h) 2160p SDR English accepted", escore(twin, ["English"], V2160_SDR) >= profiles[twin]["minFormatScore"])
         check("twin: (i) 2160p HDR English beats 2160p SDR English+German+2 extras", escore(twin, ["English"], V2160) > escore(twin, ["English", "German", "Spanish", "French"], V2160_SDR))
         check("twin: (j) 2160p SDR English+German+2 extras stays below the cutoff", escore(twin, ["English", "German", "Spanish", "French"], V2160_SDR) < profiles[twin]["cutoffFormatScore"])
-        check("twin: (j) upgrade cutoff reached by 2160p HDR English+German", escore(twin, ["English", "German"], V2160) >= profiles[twin]["cutoffFormatScore"])
+        check("twin: (j) upgrade cutoff reached by 2160p HDR English", escore(twin, ["English"], V2160) >= profiles[twin]["cutoffFormatScore"])
+        check("twin: German DL still outscores English-only at grab time", escore(twin, ["English", "German"], V2160) > escore(twin, ["English"], V2160))
         cache.update(ecache)
     print(" release name | languages parsed | custom formats | 4K profile score")
     for name, (cfs, langs) in cache.items():
