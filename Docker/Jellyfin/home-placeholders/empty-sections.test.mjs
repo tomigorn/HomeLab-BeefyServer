@@ -105,6 +105,7 @@ test("every hint has english and german, others generic", () => {
   assert.equal(es.hintFor("MyMedia", "en"), "Nothing here yet.");
   assert.equal(es.hintFor("MyMedia", "de"), "Noch nichts hier.");
   assert.equal(es.hintFor("UpcomingMovies", "en"), "No films releasing in the next months.");
+  assert.equal(es.hintFor("UpcomingShows", "en"), "No episodes airing in the next month.");
   assert.equal(es.hintFor("MyList", "en"), "Nothing here yet — mark films or series with ♥ to see them here.");
 });
 
@@ -174,4 +175,71 @@ test("start: without Home Screen Sections nothing happens", async () => {
   assert.equal(calls, 0);
   assert.equal(win.document.querySelectorAll("[data-hss-placeholder]").length, 0);
   win.close();
+});
+
+function upcoming(texts) {
+  const cards = texts.map((t) => `<div class="card upcoming-show-card"><div class="cardText cardText-first"><bdi><div class="itemAction textActionButton">Show</div></bdi></div>` +
+    `<div class="cardText cardText-tertiary"><bdi><div class="itemAction textActionButton" title="${t}">${t}</div></bdi></div></div>`).join("");
+  return home(`<div class="verticalSection UpcomingShows" data-page="1"><div class="itemsContainer">${cards}</div></div>`);
+}
+
+function dates(c) {
+  return [...c.querySelectorAll(".cardText-tertiary .textActionButton")].map((e) => e.textContent);
+}
+
+const NOW = new Date(2026, 9, 27);
+
+test("upcoming dates show weekday, day and month", () => {
+  const c = upcoming(["2 Weeks, 1 Day - 11.11.2026", "3 Weeks, 1 Day - 18.11.2026"]);
+  es.upcomingDates(c, "en-US", NOW);
+  assert.deepEqual(dates(c), ["Wed 11 Nov", "Wed 18 Nov"]);
+});
+
+test("upcoming dates next year carry the year", () => {
+  const c = upcoming(["2 Months - 04.01.2027"]);
+  es.upcomingDates(c, "en", NOW);
+  assert.deepEqual(dates(c), ["Mon 4 Jan 2027"]);
+});
+
+test("upcoming dates in german", () => {
+  const c = upcoming(["2 Weeks, 1 Day - 11.11.2026"]);
+  es.upcomingDates(c, "de-CH", NOW);
+  assert.match(dates(c)[0], /^Mi.*11.*Nov/);
+});
+
+test("upcoming dates: idempotent, unknown text untouched, movies too", () => {
+  const c = upcoming(["2 Weeks, 1 Day - 11.11.2026", "TBA"]);
+  c.querySelector(".card").className = "card upcoming-movie-card";
+  es.upcomingDates(c, "en", NOW);
+  es.upcomingDates(c, "en", NOW);
+  assert.deepEqual(dates(c), ["Wed 11 Nov", "TBA"]);
+  assert.equal(c.querySelector(".cardText-tertiary .textActionButton").title, "2 Weeks, 1 Day - 11.11.2026");
+});
+
+function shows(list) {
+  const cards = list.map(([name, ep, date]) => `<div class="card upcoming-show-card"><div class="cardText cardText-first"><bdi><div class="itemAction textActionButton" title="${name}">${name}</div></bdi></div>` +
+    `<div class="cardText cardText-secondary"><bdi><div class="itemAction textActionButton" title="${ep}">${ep}</div></bdi></div>` +
+    `<div class="cardText cardText-tertiary"><bdi><div class="itemAction textActionButton" title="${date}">${date}</div></bdi></div></div>`).join("");
+  return home(`<div class="verticalSection UpcomingShows" data-page="1"><div class="itemsContainer">${cards}</div></div>`);
+}
+
+function visible(c) {
+  return [...c.querySelectorAll(".upcoming-show-card")].filter((e) => e.style.display !== "none")
+    .map((e) => [...e.querySelectorAll(".textActionButton")].map((t) => t.textContent).join(" | "));
+}
+
+test("upcoming shows: one card per series, the next episode's season and date", () => {
+  const c = shows([["Rings", "S03E01 - TBA", "2 Weeks - 11.11.2026"], ["Rings", "S03E02 - TBA", "2 Weeks - 11.11.2026"], ["Frieren", "S02E05 - Title", "3 Weeks - 18.11.2026"], ["Rings", "S03E05 - TBA", "3 Weeks - 18.11.2026"]]);
+  es.upcomingSeries(c);
+  es.upcomingDates(c, "en", NOW);
+  assert.deepEqual(visible(c), ["Rings | S03 | Wed 11 Nov", "Frieren | S02 | Wed 18 Nov"]);
+});
+
+test("upcoming shows: idempotent and movies untouched", () => {
+  const c = shows([["Rings", "S03E01 - TBA", "x - 11.11.2026"], ["Rings", "S03E02 - TBA", "x - 11.11.2026"]]);
+  c.querySelector(".itemsContainer").insertAdjacentHTML("beforeend", '<div class="card upcoming-movie-card"><div class="cardText cardText-first"><bdi><div class="itemAction textActionButton">Film</div></bdi></div></div><div class="card upcoming-movie-card"><div class="cardText cardText-first"><bdi><div class="itemAction textActionButton">Film</div></bdi></div></div>');
+  es.upcomingSeries(c);
+  es.upcomingSeries(c);
+  assert.deepEqual(visible(c), ["Rings | S03 | x - 11.11.2026"]);
+  assert.equal([...c.querySelectorAll(".upcoming-movie-card")].filter((e) => e.style.display !== "none").length, 2);
 });

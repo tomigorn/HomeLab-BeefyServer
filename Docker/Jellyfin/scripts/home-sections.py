@@ -17,6 +17,8 @@ ORDER = [
 ]
 LIMITS = {"BecauseYouWatched": (1, 3)}
 # Jellyfin reaches the arrs through beefy's published ports (hairpin), no shared network.
+# How far ahead Upcoming Shows / Upcoming Movies look (owner 2026-10-27).
+WINDOW = {"Sonarr": (1, "Months"), "Radarr": (3, "Months")}
 ARR = {"Sonarr": ("http://192.168.1.102:8989", "/srv/appdata/sonarr/config.xml"), "Radarr": ("http://192.168.1.102:7878", "/srv/appdata/radarr/config.xml")}
 
 
@@ -29,10 +31,13 @@ def apply(cfg, types, libs, arr):
     cfg = copy.deepcopy(cfg)
     cfg["Enabled"] = True
     cfg["AllowUserOverride"] = True
+    cfg["DateFormat"], cfg["DateDelimiter"] = "DD/MM/YYYY", "."
     cfg["DefaultMoviesLibraryId"] = libs.get("movies", "")
     cfg["DefaultTVShowsLibraryId"] = libs.get("tvshows", "")
     for name, (url, key) in arr.items():
         cfg.setdefault(name, {}).update(Url=url, ApiKey=key)
+        if name in WINDOW:
+            cfg[name].update(UpcomingTimeframeValue=WINDOW[name][0], UpcomingTimeframeUnit=WINDOW[name][1])
     existing = {s["SectionId"]: s for s in cfg.get("SectionSettings") or []}
     out = []
     for i, t in enumerate(types):
@@ -51,7 +56,7 @@ def summary(cfg):
     on = sorted((s for s in cfg["SectionSettings"] if s["Enabled"]), key=lambda s: s["OrderIndex"])
     lines = [f"Enabled={cfg['Enabled']} AllowUserOverride={cfg['AllowUserOverride']}"]
     lines += [f"{n}. {s['SectionId']}" for n, s in enumerate(on, 1)]
-    lines += [f"{name}: {cfg[name]['Url']} key {'set' if cfg[name].get('ApiKey') else 'MISSING'}" for name in ARR]
+    lines += [f"{name}: {cfg[name]['Url']} key {'set' if cfg[name].get('ApiKey') else 'MISSING'}, next {cfg[name].get('UpcomingTimeframeValue')} {cfg[name].get('UpcomingTimeframeUnit')}" for name in ARR]
     return "\n".join(lines)
 
 

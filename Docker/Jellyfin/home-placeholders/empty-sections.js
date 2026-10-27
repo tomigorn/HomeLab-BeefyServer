@@ -15,7 +15,7 @@
       Studio: "Nothing here yet.",
       Starring: "Nothing here yet — watch a few titles to get actor picks.",
       DirectedBy: "Nothing here yet — watch a few films to get director picks.",
-      UpcomingShows: "No episodes airing in the next days.",
+      UpcomingShows: "No episodes airing in the next month.",
       UpcomingMovies: "No films releasing in the next months."
     },
     de: {
@@ -31,7 +31,7 @@
       Studio: "Noch nichts hier.",
       Starring: "Noch nichts hier – schau ein paar Titel, dann gibt es Tipps nach Schauspielern.",
       DirectedBy: "Noch nichts hier – schau ein paar Filme, dann gibt es Tipps nach Regie.",
-      UpcomingShows: "In den nächsten Tagen laufen keine neuen Folgen.",
+      UpcomingShows: "Im nächsten Monat laufen keine neuen Folgen.",
       UpcomingMovies: "In den nächsten Monaten erscheinen keine Filme."
     }
   };
@@ -43,6 +43,47 @@
   function hintFor(id, lang) {
     var t = HINTS[langOf(lang)];
     return t[id] || t._;
+  }
+
+  function upcomingSeries(container) {
+    var cards = container.querySelectorAll(".upcoming-show-card");
+    var seen = {};
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      var name = card.querySelector(".cardText-first .textActionButton");
+      var key = name ? name.textContent : "";
+      if (!key) continue;
+      if (seen[key]) {
+        if (card.style.display !== "none") card.style.display = "none";
+        continue;
+      }
+      seen[key] = true;
+      var ep = card.querySelector(".cardText-secondary .textActionButton");
+      var m = ep && /^(S\d+)E\d+/.exec(ep.textContent);
+      if (m && ep.textContent !== m[1]) {
+        ep.title = ep.textContent;
+        ep.textContent = m[1];
+      }
+    }
+  }
+
+  function upcomingDates(container, lang, now) {
+    var locale = langOf(lang) === "de" ? "de-CH" : "en-GB";
+    var year = (now || new Date()).getFullYear();
+    var els = container.querySelectorAll('[class*="upcoming-"][class*="-card"] .cardText-tertiary .textActionButton');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (el.hasAttribute("data-hss-date")) continue;
+      var m = /(\d{1,2})\.(\d{1,2})\.(\d{4})\s*$/.exec(el.textContent);
+      if (!m) continue;
+      var d = new Date(+m[3], +m[2] - 1, +m[1]);
+      var opts = { weekday: "short", day: "numeric", month: "short" };
+      if (d.getFullYear() !== year) opts.year = "numeric";
+      var text = d.toLocaleDateString(locale, opts);
+      el.setAttribute("data-hss-date", "");
+      el.title = el.textContent;
+      el.textContent = locale === "en-GB" ? text.replace(/,/g, "") : text;
+    }
   }
 
   function namesOf(resp) {
@@ -165,6 +206,16 @@
       var live = [];
       for (var i = 0; i < containers.length; i++) if (containers[i].querySelector(".verticalSection[data-page]")) live.push(containers[i]);
       if (!live.length) return;
+      var lang = doc.documentElement.lang || win.navigator.language || "en";
+      observer.disconnect();
+      try {
+        for (var u = 0; u < live.length; u++) {
+          upcomingSeries(live[u]);
+          upcomingDates(live[u], lang);
+        }
+      } finally {
+        observer.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+      }
       data(api).then(function (d) {
         if (!d.enabled.length) return;
         observer.disconnect();
@@ -184,7 +235,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { render: render, hintFor: hintFor, namesOf: namesOf, enabledOf: enabledOf, start: start };
+    module.exports = { render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, hintFor: hintFor, namesOf: namesOf, enabledOf: enabledOf, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {

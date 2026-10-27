@@ -70,6 +70,19 @@ class Apply(unittest.TestCase):
         self.assertEqual((cfg["Radarr"]["Url"], cfg["Radarr"]["ApiKey"]), ARR["Radarr"])
         self.assertEqual((cfg["DefaultMoviesLibraryId"], cfg["DefaultTVShowsLibraryId"]), ("m1", "t1"))
 
+    def test_upcoming_windows(self):
+        cfg = hs.apply(fresh(), TYPES, LIBS, ARR)
+        self.assertEqual((cfg["Sonarr"]["UpcomingTimeframeValue"], cfg["Sonarr"]["UpcomingTimeframeUnit"]), (1, "Months"))
+        self.assertEqual((cfg["Radarr"]["UpcomingTimeframeValue"], cfg["Radarr"]["UpcomingTimeframeUnit"]), (3, "Months"))
+
+    def test_upcoming_dates_are_swiss(self):
+        cfg = hs.apply(fresh(), TYPES, LIBS, ARR)
+        self.assertEqual((cfg["DateFormat"], cfg["DateDelimiter"]), ("DD/MM/YYYY", "."))
+
+    def test_summary_shows_the_upcoming_windows(self):
+        text = hs.summary(hs.apply(fresh(), TYPES, LIBS, ARR))
+        self.assertIn("Sonarr: http://192.168.1.102:8989 key set, next 1 Months", text)
+
     def test_second_run_changes_nothing(self):
         once = hs.apply(fresh(), TYPES, LIBS, ARR)
         self.assertEqual(hs.apply(once, TYPES, LIBS, ARR), once)

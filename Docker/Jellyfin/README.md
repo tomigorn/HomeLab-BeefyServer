@@ -458,9 +458,11 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 | 12 | By Studio/Network (`Studio`) | one studio or network row |
 | 13 | Starring (`Starring`) | one actor row |
 | 14 | Directed by (`DirectedBy`) | one director row |
-| 15 | Upcoming Shows (`UpcomingShows`) | Sonarr calendar, next week |
+| 15 | Upcoming Shows (`UpcomingShows`) | Sonarr calendar, next month; one card per series (next episode's season + date) |
 | 16 | Upcoming Movies (`UpcomingMovies`) | Radarr calendar (digital release), next 3 months |
 
+- Upcoming cards: the plugin shows `S03E01 - TBA` and `2 Weeks, 1 Day - 11.11.2026` (`DateFormat` DD/MM/YYYY, delimiter `.`, set by `home-sections.py`). The same injector script turns the date into `Wed 11 Nov` (German `Mi., 11. Nov.`, year only when not this year; the original stays as tooltip) and keeps one Upcoming Shows card per series: the first (earliest) one, season only (`S03`); later episodes are hidden. The plugin has no grouping option and returns at most 16 upcoming episodes (no setting): a series dropping more than that in a month pushes later series out.
+- Public path: Cloudflare caches `/web/*` files. File Transformation rewrites them but keeps the original ETag, so a cached copy revalidated to 304 forever and public users kept a pre-plugin bundle ("Modular Home" errored, home vanilla; 2026-10-27). Fix in HomeLab-FastPi `Traefik/traefik/dynamic/jellyfin.yml` (router `jellyfin-web` drops If-None-Match/If-Modified-Since). Still stale: Cloudflare → Caching → Custom Purge the `/web/` URL.
 - Off on purpose: Jellyseerr Discover / Trending / My Requests, Genre, Decade, and every other section.
 - Empty sections stay visible: heading plus a grey one-line hint (English, German if the UI language is German). HSS itself hides empty sections and leaves out Because You Watched without enough history.
   - Script `home-placeholders/empty-sections.js`, JavaScript Injector entry "Empty home sections" (signed-in users). It reads the user's enabled sections (`/ModularHomeViews/UserSettings`, in config order: `home-sections.py` stores them sorted) and the names (`/ModularHomeViews/Sections`), adds a placeholder where a section is missing or empty, and removes it when the section fills. No HSS markup = does nothing.
