@@ -22,6 +22,8 @@ if want jellyfin; then
   check jf.plugin-plugin-pages '^Active 3\.' "$(jf_plugin 'Plugin Pages')"
   check jf.plugin-home-sections '^Active 3\.' "$(jf_plugin 'Home Screen Sections')"
   check jf.home-sections-index '^plugin="Jellyfin\.Plugin\.HomeScreenSections"$' "$(curl -s -m 8 http://127.0.0.1:8096/web/index.html | grep -o 'plugin="Jellyfin\.Plugin\.HomeScreenSections"' | head -1)"
+  check jf.empty-home-sections '^true$' "$(jf_api /Plugins/f5a34f7b2e8a4e6aa7223a216a81b374/Configuration | jq -c '[.CustomJavaScripts[] | select(.Name == "Empty home sections") | .Enabled] | first' 2>&1)"
+  check jf.empty-home-sections-served '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'data-hss-placeholder' 2>&1)"
   check jf.home-sections-config '^unchanged$' "$(python3 "$DIR/../../Jellyfin/scripts/home-sections.py" --dry-run 2>&1 | tail -1)"
   check jf.night-tasks '^0 task\(s\) would change' "$(python3 "$DIR/../../Jellyfin/scripts/night-tasks.py" --dry-run 2>&1 | tail -1)"
   check jf.api-keys '^ok$' "$(jf_api /Auth/Keys | jq -r '[.Items[].AppName] as $k | if ($k | index("avatar-sync")) and ($k | index("Seerr")) then "ok" else ($k | join(",")) end' 2>&1)"

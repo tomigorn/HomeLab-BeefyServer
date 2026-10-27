@@ -21,7 +21,7 @@ def upsert_script(config, name, source):
     return {**config, "CustomJavaScripts": scripts}
 
 
-def main(argv, api=None, source=None, out=sys.stdout):
+def main(argv, api=None, source=None, out=sys.stdout, name=NAME, source_file=SOURCE):
     if api is None:
         import jellyfin_api
         api = jellyfin_api.api
@@ -34,9 +34,9 @@ def main(argv, api=None, source=None, out=sys.stdout):
         print(f"plugin {PLUGIN} not installed", file=sys.stderr)
         return 1
     path = f"/Plugins/{plugin_id}/Configuration"
-    source = SOURCE.read_text() if source is None else source
-    api("POST", path, upsert_script(api("GET", path), NAME, source))
-    print(f"upserted {NAME}", file=out)
+    source = source_file.read_text() if source is None else source
+    api("POST", path, upsert_script(api("GET", path), name, source))
+    print(f"upserted {name}", file=out)
     return 0
 
 

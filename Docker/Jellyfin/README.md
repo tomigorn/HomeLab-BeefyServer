@@ -453,10 +453,19 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 | 7 | Because You Watched (`BecauseYouWatched`) | 1-2 rows, similar to something watched |
 | 8 | Hidden Gems (`HiddenGems`) | rated 7.5+ (IMDb rating), not watched yet |
 | 9 | Finish These Collections (`FinishTheseCollections`) | started collections, closest to done first |
-| 10 | Upcoming Shows (`UpcomingShows`) | Sonarr calendar, next week |
-| 11 | Upcoming Movies (`UpcomingMovies`) | Radarr calendar (digital release), next 3 months |
+| 10 | My List (`MyList`) | the user's favourites (♥) |
+| 11 | Collections (`CollectionsSection`) | film collections |
+| 12 | By Studio/Network (`Studio`) | one studio or network row |
+| 13 | Starring (`Starring`) | one actor row |
+| 14 | Directed by (`DirectedBy`) | one director row |
+| 15 | Upcoming Shows (`UpcomingShows`) | Sonarr calendar, next week |
+| 16 | Upcoming Movies (`UpcomingMovies`) | Radarr calendar (digital release), next 3 months |
 
-- Off on purpose: Jellyseerr Discover / Trending / My Requests, and every other section.
+- Off on purpose: Jellyseerr Discover / Trending / My Requests, Genre, Decade, and every other section.
+- Empty sections stay visible: heading plus a grey one-line hint (English, German if the UI language is German). HSS itself hides empty sections and leaves out Because You Watched without enough history.
+  - Script `home-placeholders/empty-sections.js`, JavaScript Injector entry "Empty home sections" (signed-in users). It reads the user's enabled sections (`/ModularHomeViews/UserSettings`, in config order: `home-sections.py` stores them sorted) and the names (`/ModularHomeViews/Sections`), adds a placeholder where a section is missing or empty, and removes it when the section fills. No HSS markup = does nothing.
+  - Push a changed script: `python3 scripts/home-placeholders.py` → `upserted Empty home sections`, then reload (browser Ctrl+Shift+R, Samsung app: close fully). No restart.
+  - Tests: in `home-placeholders/` `sudo docker run --rm --network host -u $(id -u):$(id -g) -e npm_config_cache=/tmp/npm -v "$PWD":/w -w /w node:24-alpine sh -c "npm ci && node --test"`; upsert: `cd scripts && python3 -m unittest test_home_placeholders`.
 - Default for all users (`Enabled`): users without own settings get the list above. Users may change it (hamburger menu -> Modular Home; `AllowUserOverride`).
 - Upcoming: Jellyfin calls `http://192.168.1.102:8989` / `:7878`, beefy's own published ports (DNAT bridge to bridge, no firewall rule, no shared network).
 
