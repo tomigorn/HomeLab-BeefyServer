@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Night downloads (README "Can wait: downloads at night"): resumes the downloads the untagged "night" clients added paused.
-Low tariff (22:00-06:00 and all Sunday): FIFO, one night download per client at a time (qBittorrent by added_on, SABnzbd by queue position, one title finished before the next); a torrent stalled for STALL_MIN lets the next one start too.
+Low tariff (22:00-06:00 and all Sunday): every night movie resumes (the clients' own limits apply); TV runs one download at a time across both clients: one series at a time, FIFO by its first grab, within it season then episode; a torrent stalled for STALL_MIN lets the next one start too.
 Outside the low tariff: night items still downloading are paused unless their ETA is under GRACE_MIN; they resume at the next low tariff where they stopped. Any time: the night items of titles tagged download-now resume and are never paused.
 Writes ~/.local/state/movie-downloads/night-downloads.json ({"pending": n, "stalled": {hash: since}}), which fastpi reads to decide its 22:05 wake.
 Writes the download ids waiting for the night (outside the low tariff) to /srv/appdata/indexer-bar/night-waiting.json for Seerr's night label (../Seerr/README.md "Night label"; env ND_PUBLIC, empty = off).
@@ -21,6 +21,7 @@ STATE = pathlib.Path(os.environ.get("XDG_STATE_HOME", pathlib.Path.home() / ".lo
 PUBLIC = "/srv/appdata/indexer-bar/night-waiting.json"
 NIGHT_QBIT = {"radarr-night", "sonarr-night"}
 NIGHT_SAB = {"movies-night", "tv-night"}
+NIGHT_TV = {"sonarr-night", "tv-night"}
 TAG = "download-now"
 PAUSED_QBIT = {"pausedDL", "stoppedDL"}
 RUNNING_QBIT = {"downloading", "stalledDL", "metaDL", "forcedMetaDL", "forcedDL", "queuedDL", "checkingDL", "allocating"}
@@ -28,7 +29,10 @@ STALLED_QBIT = {"stalledDL", "metaDL", "forcedMetaDL"}
 QBIT_ETA_UNKNOWN = 8640000
 GRACE_MIN = 15
 STALL_MIN = int(os.environ.get("ND_STALL_MIN", "20"))
-APPS = {"radarr": "includeMovie=true", "sonarr": "includeSeries=true"}
+APPS = {"radarr": "includeMovie=true", "sonarr": "includeSeries=true&includeEpisode=true"}
+EPISODE = re.compile(r"(?<![a-z0-9])s(\d{1,2})e(\d{1,3})", re.I)
+SEASON = re.compile(r"(?<![a-z0-9])s(\d{1,2})(?![a-z0-9])", re.I)
+LAST = (float("inf"), float("inf"))
 
 
 class ApiError(Exception):
@@ -44,6 +48,20 @@ class Plan:
     pending: int = 0
     stalled: dict = field(default_factory=dict)
     waiting: list = field(default_factory=list)
+    top_hashes: list = field(default_factory=list)
+    tv_order: list = field(default_factory=list)
+
+
+@dataclass
+class Item:
+    id: str
+    qbit: bool
+    raw: dict
+    paused: bool
+    tv: bool
+    name: str
+    key: tuple
+    act: str = ""
 
 
 def low_tariff(dt):
@@ -69,6 +87,26 @@ def title_ids(app, queue):
     return out
 
 
+def episode_positions(queue):
+    out = {}
+    for rec in queue.get("records") or []:
+        ep = rec.get("episode") or {}
+        season = ep.get("seasonNumber", rec.get("seasonNumber"))
+        if not rec.get("downloadId") or rec.get("movieId") or season is None:
+            continue
+        pos, dl = (season, ep.get("episodeNumber", 0)), rec["downloadId"].lower()
+        out[dl] = min(out.get(dl, pos), pos)
+    return out
+
+
+def name_position(name):
+    m = EPISODE.search(name or "")
+    if m:
+        return int(m[1]), int(m[2])
+    m = SEASON.search(name or "")
+    return (int(m[1]), 0) if m else None
+
+
 def qbit_eta(t):
     eta = t.get("eta")
     if t.get("state") in STALLED_QBIT or not isinstance(eta, int) or not 0 <= eta < QBIT_ETA_UNKNOWN:
@@ -88,52 +126,44 @@ def sab_eta(s, kbps):
     return secs
 
 
-def qbit_order(t):
-    return t.get("added_on") or 0
-
-
-def sab_order(s):
-    return s.get("index", 0)
-
-
-def fifo(items, key, order, titles):
-    group = lambda it: titles.get(it[key].lower(), it[key].lower())
+def tv_order(items, titles, positions):
+    group = lambda it: titles.get(it.id.lower(), ("download", it.id.lower()))
     first = {}
     for it in items:
-        first[group(it)] = min(first.get(group(it), order(it)), order(it))
-    return sorted(items, key=lambda it: (first[group(it)], order(it)))
+        first[group(it)] = min(first.get(group(it), it.key), it.key)
+    pos = lambda it: positions.get(it.id.lower()) or name_position(it.name) or LAST
+    return sorted(items, key=lambda it: (first[group(it)], str(group(it)), pos(it), it.key))
 
 
-def _client(p, low, items, key, eta, stalled_long, resume, pause, titles, order):
-    taken = False
-    for it in fifo(items, key, order, titles):
-        before = p.pending
-        if it["_paused"]:
-            if low and not taken:
-                resume.append(it[key])
-                taken = True
-            else:
-                p.pending += 1
-        elif not low:
-            e = eta(it)
-            if e is None or e >= GRACE_MIN * 60:
-                pause.append(it[key])
-                p.pending += 1
-        elif stalled_long(it):
-            continue
-        elif taken:
-            pause.append(it[key])
-            p.pending += 1
+def _hold(p, it):
+    (p.pause_hashes if it.qbit else p.pause_nzos).append(it.id)
+    it.act = "pause"
+    p.pending += 1
+
+
+def _day(p, it, eta):
+    if it.paused:
+        p.pending += 1
+        it.act = "wait"
+    else:
+        e = eta(it)
+        if e is None or e >= GRACE_MIN * 60:
+            _hold(p, it)
         else:
-            taken = True
-        if not low and p.pending > before:
-            p.waiting.append(it[key].lower())
+            it.act = "grace"
+    if it.act != "grace":
+        p.waiting.append(it.id.lower())
 
 
-def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0):
-    low, p, titles, stalled = low_tariff(now), Plan(), titles or {}, stalled or {}
+def _resume(p, it):
+    (p.hashes if it.qbit else p.nzos).append(it.id)
+    it.act = "resume"
+
+
+def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0, positions=None):
+    low, p, titles, stalled, positions = low_tariff(now), Plan(), titles or {}, stalled or {}, positions or {}
     ts = now.timestamp()
-    night_t, night_s = [], []
+    items = []
     for t in torrents:
         if t.get("category") not in NIGHT_QBIT or t.get("state") not in PAUSED_QBIT | RUNNING_QBIT:
             continue
@@ -144,7 +174,7 @@ def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0):
             continue
         if t["state"] in STALLED_QBIT:
             p.stalled[t["hash"]] = stalled.get(t["hash"], ts)
-        night_t.append({**t, "_paused": paused})
+        items.append(Item(t["hash"], True, t, paused, t["category"] in NIGHT_TV, t.get("name") or "", (t.get("added_on") or 0, 0)))
     for s in slots:
         if s.get("cat") not in NIGHT_SAB:
             continue
@@ -153,10 +183,38 @@ def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0):
             if paused:
                 p.nzos.append(s["nzo_id"])
             continue
-        night_s.append({**s, "_paused": paused})
-    stalled_long = lambda t: t["hash"] in p.stalled and ts - p.stalled[t["hash"]] >= STALL_MIN * 60
-    _client(p, low, night_t, "hash", qbit_eta, stalled_long, p.hashes, p.pause_hashes, titles, qbit_order)
-    _client(p, low, night_s, "nzo_id", lambda s: sab_eta(s, kbps), lambda s: False, p.nzos, p.pause_nzos, titles, sab_order)
+        items.append(Item(s["nzo_id"], False, s, paused, s["cat"] in NIGHT_TV, s.get("filename") or "", (s.get("time_added") or 0, s.get("index", 0))))
+    eta = lambda it: qbit_eta(it.raw) if it.qbit else sab_eta(it.raw, kbps)
+    stalled_long = lambda it: it.qbit and it.id in p.stalled and ts - p.stalled[it.id] >= STALL_MIN * 60
+    movies = [it for it in items if not it.tv]
+    p.tv_order = tv_order([it for it in items if it.tv], titles, positions)
+    if not low:
+        for it in movies + p.tv_order:
+            _day(p, it, eta)
+        return p
+    for it in movies:
+        if it.paused:
+            _resume(p, it)
+        else:
+            it.act = "running"
+    taken = False
+    for it in p.tv_order:
+        if stalled_long(it):
+            it.act = "stalled"
+        elif taken:
+            if it.paused:
+                p.pending += 1
+                it.act = "wait"
+            else:
+                _hold(p, it)
+        else:
+            taken = True
+            if it.paused:
+                _resume(p, it)
+            else:
+                it.act = "running"
+            if it.qbit and (it.paused or it.raw.get("state") == "queuedDL"):
+                p.top_hashes.append(it.id)
     return p
 
 
@@ -170,12 +228,13 @@ def write_public(path, p, now):
 
 
 def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None):
-    rc, urgent, titles = 0, set(), {}
+    rc, urgent, titles, positions = 0, set(), {}, {}
     for app, api in apps.items():
         try:
             queue = api("/queue?page=1&pageSize=1000")
             urgent |= urgent_ids(api("/tag"), queue)
             titles |= title_ids(app, queue)
+            positions |= episode_positions(queue)
         except ApiError as e:
             print(f"{app}: {e}", file=sys.stderr)
             rc = 1
@@ -192,7 +251,7 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None):
         stalled = json.loads(state_path.read_text()).get("stalled") or {}
     except (OSError, ValueError, AttributeError):
         stalled = {}
-    p = plan(now, torrents, slots, urgent, titles, stalled, kbps)
+    p = plan(now, torrents, slots, urgent, titles, stalled, kbps, positions)
     names = {t["hash"]: t.get("name") for t in torrents} | {s["nzo_id"]: s.get("filename") for s in slots}
     verb = lambda v: f"would {v}" if dry_run else v
     for i in p.hashes + p.nzos:
@@ -201,12 +260,21 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None):
         print(f"{verb('pause')}: {names.get(i)}")
     print(f"low tariff: {low_tariff(now)}, waiting for the night: {p.pending}")
     if dry_run:
+        for n, it in enumerate(p.tv_order, 1):
+            pos = positions.get(it.id.lower()) or name_position(it.name)
+            series = titles.get(it.id.lower(), ("", "?"))[1]
+            print(f"tv {n:>3} series {series} {'S%02dE%02d' % pos if pos else '?'} {it.act or '-':<8} {'qbit' if it.qbit else 'sab '} {it.name[:70]}")
         return rc
     try:
         if p.hashes:
             qbit("/torrents/start", {"hashes": "|".join(p.hashes)})
         if p.pause_hashes:
             qbit("/torrents/stop", {"hashes": "|".join(p.pause_hashes)})
+        if p.top_hashes:
+            try:
+                qbit("/torrents/topPrio", {"hashes": "|".join(p.top_hashes)})
+            except ApiError as e:
+                print(f"TV torrent not moved to the top of the qBittorrent queue: {e}", file=sys.stderr)
         for n in p.nzos:
             sab({"mode": "queue", "name": "resume", "value": n})
         for n in p.pause_nzos:
@@ -245,13 +313,15 @@ def now_from(env):
 
 def qbit_client(base):
     def call(path, data=None):
-        if path in LEGACY:
-            body = urllib.parse.urlencode(data).encode()
-            try:
-                return _open(urllib.request.Request(base + path, body))
-            except ApiError:
-                return _open(urllib.request.Request(base + LEGACY[path], body))
-        return _open(urllib.request.Request(base + path))
+        if data is None:
+            return _open(urllib.request.Request(base + path))
+        body = urllib.parse.urlencode(data).encode()
+        try:
+            return _open(urllib.request.Request(base + path, body))
+        except ApiError:
+            if path not in LEGACY:
+                raise
+            return _open(urllib.request.Request(base + LEGACY[path], body))
     return call
 
 

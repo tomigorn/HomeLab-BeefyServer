@@ -42,6 +42,7 @@ if want radarr sonarr recyclarr; then
   check md.scoring 'all checks passed' "$(python3 "$MD_DIR/scripts/scoring-check.py" 2>&1 | tail -1)"
   check md.swiss-german 'all checks passed' "$(python3 "$MD_DIR/scripts/swiss-german-check.py" 2>&1 | tail -1)"
   check md.host-timers '^ok$' "$(m=''; for u in request-tags.timer night-downloads.timer night-search.timer clear-data-wipe.timer queue-watchdog.timer description-scout.timer nfo-scout.timer language-missing.timer original-audio.timer subtitle-check.timer original-audio-import.path; do [ "$(systemctl is-active "$u")" = active ] || m="$m $u"; done; echo "${m:-ok}")"
+  check md.night-downloads '^low tariff: (True|False), waiting for the night: [0-9]+$' "$(python3 "$MD_DIR/scripts/night-downloads.py" --dry-run 2>&1 | grep '^low tariff')"
 fi
 if want recyclarr; then
   check md.recyclarr-config '^15 4 \* \* \* ok$' "$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' movie-recyclarr | sed -n 's/^CRON_SCHEDULE=//p') $(docker exec movie-recyclarr sh -c 'test -r /config/recyclarr.yml && test -d /config/custom-formats && test -r /config/secrets.yml && echo ok' 2>&1)"
@@ -59,6 +60,7 @@ if want qbittorrent; then
   check md.qbit-categories '^radarr=/data/torrents/movies radarr-night=/data/torrents/movies sonarr=/data/torrents/tv sonarr-night=/data/torrents/tv$' "$(md_qb /torrents/categories | jq -r '[to_entries | sort_by(.key)[] | "\(.key)=\(.value.savePath)"] | join(" ")' 2>&1)"
   check md.qbit-clamav-autorun '^true /clamav-hook/clamav-hook\.py --qbit "%I" "%F" ok$' "$(md_qb /app/preferences | jq -r '"\(.autorun_enabled) \(.autorun_program)"' 2>&1) $(docker exec movie-qbittorrent sh -c 'test -x /clamav-hook/clamav-hook.py && echo ok' 2>&1)"
   check md.qbit-tun0-seeding '^tun0 2 43200$' "$(md_qb /app/preferences | jq -r '"\(.current_network_interface) \(.max_ratio) \(.max_seeding_time)"' 2>&1)"
+  check md.qbit-queueing '^true [1-9][0-9]*$' "$(md_qb /app/preferences | jq -r '"\(.queueing_enabled) \(.max_active_downloads)"' 2>&1)"
 fi
 if want sabnzbd; then
   check md.sab-host-whitelist '^sabnzbd,gluetun,sabnzbd\.holy-grail\.ch,192\.168\.1\.102$' "$(md_sab mode=get_config | jq -r '.config.misc.host_whitelist | join(",")' 2>&1)"

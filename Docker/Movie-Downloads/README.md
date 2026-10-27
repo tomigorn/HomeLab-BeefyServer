@@ -388,8 +388,11 @@ Radarr/Sonarr use a tagged client only for a title with a matching tag, otherwis
 
 | Part | What |
 |---|---|
-| Resume (FIFO) | `scripts/night-downloads.py` (`systemd/night-downloads.timer`: boot, every 2 min, 22:05, as buntu): in the low tariff one night download per client at a time, in request order: qBittorrent oldest `added_on`, SABnzbd queue position; one title (film/series) finishes before the next starts. Later night items that run anyway are paused back. A torrent `stalledDL`/`metaDL` for `STALL_MIN` (20, env `ND_STALL_MIN`) lets the next one start too. Own logic, not qBittorrent queueing (global) or SABnzbd `top_only` (would hold `download-now` jobs behind night jobs) |
-| 06:00 pause | outside the low tariff (not Sunday) every night item still downloading is paused, except ETA < `GRACE_MIN` (15 min; qBittorrent `eta`, SABnzbd `timeleft`; unknown, stalled or no speed = pause). Checked every run, so a grace item whose ETA grows to ≥ 15 min is paused too. Paused items keep their partial data and resume at the next low tariff in FIFO order |
+| Resume | `scripts/night-downloads.py` (`systemd/night-downloads.timer`: boot, every 2 min, 22:05, as buntu), in the low tariff: |
+| · Movies | every night movie resumes at once, in parallel. The clients limit it: qBittorrent queueing max 3 active downloads (global, all categories; extra ones wait `queuedDL`), SABnzbd downloads its queue one job after the other |
+| · TV | ONE TV download at a time across qBittorrent + SABnzbd: one series at a time, FIFO by its first grab (qBittorrent `added_on`, SABnzbd `time_added`); within it season, then episode (Sonarr queue `episode`, a season pack = its first episode; fallback `SxxEyy`/`Sxx` in the name, none = last). The next series starts when the current one has nothing left in the night categories. A later episode that runs anyway is paused back. The running TV torrent goes to the top of the qBittorrent queue (`topPrio`), so movies cannot hold it `queuedDL` |
+| · Stall | a torrent `stalledDL`/`metaDL` for `STALL_MIN` (20, env `ND_STALL_MIN`) frees the TV slot: the next episode starts. Own logic, not qBittorrent queueing (global) or SABnzbd `top_only` (would hold `download-now` jobs behind night jobs) |
+| 06:00 pause | outside the low tariff (not Sunday) every night item still downloading is paused, except ETA < `GRACE_MIN` (15 min; qBittorrent `eta`, SABnzbd `timeleft`; unknown, stalled or no speed = pause). Checked every run, so a grace item whose ETA grows to ≥ 15 min is paused too. Paused items keep their partial data and resume at the next low tariff (movies at once, TV in series order) |
 | `download-now` | resumed any time, never paused or queued by this |
 | State for fastpi | `~/.local/state/movie-downloads/night-downloads.json` (`pending`; `stalled` = stall clock per torrent). fastpi copies it while beefy is awake and wakes beefy at 22:05 only when `pending > 0` (`HomeLab-FastPi` `Docker/Beefy-Waker/README.md` "Night downloads wake") |
 | Seerr label | outside the low tariff the waiting download ids also go to `/srv/appdata/indexer-bar/night-waiting.json` (env `ND_PUBLIC`, empty = off): Seerr shows them as "Waiting for the night 🌙" (`../Seerr/README.md` "Night label") |
@@ -398,7 +401,7 @@ Radarr/Sonarr use a tagged client only for a title with a matching tag, otherwis
 | Download now (Seerr) | Seerr admins: title page → **Manage** → **⚡ Download now — at daytime power price**: tag + the title's night items move to the normal categories and start; nothing grabbed = search (`../Seerr/README.md` "Download now") |
 | By hand | Radarr/Sonarr: add the tag `download-now` to the title. Resuming a night item in qBittorrent/SABnzbd lasts only until the next run (paused again by day, or FIFO at night) |
 | Setup | `scripts/night-downloads-setup.sh` (tag, clients, categories; idempotent), `scripts/language-policy.sh` (Connect script) |
-| Check | `scripts/night-downloads.py --dry-run`; simulate a time: `ND_NOW=2026-10-27T22:10 scripts/night-downloads.py --dry-run` (`ND_NOW` refused without `--dry-run`) |
+| Check | `scripts/night-downloads.py --dry-run` (+ the TV order table: series, SxxEyy, action, client); simulate a time: `ND_NOW=2026-10-27T22:10 scripts/night-downloads.py --dry-run` (`ND_NOW` refused without `--dry-run`) |
 | Tests | `python3 tests/test_night_downloads.py`, `tests/test_download_now_hook.sh`, `tests/test_request_tags.sh` |
 
 | Side effect | Behaviour |
@@ -406,7 +409,8 @@ Radarr/Sonarr use a tagged client only for a title with a matching tag, otherwis
 | beefy sleep | paused items are idle (no net/disk traffic for the idle watcher): after 06:00 beefy sleeps once the grace items finished; seeding never keeps it awake; a resumed download does |
 | Queue watchdog | `paused` is never stalled; the stall clock starts on resume |
 | Completion scan, Delete a title | unchanged: the scan runs when the download finishes; the wipe reads the categories of all clients |
-| Paused by hand in a night category | resumed at night in FIFO order like the rest |
+| Paused by hand in a night category | resumed at night like the rest (movies at once, TV in series order) |
+| Daytime / `download-now` (normal categories) | not managed: run at once as the clients schedule them (qBittorrent ≤ 3 parallel, SABnzbd in queue order = Sonarr grab order, not episode order). Not counted in the night TV slot |
 
 ```bash
 cd ~/Projects/Docker/Movie-Downloads/systemd

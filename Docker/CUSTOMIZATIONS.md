@@ -74,6 +74,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Hardlinks, recycle bin 7 days, rescan after manual, extra files | media management | API | `md.radarr-media-management`, `md.sonarr-media-management`: → true /data/.recyclebin 7 afterManual true srt,… | |
 | Metadata writers off | app metadata | API | `md.radarr-metadata-off`, `md.sonarr-metadata-off`: → 0 enabled | |
 | Host timers: request-tags, night-downloads, night-search, clear-data-wipe, queue-watchdog, description-scout, nfo-scout, language-missing, original-audio, subtitle-check, original-audio-import.path | `Movie-Downloads/systemd/` | README per section | `md.host-timers`: → ok | |
+| Night queue: movies in parallel, one TV series at a time in episode order (reads Sonarr queue with episodes) | `Movie-Downloads/scripts/night-downloads.py` | README "Can wait" | `md.night-downloads`: --dry-run → low tariff: …, waiting for the night: n | Sonarr queue API drops `episode` → order falls back to SxxEyy in the name |
 | Recyclarr cron 04:15, local config + CFs mounted | compose | compose | `md.recyclarr-config`: → 15 4 * * * ok | env renamed |
 | Prowlarr torrent indexers: 4 × min 5, 4 × min 1 | Prowlarr | torrent-indexers.sh | `md.prowlarr-torrent-indexers`: → min5=4 min1=4 | |
 | FlareSolverr proxy for 1337x + EZTV | Prowlarr | torrent-indexers.sh | `md.prowlarr-flaresolverr`: → FlareSolverr 4 | |
@@ -84,6 +85,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | qBittorrent categories incl. night | qBittorrent | night-downloads-setup.sh | `md.qbit-categories`: → radarr, radarr-night, sonarr, sonarr-night paths | |
 | qBittorrent ClamAV autorun | qBittorrent | `scripts/clamav-hooks.sh` | `md.qbit-clamav-autorun`: → true /clamav-hook/clamav-hook.py --qbit … ok | |
 | qBittorrent bound to tun0, ratio 2, 30 days | qBittorrent | UI | `md.qbit-tun0-seeding`: → tun0 2 43200 | leak outside the VPN |
+| qBittorrent queueing on (max 3 active downloads): the night TV torrent goes to the top of the queue | qBittorrent | Web UI → Options → BitTorrent | `md.qbit-queueing`: → true n | queueing off = no limit and topPrio fails (logged, not fatal) |
 | SABnzbd host whitelist | `sabnzbd.ini` | Config → Special | `md.sab-host-whitelist`: → sabnzbd,gluetun,sabnzbd.holy-grail.ch,192.168.1.102 | |
 | SABnzbd unwanted extensions (22, abort), permissions 775 | `sabnzbd.ini` | Config → Switches | `md.sab-unwanted-ext`: → 22 2 775 | |
 | SABnzbd ClamAV post-processing script | `sabnzbd.ini` | clamav-hooks.sh | `md.sab-clamav-script`: → /clamav-hook *=clamav-hook.py ok; `md.sab-clamd-reach`: zPING to clamav:3310 → PONG | |

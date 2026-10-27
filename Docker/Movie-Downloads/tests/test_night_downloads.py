@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""scripts/night-downloads.py: low tariff, FIFO one night download per client, the 06:00 pause with its 15-min grace, download-now titles, the state file for fastpi, against fake clients.
+"""scripts/night-downloads.py: low tariff, night movies in parallel, one TV series at a time in episode order, the 06:00 pause with its 15-min grace, download-now titles, the state file for fastpi, against fake clients.
 Usage: python3 tests/test_night_downloads.py"""
 import datetime
 import importlib.util
@@ -27,8 +27,8 @@ def tor(h, added, state="stoppedDL", cat="sonarr-night", eta=INF, name=None):
     return {"hash": h, "name": name or h, "category": cat, "state": state, "added_on": added, "eta": eta}
 
 
-def job(n, index, status="Paused", cat="tv-night", timeleft="0:00:00", mbleft="1000"):
-    return {"nzo_id": n, "filename": n, "cat": cat, "status": status, "index": index, "timeleft": timeleft, "mbleft": mbleft}
+def job(n, index, status="Paused", cat="tv-night", timeleft="0:00:00", mbleft="1000", added=0):
+    return {"nzo_id": n, "filename": n, "cat": cat, "status": status, "index": index, "timeleft": timeleft, "mbleft": mbleft, "time_added": added}
 
 
 T_NIGHT = tor("AAA", 100, cat="radarr-night", name="Film.A.2020")
@@ -40,8 +40,8 @@ J_NIGHT = job("SABnzbd_nzo_1", 0, cat="movies-night")
 J_NOW = job("SABnzbd_nzo_2", 1, cat="movies")
 
 
-def plan(now, torrents=(), slots=(), urgent=(), titles=None, stalled=None, kbps=1000):
-    return nd.plan(now, list(torrents), list(slots), set(urgent), titles or {}, stalled or {}, kbps)
+def plan(now, torrents=(), slots=(), urgent=(), titles=None, stalled=None, kbps=1000, positions=None):
+    return nd.plan(now, list(torrents), list(slots), set(urgent), titles or {}, stalled or {}, kbps, positions or {})
 
 
 class Tariff(unittest.TestCase):
@@ -114,7 +114,7 @@ class Day(unittest.TestCase):
         self.assertEqual((p.hashes, p.nzos, p.pending), (["AAA"], ["SABnzbd_nzo_1"], 1))
 
     def test_sunday_never_pauses(self):
-        p = plan(SUN_NOON, [tor("t", 1, "downloading")], [job("j", 0, "Downloading", timeleft="9:00:00")])
+        p = plan(SUN_NOON, [tor("t", 1, "downloading", cat="radarr-night")], [job("j", 0, "Downloading", timeleft="9:00:00")])
         self.assertEqual((p.pause_hashes, p.pause_nzos), ([], []))
 
 
@@ -154,18 +154,18 @@ class Fifo(unittest.TestCase):
         p = plan(MON_2205, slots=[job("j0", 0), job("j1", 1, "Downloading")])
         self.assertEqual((p.nzos, p.pause_nzos), (["j0"], ["j1"]))
 
-    def test_one_title_completes_before_the_next_starts(self):
+    def test_one_series_completes_before_the_next_starts(self):
         titles = {"boys1": ("sonarr", 1), "vox1": ("sonarr", 2), "vox2": ("sonarr", 2), "boys5": ("sonarr", 1)}
-        js = [job("boys1", 0, "Downloading"), job("vox1", 1), job("vox2", 2), job("boys5", 3)]
-        self.assertEqual([s["nzo_id"] for s in nd.fifo(js, "nzo_id", nd.sab_order, titles)], ["boys1", "boys5", "vox1", "vox2"])
+        js = [job("boys1", 0, "Downloading", added=10), job("vox1", 1, added=20), job("vox2", 2, added=30), job("boys5", 3, added=40)]
         p = plan(MON_2205, slots=js, titles=titles)
+        self.assertEqual([i.id for i in p.tv_order], ["boys1", "boys5", "vox1", "vox2"])
         self.assertEqual((p.nzos, p.pause_nzos, p.pending), ([], [], 3))
 
     def test_resume_order_after_a_0600_pause(self):
-        ts = [tor("t1", 100, "stoppedDL"), tor("t2", 200)]
-        js = [job("j0", 0), job("j1", 1)]
+        ts = [tor("t1", 100, "stoppedDL", cat="radarr-night"), tor("t2", 200, cat="radarr-night"), tor("e1", 300), tor("e2", 400)]
+        js = [job("j0", 0, cat="movies-night"), job("e3", 1, added=500)]
         p = plan(MON_2205, ts, js)
-        self.assertEqual((p.hashes, p.nzos), (["t1"], ["j0"]))
+        self.assertEqual((p.hashes, p.nzos, p.pending), (["t1", "t2", "e1"], ["j0"], 2))
 
     def test_download_now_runs_beside_the_night_slot(self):
         ts = [tor("old", 100, "downloading"), tor("urg", 200), tor("now", 50, "downloading", cat="radarr")]
@@ -174,14 +174,95 @@ class Fifo(unittest.TestCase):
 
     def test_nothing_waits_for_the_night_during_the_night(self):
         p = plan(MON_2205, [T_NIGHT, tor("zzz", 300)], [J_NIGHT, job("SABnzbd_nzo_5", 1)])
-        self.assertEqual((p.pending, p.waiting), (2, []))
+        self.assertEqual((p.pending, p.waiting), (1, []))
 
     def test_paused_item_outside_night_categories_is_never_touched(self):
         p = plan(MON_2205, [T_NOW_PAUSED], [J_NOW], {"ccc", "sabnzbd_nzo_2"})
         self.assertEqual((p.hashes, p.nzos, p.pending), ([], [], 0))
 
 
+T_SHOW = {"s1e1": ("sonarr", 1), "s1e2": ("sonarr", 1), "s2": ("sonarr", 1), "s2e3": ("sonarr", 1), "other": ("sonarr", 2)}
+P_SHOW = {"s1e1": (1, 1), "s1e2": (1, 2), "s2": (2, 1), "s2e3": (2, 3), "other": (1, 1)}
+
+
+class Rule(unittest.TestCase):
+    def test_night_movies_all_resume_in_parallel(self):
+        ts = [tor("m1", 100, cat="radarr-night"), tor("m2", 200, cat="radarr-night"), tor("m3", 300, "downloading", cat="radarr-night")]
+        js = [job("n1", 0, cat="movies-night"), job("n2", 1, "Downloading", cat="movies-night")]
+        p = plan(MON_2205, ts, js)
+        self.assertEqual((p.hashes, p.nzos, p.pause_hashes, p.pause_nzos, p.pending), (["m1", "m2"], ["n1"], [], [], 0))
+
+    def test_episodes_in_season_then_episode_order_across_clients(self):
+        ts = [tor("s2", 50, name="Show.S02.1080p"), tor("s1e2", 60)]
+        js = [job("s2e3", 0, added=10), job("s1e1", 1, added=90)]
+        p = plan(MON_2205, ts, js, titles=T_SHOW, positions=P_SHOW)
+        self.assertEqual([i.id for i in p.tv_order], ["s1e1", "s1e2", "s2", "s2e3"])
+        self.assertEqual((p.hashes, p.nzos, p.pending), ([], ["s1e1"], 3))
+
+    def test_later_episode_running_is_paused_back_for_the_earlier(self):
+        ts = [tor("s1e2", 60, "downloading")]
+        js = [job("s1e1", 0, added=90)]
+        p = plan(MON_2205, ts, js, titles=T_SHOW, positions=P_SHOW)
+        self.assertEqual((p.nzos, p.pause_hashes, p.pending), (["s1e1"], ["s1e2"], 1))
+
+    def test_series_fifo_by_first_grab_one_series_across_clients(self):
+        ts = [tor("other", 100, "downloading")]
+        js = [job("s1e2", 0, added=50), job("s1e1", 1, added=300)]
+        p = plan(MON_2205, ts, js, titles=T_SHOW, positions=P_SHOW)
+        self.assertEqual([i.id for i in p.tv_order], ["s1e1", "s1e2", "other"])
+        self.assertEqual((p.nzos, p.pause_hashes, p.pending), (["s1e1"], ["other"], 2))
+
+    def test_next_series_starts_when_the_current_has_nothing_left(self):
+        p = plan(MON_2205, [tor("other", 100), tor("done", 10, "uploading")], titles=T_SHOW, positions=P_SHOW)
+        self.assertEqual((p.hashes, p.pending), (["other"], 0))
+
+    def test_one_series_beside_several_movies(self):
+        ts = [tor("m1", 100, cat="radarr-night"), tor("m2", 200, cat="radarr-night"), tor("other", 150)]
+        js = [job("s1e1", 0, added=50), job("n1", 1, cat="movies-night"), job("s1e2", 2, added=60)]
+        p = plan(MON_2205, ts, js, titles=T_SHOW, positions=P_SHOW)
+        self.assertEqual((sorted(p.hashes), p.nzos, p.pending), (["m1", "m2"], ["n1", "s1e1"], 2))
+
+    def test_running_tv_torrent_head_goes_to_the_top_of_the_qbit_queue(self):
+        p = plan(MON_2205, [tor("s1e1", 10), tor("m1", 5, "downloading", cat="radarr-night")], titles=T_SHOW, positions=P_SHOW)
+        self.assertEqual((p.hashes, p.top_hashes), (["s1e1"], ["s1e1"]))
+        q = plan(MON_2205, [tor("s1e1", 10, "queuedDL")], titles=T_SHOW, positions=P_SHOW)
+        self.assertEqual(q.top_hashes, ["s1e1"])
+        r = plan(MON_2205, [tor("s1e1", 10, "downloading")], titles=T_SHOW, positions=P_SHOW)
+        self.assertEqual(r.top_hashes, [])
+        self.assertEqual(plan(MON_2205, slots=[job("s1e1", 0)], titles=T_SHOW, positions=P_SHOW).top_hashes, [])
+
+    def test_stalled_tv_head_lets_the_next_episode_start(self):
+        ts = [tor("s1e1", 10, "stalledDL"), tor("s1e2", 20)]
+        p = plan(MON_2205, ts, titles=T_SHOW, positions=P_SHOW, stalled={"s1e1": MON_2205.timestamp() - nd.STALL_MIN * 60})
+        self.assertEqual((p.hashes, p.pause_hashes), (["s1e2"], []))
+
+    def test_unknown_position_from_the_name_and_last_without(self):
+        self.assertEqual(nd.name_position("Show.S03E07.1080p"), (3, 7))
+        self.assertEqual(nd.name_position("Show.s2e10v2"), (2, 10))
+        self.assertEqual(nd.name_position("Show.S02.1080p.BluRay"), (2, 0))
+        self.assertEqual(nd.name_position("[Grp] Show - 12 [1080p]"), None)
+        ts = [tor("x", 10, name="Show.S01E05"), tor("y", 20, name="Show.S01E02"), tor("z", 5, name="Show - 01")]
+        titles = {"x": ("sonarr", 5), "y": ("sonarr", 5), "z": ("sonarr", 5)}
+        self.assertEqual([i.id for i in plan(MON_2205, ts, titles=titles).tv_order], ["y", "x", "z"])
+
+    def test_by_day_tv_and_movies_still_pause_and_wait(self):
+        ts = [tor("m1", 1, "downloading", cat="radarr-night", eta=3600), tor("s1e1", 2, "downloading", eta=3600), tor("s1e2", 3)]
+        p = plan(TUE_0602, ts, titles=T_SHOW, positions=P_SHOW)
+        self.assertEqual((p.hashes, sorted(p.pause_hashes), p.pending, sorted(p.waiting)), ([], ["m1", "s1e1"], 3, ["m1", "s1e1", "s1e2"]))
+        self.assertEqual(p.top_hashes, [])
+
+
 class Arr(unittest.TestCase):
+    def test_positions_are_the_first_episode_of_each_download(self):
+        queue = {"records": [
+            {"downloadId": "PACK", "seasonNumber": 2, "episode": {"seasonNumber": 2, "episodeNumber": 3}},
+            {"downloadId": "PACK", "seasonNumber": 2, "episode": {"seasonNumber": 2, "episodeNumber": 1}},
+            {"downloadId": "ep", "seasonNumber": 1, "episode": {"seasonNumber": 1, "episodeNumber": 7}},
+            {"downloadId": "noep", "seasonNumber": 4},
+            {"downloadId": "movie", "movieId": 3},
+        ]}
+        self.assertEqual(nd.episode_positions(queue), {"pack": (2, 1), "ep": (1, 7), "noep": (4, 0)})
+
     def test_download_ids_of_titles_tagged_download_now(self):
         tags = [{"id": 3, "label": "audio-german"}, {"id": 70, "label": "download-now"}]
         queue = {"totalRecords": 3, "records": [
@@ -209,7 +290,7 @@ class Fake:
             raise nd.ApiError("qbit down")
         if path == "/torrents/info":
             return self.torrents
-        if path in ("/torrents/start", "/torrents/stop"):
+        if path in ("/torrents/start", "/torrents/stop", "/torrents/topPrio"):
             return None
         raise AssertionError(path)
 
@@ -250,9 +331,9 @@ class Run(unittest.TestCase):
     def test_low_tariff_resumes_the_head_and_writes_pending(self):
         f = Fake([T_NIGHT, tor("zzz", 300)], [J_NIGHT, job("SABnzbd_nzo_5", 1)])
         self.assertEqual(self.go(f, MON_2205), 0)
-        self.assertEqual(f.actions(), [("qbit", "/torrents/start", {"hashes": "AAA"}), ("sab", {"mode": "queue", "name": "resume", "value": "SABnzbd_nzo_1"})])
+        self.assertEqual(f.actions(), [("qbit", "/torrents/start", {"hashes": "AAA"}), ("sab", {"mode": "queue", "name": "resume", "value": "SABnzbd_nzo_1"}), ("sab", {"mode": "queue", "name": "resume", "value": "SABnzbd_nzo_5"})])
         s = json.loads(self.state.read_text())
-        self.assertEqual((s["pending"], s["low_tariff"]), (2, True))
+        self.assertEqual((s["pending"], s["low_tariff"]), (1, True))
 
     def test_by_day_resumes_download_now_and_counts_the_rest(self):
         f = Fake([T_NIGHT, T_NIGHT_V4], [J_NIGHT])
@@ -273,7 +354,7 @@ class Run(unittest.TestCase):
         later = MON_2205 + datetime.timedelta(minutes=nd.STALL_MIN)
         f2 = Fake([tor("old", 100, "stalledDL"), tor("new", 200)])
         self.go(f2, later)
-        self.assertEqual(f2.actions(), [("qbit", "/torrents/start", {"hashes": "new"})])
+        self.assertEqual(f2.actions(), [("qbit", "/torrents/start", {"hashes": "new"}), ("qbit", "/torrents/topPrio", {"hashes": "new"})])
 
     def test_seerr_file_lists_the_waiting_ids_by_day(self):
         f = Fake([T_NIGHT, T_NIGHT_V4], [J_NIGHT])
@@ -306,6 +387,22 @@ class Run(unittest.TestCase):
         f = Fake([T_NIGHT], [J_NIGHT], fail={"sab"})
         self.assertEqual(self.go(f, MON_DAY), 1)
         self.assertEqual(json.loads(self.state.read_text())["pending"], 4)
+
+    def test_tv_head_torrent_gets_top_priority_and_its_failure_is_not_fatal(self):
+        f = Fake([tor("bbb", 100), tor("ccc", 50, cat="radarr-night")])
+        f.arr = lambda app: (lambda path: {"records": []} if path.startswith("/queue") else [])
+        self.assertEqual(self.go(f, MON_2205), 0)
+        self.assertEqual(f.actions(), [("qbit", "/torrents/start", {"hashes": "ccc|bbb"}), ("qbit", "/torrents/topPrio", {"hashes": "bbb"})])
+        qbit = f.qbit
+        f.qbit = lambda path, data=None: (_ for _ in ()).throw(nd.ApiError("409 queueing off")) if path == "/torrents/topPrio" else qbit(path, data)
+        self.assertEqual(self.go(f, MON_2205), 0)
+        self.assertEqual(json.loads(self.state.read_text())["pending"], 0)
+
+    def test_sonarr_queue_asks_for_the_episodes(self):
+        f = Fake([])
+        self.go(f, MON_2205)
+        self.assertIn(("sonarr", "/queue?page=1&pageSize=1000"), f.calls)
+        self.assertEqual(nd.APPS["sonarr"], "includeSeries=true&includeEpisode=true")
 
     def test_arr_down_still_resumes_at_night(self):
         f = Fake([T_NIGHT], [], fail={"radarr", "sonarr"})
