@@ -2,6 +2,7 @@
 """Download now (README "Download now"): the button in Seerr's Manage panel. Seerr admins / manage-requests only, checked against Seerr itself on every call.
 A press tags the title download-now in Radarr/Sonarr, moves its downloads out of the night categories (qBittorrent radarr-night/sonarr-night, SABnzbd movies-night/tv-night) into the normal ones and resumes the paused ones; nothing grabbed yet = a search, which grabs through the tagged normal clients.
 GET /_download-now/api?type=movie|tv&tmdb=<id>: what a press would do (no change). POST /_download-now/api {"type","tmdbId"}: do it. The API keys stay here, the browser only sees the state."""
+import http.client
 import http.server
 import json
 import os
@@ -9,6 +10,7 @@ import pathlib
 import re
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -23,6 +25,8 @@ APP = {"movie": "radarr", "tv": "sonarr"}
 AUTH_HEADERS = ("X-Api-Key", "X-Api-User")
 TMDB = re.compile(r"^[1-9][0-9]{0,9}$")
 LOCK = threading.Lock()
+SEARCH_COOLDOWN = 120
+SEARCHED = {}
 
 
 class ApiError(Exception):
@@ -79,18 +83,24 @@ def plan(kind, title, tag_id, queue, torrents, slots):
 def find_title(kind, arr, media, tmdb):
     info = (media or {}).get("mediaInfo") or {}
     sid = info.get("externalServiceId")
+    tvdb = info.get("tvdbId") or ((media or {}).get("externalIds") or {}).get("tvdbId")
     path = "/movie" if kind == "movie" else "/series"
+
+    def same(t):
+        return isinstance(t, dict) and (t.get("tmdbId") == tmdb or (kind == "tv" and tvdb and t.get("tvdbId") == tvdb))
     if isinstance(sid, int) and sid > 0:
         try:
-            return arr(f"{path}/{sid}")
+            t = arr(f"{path}/{sid}")
+            if same(t):
+                return t
         except ApiError:
             pass
     if kind == "movie":
         found = arr(f"/movie?tmdbId={int(tmdb)}")
     else:
-        tvdb = info.get("tvdbId") or ((media or {}).get("externalIds") or {}).get("tvdbId")
         found = arr(f"/series?tvdbId={int(tvdb)}") if tvdb else []
-    return found[0] if isinstance(found, list) and found else None
+    found = [t for t in found if same(t)] if isinstance(found, list) else []
+    return found[0] if found else None
 
 
 def assess(kind, tmdb, auth, deps):
@@ -126,11 +136,18 @@ def apply(kind, p, deps):
     if start:
         deps.qbit("/torrents/start", {"hashes": "|".join(start)})
     for nzo, cat, paused in p["sab"]:
-        deps.sab({"mode": "change_cat", "value": nzo, "value2": cat})
+        sab_ok(deps.sab({"mode": "change_cat", "value": nzo, "value2": cat}), "change_cat")
         if paused:
-            deps.sab({"mode": "queue", "name": "resume", "value": nzo})
-    if p["search"]:
+            sab_ok(deps.sab({"mode": "queue", "name": "resume", "value": nzo}), "resume")
+    key = (kind, tid)
+    if p["search"] and time.monotonic() - SEARCHED.get(key, -SEARCH_COOLDOWN) >= SEARCH_COOLDOWN:
         arr("/command", "POST", {"name": "MoviesSearch", "movieIds": [tid]} if kind == "movie" else {"name": "SeriesSearch", "seriesId": tid})
+        SEARCHED[key] = time.monotonic()
+
+
+def sab_ok(r, what):
+    if not (isinstance(r, dict) and r.get("status") is True):
+        raise ApiError(f"sabnzbd {what} refused")
 
 
 def public(p):
@@ -165,7 +182,7 @@ def handle(method, path, headers, body, deps):
         try:
             req = json.loads(body or b"{}")
             kind, tmdb = req.get("type"), str(req.get("tmdbId", ""))
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, RecursionError):
             return 400, {"state": "error", "error": "bad request"}
     else:
         q = urllib.parse.parse_qs(url.query)
@@ -180,25 +197,36 @@ def handle(method, path, headers, body, deps):
     if not allowed(me):
         return 403, {"state": "error", "error": "forbidden"}
     try:
-        with LOCK:
+        if method == "GET":
             title, p = assess(kind, int(tmdb), auth, deps)
-            if method == "POST" and title:
-                apply(kind, p, deps)
-                print(f"user {me.get('id')} {kind} {tmdb} ({title.get('title')}): {p['state']}, moved {len(p['qbit']) + len(p['sab'])}, tag {'added' if p['add_tag'] else 'kept'}", flush=True)
-    except (ApiError, KeyError, TypeError, ValueError) as e:
-        print(f"{kind} {tmdb}: {redact(e)}", file=sys.stderr, flush=True)
+        else:
+            with LOCK:
+                title, p = assess(kind, int(tmdb), auth, deps)
+                if title:
+                    apply(kind, p, deps)
+                    print(f"user {me.get('id')} {kind} {tmdb} ({title.get('title')}): {p['state']}, moved {len(p['qbit']) + len(p['sab'])}, tag {'added' if p['add_tag'] else 'kept'}", flush=True)
+    except Exception as e:
+        print(f"{kind} {tmdb}: {type(e).__name__} {redact(e)}", file=sys.stderr, flush=True)
         return 502, {"state": "error", "error": "download clients not reachable"}
     return 200, public(p)
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+OPENER = urllib.request.build_opener(NoRedirect)
+
+
 def _open(req, timeout=15):
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with OPENER.open(req, timeout=timeout) as r:
             data = r.read()
             return json.loads(data) if data.strip() else None
     except urllib.error.HTTPError as e:
         raise ApiError(f"{req.full_url.split('?')[0]}: {e.code}") from None
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+    except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError, ValueError) as e:
         raise ApiError(f"{req.full_url.split('?')[0]}: {redact(e)}") from None
 
 
@@ -259,11 +287,15 @@ def deps_from_env(env):
 class Handler(http.server.BaseHTTPRequestHandler):
     deps = None
     server_version = "download-now"
+    timeout = 10
     sys_version = ""
 
     def _serve(self, method):
-        n = int(self.headers.get("Content-Length") or 0)
-        body = self.rfile.read(min(n, 4096)) if n else b""
+        try:
+            n = max(0, min(int(self.headers.get("Content-Length") or 0), 4096))
+        except ValueError:
+            n = 0
+        body = self.rfile.read(n) if n else b""
         status, out = handle(method, self.path, dict(self.headers.items()), body, self.deps)
         data = json.dumps(out).encode()
         self.send_response(status)

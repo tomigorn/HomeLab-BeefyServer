@@ -195,12 +195,14 @@ class Handler(unittest.TestCase):
         self.assertEqual(sab, [{"mode": "change_cat", "value": "SABnzbd_nzo_1", "value2": "movies"}, {"mode": "queue", "name": "resume", "value": "SABnzbd_nzo_1"}])
 
     def test_press_without_a_grab_searches(self):
+        dn.SEARCHED.clear()
         w = FakeWorld()
         status, out = post(w, {"type": "movie", "tmdbId": 673})
         self.assertEqual(out["state"], "searching")
         self.assertIn(("radarr", "POST", "/command", {"name": "MoviesSearch", "movieIds": [43]}), w.writes)
 
     def test_series_search_uses_series_search(self):
+        dn.SEARCHED.clear()
         w = FakeWorld(kind="tv")
         status, out = post(w, {"type": "tv", "tmdbId": 1399})
         self.assertIn(("sonarr", "PUT", "/series/editor", {"seriesIds": [17], "tags": [TAG], "applyTags": "add"}), w.writes)
@@ -257,6 +259,7 @@ class Handler(unittest.TestCase):
         w.arr = lambda app: (lambda path, method="GET", body=None: [] if path.startswith("/movie?") else {"records": []} if path.startswith("/queue") else [{"id": TAG, "label": "download-now"}])
         status, out = get(w)
         self.assertEqual((status, out["state"]), (200, "not-found"))
+        self.assertEqual(post(w, {"type": "movie", "tmdbId": 673})[:1], (200,))
 
     def test_title_seerr_does_not_know_is_not_found_not_an_error(self):
         w = FakeWorld()
@@ -281,6 +284,37 @@ class Handler(unittest.TestCase):
         status, out = post(w, {"type": "movie", "tmdbId": 673})
         self.assertEqual((status, out["state"]), (502, "error"))
         self.assertNotIn("SECRET", json.dumps(out))
+
+    def test_seerr_link_to_another_title_falls_back_to_the_tmdb_lookup(self):
+        w = FakeWorld(media={"mediaInfo": {"externalServiceId": 99}}, queue=[rec("abc")], torrents=[tor("abc")])
+        arr = w.arr
+        def other(app):
+            call = arr(app)
+            return lambda path, method="GET", body=None: {**movie(99), "tmdbId": 1} if path == "/movie/99" else call(path, method, body)
+        w.arr = other
+        status, out = post(w, {"type": "movie", "tmdbId": 673})
+        self.assertEqual(out["state"], "started")
+        self.assertIn(("radarr", "PUT", "/movie/editor", {"movieIds": [43], "tags": [TAG], "applyTags": "add"}), w.writes)
+
+    def test_sab_refusal_is_an_error_not_started(self):
+        w = FakeWorld(queue=[rec("SABnzbd_nzo_1")], slots=[job("SABnzbd_nzo_1")])
+        sab = w.sab
+        w.sab = lambda params: {"status": False, "error": "nope"} if params.get("mode") == "change_cat" else sab(params)
+        self.assertEqual(post(w, {"type": "movie", "tmdbId": 673})[1]["state"], "error")
+
+    def test_second_search_within_the_cooldown_is_not_sent_again(self):
+        dn.SEARCHED.clear()
+        w = FakeWorld()
+        post(w, {"type": "movie", "tmdbId": 673})
+        status, out = post(w, {"type": "movie", "tmdbId": 673})
+        self.assertEqual(out["state"], "searching")
+        self.assertEqual(len([x for x in w.writes if x[2:3] == ("/command",)]), 1)
+
+    def test_odd_upstream_shapes_are_502_not_a_crash(self):
+        w = FakeWorld()
+        arr = w.arr
+        w.arr = lambda app: (lambda path, method="GET", body=None: None if path.startswith("/queue") else arr(app)(path, method, body))
+        self.assertEqual(get(w)[0], 502)
 
     def test_health_needs_no_login(self):
         self.assertEqual(dn.handle("GET", "/_download-now/health", {}, b"", FakeWorld(perms=None).deps()), (200, {"ok": True}))
