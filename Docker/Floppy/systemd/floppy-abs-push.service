@@ -6,9 +6,11 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-# fetch: throwaway uid, the ABS keys only as credentials, outbound HTTPS only, no write access but its state dir.
+# targets: root (docker exec into floppy) lists Floppy usernames minus /etc/floppy-abs-push/exclude.
+ExecStartPre=+/usr/bin/python3 -I /home/buntu/Projects/Docker/Floppy/scripts/abs-push.py targets
+# fetch: throwaway uid, the floppy-sync key only as a credential, GET-only HTTPS to ABS, no write access but its state dir.
 DynamicUser=yes
-LoadCredential=key:/home/buntu/Projects/Docker/Floppy/secrets/abs-push
+LoadCredential=abs-key:/home/buntu/Projects/Docker/Floppy/secrets/floppy-sync-abs-key
 StateDirectory=floppy-abs-push
 StateDirectoryMode=0700
 BindReadOnlyPaths=/home/buntu/Projects/Docker/Floppy/scripts:/run/abs-push

@@ -1,8 +1,10 @@
 import importlib.util
+import io
 import json
 import pathlib
 import tempfile
 import unittest
+import urllib.request
 
 _spec = importlib.util.spec_from_file_location("abs_push", pathlib.Path(__file__).with_name("abs-push.py"))
 ap = importlib.util.module_from_spec(_spec)
@@ -10,6 +12,7 @@ _spec.loader.exec_module(ap)
 
 NOW = 1_800_000_000.0
 JPEG = b"\xff\xd8\xff" + b"x" * 10
+SERVICE = {"id": "svc", "username": "floppy-sync", "type": "admin", "isActive": True}
 
 
 def entry(item, last, episode=None):
@@ -19,9 +22,15 @@ def entry(item, last, episode=None):
     return e
 
 
+def abs_user(uid, name, type_="user", active=True):
+    return {"id": uid, "username": name, "type": type_, "isActive": active, "token": "secret-token", "email": "x@example.com"}
+
+
 class FakeAbs:
-    def __init__(self, me, covers=None):
+    def __init__(self, users=None, progress=None, me=SERVICE, covers=None):
         self.me = me
+        self.users = users or []
+        self.progress = progress or {}
         self.covers = covers or {}
         self.calls = []
 
@@ -29,6 +38,12 @@ class FakeAbs:
         self.calls.append(path)
         if path == "/api/me":
             return self.me
+        if path == "/api/users":
+            return {"users": self.users}
+        if path.startswith("/api/users/"):
+            uid = path.split("/")[3]
+            u = next(u for u in self.users if u["id"] == uid)
+            return {**u, "mediaProgress": self.progress.get(uid, [])}
         if path.endswith("?expanded=1"):
             return {"id": path.split("/")[3].split("?")[0], "expanded": True}
         return {"id": path.split("/")[3], "media": {"coverPath": "/metadata/c.jpg"}}
@@ -38,28 +53,109 @@ class FakeAbs:
         return self.covers.get(item_id, ("image/jpeg", JPEG))
 
 
-def me(*entries, type_="user"):
-    return {"username": "member", "type": type_, "email": "x@example.com", "mediaProgress": list(entries)}
+class FakeResponse(io.BytesIO):
+    headers = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
 
 
-class KeysTest(unittest.TestCase):
-    def test_reads_one_key_per_member(self):
+class FakeOpener:
+    def __init__(self):
+        self.requests = []
+
+    def open(self, req, timeout=None):
+        self.requests.append(req)
+        return FakeResponse(b'{"ok": true}')
+
+
+class GetOnlyTest(unittest.TestCase):
+    def client(self):
+        abs_ = ap.Abs("k")
+        abs_.opener = FakeOpener()
+        return abs_
+
+    def test_get_sends_get_with_bearer(self):
+        abs_ = self.client()
+        self.assertEqual(abs_.get("/api/me"), {"ok": True})
+        req = abs_.opener.requests[0]
+        self.assertEqual((req.get_method(), req.full_url, req.data), ("GET", ap.ABS_URL + "/api/me", None))
+        self.assertEqual(req.get_header("Authorization"), "Bearer k")
+
+    def test_refuses_every_other_method(self):
+        abs_ = self.client()
+        for method in ("POST", "PATCH", "PUT", "DELETE", "HEAD", "get"):
+            with self.subTest(method=method), self.assertRaises(ap.AbsError):
+                abs_._open("/api/me", method=method)
+        self.assertEqual(abs_.opener.requests, [])
+
+    def test_refuses_paths_outside_the_api(self):
+        abs_ = self.client()
+        for path in ("/login", "//evil.example.com/api/me", "@evil.example.com/api/me", "/api/../x"):
+            with self.subTest(path=path), self.assertRaises(ap.AbsError):
+                abs_._open(path)
+        self.assertEqual(abs_.opener.requests, [])
+
+    def test_no_write_helpers(self):
+        for name in ("post", "patch", "put", "delete"):
+            self.assertFalse(hasattr(ap.Abs, name))
+
+    def test_redirects_are_not_followed(self):
+        handler = ap.NoRedirect()
+        req = urllib.request.Request(ap.ABS_URL + "/api/me")
+        self.assertIsNone(handler.redirect_request(req, None, 302, "Found", {}, "https://evil.example.com/"))
+        self.assertTrue(any(isinstance(h, ap.NoRedirect) for h in ap.Abs("k").opener.handlers))
+
+
+class TargetsTest(unittest.TestCase):
+    def test_floppy_users_minus_skip_and_exclude(self):
+        floppy = ["tomigorn", "jane", "floppy-sync", "root", "abr", "bob"]
+        self.assertEqual(ap.targets(floppy, ["bob", "# comment", ""]), ["jane", "tomigorn"])
+
+    def test_read_exclude_ignores_missing_file_and_comments(self):
         with tempfile.TemporaryDirectory() as d:
-            pathlib.Path(d, "key_alice").write_text("k1\n")
-            pathlib.Path(d, "key_bob.b").write_text("k2")
-            pathlib.Path(d, "other").write_text("x")
-            self.assertEqual(ap.member_keys(d), {"alice": "k1", "bob.b": "k2"})
+            self.assertEqual(ap.read_exclude(pathlib.Path(d, "missing")), [])
+            p = pathlib.Path(d, "exclude")
+            p.write_text("# who\nbob  \n\n jane # later\n")
+            self.assertEqual(ap.read_exclude(p), ["bob", "jane"])
 
-    def test_rejects_unsafe_names(self):
-        with tempfile.TemporaryDirectory() as d:
-            pathlib.Path(d, "key_a b").write_text("k")
-            self.assertEqual(ap.member_keys(d), {})
+    def test_floppy_users_parses_the_result_line(self):
+        out = 'noise\nRESULT ["tomigorn", "jane", "bad name"]\n'
+        self.assertEqual(ap.floppy_users(lambda code: (0, out)), ["tomigorn", "jane"])
+        with self.assertRaises(ap.AbsError):
+            ap.floppy_users(lambda code: (1, "Traceback\n"))
+
+
+class ServiceKeyTest(unittest.TestCase):
+    def test_accepts_only_the_admin_service_user(self):
+        ap.check_service(FakeAbs(me=SERVICE))
+        for me in [{**SERVICE, "username": "tomigorn"}, {**SERVICE, "type": "user"}, {**SERVICE, "type": "root"}, {**SERVICE, "isActive": False}]:
+            with self.subTest(me=me), self.assertRaises(ap.AbsError):
+                ap.check_service(FakeAbs(me=me))
+
+
+class SyncedUsersTest(unittest.TestCase):
+    def test_matches_targets_and_skips_service_root_inactive(self):
+        users = [abs_user("u1", "tomigorn"), abs_user("u2", "jane", "admin"), abs_user("u3", "root", "root"), abs_user("u4", "floppy-sync", "admin"),
+                 abs_user("u5", "abr"), abs_user("u6", "gone", active=False), abs_user("u7", "nofloppy"), abs_user("u8", "boss", "root")]
+        got = ap.synced_users(FakeAbs(users), ["tomigorn", "jane", "root", "floppy-sync", "abr", "gone", "boss"])
+        self.assertEqual(got, [("u2", "jane"), ("u1", "tomigorn")])
+
+    def test_rejects_unsafe_ids(self):
+        with self.assertRaises(ap.AbsError):
+            ap.synced_users(FakeAbs([abs_user("../x", "tomigorn")]), ["tomigorn"])
 
 
 class PlanTest(unittest.TestCase):
+    def build(self, entries, state=None, covers=None):
+        abs_ = FakeAbs([abs_user("u1", "alice")], {"u1": entries}, covers=covers)
+        return abs_, ap.build_payload("alice", "u1", abs_, state or {}, NOW)
+
     def test_first_run_pushes_everything(self):
-        abs_ = FakeAbs(me(entry("b1", 5), entry("p1", 7, "e1")))
-        payload, nxt = ap.build_payload("alice", abs_, {}, NOW)
+        _, (payload, nxt) = self.build([entry("b1", 5), entry("p1", 7, "e1")])
         self.assertEqual(payload["user"], "alice")
         self.assertEqual(set(payload["items"]), {"b1", "p1?expanded=1"})
         self.assertEqual(set(payload["covers"]), {"b1"})
@@ -67,56 +163,49 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(nxt["covers"], {"b1": NOW})
 
     def test_payload_carries_no_account_details(self):
-        payload, _ = ap.build_payload("alice", FakeAbs(me(entry("b1", 5))), {}, NOW)
+        _, (payload, _) = self.build([{**entry("b1", 5), "displayTitle": "T", "coverPath": "/c", "mediaUpdatedAt": 1, "displaySubtitle": "S"}])
         self.assertEqual(set(payload["me"]), {"type", "mediaProgress"})
+        self.assertEqual(payload["me"]["type"], "user")
+        self.assertEqual(payload["me"]["mediaProgress"], [entry("b1", 5)])
+        self.assertNotIn("secret-token", json.dumps(payload))
 
     def test_nothing_changed_pushes_nothing(self):
-        abs_ = FakeAbs(me(entry("b1", 5)))
         state = {"progress": {"b1": 5}, "covers": {"b1": NOW - 3600}}
-        self.assertEqual(ap.build_payload("alice", abs_, state, NOW), (None, state))
-        self.assertEqual(abs_.calls, ["/api/me"])
+        abs_, result = self.build([entry("b1", 5)], state)
+        self.assertEqual(result, (None, state))
+        self.assertEqual(abs_.calls, ["/api/users/u1"])
 
     def test_changed_progress_pushes_without_fresh_covers(self):
-        abs_ = FakeAbs(me(entry("b1", 6)))
-        state = {"progress": {"b1": 5}, "covers": {"b1": NOW - 3600}}
-        payload, nxt = ap.build_payload("alice", abs_, state, NOW)
+        _, (payload, nxt) = self.build([entry("b1", 6)], {"progress": {"b1": 5}, "covers": {"b1": NOW - 3600}})
         self.assertEqual(payload["covers"], {})
         self.assertEqual(nxt["progress"], {"b1": 6})
         self.assertEqual(nxt["covers"], {"b1": NOW - 3600})
 
     def test_stale_cover_alone_triggers_a_push(self):
-        abs_ = FakeAbs(me(entry("b1", 5)))
-        state = {"progress": {"b1": 5}, "covers": {"b1": NOW - ap.COVER_REFRESH_SECONDS - 1}}
-        payload, nxt = ap.build_payload("alice", abs_, state, NOW)
+        _, (payload, nxt) = self.build([entry("b1", 5)], {"progress": {"b1": 5}, "covers": {"b1": NOW - ap.COVER_REFRESH_SECONDS - 1}})
         self.assertEqual(set(payload["covers"]), {"b1"})
         self.assertEqual(nxt["covers"]["b1"], NOW)
-
-    def test_refuses_admin_keys(self):
-        for t in ("admin", "root"):
-            with self.subTest(t=t), self.assertRaises(ap.AbsError):
-                ap.build_payload("alice", FakeAbs(me(entry("b1", 5), type_=t)), {}, NOW)
 
     def test_bad_cover_is_skipped_and_retried(self):
         for cover in [("text/html", b"<html>"), ("image/jpeg", b"x" * (ap.MAX_COVER_BYTES + 1)), None]:
             with self.subTest(cover=cover and cover[0]):
-                abs_ = FakeAbs(me(entry("b1", 5)), covers={"b1": cover})
-                payload, nxt = ap.build_payload("alice", abs_, {}, NOW)
+                _, (payload, nxt) = self.build([entry("b1", 5)], covers={"b1": cover})
                 self.assertEqual(payload["covers"], {})
                 self.assertNotIn("b1", nxt["covers"])
 
     def test_cover_is_base64(self):
-        payload, _ = ap.build_payload("alice", FakeAbs(me(entry("b1", 5))), {}, NOW)
+        _, (payload, _) = self.build([entry("b1", 5)])
         self.assertEqual(payload["covers"]["b1"]["type"], "image/jpeg")
         self.assertEqual(ap.base64.b64decode(payload["covers"]["b1"]["data"]), JPEG)
 
     def test_item_without_cover_fetches_none(self):
-        abs_ = FakeAbs(me(entry("b1", 5)))
+        abs_ = FakeAbs([abs_user("u1", "alice")], {"u1": [entry("b1", 5)]})
         abs_.get = lambda path, _g=abs_.get: {"id": "b1", "media": {}} if path == "/api/items/b1" else _g(path)
-        payload, _ = ap.build_payload("alice", abs_, {}, NOW)
+        payload, _ = ap.build_payload("alice", "u1", abs_, {}, NOW)
         self.assertEqual(payload["covers"], {})
 
     def test_deleted_item_is_left_out(self):
-        abs_ = FakeAbs(me(entry("b1", 5), entry("b2", 5)))
+        abs_ = FakeAbs([abs_user("u1", "alice")], {"u1": [entry("b1", 5), entry("b2", 5)]})
         real = abs_.get
 
         def get(path):
@@ -125,13 +214,13 @@ class PlanTest(unittest.TestCase):
             return real(path)
 
         abs_.get = get
-        payload, nxt = ap.build_payload("alice", abs_, {}, NOW)
+        payload, nxt = ap.build_payload("alice", "u1", abs_, {}, NOW)
         self.assertEqual(set(payload["items"]), {"b1"})
         self.assertEqual(nxt["progress"], {"b1": 5, "b2": 5})
 
     def test_rejects_unsafe_item_ids(self):
         with self.assertRaises(ap.AbsError):
-            ap.build_payload("alice", FakeAbs(me(entry("../x", 5))), {}, NOW)
+            self.build([entry("../x", 5)])
 
 
 class SpoolTest(unittest.TestCase):
@@ -152,31 +241,41 @@ class SpoolTest(unittest.TestCase):
 
 
 class FetchTest(unittest.TestCase):
-    def test_spools_only_members_with_changes(self):
+    def run_fetch(self, fake, targets, prepare=None):
         with tempfile.TemporaryDirectory() as creds, tempfile.TemporaryDirectory() as d:
-            pathlib.Path(creds, "key_alice").write_text("k1")
-            pathlib.Path(creds, "key_bob").write_text("k2")
-            fakes = {"k1": FakeAbs(me(entry("b1", 5))), "k2": FakeAbs(me(entry("b2", 5)))}
-            ap.write_json(pathlib.Path(d, "state", "bob.json"), {"progress": {"b2": 5}, "covers": {"b2": NOW}})
-            orig, ap.Abs = ap.Abs, lambda key: fakes[key]
+            pathlib.Path(creds, "abs-key").write_text("k1\n")
+            ap.write_json(pathlib.Path(d, "targets.json"), targets)
+            if prepare:
+                prepare(d)
+            keys = []
+            orig, ap.Abs = ap.Abs, lambda key: keys.append(key) or fake
             try:
                 ap.fetch(creds, d, NOW)
             finally:
                 ap.Abs = orig
-            self.assertTrue(pathlib.Path(d, "pending", "alice.json").exists())
-            self.assertFalse(pathlib.Path(d, "pending", "bob.json").exists())
-            self.assertTrue(pathlib.Path(d, "applied").is_dir())
-            self.assertEqual(json.loads(pathlib.Path(d, "fetch-failed.json").read_text()), [])
+            pending = sorted(p.stem for p in pathlib.Path(d, "pending").glob("*.json"))
+            return keys, pending, json.loads(pathlib.Path(d, "fetch-failed.json").read_text())
 
-    def test_failed_member_is_recorded(self):
-        with tempfile.TemporaryDirectory() as creds, tempfile.TemporaryDirectory() as d:
-            pathlib.Path(creds, "key_alice").write_text("k1")
-            orig, ap.Abs = ap.Abs, lambda key: FakeAbs(me(entry("b1", 5), type_="admin"))
-            try:
-                ap.fetch(creds, d, NOW)
-            finally:
-                ap.Abs = orig
-            self.assertEqual(json.loads(pathlib.Path(d, "fetch-failed.json").read_text()), ["alice"])
+    def test_syncs_matching_users_with_the_service_key(self):
+        fake = FakeAbs([abs_user("u1", "alice"), abs_user("u2", "bob"), abs_user("u3", "carol")], {"u1": [entry("b1", 5)], "u2": [entry("b2", 5)]})
+
+        def prepare(d):
+            ap.write_json(pathlib.Path(d, "state", "bob.json"), {"progress": {"b2": 5}, "covers": {"b2": NOW}})
+
+        keys, pending, failed = self.run_fetch(fake, ["alice", "bob"], prepare)
+        self.assertEqual((keys, pending, failed), (["k1"], ["alice"], []))
+        self.assertNotIn("/api/users/u3", fake.calls)
+
+    def test_wrong_key_syncs_nobody(self):
+        fake = FakeAbs([abs_user("u1", "alice")], {"u1": [entry("b1", 5)]}, me={**SERVICE, "username": "tomigorn"})
+        _, pending, failed = self.run_fetch(fake, ["alice"])
+        self.assertEqual((pending, failed), ([], ["floppy-sync"]))
+        self.assertEqual(fake.calls, ["/api/me"])
+
+    def test_failed_user_is_recorded(self):
+        fake = FakeAbs([abs_user("u1", "alice"), abs_user("u2", "bob")], {"u1": [entry("../x", 5)], "u2": [entry("b2", 5)]})
+        _, pending, failed = self.run_fetch(fake, ["alice", "bob"])
+        self.assertEqual((pending, failed), (["bob"], ["alice"]))
 
 
 class ApplyTest(unittest.TestCase):
@@ -201,6 +300,33 @@ class ApplyTest(unittest.TestCase):
             with self.subTest(out=out):
                 ok, _, pending, applied = self.run_apply(out, code)
                 self.assertEqual((ok, pending, applied), (False, True, False))
+
+
+class StoreKeyTest(unittest.TestCase):
+    def store(self, me):
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d, "key")
+            orig, ap.Abs = ap.Abs, lambda key: FakeAbs(me=me)
+            try:
+                msg = ap.store_key("k1\n", path, chown=lambda p: None)
+            finally:
+                ap.Abs = orig
+            return msg, path.exists() and (path.read_text(), path.stat().st_mode & 0o777)
+
+    def test_stores_the_service_key_private(self):
+        msg, stored = self.store(SERVICE)
+        self.assertEqual(stored, ("k1\n", 0o600))
+        self.assertIn("floppy-sync", msg)
+        self.assertNotIn("k1", msg)
+
+    def test_refuses_another_users_key(self):
+        for me in [{**SERVICE, "username": "tomigorn"}, {**SERVICE, "type": "user"}]:
+            with self.subTest(me=me), self.assertRaises(ap.AbsError):
+                self.store(me)
+
+    def test_refuses_empty_key(self):
+        with self.assertRaises(ap.AbsError):
+            ap.store_key("  \n", pathlib.Path("/nonexistent/key"))
 
 
 class SelftestTest(unittest.TestCase):

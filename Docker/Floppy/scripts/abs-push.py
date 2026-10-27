@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Pushes Audiobookshelf listening progress into Floppy (README "Integrations"); Floppy holds no ABS key and opens no connection.
 
-abs-push.py fetch           as the unit's DynamicUser: read ABS with each member's key, spool deltas
-abs-push.py apply           as root (unit ExecStartPost=+): feed the spool to Floppy's own importer
-abs-push.py link <member>   sudo; asks for the ABS key of the member's non-admin ABS user (hidden)
-abs-push.py unlink <member> sudo
-abs-push.py selftest        sudo; Floppy's importer on a synthetic book, rolled back (post-update check)
+abs-push.py targets     as root (unit ExecStartPre=+): Floppy usernames minus skip/exclude list -> spool
+abs-push.py fetch       as the unit's DynamicUser: GET-only, the floppy-sync key, spool deltas per matching ABS user
+abs-push.py apply       as root (unit ExecStartPost=+): feed the spool to Floppy's own importer
+abs-push.py store-key   sudo; asks for the floppy-sync ABS API key (hidden), checks it, stores it root-only
+abs-push.py selftest    sudo; Floppy's importer on a synthetic book, rolled back (post-update check)
 """
 import base64
 import getpass
@@ -20,19 +20,25 @@ import urllib.error
 import urllib.request
 
 ABS_URL = "https://audiobookshelf.holy-grail.ch"
+SERVICE_USER = "floppy-sync"
+SKIP_USERS = {"abr", "audiobook-importer", SERVICE_USER, "root"}
 HERE = pathlib.Path(__file__).resolve().parent
 APPLY_SNIPPET = HERE / "abs-push-apply.py"
-KEY_DIR = HERE.parent / "secrets" / "abs-push"
+KEY_FILE = HERE.parent / "secrets" / "floppy-sync-abs-key"
+EXCLUDE_FILE = pathlib.Path("/etc/floppy-abs-push/exclude")
 STATE_DIR = "/var/lib/floppy-abs-push"
 UNIT = "floppy-abs-push.service"
 COVER_REFRESH_SECONDS = 20 * 3600
 MAX_COVER_BYTES = 10 * 1024 * 1024
 COVER_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+BROWSER_ONLY = ("displayTitle", "displaySubtitle", "coverPath", "mediaUpdatedAt")
 SAFE_NAME = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
 SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+SAFE_PATH = re.compile(r"^/api/[A-Za-z0-9_/-]+(\?expanded=1)?$")
 # REDIS_URL exists only in the compose entrypoint; the importer queues celery tasks, so it is rebuilt from the secret inside the container.
 FLOPPY_SHELL = 'export REDIS_URL="redis://:$(cat /run/secrets/floppy_redis_password)@floppy-redis:6379/0"; exec python manage.py shell -c "$0"'
 DOCKER_EXEC = ["/usr/bin/docker", "exec", "-i", "-u", "abc", "-w", "/floppy", "floppy", "sh", "-c", FLOPPY_SHELL]
+FLOPPY_USERS_CODE = 'import json; from users.models import User; print("RESULT", json.dumps(list(User.objects.filter(is_active=True).values_list("username", flat=True))))'
 
 
 class AbsError(Exception):
@@ -43,15 +49,29 @@ class AbsNotFound(AbsError):
     pass
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class Abs:
+    """Read-only ABS client: GET to the fixed ABS URL only, no redirects (the key is admin-capable)."""
+
     def __init__(self, key, base=ABS_URL):
         self.key = key
         self.base = base
+        self.opener = urllib.request.build_opener(NoRedirect)
 
-    def _open(self, path):
-        req = urllib.request.Request(self.base + path, headers={"Authorization": f"Bearer {self.key}", "User-Agent": "floppy-abs-push"})
+    def _open(self, path, method="GET"):
+        if method != "GET":
+            raise AbsError(f"refused: {method} (GET only)")
+        if not SAFE_PATH.match(path) or ".." in path:
+            raise AbsError("refused: path outside /api/")
+        req = urllib.request.Request(self.base + path, headers={"Authorization": f"Bearer {self.key}", "User-Agent": "floppy-abs-push"}, method="GET")
+        if req.get_method() != "GET" or req.data is not None:
+            raise AbsError("refused: not a plain GET")
         try:
-            return urllib.request.urlopen(req, timeout=20)
+            return self.opener.open(req, timeout=20)
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
                 raise AbsError(f"ABS rejected the key ({e.code})") from None
@@ -72,13 +92,53 @@ class Abs:
             return None
 
 
-def member_keys(cred_dir):
-    keys = {}
-    for p in sorted(pathlib.Path(cred_dir).glob("key_*")):
-        name = p.name[4:]
-        if SAFE_NAME.match(name):
-            keys[name] = p.read_text().strip()
-    return keys
+def check_service(abs_):
+    me = abs_.get("/api/me")
+    if (me.get("username"), me.get("type"), me.get("isActive", True)) != (SERVICE_USER, "admin", True):
+        raise AbsError(f"key is not the active ABS admin {SERVICE_USER} (got {me.get('username')}, {me.get('type')})")
+    return me
+
+
+def read_exclude(path):
+    try:
+        lines = pathlib.Path(path).read_text().splitlines()
+    except FileNotFoundError:
+        return []
+    return [n for n in (line.split("#")[0].strip() for line in lines) if n]
+
+
+def targets(floppy, exclude):
+    skip = SKIP_USERS | set(exclude)
+    return sorted({u for u in floppy if SAFE_NAME.match(u) and u not in skip})
+
+
+def run_floppy_code(code):
+    try:
+        r = subprocess.run([*DOCKER_EXEC, code], capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        return 1, ""
+    return r.returncode, r.stdout
+
+
+def floppy_users(runner=run_floppy_code):
+    code, out = runner(FLOPPY_USERS_CODE)
+    lines = [line[7:] for line in out.splitlines() if line.startswith("RESULT ")]
+    if code != 0 or not lines:
+        raise AbsError(f"Floppy user list failed (exit {code})")
+    return [u for u in json.loads(lines[-1]) if isinstance(u, str) and SAFE_NAME.match(u)]
+
+
+def synced_users(abs_, wanted):
+    wanted = set(wanted) - SKIP_USERS
+    out = []
+    for u in abs_.get("/api/users").get("users") or []:
+        name = u.get("username")
+        if name not in wanted or u.get("type") == "root" or not u.get("isActive"):
+            continue
+        if not SAFE_ID.match(str(u.get("id") or "")):
+            raise AbsError("unexpected user id in /api/users")
+        out.append((u["id"], name))
+    return sorted(out, key=lambda x: x[1])
 
 
 def _entry_key(e):
@@ -94,11 +154,9 @@ def _has_cover(item):
     return bool(item.get("coverPath") or media.get("coverPath"))
 
 
-def build_payload(member, abs_, state, now):
-    me = abs_.get("/api/me")
-    if me.get("type") in ("admin", "root"):
-        raise AbsError(f"key belongs to an ABS {me.get('type')}; use the member's non-admin ABS user")
-    entries = [e for e in me.get("mediaProgress") or [] if e.get("libraryItemId")]
+def build_payload(member, user_id, abs_, state, now):
+    user = abs_.get(f"/api/users/{user_id}")
+    entries = [{k: v for k, v in e.items() if k not in BROWSER_ONLY} for e in user.get("mediaProgress") or [] if e.get("libraryItemId")]
     progress = {_entry_key(e): int(e.get("lastUpdate") or 0) for e in entries}
     covers_at = dict(state.get("covers") or {})
     books = sorted({str(e["libraryItemId"]) for e in entries if not e.get("episodeId")})
@@ -122,17 +180,18 @@ def build_payload(member, abs_, state, now):
             continue
         covers[b] = {"type": got[0], "data": base64.b64encode(got[1]).decode()}
         covers_at[b] = now
-    payload = {"user": member, "me": {"type": me.get("type"), "mediaProgress": entries}, "items": items, "covers": covers}
+    payload = {"user": member, "me": {"type": user.get("type"), "mediaProgress": entries}, "items": items, "covers": covers}
     return payload, {"progress": progress, "covers": {b: t for b, t in covers_at.items() if b in books}}
 
 
-def write_json(path, data):
+def write_json(path, data, mode=0o600):
     path = pathlib.Path(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
     with os.fdopen(fd, "w") as f:
         json.dump(data, f)
+    os.chmod(tmp, mode)
     os.replace(tmp, path)
 
 
@@ -151,14 +210,28 @@ def mark_applied(state_dir, member):
     os.replace(pathlib.Path(state_dir, "pending", f"{member}.json"), dst)
 
 
+def write_targets(state_dir):
+    names = targets(floppy_users(), read_exclude(EXCLUDE_FILE))
+    # Root writes it, the DynamicUser reads it; the state dir itself is 0700.
+    write_json(pathlib.Path(state_dir, "targets.json"), names, mode=0o644)
+    print(f"targets: {len(names)} Floppy users")
+
+
 def fetch(cred_dir, state_dir, now=None):
     now = now or time.time()
     for sub in ("state", "pending", "applied"):
         pathlib.Path(state_dir, sub).mkdir(mode=0o700, exist_ok=True)
     failed = []
-    for member, key in member_keys(cred_dir).items():
+    abs_ = Abs(pathlib.Path(cred_dir, "abs-key").read_text().strip())
+    try:
+        check_service(abs_)
+        users = synced_users(abs_, json.loads(pathlib.Path(state_dir, "targets.json").read_text()))
+    except AbsError as e:
+        print(f"{SERVICE_USER}: {e}")
+        users, failed = [], [SERVICE_USER]
+    for user_id, member in users:
         try:
-            payload, nxt = build_payload(member, Abs(key), load_state(state_dir, member), now)
+            payload, nxt = build_payload(member, user_id, abs_, load_state(state_dir, member), now)
         except AbsError as e:
             print(f"{member}: {e}")
             failed.append(member)
@@ -197,27 +270,23 @@ def apply_all(state_dir, runner=run_floppy):
     return ok
 
 
-def link(member):
-    key = (getpass.getpass(f"ABS API key for {member}: ") if sys.stdin.isatty() else sys.stdin.readline()).strip()
-    me = Abs(key).get("/api/me")
-    if me.get("type") in ("admin", "root"):
-        sys.exit(f"refused: ABS user {me.get('username')} is {me.get('type')}; use a key of a non-admin ABS user")
-    KEY_DIR.mkdir(mode=0o700, exist_ok=True)
-    os.chown(KEY_DIR, 0, 0)
-    path = KEY_DIR / member
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+def _chown_root(path):
+    os.chown(path, 0, 0)
+
+
+def store_key(key, path=KEY_FILE, chown=_chown_root):
+    key = key.strip()
+    if not key:
+        raise AbsError("no key given")
+    me = check_service(Abs(key))
+    path = pathlib.Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(key + "\n")
-    os.chown(path, 0, 0)
-    print(f"linked {member} -> ABS {me.get('username')} ({me.get('type')}); first push: sudo systemctl start {UNIT}")
-
-
-def unlink(member):
-    (KEY_DIR / member).unlink(missing_ok=True)
-    for sub in ("state", "pending", "applied"):
-        pathlib.Path(STATE_DIR, sub, f"{member}.json").unlink(missing_ok=True)
-    code, out = run_floppy(json.dumps({"user": member, "action": "unlink"}))
-    print(next((line[7:] for line in out.splitlines() if line.startswith("RESULT ")), f"Floppy unlink failed (exit {code})"))
+    chown(tmp)
+    os.replace(tmp, path)
+    return f"stored the key of ABS user {me['username']} ({me['type']}) in {path} (root:root 600); first sync: sudo systemctl start {UNIT}"
 
 
 def selftest_payload():
@@ -236,18 +305,27 @@ def selftest(runner=run_floppy):
 
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else ""
+    state_dir = os.environ.get("STATE_DIRECTORY", STATE_DIR)
+    if cmd == "targets":
+        write_targets(state_dir)
+        return 0
     if cmd == "fetch":
-        fetch(os.environ["CREDENTIALS_DIRECTORY"], os.environ.get("STATE_DIRECTORY", STATE_DIR))
+        fetch(os.environ["CREDENTIALS_DIRECTORY"], state_dir)
         return 0
     if cmd == "apply":
-        state_dir = os.environ.get("STATE_DIRECTORY", STATE_DIR)
         failed_path = pathlib.Path(state_dir, "fetch-failed.json")
         failed = json.loads(failed_path.read_text()) if failed_path.exists() else []
         return 0 if apply_all(state_dir) and not failed else 1
     if cmd == "selftest":
         return 0 if selftest() else 1
-    if cmd in ("link", "unlink") and len(argv) == 3 and SAFE_NAME.match(argv[2]):
-        (link if cmd == "link" else unlink)(argv[2])
+    if cmd == "store-key":
+        if os.geteuid() != 0:
+            sys.exit("run with sudo")
+        key = getpass.getpass(f"ABS API key of {SERVICE_USER} (hidden): ") if sys.stdin.isatty() else sys.stdin.readline()
+        try:
+            print(store_key(key))
+        except AbsError as e:
+            sys.exit(f"refused, nothing stored: {e}")
         return 0
     print(__doc__.split("\n\n")[1])
     return 2

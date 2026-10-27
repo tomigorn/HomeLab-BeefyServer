@@ -70,11 +70,7 @@ result = None
 try:
     with transaction.atomic():
         PeriodicTask.objects.filter(task="Import from Audiobookshelf (Recurring)", **helpers.periodic_task_user_kwargs(user.id)).delete()
-        if payload.get("action") == "unlink":
-            AudiobookshelfAccount.objects.filter(user=user).delete()
-            result = f"ok unlinked {user.username}"
-        else:
-            result = push(payload, user)
+        result = push(payload, user)
         if payload.get("dry_run"):
             raise DryRun
 except DryRun:
