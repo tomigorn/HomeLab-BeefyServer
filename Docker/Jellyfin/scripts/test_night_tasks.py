@@ -43,9 +43,17 @@ class Plan(unittest.TestCase):
     def test_task_without_trigger_that_is_not_listed_is_left_alone(self):
         self.assertEqual(nt.plan([task("Keyframe Extractor"), task("Unknown Plugin Task", INTERVAL)]), [])
 
-    def test_every_scheduled_time_is_inside_the_window(self):
-        for name, (hm, _day) in nt.SCHEDULE.items():
-            self.assertTrue("04:00" <= hm <= "04:45", f"{name} {hm}")
+    def test_intro_skipper_analysis_runs_at_night_and_in_the_window(self):
+        plan = nt.plan([task("Detect and Analyze Media Segments", DAILY("00:00"))])
+        self.assertEqual(plan[0][2], [DAILY("22:05"), DAILY("04:13")])
+
+    def test_intro_skipper_analysis_already_on_both_triggers_is_left_alone(self):
+        self.assertEqual(nt.plan([task("Detect and Analyze Media Segments", DAILY("22:05"), DAILY("04:13"))]), [])
+
+    def test_every_scheduled_time_is_inside_the_window_or_the_night_download_slot(self):
+        for name, (times, _day) in nt.SCHEDULE.items():
+            for hm in [times] if isinstance(times, str) else times:
+                self.assertTrue("04:00" <= hm <= "04:45" or hm == "22:05", f"{name} {hm}")
 
 
 if __name__ == "__main__":

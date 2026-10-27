@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Puts Jellyfin's scheduled tasks into beefy's maintenance window (Server/9-Night-Schedule.md): fixed daily/Sunday triggers 04:08-04:44 instead of intervals and startup triggers that run on whatever wake comes (README "Scheduled tasks").
+"""Puts Jellyfin's scheduled tasks into beefy's maintenance window (Server/9-Night-Schedule.md): fixed daily/Sunday triggers 04:08-04:44 instead of intervals and startup triggers that run on whatever wake comes (README "Scheduled tasks"); the Intro Skipper analysis also runs at 22:05 (night downloads).
 Idempotent: a task already on its trigger is not touched. Usage: night-tasks.py [--dry-run]"""
 import pathlib
 import sys
@@ -7,10 +7,11 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from jellyfin_api import api  # noqa: E402
 
-# task name -> (time of day, None = daily or the weekday). "JavaScript Injector Startup" keeps its startup trigger on purpose.
+# task name -> (time of day or a tuple of them, None = daily or the weekday). "JavaScript Injector Startup" keeps its startup trigger on purpose.
 SCHEDULE = {
     "Update IMDb Ratings": ("04:08", None),
     "Scan Media Library": ("04:10", None),
+    "Detect and Analyze Media Segments": (("22:05", "04:13"), None),
     "Generate Trickplay Images": ("04:24", None),
     "Extract Chapter Images": ("04:30", None),
     "Refresh People": ("04:31", "Sunday"),
@@ -34,6 +35,10 @@ def ticks(hm):
     return (int(h) * 3600 + int(m) * 60) * 10**7
 
 
+def triggers_for(times, day):
+    return [trigger(hm, day) for hm in ([times] if isinstance(times, str) else times)]
+
+
 def trigger(hm, day):
     t = {"Type": "DailyTrigger" if day is None else "WeeklyTrigger", "TimeOfDayTicks": ticks(hm)}
     if day:
@@ -48,7 +53,7 @@ def plan(tasks):
         want = SCHEDULE.get(t["Name"])
         if not want:
             continue
-        triggers = [trigger(*want)]
+        triggers = triggers_for(*want)
         if t.get("Triggers") != triggers:
             out.append((t["Id"], t["Name"], triggers))
     return out
@@ -57,7 +62,8 @@ def plan(tasks):
 def main(argv):
     changes = plan(api("GET", "/ScheduledTasks"))
     for tid, name, triggers in changes:
-        print(f"{name}: {triggers[0].get('DayOfWeek', 'daily')} {triggers[0]['TimeOfDayTicks'] // 10**7 // 3600:02d}:{triggers[0]['TimeOfDayTicks'] // 10**7 // 60 % 60:02d}")
+        when = ", ".join(f"{t['TimeOfDayTicks'] // 10**7 // 3600:02d}:{t['TimeOfDayTicks'] // 10**7 // 60 % 60:02d}" for t in triggers)
+        print(f"{name}: {triggers[0].get('DayOfWeek', 'daily')} {when}")
         if "--dry-run" not in argv:
             api("POST", f"/ScheduledTasks/{tid}/Triggers", triggers)
     print(f"{len(changes)} task(s) {'would change' if '--dry-run' in argv else 'changed'}")
