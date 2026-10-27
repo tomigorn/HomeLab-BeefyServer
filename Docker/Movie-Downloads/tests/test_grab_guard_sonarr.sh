@@ -33,7 +33,12 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.command == "GET" and p == "/parse":
             return self.reply(200, {"title": q["title"], "parsedMovieInfo": {"year": state["parsed_year"]}, "parsedEpisodeInfo": {"seriesTitleInfo": {"year": state["parsed_year"]}}})
         if self.command == "GET" and p == "/series/4":
-            return self.reply(200, {"id": 4, "title": "Money Heist", "year": state["series_year"], "tvdbId": 327417})
+            body = {"id": 4, "title": "Money Heist", "year": state["series_year"], "tvdbId": 327417}
+            for k in ("firstAired", "lastAired", "status"):
+                if k in state: body[k] = state[k]
+            return self.reply(200, body)
+        if self.command == "GET" and p == "/episode":
+            return self.reply(200, [e for e in state.get("episodes", []) if str(e["seasonNumber"]) == q.get("seasonNumber")])
         if self.command == "GET" and p == "/movie/7":
             return self.reply(200, {"id": 7, "title": "Night of the Living Dead", "year": 1968, "secondaryYear": None})
         if self.command == "GET" and p == "/queue":
@@ -44,7 +49,7 @@ class H(http.server.BaseHTTPRequestHandler):
                 recs = [r for r in recs if r.get("seriesId") is not None]
             return self.reply(200, {"records": recs})
         if self.command == "DELETE" and p.startswith("/queue/"):
-            return self.reply(200, {})
+            return self.reply(500 if state.get("fail_delete") else 200, {})
         if self.command == "GET" and p == "/history/series":
             return self.reply(200, state.get("history", []))
         if self.command == "POST" and p.startswith("/history/failed/"):
@@ -64,7 +69,7 @@ printf '<Config>\n  <Port>%s</Port>\n  <UrlBase></UrlBase>\n  <ApiKey>testkey</A
 run() {
   echo "$1" > "$T/state.json"; local title=$2; shift 2
   : > "$T/requests"; rm -rf "$T/events"
-  env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_EVENTS="$T/events" GG_DUBONLY="$T/dub-only.json" sonarr_eventtype=Grab sonarr_series_id=4 \
+  env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_DETACH=0 GG_EVENTS="$T/events" GG_DUBONLY="$T/dub-only.json" sonarr_eventtype=Grab sonarr_series_id=4 \
     sonarr_release_title="$title" sonarr_download_id=abc "$@" bash "$GUARD" > "$T/out" 2>&1; RC=$?
   grep '^DELETE ' "$T/requests" | cut -d' ' -f2- > "$T/deletes"
   grep '^POST ' "$T/requests" | cut -d' ' -f2- > "$T/posts"
@@ -130,6 +135,43 @@ dub "$DUBREL" 40
 run "{\"series_year\": 2017, \"parsed_year\": 0, \"queue\": $Q}" "$DUBREL"
 assert_eq "dub-only: expired entry is ignored" "" "$(cat "$T/deletes")"
 rm -f "$T/dub-only.json"
+
+# A season-pack release carries the season's air year (The Boys 2019: "The.Boys.2024.S04"), not the series' start year.
+BOYS='"series_year": 2019, "firstAired": "2019-07-26T00:00:00Z", "lastAired": "2026-05-20T00:00:00Z", "status": "ended"'
+BREL=The.Boys.2024.S04.2160p.AMZN.WEB-DL.H.265.HDR.DDP5.1-PTerWEB
+run "{$BOYS, \"parsed_year\": 2024, \"queue\": $Q}" "$BREL" sonarr_release_seasonnumber=4 sonarr_release_episodeairdates=2024-06-13,2024-06-20,2024-07-18
+assert_eq "season air year from the grab env (near the episode air dates) is kept" "" "$(cat "$T/deletes")"
+assert_eq "  exit 0" 0 "$RC"
+run "{$BOYS, \"parsed_year\": 2024, \"queue\": $Q}" "$BREL" sonarr_release_seasonnumber=4
+assert_eq "no air dates in env: air year of the season from the episode API is kept" "" "$(cat "$T/deletes")"
+EPS='[{"seasonNumber": 4, "airDate": "2024-06-13"}, {"seasonNumber": 4, "airDate": "2024-07-18"}, {"seasonNumber": 3, "airDate": "2022-06-03"}]'
+run "{\"series_year\": 2005, \"firstAired\": \"2005-03-26T00:00:00Z\", \"lastAired\": \"2008-06-21T00:00:00Z\", \"status\": \"ended\", \"parsed_year\": 2013, \"episodes\": $EPS, \"queue\": $Q}" "Doctor.Who.2013.S04.1080p.WEB.x264-GROUP" sonarr_release_seasonnumber=4
+assert_eq "episode API: 2013 is not near the 2024 season and outside the 2005-2008 run: removed" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
+run "{$BOYS, \"parsed_year\": 2022, \"episodes\": $EPS, \"queue\": $Q}" "The.Boys.2022.S04.1080p.WEB.x264-GROUP" sonarr_release_seasonnumber=4
+assert_eq "a year inside the series' run (2019-2026) is kept" "" "$(cat "$T/deletes")"
+run "{$BOYS, \"parsed_year\": 1985, \"queue\": $Q}" "The.Boys.1985.S01.1080p.WEB.x264-GROUP" sonarr_release_seasonnumber=1 sonarr_release_episodeairdates=2019-07-26
+assert_eq "same-named older series (1985, outside the run) is still removed" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
+run "{\"series_year\": 2017, \"firstAired\": \"2017-05-02T00:00:00Z\", \"lastAired\": \"2018-12-03T00:00:00Z\", \"status\": \"ended\", \"parsed_year\": 2023, \"queue\": $Q}" "Money.Heist.2023.S01E01.1080p.WEB.x264-GROUP" sonarr_release_seasonnumber=1 sonarr_release_episodeairdates=2017-05-02
+assert_eq "same-named newer series after an ended run is removed" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
+run "{\"series_year\": 2017, \"firstAired\": \"2017-05-02T00:00:00Z\", \"lastAired\": \"2018-12-03T00:00:00Z\", \"parsed_year\": 2019, \"queue\": $Q}" "Money.Heist.2019.S01E01.1080p.WEB.x264-GROUP" sonarr_release_seasonnumber=1 sonarr_release_episodeairdates=2025-05-02
+assert_eq "air year +-1 of the episodes: a release one year off the air date is kept" "" "$(cat "$T/deletes")"
+
+# A failing queue DELETE falls back to the history instead of aborting the script.
+run "{\"series_year\": 2017, \"parsed_year\": 1995, \"fail_delete\": true, \"queue\": $Q, \"history\": $H}" "$REL"
+assert_eq "queue DELETE fails: grabbed history record marked failed instead" "/api/v3/history/failed/80" "$(cat "$T/posts")"
+assert_eq "  exit 0, event" "0|sonarr	marked-failed	Money Heist	2017	$REL	1995" "$RC|$(cat "$T/event")"
+run "{\"series_year\": 2017, \"parsed_year\": 1995, \"fail_delete\": true, \"queue\": $Q, \"history\": []}" "$REL"
+assert_eq "queue DELETE and history both fail: exit non-zero, check-by-hand event" "1|sonarr	manual	Money Heist	2017	$REL	1995" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)|$(cat "$T/event")"
+
+# Sonarr writes the grab history and shows the queue item only after the Connect script returns: the removal runs detached.
+echo "{\"series_year\": 2017, \"parsed_year\": 1995, \"queue\": $Q}" > "$T/state.json"; : > "$T/requests"; rm -rf "$T/events"
+env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_LOG="$T/guard.log" GG_EVENTS="$T/events" sonarr_eventtype=Grab sonarr_series_id=4 \
+  sonarr_release_title="$REL" sonarr_download_id=abc bash "$GUARD" > "$T/out" 2>&1; RC=$?
+assert_eq "detached: script returns at once, nothing deleted yet" "0|" "$RC|$(grep '^DELETE ' "$T/requests")"
+for _ in $(seq 50); do grep -q '^DELETE ' "$T/requests" && break; sleep 0.2; done
+assert_eq "  background removal deletes the queue item" "DELETE /api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(grep '^DELETE ' "$T/requests")"
+sleep 0.5
+assert_eq "  background log" "series 4: grabbed '$REL' is from 1995, not 2017: removed, blocklisted, searching again" "$(tail -1 "$T/guard.log")"
 
 run "{}" "x" sonarr_eventtype=Test
 assert_eq "Test event exits 0 and calls nothing" "0|" "$RC|$(cat "$T/requests")"
