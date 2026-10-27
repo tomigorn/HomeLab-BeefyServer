@@ -949,11 +949,12 @@ Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scor
 | Reports only | everything else: not UTF-8, U+FFFD, leftovers (`â€` alone), C1 characters, UTF-16 |
 | Skips | binary VobSub `.sub`, `.idx`, symlinks |
 | Original | `/srv/appdata/bazarr/subtitle-check/backup/<date>_<time> <folder> -- <file>`: outside the library, so Jellyfin and Bazarr never see it; kept |
-| Log | `/srv/appdata/bazarr/subtitle-check/hook.log` (every hook run) |
+| Log | `/srv/appdata/bazarr/subtitle-check/hook.log` (every hook run), `scan.log` (nightly: findings + one summary line) |
 | Digest | every repair and finding: `…/subtitle-check/events/*.json` → [Queue watchdog](#queue-watchdog) → fastpi 06:30 digest (`subtitle_repaired`, `subtitle_suspect`) |
 | Hook | Bazarr post-processing, no score threshold: `/scripts/subtitle-check.py "{{subtitles}}" "{{provider}}" "{{subtitle_id}}"`; runs after ffsubsync for every downloaded, upgraded and uploaded subtitle; mount `./scripts:/scripts:ro` |
+| Nightly | `systemd/subtitle-check.timer` 04:21 in the maintenance window (`Persistent=false`, no boot trigger), runs as buntu: `--scan /srv/.disks/ssd-hot/media=/srv/video/media` = every subtitle whose mtime or ctime is newer than the last run (`scan-state.json`; first run: all). Reads the SSD branch only (new files land there, `category.create=ff`, and the mover leaves sidecars hot), so the cold HDD never spins up; repairs are written through mergerfs. Catches what the hook does not see: subtitles Radarr/Sonarr import from a release, a hook that failed |
 | Bazarr mod | **common** only (Settings → Subtitles → Modifications, "Common Fixes": music symbols, double apostrophes, spacing). Off on purpose: `remove_HI` (would drop HI lines), `OCR_fixes` (only for OCR'd subtitles). Cannot read mojibake, hence the hook |
-| Setup | `scripts/subtitle-check-setup.sh` (idempotent: state dirs owned by Bazarr's uid 65104, group buntu; Bazarr settings through `/api/system/settings`) |
+| Setup | `scripts/subtitle-check-setup.sh` (idempotent: state dirs owned by Bazarr's uid 65104, group buntu; Bazarr settings through `/api/system/settings`; installs and enables the timer) |
 | By hand | `sudo docker exec movie-bazarr /scripts/subtitle-check.py [--dry-run] "/data/media/…/<file>.en.srt"` |
 | Tests | `python3 tests/test_subtitle_check.py` (fixtures in `tests/fixtures/subtitles/`) |
 

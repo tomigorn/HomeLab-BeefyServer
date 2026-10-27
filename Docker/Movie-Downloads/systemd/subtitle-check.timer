@@ -1,0 +1,11 @@
+[Unit]
+Description=Subtitle check daily 04:21 in the beefy maintenance window, before the queue watchdog hands findings to fastpi's digest
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Timer]
+# Inside the beefy maintenance window (03:58-04:45); no boot trigger and no Persistent, so a daytime wake never runs it.
+OnCalendar=*-*-* 04:21:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target

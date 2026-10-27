@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Subtitle check (README "Subtitle check"): state dirs, the Bazarr post-processing hook and the "common" subtitle mod. Idempotent.
+# Subtitle check (README "Subtitle check"): state dirs, Bazarr post-processing hook + the "common" subtitle mod, the nightly timer. Idempotent.
 #   ~/Projects/Docker/Movie-Downloads/scripts/subtitle-check-setup.sh
 # Needs the ./scripts:/scripts:ro mount in the bazarr service (docker-compose.yaml).
 set -euo pipefail
@@ -34,3 +34,9 @@ print("   post-processing:", g["use_postprocessing"], "| cmd:", g["postprocessin
 mods = g["subzero_mods"]
 ok = g["use_postprocessing"] is True and g["postprocessing_cmd"] == os.environ["CMD"] and "common" in mods and "remove_HI" not in mods and "OCR_fixes" not in mods
 sys.exit(0 if ok else "   settings not as expected")'
+
+echo "== nightly timer"
+sudo install -m 0644 "$HERE/../systemd/subtitle-check.service" "$HERE/../systemd/subtitle-check.timer" /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now subtitle-check.timer
+systemctl list-timers subtitle-check.timer --no-pager | sed -n 2p | sed 's/^/   /'
