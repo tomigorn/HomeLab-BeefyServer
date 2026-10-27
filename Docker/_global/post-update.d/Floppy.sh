@@ -14,4 +14,5 @@ if want floppy; then
   check floppy.abs-pull-off '^0 tasks 0 keys$' "$(docker exec -u abc -w /floppy floppy python manage.py shell -c "from django_celery_beat.models import PeriodicTask; from integrations.models import AudiobookshelfAccount; print(PeriodicTask.objects.filter(task__icontains='audiobookshelf').count(), 'tasks', AudiobookshelfAccount.objects.exclude(api_token='pushed-by-abs-push').count(), 'keys')" 2>&1 | tail -1)"
   check floppy.abs-push-selftest '^ok dry-run$' "$("$FLOPPY_DIR/scripts/abs-push.py" selftest 2>&1 | tail -1)"
   check floppy.abs-push-timer '^enabled success$' "$(systemctl is-enabled floppy-abs-push.timer 2>&1) $(systemctl show -p Result --value floppy-abs-push.service 2>&1)"
+  check floppy.abs-push-key '^root:root 600$' "$(stat -c '%U:%G %a' "$FLOPPY_DIR/secrets/floppy-sync-abs-key" 2>&1)"
 fi

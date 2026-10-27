@@ -71,6 +71,7 @@ Files under `secrets/` (gitignored); `docker inspect` shows no value. How-to: `.
 | `secrets/floppy_redis_password` | `65126:65125 0440` | redis (config on tmpfs), floppy builds `REDIS_URL` in its compose `entrypoint` |
 | `secrets/floppy_oidc_providers` | `65125:65125 0400` | allauth `SOCIALACCOUNT_PROVIDERS_FILE`; written from fastpi by `provision-tracker-sso.py` |
 | `secrets/floppy_seerr_webhook_secret` | `65125:65125 0400` | `SEERR_GLOBAL_WEBHOOK_SECRET_FILE`; Seerr gets it from `../Seerr/scripts/seerr-webhook.py apply` |
+| `secrets/floppy-sync-abs-key` | `root:root 0600` | ABS API key of the service user `floppy-sync`, read only by `floppy-abs-push` (`LoadCredential`), never by Floppy; `sudo scripts/abs-push.py store-key` |
 
 ## Deploy
 
@@ -111,6 +112,8 @@ sudo chown 65125:65125 /srv/appdata/floppy/db/db.sqlite3 && sudo docker compose 
 
 ## Update
 
+> **Update caution: the ABS push uses Floppy internals.** `scripts/abs-push-apply.py` calls Floppy's own code, not a public API: `integrations.imports.audiobookshelf.AudiobookshelfImporter` (`import_data`, `.client.get_me()` / `.client.get_library_item(id, expanded=)`), `decrypt_or_raise`, `AudiobookshelfAccount`, `app.image_cache.store_cover` / `MAX_IMAGE_BYTES` (cover key `abs-cover:<account>:<item>`), `helpers.periodic_task_user_kwargs`. A Floppy release that renames or changes any of them breaks the sync. Guard: auto-update tier `notify` (no unattended Floppy update); `update-project.sh` runs the post-update check, `floppy.abs-push-selftest` (`ok dry-run`) fails → automatic rollback. After an update also: `sudo systemctl start floppy-abs-push && journalctl -u floppy-abs-push -n 10 -o cat` → `ok <user> …` lines.
+
 Monthly at most, by hand: read the release notes (migrations are one-way), then bump `FLOPPY_TAG` (tag + digest) in `.env` and `.env.example`:
 
 ```bash
@@ -129,7 +132,7 @@ Per Floppy user. Floppy opens no connection into the LAN for any of them.
 |---|---|---|---|
 | Jellyfin (playback, watched checkmark) | Jellyfin Webhooks plugin → `http://192.168.1.102:8012/webhook/jellyfin/<token>` (hairpin on beefy) | the user's Floppy token, bound to their Jellyfin user | on |
 | Seerr (request → Planning) | Seerr webhook → `http://192.168.1.102:8012/webhook/seerr/global/`, routed by requester name | shared secret (Secrets) | on |
-| Audiobookshelf (listening progress, covers) | `floppy-abs-push.timer` (beefy, every 15 min while awake): reads ABS, feeds Floppy's own ABS importer via `docker exec` | API key of the member's non-admin ABS user, on the host only (`secrets/abs-push/<floppy-user>`); Floppy's account row holds a placeholder | key pending (owner) |
+| Audiobookshelf (listening progress, covers) | `floppy-abs-push.timer` (beefy, every 15 min while awake): reads ABS, feeds Floppy's own ABS importer via `docker exec` | one key of the ABS service user `floppy-sync` (admin), on the host only (`secrets/floppy-sync-abs-key`); every ABS user with a Floppy account of the same username, automatically; Floppy's account rows hold a placeholder | on once the key is stored |
 
 Not used: Floppy → ABS pull (key in Floppy + egress; ABS has no progress webhook), Floppy → Jellyfin pull/push (would need egress to Jellyfin), request from Floppy (needs Seerr's single admin API key), ItemAdded/ItemDeleted (every new library item in every member's collection).
 
@@ -140,20 +143,31 @@ The member has signed in to the Tracker once (creates the Floppy user); username
 |---|---|
 | Jellyfin | `cd ../Jellyfin/scripts && python3 tracker-webhook.py add <jellyfin-user> [<floppy-user>]` (also turns on MarkPlayed/MarkUnplayed) |
 | Seerr | `sudo docker exec -u abc -w /floppy floppy python manage.py shell -c "from users.models import User; User.objects.filter(username='<floppy-user>').update(jellyseerr_enabled=True, jellyseerr_allowed_usernames='<seerr-name>')"` |
-| ABS | ABS (admin) → Settings → API Keys → Add, name `floppy-push`, User = the member's ABS user, no expiry; copy the key, then `sudo scripts/abs-push.py link <floppy-user>` (asks, hidden; refuses ABS admins) and `sudo systemctl start floppy-abs-push` |
-| ABS off | `sudo scripts/abs-push.py unlink <floppy-user>` (key, state, Floppy account row) |
+| ABS | nothing: synced from the next run (≤ 15 min) when the ABS username = the Floppy username |
+| ABS off for one user | add the username to `/etc/floppy-abs-push/exclude` (root, one per line, `#` comments); already-imported entries stay in Floppy |
 
 ### Audiobookshelf push
 
-ABS 2.37 sends no progress events (notifications: backups, podcast downloads, RSS only), and Floppy has no inbound ABS endpoint, so a host service pushes.
+ABS 2.37 sends no progress events (notifications: backups, podcast downloads, RSS only), and Floppy has no inbound ABS endpoint, so a host service pushes. Owner decision 2026-10-27: one ABS service key for all users instead of a key per user.
 
 | | |
 |---|---|
-| Install | `sudo install -d -m 0700 secrets/abs-push && sudo install -m 0644 systemd/floppy-abs-push.* /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now floppy-abs-push.timer` |
-| fetch | `DynamicUser`, keys via `LoadCredential`, HTTPS to the fixed ABS URL only; `/api/me`, then (only when a `lastUpdate` changed or a cover is >20 h old) every item + cover → spool `/var/lib/floppy-abs-push/pending/` |
+| Install | `sudo install -m 0644 systemd/floppy-abs-push.* /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now floppy-abs-push.timer` |
+| Key | ABS (as an admin) → Settings → Users → add `floppy-sync`, type Admin, random password; Settings → API Keys → Add, name `floppy-sync`, no expiry, acting as `floppy-sync`; then `ssh -t beefy 'sudo ~/Projects/Docker/Floppy/scripts/abs-push.py store-key'` (hidden prompt; checks `GET /api/me` = `floppy-sync`, admin, active, else stores nothing) |
+| targets | root (`ExecStartPre=+`): active Floppy usernames minus `abr`, `audiobook-importer`, `floppy-sync`, `root` and `/etc/floppy-abs-push/exclude` → `targets.json` |
+| fetch | `DynamicUser`, key via `LoadCredential`, HTTPS to the fixed ABS URL only, **GET only** (client refuses any other method, paths outside `/api/` and redirects; tested); `/api/me` (must be `floppy-sync`), `/api/users`, `/api/users/<id>` per matching active non-root user (mediaProgress), then (only when a `lastUpdate` changed or a cover is >20 h old) every item + cover → spool `/var/lib/floppy-abs-push/pending/` |
 | apply | root (`docker exec` into floppy): `scripts/abs-push-apply.py` runs Floppy's `AudiobookshelfImporter` on the spool, stores covers in Floppy's cover cache; spool → state only after `RESULT ok` |
-| Logs | `journalctl -u floppy-abs-push -n 20` (one line per member: rows, imported, covers, warnings) |
+| Logs | `journalctl -u floppy-abs-push -n 20 -o cat` (`targets: N`, then one line per user: rows, imported, covers, warnings) |
 | Selftest | `sudo scripts/abs-push.py selftest` → `ok dry-run` (synthetic book, rolled back) |
 | Tests | `cd scripts && python3 -m unittest test_abs_push` |
+
+Why admin: ABS 2.37 returns another user's mediaProgress only from `GET /api/users/:id` (and the list from `GET /api/users`), both `isAdminOrUp`; a `user`/`guest` key gets 403. Admin (not root) is the minimum.
+
+**Security (floppy-sync key is admin-capable):** ABS API keys have no read-only scope, so the key could change or delete anything in ABS and read every user (incl. their legacy tokens). Mitigations: file `root:root 0600` on beefy, only the sandboxed fetch gets it (`LoadCredential`, `DynamicUser`, no home, AF_INET only); the client sends GET only and follows no redirects; Floppy never holds it (edge 403 on `/import/audiobookshelf/` stays). Never put it anywhere else.
+
+| | |
+|---|---|
+| Rotate | ABS → Settings → API Keys → Add a new `floppy-sync` key (acting as `floppy-sync`), `ssh -t beefy 'sudo ~/Projects/Docker/Floppy/scripts/abs-push.py store-key'`, `sudo systemctl start floppy-abs-push` → `ok …`, then delete the old key in ABS |
+| Revoke (leak) | ABS → Settings → API Keys → delete `floppy-sync` (or Users → `floppy-sync` → disable); `sudo rm Docker/Floppy/secrets/floppy-sync-abs-key`; `sudo systemctl disable --now floppy-abs-push.timer` |
 
 Seerr name = Seerr display name (the Jellyfin username), case-insensitive. Test: mark a film played in Jellyfin → it shows as completed in the member's Tracker; `sudo docker logs floppy 2>&1 | grep -i -E "webhook_finished|Seerr accepted|Audiobookshelf" | tail`.
