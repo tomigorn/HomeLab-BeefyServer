@@ -9,7 +9,8 @@
       ContinueWatching: "Nothing to continue — start something to see it here.",
       NextUp: "No series in progress yet.",
       WatchAgain: "Nothing here yet — films and series you finished more than 4 weeks ago show up here.",
-      RecentlyWatched: "Nothing here yet — films and series you finish show up here.",
+      RecentlyWatchedMovies: "Nothing here yet — films you finish show up here.",
+      RecentlyWatchedSeries: "Nothing here yet — series you finish completely and complete film collections show up here.",
       BecauseYouWatched: "Nothing here yet — finish a film to get recommendations.",
       HiddenGems: "No highly rated unwatched titles right now.",
       FinishTheseCollections: "No film collection started yet.",
@@ -26,7 +27,8 @@
       ContinueWatching: "Nichts fortzusetzen – starte etwas, dann erscheint es hier.",
       NextUp: "Noch keine angefangene Serie.",
       WatchAgain: "Noch nichts hier – Filme und Serien, die du vor mehr als 4 Wochen fertig geschaut hast, erscheinen hier.",
-      RecentlyWatched: "Noch nichts hier – Filme und Serien, die du fertig schaust, erscheinen hier.",
+      RecentlyWatchedMovies: "Noch nichts hier – Filme, die du fertig schaust, erscheinen hier.",
+      RecentlyWatchedSeries: "Noch nichts hier – Serien, die du ganz fertig schaust, und komplett geschaute Filmreihen erscheinen hier.",
       BecauseYouWatched: "Noch nichts hier – schau einen Film fertig, dann gibt es Empfehlungen.",
       HiddenGems: "Gerade keine hoch bewerteten, ungesehenen Titel.",
       FinishTheseCollections: "Noch keine Filmreihe angefangen.",
@@ -49,22 +51,27 @@
     return t[id] || t._;
   }
 
-  // "Recently Watched" is built here, not by the plugin: its Watch Again waits 28 days and RegisterSection would need an unauthenticated public endpoint.
-  var RECENT = "RecentlyWatched";
+  // The recently watched rows are built here, not by the plugin: its Watch Again waits 28 days and RegisterSection would need an unauthenticated public endpoint.
+  var MOVIES = "RecentlyWatchedMovies";
+  var SERIES = "RecentlyWatchedSeries";
+  var RECENT_ROWS = [MOVIES, SERIES];
   var RECENT_AFTER = "WatchAgain";
   var RECENT_DAYS = 60;
   var RECENT_LIMIT = 20;
-  var RECENT_NAMES = { en: "Recently Watched", de: "Kürzlich angesehen" };
+  var RECENT_NAMES = {
+    en: { RecentlyWatchedMovies: "Recently Watched Movies", RecentlyWatchedSeries: "Recently Watched TV Series & Collections" },
+    de: { RecentlyWatchedMovies: "Kürzlich angesehene Filme", RecentlyWatchedSeries: "Kürzlich angesehene Serien & Filmreihen" }
+  };
 
-  function recentName(lang) {
-    return RECENT_NAMES[langOf(lang)];
+  function recentName(id, lang) {
+    return RECENT_NAMES[langOf(lang)][id];
   }
 
   function withRecent(enabled) {
-    if (enabled.indexOf(RECENT) !== -1) return enabled.slice();
-    var out = enabled.slice();
+    var out = enabled.filter(function (id) { return RECENT_ROWS.indexOf(id) === -1; });
     var at = out.indexOf(RECENT_AFTER);
-    out.splice(at === -1 ? out.length : at + 1, 0, RECENT);
+    var args = [at === -1 ? out.length : at + 1, 0].concat(RECENT_ROWS);
+    out.splice.apply(out, args);
     return out;
   }
 
@@ -74,49 +81,133 @@
     return isNaN(t) ? null : t;
   }
 
-  function pickRecent(movies, episodes, now) {
-    var since = (now || new Date()).getTime() - RECENT_DAYS * 86400000;
-    var picks = [];
-    var series = {};
-    var i, t;
-    for (i = 0; i < (movies || []).length; i++) {
-      t = playedAt(movies[i]);
-      if (t !== null && t >= since && movies[i].Id) picks.push({ Id: movies[i].Id, Type: "Movie", at: t });
-    }
-    for (i = 0; i < (episodes || []).length; i++) {
-      var sid = episodes[i].SeriesId;
-      t = playedAt(episodes[i]);
-      if (!sid || t === null || t < since) continue;
-      if (!series[sid]) picks.push(series[sid] = { Id: sid, Type: "Series", at: t });
-      else if (t > series[sid].at) series[sid].at = t;
-    }
+  function sinceOf(now) {
+    return (now || new Date()).getTime() - RECENT_DAYS * 86400000;
+  }
+
+  function newest(picks) {
     picks.sort(function (a, b) { return b.at - a.at; });
-    return picks.slice(0, RECENT_LIMIT).map(function (p) { return { Id: p.Id, Type: p.Type }; });
+    return picks.slice(0, RECENT_LIMIT).map(function (p) { return p.item; });
+  }
+
+  function pickMovies(movies, now) {
+    var since = sinceOf(now);
+    var picks = [];
+    for (var i = 0; i < (movies || []).length; i++) {
+      var t = playedAt(movies[i]);
+      if (t !== null && t >= since && movies[i].Id) picks.push({ item: movies[i], at: t });
+    }
+    return newest(picks);
+  }
+
+  function seriesCandidates(episodes, now) {
+    var since = sinceOf(now);
+    var out = {};
+    for (var i = 0; i < (episodes || []).length; i++) {
+      var e = episodes[i];
+      var t = playedAt(e);
+      if (!e.SeriesId || e.ParentIndexNumber === 0 || t === null || t < since) continue;
+      if (!out[e.SeriesId] || t > out[e.SeriesId]) out[e.SeriesId] = t;
+    }
+    return out;
+  }
+
+  function unplayedOf(item) {
+    var n = item && item.UserData && item.UserData.UnplayedItemCount;
+    return typeof n === "number" ? n : null;
+  }
+
+  function completeCollection(item) {
+    return unplayedOf(item) === 0 && (item.RecursiveItemCount || item.ChildCount || 0) > 0;
+  }
+
+  // ignored: unwatched specials and unaired episodes that still count in Jellyfin's UnplayedItemCount
+  function pickSeries(series, candidates, ignored, collections, now) {
+    var since = sinceOf(now);
+    var skip = {};
+    var seen = {};
+    var i;
+    for (i = 0; i < (ignored || []).length; i++) {
+      var e = ignored[i];
+      if (!e || !e.SeriesId || seen[e.Id]) continue;
+      seen[e.Id] = true;
+      skip[e.SeriesId] = (skip[e.SeriesId] || 0) + 1;
+    }
+    var picks = [];
+    for (i = 0; i < (series || []).length; i++) {
+      var s = series[i];
+      var left = unplayedOf(s);
+      if (!s || !candidates[s.Id] || left === null || left - (skip[s.Id] || 0) > 0) continue;
+      picks.push({ item: s, at: candidates[s.Id] });
+    }
+    for (i = 0; i < (collections || []).length; i++) {
+      var c = collections[i];
+      if (c && c.item && c.at !== null && c.at >= since) picks.push(c);
+    }
+    return newest(picks);
   }
 
   function loadRecent(api, userId, now) {
     var path = "Users/" + userId + "/Items";
-    var played = { Recursive: true, IsPlayed: true, SortBy: "DatePlayed", SortOrder: "Descending" };
-    function query(extra) {
+    function query(q) {
+      var all = { Recursive: true };
+      for (var k in q) all[k] = q[k];
+      return api.getJSON(api.getUrl(path, all)).then(function (r) { return (r && r.Items) || []; });
+    }
+    var played = { IsPlayed: true, SortBy: "DatePlayed", SortOrder: "Descending" };
+    function playedQuery(extra) {
       var q = {};
       for (var k in played) q[k] = played[k];
       for (var e in extra) q[e] = extra[e];
-      return api.getJSON(api.getUrl(path, q)).then(function (r) { return (r && r.Items) || []; });
+      return query(q);
+    }
+    var left = { IncludeItemTypes: "Episode", IsPlayed: false, ExcludeLocationTypes: "Virtual", EnableImages: false, EnableUserData: false };
+    function leftQuery(extra) {
+      var q = {};
+      for (var k in left) q[k] = left[k];
+      for (var e in extra) q[e] = extra[e];
+      return query(q);
     }
     return Promise.all([
-      query({ IncludeItemTypes: "Movie", Limit: RECENT_LIMIT }),
-      query({ IncludeItemTypes: "Episode", Limit: 300, EnableImages: false })
+      playedQuery({ IncludeItemTypes: "Movie", Limit: RECENT_LIMIT }),
+      playedQuery({ IncludeItemTypes: "Episode", Limit: 300, EnableImages: false }),
+      query({ IncludeItemTypes: "BoxSet", Fields: "RecursiveItemCount" })
     ]).then(function (r) {
-      var picks = pickRecent(r[0], r[1], now);
-      var byId = {};
-      for (var i = 0; i < r[0].length; i++) byId[r[0][i].Id] = r[0][i];
-      var ids = picks.filter(function (p) { return p.Type === "Series"; }).map(function (p) { return p.Id; });
-      var more = ids.length ? api.getJSON(api.getUrl(path, { Ids: ids.join(",") })).then(function (s) { return (s && s.Items) || []; }) : Promise.resolve([]);
-      return more.then(function (series) {
-        for (var j = 0; j < series.length; j++) byId[series[j].Id] = series[j];
-        return picks.map(function (p) { return byId[p.Id]; }).filter(Boolean);
+      var candidates = seriesCandidates(r[1], now);
+      var ids = Object.keys(candidates);
+      var series = !ids.length ? Promise.resolve([[], []]) : query({ Ids: ids.join(","), Fields: "RecursiveItemCount" }).then(function (items) {
+        var unwatched = items.some(function (s) { return unplayedOf(s) > 0; });
+        if (!unwatched) return [items, []];
+        return Promise.all([leftQuery({ ParentIndexNumber: 0 }), leftQuery({ IsUnaired: true })]).then(function (x) { return [items, x[0].concat(x[1])]; });
+      });
+      // The API has no multi-parent filter: one Limit=1 request per fully watched collection.
+      var cols = Promise.all(r[2].filter(completeCollection).map(function (c) {
+        return playedQuery({ ParentId: c.Id, Limit: 1, EnableImages: false }).then(function (m) { return { item: c, at: m.length ? playedAt(m[0]) : null }; });
+      }));
+      return Promise.all([series, cols]).then(function (x) {
+        var out = {};
+        out[MOVIES] = pickMovies(r[0], now);
+        out[SERIES] = pickSeries(x[0][0], candidates, x[0][1], x[1], now);
+        return out;
       });
     });
+  }
+
+  function hideWatchAgainDupes(container, ids) {
+    var shown = {};
+    for (var i = 0; i < ids.length; i++) shown[ids[i]] = true;
+    var cards = container.querySelectorAll(".verticalSection." + RECENT_AFTER + ":not([data-hss-placeholder]) .itemsContainer > [data-id]");
+    for (var j = 0; j < cards.length; j++) {
+      var card = cards[j];
+      var dupe = !!shown[card.getAttribute("data-id")];
+      if (dupe && !card.hasAttribute("data-hss-dupe")) {
+        card.setAttribute("data-hss-dupe", "");
+        card.style.display = "none";
+      } else if (!dupe && card.hasAttribute("data-hss-dupe")) {
+        card.removeAttribute("data-hss-dupe");
+        card.style.display = "";
+      }
+    }
   }
 
   function imageOf(item) {
@@ -149,7 +240,7 @@
     card.setAttribute("data-id", item.Id);
     card.setAttribute("data-serverid", item.ServerId || "");
     card.setAttribute("data-type", item.Type);
-    card.setAttribute("data-isfolder", item.Type === "Series" ? "true" : "false");
+    card.setAttribute("data-isfolder", item.Type === "Series" || item.Type === "BoxSet" ? "true" : "false");
     if (item.MediaType) card.setAttribute("data-mediatype", item.MediaType);
     card.setAttribute("data-context", "home");
     card.setAttribute("aria-label", item.Name || "");
@@ -163,9 +254,9 @@
     return card;
   }
 
-  function syncRecent(container, items, name, api) {
+  function syncRecent(container, id, items, name, api) {
     var doc = container.ownerDocument;
-    var sec = container.querySelector(".verticalSection." + RECENT + "[data-hss-client]");
+    var sec = container.querySelector(".verticalSection." + id + "[data-hss-client]");
     if (!items.length) {
       if (sec) sec.remove();
       return;
@@ -175,10 +266,10 @@
     if (sec && sec.getAttribute("data-hss-client") === key && sec.querySelector("h2").textContent === name) return;
     if (!sec) {
       sec = doc.createElement("div");
-      sec.className = "verticalSection " + RECENT;
+      sec.className = "verticalSection " + id;
       sec.innerHTML = RECENT_SECTION;
       // Insert at the final spot: moving it later re-attaches Jellyfin's scroller and doubles its scroll buttons.
-      var ph = container.querySelector('[data-hss-placeholder="' + RECENT + '"]');
+      var ph = container.querySelector('[data-hss-placeholder="' + id + '"]');
       if (ph) sec.style.order = ph.style.order;
       container.insertBefore(sec, ph);
     }
@@ -270,7 +361,9 @@
 
   function filled(el) {
     var items = el.querySelector(".itemsContainer");
-    return !el.classList.contains("hide") && !!items && items.children.length > 0;
+    if (el.classList.contains("hide") || !items) return false;
+    for (var i = 0; i < items.children.length; i++) if (items.children[i].style.display !== "none") return true;
+    return false;
   }
 
   function build(doc, id, name, hint) {
@@ -358,13 +451,13 @@
       var promise = Promise.all([
         api.getJSON(api.getUrl("ModularHomeViews/UserSettings", { userId: userId })),
         api.getJSON(api.getUrl("ModularHomeViews/Sections", { language: lang })),
-        loadRecent(api, userId).catch(function () { return []; })
+        loadRecent(api, userId).catch(function () { return {}; })
       ]).then(function (r) {
         var names = namesOf(r[1]);
         var enabled = enabledOf(r[0]);
         if (enabled.length) {
           enabled = withRecent(enabled);
-          names[RECENT] = recentName(lang);
+          for (var n = 0; n < RECENT_ROWS.length; n++) names[RECENT_ROWS[n]] = recentName(RECENT_ROWS[n], lang);
         }
         return { enabled: enabled, names: names, lang: lang, recent: r[2] };
       });
@@ -398,7 +491,13 @@
         try {
           for (var j = 0; j < live.length; j++) {
             render(live[j], d.enabled, d.names, d.lang);
-            syncRecent(live[j], d.recent, d.names[RECENT], api);
+            var shown = [];
+            for (var k = 0; k < RECENT_ROWS.length; k++) {
+              var items = d.recent[RECENT_ROWS[k]] || [];
+              syncRecent(live[j], RECENT_ROWS[k], items, d.names[RECENT_ROWS[k]], api);
+              for (var m = 0; m < items.length; m++) shown.push(items[m].Id);
+            }
+            hideWatchAgainDupes(live[j], shown);
             render(live[j], d.enabled, d.names, d.lang);
           }
         } finally {
@@ -417,7 +516,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { LOCKED_SELECTOR: LOCKED_SELECTOR, lockHomeSettings: lockHomeSettings, render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, hintFor: hintFor, namesOf: namesOf, enabledOf: enabledOf, start: start, pickRecent: pickRecent, loadRecent: loadRecent, withRecent: withRecent, recentName: recentName, syncRecent: syncRecent, RECENT_DAYS: RECENT_DAYS, RECENT_LIMIT: RECENT_LIMIT };
+    module.exports = { LOCKED_SELECTOR: LOCKED_SELECTOR, lockHomeSettings: lockHomeSettings, render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, hintFor: hintFor, namesOf: namesOf, enabledOf: enabledOf, start: start, pickMovies: pickMovies, seriesCandidates: seriesCandidates, pickSeries: pickSeries, completeCollection: completeCollection, hideWatchAgainDupes: hideWatchAgainDupes, loadRecent: loadRecent, withRecent: withRecent, recentName: recentName, syncRecent: syncRecent, RECENT_DAYS: RECENT_DAYS, RECENT_LIMIT: RECENT_LIMIT };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {
