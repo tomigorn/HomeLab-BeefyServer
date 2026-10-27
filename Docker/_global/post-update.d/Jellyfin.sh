@@ -22,4 +22,5 @@ if want jellyfin; then
   check jf.api-keys '^ok$' "$(jf_api /Auth/Keys | jq -r '[.Items[].AppName] as $k | if ($k | index("avatar-sync")) and ($k | index("Seerr")) then "ok" else ($k | join(",")) end' 2>&1)"
   check jf.extra-hosts '^192\.168\.1\.2$' "$(docker exec jellyfin getent ahostsv4 sso.holy-grail.ch 2>&1 | awk 'NR==1{print $1}')"
   check jf.user-defaults-timer '^active$' "$(XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user is-active jellyfin-user-defaults.timer 2>&1)"
+  check jf.user-defaults-config '^\["",true,"Smart"\]$' "$(python3 -c 'import importlib.util as u,json,sys;s=u.spec_from_file_location("m",sys.argv[1]);m=u.module_from_spec(s);s.loader.exec_module(m);d=m.DEFAULTS;print(json.dumps([d["AudioLanguagePreference"],d["PlayDefaultAudioTrack"],d["SubtitleMode"]],separators=(",",":")))' "$DIR/../../Jellyfin/scripts/user-defaults.py" 2>&1)"
 fi

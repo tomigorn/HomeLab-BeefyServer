@@ -14,13 +14,13 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
-# English audio even when the default flag sits on another track (needs PlayDefaultAudioTrack off),
-# subtitles off by default (SubtitleMode None). A user can change both under Jellyfin Settings.
+# Original language = no language preference + the track flagged default (original-audio.py flags the original track).
+# A user can change all of it under Jellyfin Settings.
 DEFAULTS = {
-    "AudioLanguagePreference": "eng",
-    "PlayDefaultAudioTrack": False,
+    "AudioLanguagePreference": "",
+    "PlayDefaultAudioTrack": True,
     "SubtitleLanguagePreference": "",
-    "SubtitleMode": "None",
+    "SubtitleMode": "Smart",
     "RememberAudioSelections": True,
     "RememberSubtitleSelections": True,
 }

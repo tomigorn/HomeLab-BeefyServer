@@ -46,7 +46,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Scheduled tasks in the maintenance window | Jellyfin tasks | `Jellyfin/scripts/night-tasks.py` | `jf.night-tasks`: --dry-run → 0 task(s) would change | new task keys, reset triggers |
 | API keys avatar-sync (fastpi) and Seerr | Jellyfin DB | Dashboard → API Keys | `jf.api-keys`: → ok | DB migration |
 | extra_hosts sso → fastpi | compose | compose | `jf.extra-hosts`: getent ahostsv4 → 192.168.1.2 | |
-| New-user defaults (user timer) | `Jellyfin/scripts/user-defaults.py` | README "Audio and subtitle language" | `jf.user-defaults-timer`: → active | user API change (script errors) |
+| New-user defaults (user timer): audio = original (empty + default track), subtitles Smart | `Jellyfin/scripts/user-defaults.py` | README "Audio and subtitle language" | `jf.user-defaults-timer`: → active; `jf.user-defaults-config`: script defaults → original/Smart | user API change (script errors) |
 
 Not registered: Home Screen Sections, File Transformation, Plugin Pages: not installed (2026-10-27, work in progress, uncommitted `Jellyfin/scripts/home-sections.py` + `post-update-check.sh`). Add rows and checks when they go live.
 
@@ -145,9 +145,6 @@ Only in `post-update-check.sh all` (no compose project).
 
 | Item | Live | Docs |
 |---|---|---|
-| Jellyfin new-user defaults | `user-defaults.py`: English audio, subtitles None (commit 92d9711) | Jellyfin README: Original language, Smart |
-| JavaScript Injector | 4.1.0.0 | Jellyfin README 4.0.0.0 |
-| Treasure Maps | enabled in Prowlarr (priority 30, in use) | Movie-Downloads README "Disabled since 2026-10-19" |
 | Seerr sso | no extra_hosts: resolves via Cloudflare (OIDC discovery works) | Jellyfin/DT pin sso to fastpi |
 | description-scout.service | installed copy differs from `Movie-Downloads/systemd/` in Description only | reinstall when touched |
 | ryot-db-backup user timer | unit files present, disabled | Ryot retired |

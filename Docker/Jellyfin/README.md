@@ -331,8 +331,8 @@ Server-side per user, so every client that takes the server's track choice follo
 
 | Setting (web: profile -> Settings) | Page | Default for new users |
 |---|---|---|
-| Preferred audio language | Playback | **Original language** |
-| Play default audio track regardless of language | Playback | **off** (on = the track flagged default wins over the language, often a dub) |
+| Preferred audio language | Playback | **empty = original language** (the track flagged default; `original-audio.py` flags the original track) |
+| Play default audio track regardless of language | Playback | **on** (the track flagged default is played) |
 | Remember audio selections | Playback | on |
 | Preferred subtitle language | Subtitles | empty: pick yours |
 | Subtitle mode | Subtitles | **Smart**: subtitles when the audio is not in your subtitle language, otherwise forced only |
@@ -387,7 +387,7 @@ Jellyfin posts each member's playback to their own Floppy account (`../Floppy/`,
 | Plugin | Repo | Version | Config |
 |---|---|---|---|
 | Webhooks (shemanaev) | `https://raw.githubusercontent.com/shemanaev/jellyfin-plugin-repo/master/manifest.json` | 3.10.0.120000 (Jellyfin shows 3.10.0.0) | `/config/data/plugins/configurations/Jellyfin.Webhooks.xml`, holds the members' Floppy tokens (full API keys), not in git |
-| JavaScript Injector (n00bcodr) | `https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/12/manifest.json` | 4.0.0.0 | `/config/data/plugins/configurations/Jellyfin.Plugin.JavaScriptInjector.xml`, entry "Rate in Tracker" written by `tracker-link.py` |
+| JavaScript Injector (n00bcodr) | `https://raw.githubusercontent.com/n00bcodr/jellyfin-plugins/main/12/manifest.json` | 4.1.0.0 | `/config/data/plugins/configurations/Jellyfin.Plugin.JavaScriptInjector.xml`, entry "Rate in Tracker" written by `tracker-link.py` |
 
 - Not the official "Webhook" plugin: its payload has only the episode's own ids, and 12.1 episodes have no TMDB id. shemanaev's "Default" format nests the series with its TMDB id, so episodes land on their show.
 - Route: `http://192.168.1.102:8012/webhook/jellyfin/<token>`, beefy's own published Floppy port (hairpin), never Traefik: `/webhook/` is 403 there. DOCKER-USER lets only the `jellyfin` subnet and fastpi reach that port.
