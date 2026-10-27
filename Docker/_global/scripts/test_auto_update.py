@@ -12,10 +12,12 @@ from auto_update import (  # noqa: E402
     build_refs,
     crosses_major,
     decide,
+    failure_reason,
     parse_conf,
     past_deadline,
     pick_digest,
     render_prom,
+    rollback_failed_message,
     update_command,
 )
 
@@ -178,6 +180,27 @@ def test_build_refs_are_the_images_of_services_with_a_build_section():
 def test_render_prom_has_no_help_lines():
     assert "# HELP" not in render_prom(_rows(3), 1, "fastpi")
 
+
+def test_rollback_failed_message_is_titled_bulleted_and_escaped():
+    msg = rollback_failed_message("A<b>&", DOCKER / "A")
+    assert msg.startswith("🔴 <b>Auto-update: A&lt;b&gt;&amp; is down</b>\n\n• ")
+    assert "<blockquote expandable>" in msg and "<code>cd " in msg
+    assert "• Update failed verification: customizations missing: a.b\n" in rollback_failed_message("A", DOCKER / "A", "customizations missing: a.b")
+
+def test_failure_reason_names_the_missing_customizations():
+    out = "  after : seerr running nohc\n  check : OK (x)\n  custom: FAIL seerr.oidc-login seerr.bar-js\n    FAIL seerr.oidc-login got: false\nROLLBACK seerr\n"
+    assert failure_reason(out) == "customizations missing: seerr.oidc-login seerr.bar-js"
+    assert failure_reason("  check : FAIL (curl x)\nROLLBACK a\n") == "check failed"
+    assert failure_reason("  after : a exited -\nROLLBACK a\n") == "containers not running"
+    assert failure_reason("OK a\n") == ""
+
+
+def test_render_prom_carries_the_reason_of_a_rollback():
+    out = render_prom([{"project": "Seerr", "tier": "auto", "ref": "s:1", "result": "rolled_back", "from": "a", "to": "b",
+                        "reason": "customizations missing: seerr.oidc-login"}], 1, "beefy")
+    assert ',reason="customizations missing: seerr.oidc-login"} 1' in out
+
+
 if __name__ == "__main__":
     import traceback
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
@@ -191,3 +214,4 @@ if __name__ == "__main__":
             traceback.print_exc()
     print(f"\n{len(fns) - bad}/{len(fns)} passed")
     sys.exit(1 if bad else 0)
+

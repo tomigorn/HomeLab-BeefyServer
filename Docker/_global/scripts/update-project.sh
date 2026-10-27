@@ -6,15 +6,26 @@
 # project is running (and healthy if it has a healthcheck) with no crash loop;
 # on failure re-tag the old images and recreate (automatic rollback).
 # Env: SERVICES (pull/build/recreate only these, --no-deps; the verify still covers the whole project), WAIT (45), CHECK (functional check, a shell command; retried CHECK_TRIES=6 times 10 s apart),
+#      POST_CHECK=0 (skip the customization check: post-update-check.sh runs after CHECK whenever _global/post-update.d/<dir name>.sh exists, Docker/CUSTOMIZATIONS.md),
 #      TEST_FORCE_FAIL=1 (the verify fails: rollback drill). Exit 0 ok, 1 rolled back, 3 rollback did not verify.
 set -uo pipefail
 # beefy: buntu is outside the docker group on purpose; by hand it goes through sudo, the auto-update service has the group.
 if ! docker info >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then docker() { sudo -n docker "$@"; }; export -f docker; fi
 dir=$1; mode=$2; shift 2
+here=$(cd "$(dirname "$0")" && pwd)
 cd "$dir" || { echo "FAIL $dir: no such dir"; exit 2; }
 proj=$(docker compose config --format json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
 bk="$HOME/backups/pre-update/$(date +%F)/$proj"; mkdir -p "$bk"
 echo "=== $proj ($dir) mode=$mode"
+name=$(basename "$(pwd -P)")
+custom=""
+[[ ${POST_CHECK:-1} != 0 && -f ${POST_UPDATE_DIR:-$here/../post-update.d}/$name.sh ]] && custom="$here/post-update-check.sh $name"
+# custom_check: the project's customizations (post-update-check.sh), retried like CHECK; on failure prints the missing ids.
+custom_check() {
+  local out i
+  for i in $(seq 1 "${CHECK_TRIES:-6}"); do out=$(bash -c "$custom" 2>&1) && { echo "  custom: OK ($name)"; return 0; }; (( i < ${CHECK_TRIES:-6} )) && sleep 10; done
+  echo "  custom: FAIL $(sed -n 's/^FAILED: //p' <<<"$out" | tail -1)"; grep -E '^  FAIL ' <<<"$out" | head -8 | sed 's/^/  /'; return 1
+}
 
 # snapshot: container -> "ref|imageid|containerid|restartcount". The container id
 # and RestartCount are the baseline: RestartCount is a LIFETIME counter, so the
@@ -66,6 +77,7 @@ if (( ok )) && [[ -n ${CHECK:-} ]]; then
   for i in $(seq 1 "${CHECK_TRIES:-6}"); do bash -c "$CHECK" >/dev/null 2>&1 && break; (( i < ${CHECK_TRIES:-6} )) && sleep 10; done \
     && echo "  check : OK ($CHECK)" || { echo "  check : FAIL ($CHECK)"; ok=0; }
 fi
+if (( ok )) && [[ -n $custom ]]; then custom_check || ok=0; fi
 [[ ${TEST_FORCE_FAIL:-0} == 1 ]] && { echo "  check : FAIL (forced by TEST_FORCE_FAIL)"; ok=0; }
 if (( ok )); then echo "OK $proj"; exit 0; fi
 
@@ -73,7 +85,7 @@ echo "ROLLBACK $proj${svcs:+ (only:$svcs)}"
 for n in "${!oldid[@]}"; do IFS='|' read -r ref iid _ _ <<< "${oldid[$n]}"; docker tag "$iid" "$ref" 2>/dev/null; done
 # only what changed or is down; nothing changed (a forced drill) = SERVICES, else the whole project
 svcs=${svcs:-${SERVICES:-}}
-docker compose up -d --force-recreate ${svcs:+--no-deps $svcs} 2>&1 | tail -3; sleep 20
+docker compose up -d --force-recreate ${svcs:+--no-deps $svcs} 2>&1 | tail -3; sleep "${ROLLBACK_WAIT:-20}"
 docker compose ps --format '{{.Name}} {{.Status}}'
 back=1
 for n in "${!oldid[@]}"; do
@@ -83,6 +95,7 @@ done
 if (( back )) && [[ -n ${CHECK:-} ]]; then
   for i in $(seq 1 "${CHECK_TRIES:-6}"); do bash -c "$CHECK" >/dev/null 2>&1 && break; (( i < ${CHECK_TRIES:-6} )) && sleep 10; done || { echo "  rollback: check still failing"; back=0; }
 fi
+if (( back )) && [[ -n $custom ]]; then custom_check || { echo "  rollback: customizations still missing"; back=0; }; fi
 (( back )) && { echo "ROLLED BACK $proj"; exit 1; }
 echo "ROLLBACK FAILED $proj"
 exit 3

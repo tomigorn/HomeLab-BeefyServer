@@ -19,6 +19,7 @@ Env: COOLDOWN_HOURS (24), TEST_FORCE_FAIL=1 (first functional check fails: rollb
      AUTO_UPDATE_MAX_APPLY (projects updated per run, default no limit), AUTO_UPDATE_CONF / _STATE / _TEXTFILE (paths)
 """
 import fcntl
+import html
 import json
 import os
 import platform
@@ -130,7 +131,7 @@ def _rank(r: dict) -> int:
 
 
 def render_prom(results: list[dict], now: float, host: str = HOST) -> str:
-    """auto_update_result (one per image, result = current|waiting|updated|rolled_back|rollback_failed|available|major_held|held_back|skipped|deferred|local_build|error), auto_update_omitted (noteworthy results left out to keep the Telegram summary under 4096 characters), auto_update_last_run_timestamp_seconds.
+    """auto_update_result (one per image, result = current|waiting|updated|rolled_back|rollback_failed|available|major_held|held_back|skipped|deferred|local_build|error; a rollback carries reason, e.g. the missing customizations), auto_update_omitted (noteworthy results left out to keep the Telegram summary under 4096 characters), auto_update_last_run_timestamp_seconds.
 
     No HELP lines: fastpi republishes beefy's file next to its own, and node-exporter drops a family whose files disagree on HELP (one with, one without, or two versions).
     """
@@ -153,6 +154,8 @@ def render_prom(results: list[dict], now: float, host: str = HOST) -> str:
                   "from": _short(r.get("from", "")), "to": _short(r.get("to", ""))}
         if r.get("command"):
             labels["command"] = r["command"]
+        if r.get("reason"):
+            labels["reason"] = r["reason"]
         lines.append("auto_update_result{" + ",".join(f'{k}="{_esc(v)}"' for k, v in labels.items()) + "} 1")
     lines += [
         "# TYPE auto_update_omitted gauge",
@@ -238,6 +241,23 @@ def image_version(image: str) -> str:
     return "" if v == "<no value>" else v
 
 
+def failure_reason(out: str) -> str:
+    """Why update-project.sh rolled back, from its output: the missing customizations (post-update-check.sh), the functional check, or the containers."""
+    for line in out.splitlines():
+        if line.startswith("  custom: FAIL"):
+            return "customizations missing: " + line.split("FAIL", 1)[1].strip()
+    if any(line.startswith("  check : FAIL") for line in out.splitlines()):
+        return "check failed"
+    return "containers not running" if "ROLLBACK" in out else ""
+
+
+def rollback_failed_message(project: str, directory, reason: str = "") -> str:
+    return (f"🔴 <b>Auto-update: {html.escape(project)} is down</b>\n\n"
+            f"• Update failed verification{': ' + html.escape(reason) if reason else ''}\n"
+            "• Rollback did not verify either\n"
+            f"<blockquote expandable>💡 Check: <code>cd {html.escape(str(directory))} && docker compose ps</code></blockquote>")
+
+
 def oob(msg: str) -> None:
     script = SCRIPTS / "oob-alert.sh"
     if not script.exists():
@@ -246,14 +266,14 @@ def oob(msg: str) -> None:
     sh([str(script), msg], timeout=60)
 
 
-def apply(row: dict, refs: list[str], images: dict[str, str]) -> dict[str, str]:
-    """Pull, refuse a major jump, then update-project.sh recreate with the functional check. -> ref -> result."""
+def apply(row: dict, refs: list[str], images: dict[str, str]) -> tuple[dict[str, str], str]:
+    """Pull, refuse a major jump, then update-project.sh recreate with the functional and customization checks. -> (ref -> result, rollback reason)."""
     d = DOCKER / row["project"]
     services = row["services"]
     r = sh(["docker", "compose", "pull", "-q", *services], cwd=d, timeout=1800)
     if r.returncode != 0:
         log(f"  pull failed: {r.stderr.strip()[-300:]}")
-        return {ref: "error" for ref in refs}
+        return {ref: "error" for ref in refs}, ""
     out, changed = {}, False
     for ref in refs:
         old_id = images[ref]
@@ -270,18 +290,18 @@ def apply(row: dict, refs: list[str], images: dict[str, str]) -> dict[str, str]:
         out[ref] = "pending"
         changed = True
     if not changed:
-        return out
+        return out, ""
     env = dict(os.environ, SERVICES=" ".join(services), CHECK=row["check"])
     r = subprocess.run([str(SCRIPTS / "update-project.sh"), str(d), "recreate", *row["backups"]],
                        env=env, text=True, capture_output=True, timeout=1800)
     for line in r.stdout.splitlines():
         log("  | " + line)
     res = {0: "updated", 1: "rolled_back"}.get(r.returncode, "rollback_failed")
+    reason = failure_reason(r.stdout) if res != "updated" else ""
     if res == "rollback_failed":
-        msg = f"auto-update: {row['project']} failed verification AND its rollback did not verify. Check now: cd {d} && docker compose ps"
-        log("  " + msg)
-        oob(msg)
-    return {ref: (res if v == "pending" else v) for ref, v in out.items()}
+        log(f"  {row['project']} failed verification AND its rollback did not verify. Check now: cd {d} && docker compose ps")
+        oob(rollback_failed_message(row["project"], d, reason))
+    return {ref: (res if v == "pending" else v) for ref, v in out.items()}, reason
 
 
 def main(argv: list[str]) -> int:
@@ -347,10 +367,12 @@ def main(argv: list[str]) -> int:
                     r["result"] = "skipped"
             continue
         applied += 1
-        outcome = apply(row, todo, images)
+        outcome, reason = apply(row, todo, images)
         for r in results:
             if r["project"] == row["project"] and r["ref"] in outcome:
                 r["result"] = outcome[r["ref"]]
+                if reason and r["result"] in ("rolled_back", "rollback_failed"):
+                    r["reason"] = reason
                 key = f"{row['project']}|{r['ref']}"
                 if r["result"] == "updated":
                     state[key] = {}
