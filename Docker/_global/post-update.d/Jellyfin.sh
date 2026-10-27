@@ -33,6 +33,7 @@ if want jellyfin; then
   check jf.home-sections-locked '^\{"Enabled":true,"AllowUserOverride":false' "$(jf_api /HomeScreen/Meta | jq -c . 2>&1)"
   check jf.home-sections-users '^all [1-9][0-9]* users ok$' "$(python3 "$DIR/../../Jellyfin/scripts/home-sections.py" --check 2>&1 | tail -1)"
   check jf.home-settings-hidden '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'hss-lock-style' 2>&1)"
+  check jf.auto-collections '^0 libraries would change$' "$(python3 "$DIR/../../Jellyfin/scripts/library-options.py" --dry-run 2>&1 | tail -1)"
   check jf.night-tasks '^0 task\(s\) would change' "$(python3 "$DIR/../../Jellyfin/scripts/night-tasks.py" --dry-run 2>&1 | tail -1)"
   check jf.plugin-intro-skipper '^Active 12\.' "$(jf_plugin 'Intro Skipper')"
   check jf.intro-skipper-buttons-only '^\[false,false,false,false,true\]$' "$(jf_api /Plugins/c83d86bba1e04c35a113e2101cf4ee6b/Configuration | jq -c '[.AutoSkipIntro,.AutoSkipCredits,.UseFileTransformationPlugin,.AutoDetectIntros,.UpdateMediaSegments]' 2>&1)"

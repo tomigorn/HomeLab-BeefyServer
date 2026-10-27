@@ -485,6 +485,7 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 
 | Task | Command (in `Docker/Jellyfin/`) |
 |---|---|
+| Library options | `python3 scripts/library-options.py` (`--check`): automatic movie collections on the Movies library (franchises become BoxSets, e.g. Harry Potter Collection); after adding films a library scan creates them; tests `python3 -m unittest test_library_options` in `scripts/` |
 | Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-home-sections`, `jf.home-sections-*`; `../CUSTOMIZATIONS.md`) |
 | Rollback | stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/{Home Screen Sections,Plugin Pages,File Transformation}_*`, start. Pre-change backup: `/srv/appdata/jellyfin-pre-hss-2026-10-27.tgz` (root, 600) |
 
