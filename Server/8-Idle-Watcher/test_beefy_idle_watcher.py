@@ -292,6 +292,23 @@ class TestIdleMetrics(unittest.TestCase):
         for ch in '"\\{}\n':
             self.assertNotIn(ch, detail)
 
+    def test_parse_btime_from_proc_stat(self):
+        stat = "cpu  1 2 3 4\nintr 5\nctxt 99\nbtime 1793070000\nprocesses 7\n"
+        self.assertEqual(biw.parse_btime(stat), 1793070000)
+
+    def test_parse_btime_missing_is_none(self):
+        self.assertIsNone(biw.parse_btime("cpu  1 2 3 4\n"))
+        self.assertIsNone(biw.parse_btime(""))
+
+    def test_render_includes_boot_time(self):
+        out = biw.render_idle_metrics([], "", 5, 1793070000)
+        self.assertIn("# HELP beefy_boot_time_seconds ", out)
+        self.assertIn("# TYPE beefy_boot_time_seconds gauge", out)
+        self.assertIn("beefy_boot_time_seconds 1793070000\n", out)
+
+    def test_render_without_boot_time_omits_metric(self):
+        self.assertNotIn("beefy_boot_time_seconds", biw.render_idle_metrics([], "", 5))
+
     def test_first_inbound_peer_from_ss(self):
         txt = ("ESTAB 0 0 192.168.1.102:22 192.168.1.2:39778\n"
                "ESTAB 0 0 192.168.1.102:8096 192.168.1.50:55512\n")

@@ -267,14 +267,27 @@ def idle_detail(reasons, peer, stats):
     return ", ".join(parts)
 
 
-def render_idle_metrics(reasons, detail, ts):
-    """node-exporter textfile body: one 0/1 per reason, the detail, the write time."""
+def parse_btime(stat_text):
+    """Boot time (epoch seconds) from /proc/stat, None when absent."""
+    for line in stat_text.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "btime" and parts[1].isdigit():
+            return int(parts[1])
+    return None
+
+
+def render_idle_metrics(reasons, detail, ts, boot_time=None):
+    """node-exporter textfile body: one 0/1 per reason, the detail, the write time, the boot time."""
     safe = _SAFE.sub("", str(detail))[:80]
     lines = ["# TYPE beefy_idle_busy gauge"]
     lines += ['beefy_idle_busy{reason="%s"} %d' % (r, int(r in reasons)) for r in IDLE_REASONS]
     lines += ["# TYPE beefy_idle_info gauge", 'beefy_idle_info{detail="%s"} 1' % safe,
               "# TYPE beefy_idle_updated_timestamp_seconds gauge",
               "beefy_idle_updated_timestamp_seconds %d" % ts]
+    if boot_time is not None:
+        lines += ["# HELP beefy_boot_time_seconds Boot time of beefy (btime from /proc/stat), epoch seconds.",
+                  "# TYPE beefy_boot_time_seconds gauge",
+                  "beefy_boot_time_seconds %d" % boot_time]
     return "\n".join(lines) + "\n"
 
 
@@ -491,7 +504,8 @@ def main():
             busy, reasons, stats = True, ["probe_error"], "probe error"
             detail = "probe error"
 
-        write_idle_metrics(cfg["METRICS_FILE"], render_idle_metrics(reasons, detail, int(time.time())))
+        write_idle_metrics(cfg["METRICS_FILE"], render_idle_metrics(reasons, detail, int(time.time()),
+                                                                  parse_btime(cur["stat"])))
         idle_since = update_idle(busy, idle_since, now)
         idle_min = (now - idle_since) / 60.0
         log("idle=%4.1fm %s -> %s%s"
