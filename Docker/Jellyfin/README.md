@@ -392,7 +392,6 @@ Jellyfin posts each member's playback to their own Floppy account (`../Floppy/`,
 - Not the official "Webhook" plugin: its payload has only the episode's own ids, and 12.1 episodes have no TMDB id. shemanaev's "Default" format nests the series with its TMDB id, so episodes land on their show.
 - Route: `http://192.168.1.102:8012/webhook/jellyfin/<token>`, beefy's own published Floppy port (hairpin), never Traefik: `/webhook/` is 403 there. DOCKER-USER lets only the `jellyfin` subnet and fastpi reach that port.
 - Hook per member: name `Tracker <user>`, format Default, events Play, Stop, MarkPlayed, MarkUnplayed.
-- `extra_hosts` `tracker.holy-grail.ch` → fastpi is a leftover of Ryot (unused now).
 
 ### Add a household member
 1. Member is in Holy Grail (`streaming-users`, automatic on invite) and has signed in to Jellyfin and to the Tracker tile once (creates both users).
@@ -411,7 +410,7 @@ Jellyfin posts each member's playback to their own Floppy account (`../Floppy/`,
 | Not arriving | `sudo docker logs jellyfin 2>&1 \| grep -i webhook \| tail` here, `sudo docker logs floppy 2>&1 \| grep webhook_finished \| tail` |
 
 ### "Rate in Tracker" link
-Film, series, season and episode pages in Jellyfin web get a "Rate in Tracker" link next to the TMDB/IMDb links. It opens `https://tracker.holy-grail.ch/go/tmdb/<movie|show>/<id>?title=…`; `ryot-go` (`Docker/Ryot/go/`) opens the Ryot item, or Ryot's search when the title is not in Ryot yet. Episodes and seasons link to their show. No TMDB id = no link. Web only, apps and TV have none.
+Film, series, season and episode pages in Jellyfin web get a "Rate in Tracker" link next to the TMDB/IMDb links. It opens `https://tracker.holy-grail.ch/go/tmdb/<movie|show>/<id>?title=…`; Traefik redirects it to Floppy's TMDB details page (HomeLab-FastPi `Traefik/traefik/dynamic/tracker.yml`, router `tracker-go`). Episodes and seasons link to their show. No TMDB id = no link. Web only, apps and TV have none.
 
 - Script: `tracker-link/rate-in-tracker.js`, served by JavaScript Injector from `private.js` (signed-in users only).
 - Not johnpc's Custom JavaScript: deprecated, and it rewrites `index.html` on disk (root-owned in the LSIO image). JavaScript Injector rewrites the response.
@@ -424,11 +423,11 @@ Film, series, season and episode pages in Jellyfin web get a "Rate in Tracker" l
 | Check it is served | `curl -s localhost:8096/web/index.html \| grep -c -i injector` → ≥ 1 |
 
 ### Rating on TV and phone
-Jellyfin's TV and phone apps have only the heart (favourite) and "played"; no app has stars (jellyfin-androidtv `ItemMutationRepository.kt`), and Ryot has no native app.
+Jellyfin's TV and phone apps have only the heart (favourite) and "played"; no app has stars (jellyfin-androidtv `ItemMutationRepository.kt`), and Floppy has no native app.
 
-- Phone: open `https://tracker.holy-grail.ch`, browser menu -> **Install app** / **Add to Home screen**. Ryot is a PWA; its manifest and icons are reachable without sign-in for that (HomeLab-FastPi `Traefik/traefik/dynamic/tracker.yml`, router `tracker-pwa`).
+- Phone: open `https://tracker.holy-grail.ch`, browser menu -> **Install app** / **Add to Home screen**. Floppy is a PWA; its manifest and icons are reachable without sign-in for that (HomeLab-FastPi `Traefik/traefik/dynamic/tracker.yml`, router `tracker-pwa`).
 - TV: rate later on the phone; the TV app has no rating.
-- Not built: hearts -> Ryot. Ryot's Jellyfin Sink ignores favourites; the way would be a per-member Ryot "Generic JSON" integration URL plus a nightly job that posts Jellyfin favourites into a Ryot collection. It needs each member's own URL (only creatable in their Ryot session) and a real test, so it waits for a decision.
+- Not built: hearts -> Tracker. The webhook events carry no favourite change.
 
 ## IMDb link and rating (2026-10-25)
 - Film and series pages (web) show an **IMDb** and **TMDB** link row (`ExternalUrls`, built from `ProviderIds`); all 9 items have both IDs, nothing to fix. Apps show no link row.

@@ -30,8 +30,6 @@ services:
     # the plugin via Cloudflare (403). Also keeps OIDC logins off the tunnel.
     extra_hosts:
       - "sso.holy-grail.ch:192.168.1.2"
-      # Webhooks to the Tracker (Ryot) on fastpi: /_i/ is LAN-only, via Cloudflare it is 403.
-      - "tracker.holy-grail.ch:192.168.1.2"
     environment:
       - PUID=65108
       - PGID=65108

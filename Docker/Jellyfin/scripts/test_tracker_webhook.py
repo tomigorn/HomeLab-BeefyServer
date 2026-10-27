@@ -42,7 +42,7 @@ class UpsertTest(unittest.TestCase):
         self.assertEqual(hooks[0]["Url"], URL2)
         self.assertEqual(hooks[0]["Id"], hook_id)
 
-    def test_old_ryot_hook_replaced(self):
+    def test_old_hook_of_the_user_replaced(self):
         old = {"Id": "9", "Name": "Tracker anna", "Url": "https://tracker.holy-grail.ch/_i/int_x", "UserId": "a" * 32, "Format": "Default", "Events": ["Play", "Pause", "Resume", "Stop", "Progress", "MarkPlayed"]}
         hooks = tw.upsert_hook({"Hooks": [old]}, "anna", "a" * 32, URL)["Hooks"]
         self.assertEqual(hooks, [{"Id": "9", "Name": "Tracker anna", "Url": URL, "UserId": "a" * 32, "Format": "Default", "Events": EVENTS}])
