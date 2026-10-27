@@ -61,4 +61,4 @@ Tags like `rollback-4.0.20-20261021` are not versions: Cup logs "no remote versi
 
 ## Locally built images
 
-`jellyfin-local`, `clamav-local` and `ryot-go` have no registry copy, so they sit in `images.exclude` (no "Unauthorized" errors) and their bases are in `images.extra` (`lscr.io/linuxserver/jellyfin:12.2ubu2604-ls55`, `python:3.13-alpine`). An `extra` entry must be a versioned tag or already on the host: `alpine:latest` is refused and crash-loops the agent, so clamav's base is covered by the Trivy scan on fastpi only. Rebuild routine: the `Rebuild` line in each image's README. After editing `cup.json`: `sudo docker restart cup-agent`.
+`jellyfin-local` and `clamav-local` have no registry copy, so they sit in `images.exclude` (no "Unauthorized" errors) and their bases are in `images.extra` (`lscr.io/linuxserver/jellyfin:12.2ubu2604-ls55`). An `extra` entry must be a versioned tag or already on the host: `alpine:latest` is refused and crash-loops the agent, so clamav's base is covered by the Trivy scan on fastpi only. Rebuild routine: the `Rebuild` line in each image's README. After editing `cup.json`: `sudo docker restart cup-agent`.

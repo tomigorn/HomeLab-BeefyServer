@@ -7,11 +7,9 @@
   "images": {
     "exclude": [
       "jellyfin-local",
-      "clamav-local",
-      "ryot-go"
+      "clamav-local"
     ],
     "extra": [
-      "python:3.13-alpine",
       "lscr.io/linuxserver/jellyfin:12.2ubu2604-ls55"
     ]
   }
