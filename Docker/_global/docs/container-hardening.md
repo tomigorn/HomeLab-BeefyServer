@@ -38,10 +38,11 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65124 | seerr-proxy (nginx, read_only) | | |
 | 65125 | floppy (app processes `abc` via PUID/PGID; supervisord + nginx master root) | | CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, KILL |
 | 65126 | floppy-redis (read_only) | | |
+| 65127 | seerr-download-now (read_only; group 65127 reads `Seerr/secrets/download-now`) | | |
 | 65116 | gluetun files (PUID; process root) | | NET_ADMIN, NET_RAW, NET_BIND_SERVICE, DAC_OVERRIDE, CHOWN |
 | 0 | portainer_agent | | none (full socket by design, `AGENT_SECRET` required) |
 
-Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65127+.
+Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65128+.
 
 ## Root by design
 | Container | Why |

@@ -15,7 +15,12 @@ if want seerr; then
   check seerr.extra-hosts '^192\.168\.1\.2$' "$(docker exec seerr getent ahostsv4 sso.holy-grail.ch 2>&1 | awk 'NR==1{print $1}')"
 fi
 if want seerr-proxy; then
-  check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/menu-links.js _indexer-bar/night-label.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
+  check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/menu-links.js _indexer-bar/night-label.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
   check seerr.indexer-bar-data '^true [0-9]+$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/usage.json | jq -r '"\(.ok) \(.indexers|length)"' 2>&1)"
   check seerr.night-label-data '^array$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-waiting.json | jq -r '.waiting|type' 2>&1)"
+fi
+if want download-now seerr-proxy; then
+  check seerr.download-now-health '^\{"ok": true\}$' "$(curl -s -m 5 http://127.0.0.1:5055/_download-now/health 2>&1)"
+  check seerr.download-now-auth '^403$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5055/_download-now/api?type=movie&tmdb=603' 2>&1)"
+  check seerr.download-now-backend '^(started|downloading|searching|available)$' "$(t=$(curl -s -m 8 -H "X-Api-Key: $(grep -oP '(?<=<ApiKey>)[^<]+' /srv/appdata/radarr/config.xml)" http://127.0.0.1:7878/api/v3/movie | jq -r '.[0].tmdbId' 2>&1); curl -s -m 20 -H "X-Api-Key: $(cat "$DIR/../../Seerr/secrets/api-key")" "http://127.0.0.1:5055/_download-now/api?type=movie&tmdb=$t" | jq -r .state 2>&1)"
 fi

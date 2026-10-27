@@ -21,7 +21,7 @@ curl -s http://127.0.0.1:5055/api/v1/status     # preview: {"version":"develop-2
 | | |
 |---|---|
 | Port | `5055` on beefy, reachable from fastpi only (DOCKER-USER rule); owned by `seerr-proxy` (nginx, [Indexer bar](#indexer-bar)), Seerr itself publishes nothing |
-| Networks | joins `movie-downloads` and `jellyfin` (external): `radarr:7878`, `sonarr:8989`, `jellyfin:8096`; `seerr-front` (own) with `seerr-proxy`. Default route stays on `jellyfin` (`gw_priority`): only that subnet may reach sso on fastpi; `extra_hosts` pins `sso.holy-grail.ch` to 192.168.1.2 so OIDC stays on the LAN |
+| Networks | joins `movie-downloads` and `jellyfin` (external): `radarr:7878`, `sonarr:8989`, `jellyfin:8096`; `seerr-front` (own) with `seerr-proxy` and `download-now`. Default route stays on `jellyfin` (`gw_priority`): only that subnet may reach sso on fastpi; `extra_hosts` pins `sso.holy-grail.ch` to 192.168.1.2 so OIDC stays on the LAN |
 | Config | `/srv/appdata/seerr` (`settings.json` holds the API key and the Jellyfin token; `db/db.sqlite3`) |
 | Traefik / Authentik | `HomeLab-FastPi` -> `Traefik/traefik/dynamic/requests.yml`; Authentik apps `requests` (forward auth) and `requests-login` (OIDC, hidden tile), group **`streaming-requesters`** (`Authentik/scripts/provision-media-groups.py`) |
 | OIDC client | `SEERR_OIDC_CLIENT_ID` / `SEERR_OIDC_CLIENT_SECRET` in `.env` (gitignored), written from fastpi by the provisioning run (`HomeLab-FastPi` `Authentik/README.md`); `scripts/configure.sh` puts them into `settings.json` |
@@ -150,6 +150,7 @@ email) are not set up: Settings -> Notifications.
 |---|---|
 | a film or series | **Request**, leave the profile on the default (4K HDR, 1080p fallback) |
 | it now, not tonight | untick **Can wait — download tonight (cheaper power)** ([Can wait](#can-wait)) |
+| it now, at daytime power price (already requested, admins) | **Manage** → **⚡ Download now — at daytime power price** ([Download now](#download-now)) |
 | an old or niche title | nothing: on add it moves to **Any quality - old & rare (upgrades to 4K)** by itself (released ≤ 12 years ago, or ≥ 2 years old with few votes) |
 | force Any quality for a new title | **Advanced** → Quality Profile **Any quality - old & rare (upgrades to 4K)** |
 | a must-have audio language | **Advanced** → Tags `audio-<language>`: not grabbed without it |
@@ -179,8 +180,8 @@ A thin bar at the top of every Seerr page (everyone who can open Requests sees i
 
 | Part | What |
 |---|---|
-| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` (and `can-wait.js`, `menu-links.js`, `night-label.js`: [Can wait](#can-wait), [Menu links](#menu-links), [Night label](#night-label)) before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
-| `/_indexer-bar/` | `indexer-bar/www/` (bar.js, bar.css, starting.html, can-wait.js, menu-links.js, night-label.js); `usage.json` and `night-waiting.json` from `/srv/appdata/indexer-bar/` |
+| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` (and `can-wait.js`, `menu-links.js`, `night-label.js`, `download-now.js`: [Can wait](#can-wait), [Menu links](#menu-links), [Night label](#night-label), [Download now](#download-now)); `/_download-now/` goes to the `download-now` backend before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
+| `/_indexer-bar/` | `indexer-bar/www/` (bar.js, bar.css, starting.html, can-wait.js, menu-links.js, night-label.js, download-now.js); `usage.json` and `night-waiting.json` from `/srv/appdata/indexer-bar/` |
 | Collector | `scripts/indexer-usage.py` as buntu, `systemd/indexer-usage.timer` every minute: Prowlarr `GET /api/v1/indexer` + `/api/v1/history/since`, counts queries + RSS (searches) and grabs (downloads) per indexer in its window. Writes names and counts only, no keys, no queries |
 | Limits + deadlines | `indexer-bar/limits.toml` (committed, no secrets); picked up on the next run, no restart |
 | Colours | limits: green < 70 %, amber 70-95 %, red ≥ 95 % with the reset time. Subscriptions: yellow ≤ 30 days left, orange ≤ 7, red on the end date and after, `lifetime` without countdown (same stages as the Telegram alerts) |
@@ -251,6 +252,36 @@ A download held by the night queue ([Can wait](#can-wait)) shows **Waiting for t
 | Script | `indexer-bar/www/night-label.js`: status badge (title page, request cards, Requests list), Discover card spinner → 🌙, download blocks (Manage panel, badge tooltip: label, bar grey). Titles from Seerr's own API responses (read-only) or `GET /api/v1/movie|tv/<id>` |
 | Fallback | file missing or older than 10 min, API error, Seerr changed its markup: Seerr's normal display |
 | Check | `curl -s localhost:5055/_indexer-bar/night-waiting.json \| head -c 200`; tests in [Menu links](#menu-links) (`node --test`) |
+
+## Download now
+
+Admins (and users with **Manage Requests**) get a button in the Manage panel: title page → **Manage** (slide-over, under **Open in Radarr/Sonarr**; without admin at the top) → **⚡ Download now — at daytime power price** (German UI: **⚡ Jetzt herunterladen — zum Tagstrompreis**).
+
+| Before the press | Panel shows |
+|---|---|
+| downloads wait in a night category | the button + "Waiting for the night 🌙. Starts at once instead, at the higher daytime power price." |
+| nothing grabbed yet, file missing | the button + "Nothing grabbed yet. Searches now …" |
+| already downloading (normal category) | "Already downloading — nothing to do", no button |
+| downloaded, or not in Radarr/Sonarr | nothing |
+
+A press: tag `download-now` on the title (Radarr/Sonarr) → the title's unfinished night downloads move to the normal category (qBittorrent `radarr-night`→`radarr`, `sonarr-night`→`sonarr`; SABnzbd `movies-night`→`movies`, `tv-night`→`tv`), paused ones resume → nothing grabbed: `MoviesSearch` / `SeriesSearch`, the grab goes to the tagged normal clients. Out of the night categories `night-downloads.py` never pauses or queues them again. Feedback in the panel: ✅ Started / ✅ Searching / Already downloading / ❌ Failed; the 🌙 label goes at once (`night-label.js` `release`). Items paused by hand in a normal category stay paused.
+
+| Part | What |
+|---|---|
+| Button | `indexer-bar/www/download-now.js` (injected by `seerr-proxy`); asks `/api/v1/auth/me` first, requesters never call the backend |
+| Backend | `download-now` container (`seerr-download-now`, `download-now/download_now.py`, python alpine, uid 65127, read-only, no caps, no port). `seerr-proxy` routes `/_download-now/` to it |
+| Who may | every call: Seerr `/api/v1/auth/me` with the caller's `connect.sid` cookie (or Seerr's API key), permission ADMIN (2) or MANAGE_REQUESTS (16), else 403. POST only with `Origin: https://requests.holy-grail.ch` and JSON |
+| API | `GET /_download-now/api?type=movie\|tv&tmdb=<id>`: what a press would do (no change). `POST /_download-now/api` `{"type","tmdbId"}`: do it. Answer: `state`, `released` (download ids), `moved` |
+| Keys | `secrets/download-now/{radarr,sonarr,sabnzbd}.apikey` (buntu:65127 0640), never sent to the browser. qBittorrent: no-password bypass for 172.28.10.205 |
+| Setup | `scripts/download-now-setup.sh` (keys + qBittorrent bypass; idempotent), then `sudo docker compose up -d download-now`; after a Radarr/Sonarr/SAB key change re-run it and `sudo docker restart seerr-download-now` |
+| Log | `sudo docker logs seerr-download-now`: one line per press (user id, title, state) |
+| Fallback | backend down, Seerr changed the panel: no button, Seerr unchanged; the request's **Can wait** box still works |
+
+| Check | Command |
+|---|---|
+| Tests | `python3 tests/test_download_now.py`; JS: `node --test` in `tests/js` |
+| Dry run (admin, Seerr API key) | `curl -s -H "X-Api-Key: $(cat secrets/api-key)" 'localhost:5055/_download-now/api?type=movie&tmdb=<id>'` |
+| Refused | same without the key → 403; with `-H 'X-Api-User: <requester id>'` → 403 |
 
 ## Delete a title
 
