@@ -6,8 +6,8 @@
       _: "Nothing here yet.",
       ContinueWatching: "Nothing to continue — start something to see it here.",
       NextUp: "No series in progress yet.",
-      WatchAgain: "Nothing here yet — finish a series or a film collection to see it here.",
-      BecauseYouWatched: "Nothing here yet — watch a few films to get recommendations.",
+      WatchAgain: "Nothing here yet — films and series you finished more than 4 weeks ago show up here.",
+      BecauseYouWatched: "Nothing here yet — finish a film to get recommendations.",
       HiddenGems: "No highly rated unwatched titles right now.",
       FinishTheseCollections: "No film collection started yet.",
       MyList: "Nothing here yet — mark films or series with ♥ to see them here.",
@@ -22,8 +22,8 @@
       _: "Noch nichts hier.",
       ContinueWatching: "Nichts fortzusetzen – starte etwas, dann erscheint es hier.",
       NextUp: "Noch keine angefangene Serie.",
-      WatchAgain: "Noch nichts hier – schau eine Serie oder Filmreihe fertig, dann erscheint sie hier.",
-      BecauseYouWatched: "Noch nichts hier – schau ein paar Filme, dann gibt es Empfehlungen.",
+      WatchAgain: "Noch nichts hier – Filme und Serien, die du vor mehr als 4 Wochen fertig geschaut hast, erscheinen hier.",
+      BecauseYouWatched: "Noch nichts hier – schau einen Film fertig, dann gibt es Empfehlungen.",
       HiddenGems: "Gerade keine hoch bewerteten, ungesehenen Titel.",
       FinishTheseCollections: "Noch keine Filmreihe angefangen.",
       MyList: "Noch nichts hier – markiere Filme oder Serien mit ♥, dann erscheinen sie hier.",
@@ -180,8 +180,20 @@
     for (var k = 0; k < all.length; k++) if (!wanted[all[k].getAttribute("data-hss-placeholder")]) all[k].remove();
   }
 
+  // Sections are locked server-side (home-sections.py); Jellyfin's own pickers do nothing under Modular Home.
+  var LOCKED_SELECTOR = '.homeScreenSettingsContainer .selectContainer:has(select[id^="selectHomeSection"])';
+
+  function lockHomeSettings(doc) {
+    if (doc.getElementById("hss-lock-style")) return;
+    var style = doc.createElement("style");
+    style.id = "hss-lock-style";
+    style.textContent = LOCKED_SELECTOR + " { display: none !important; }";
+    (doc.head || doc.documentElement).appendChild(style);
+  }
+
   function start(win) {
     var doc = win.document;
+    lockHomeSettings(doc);
     var cache = null;
     var timer = null;
 
@@ -235,7 +247,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, hintFor: hintFor, namesOf: namesOf, enabledOf: enabledOf, start: start };
+    module.exports = { LOCKED_SELECTOR: LOCKED_SELECTOR, lockHomeSettings: lockHomeSettings, render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, hintFor: hintFor, namesOf: namesOf, enabledOf: enabledOf, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {

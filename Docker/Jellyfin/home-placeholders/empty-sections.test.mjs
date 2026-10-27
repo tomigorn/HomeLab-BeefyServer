@@ -243,3 +243,39 @@ test("upcoming shows: idempotent and movies untouched", () => {
   assert.deepEqual(visible(c), ["Rings | S03 | x - 11.11.2026"]);
   assert.equal([...c.querySelectorAll(".upcoming-movie-card")].filter((e) => e.style.display !== "none").length, 2);
 });
+
+function prefsHome() {
+  const sel = (n) => `<div class="selectContainer"><label>Home screen section ${n}</label><select is="emby-select" id="selectHomeSection${n}"></select></div>`;
+  return new JSDOM(`<html><head></head><body><div class="homeScreenSettingsContainer"><form>` +
+    `<div class="verticalSection"><label class="checkboxContainer"><input class="chkHidePlayedFromLatest" type="checkbox"/></label></div>` +
+    `${[1, 2, 10].map(sel).join("")}<div class="selectContainer"><select class="selectLanding"></select></div></form></div></body></html>`);
+}
+
+test("lock: Jellyfin's own home section pickers are hidden, the rest of Settings → Home stays", () => {
+  const dom = prefsHome();
+  es.lockHomeSettings(dom.window.document);
+  const hidden = [...dom.window.document.querySelectorAll(es.LOCKED_SELECTOR)];
+  assert.deepEqual(hidden.map((e) => e.querySelector("select").id), ["selectHomeSection1", "selectHomeSection2", "selectHomeSection10"]);
+  assert.match(dom.window.document.getElementById("hss-lock-style").textContent, /display:\s*none\s*!important/);
+});
+
+test("lock: style is added once", () => {
+  const dom = prefsHome();
+  es.lockHomeSettings(dom.window.document);
+  es.lockHomeSettings(dom.window.document);
+  assert.equal(dom.window.document.querySelectorAll("#hss-lock-style").length, 1);
+});
+
+test("start: locks the home settings even without Home Screen Sections on the page", () => {
+  const dom = new JSDOM("<html><head></head><body></body></html>");
+  es.start(dom.window);
+  assert.equal(dom.window.document.querySelectorAll("#hss-lock-style").length, 1);
+  dom.window.close();
+});
+
+test("watch again and because you watched say what the plugin needs", () => {
+  assert.equal(es.hintFor("WatchAgain", "en"), "Nothing here yet — films and series you finished more than 4 weeks ago show up here.");
+  assert.equal(es.hintFor("WatchAgain", "de"), "Noch nichts hier – Filme und Serien, die du vor mehr als 4 Wochen fertig geschaut hast, erscheinen hier.");
+  assert.equal(es.hintFor("BecauseYouWatched", "en"), "Nothing here yet — finish a film to get recommendations.");
+  assert.equal(es.hintFor("BecauseYouWatched", "de"), "Noch nichts hier – schau einen Film fertig, dann gibt es Empfehlungen.");
+});
