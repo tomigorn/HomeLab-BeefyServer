@@ -12,7 +12,8 @@ from jellyfin_api import api  # noqa: E402
 PLUGIN_ID = "b8298e012697407ab44daa8dc795e850"
 ORDER = [
     "MyMedia", "ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows",
-    "WatchAgain", "BecauseYouWatched", "HiddenGems", "FinishTheseCollections", "UpcomingShows", "UpcomingMovies",
+    "WatchAgain", "BecauseYouWatched", "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection",
+    "Studio", "Starring", "DirectedBy", "UpcomingShows", "UpcomingMovies",
 ]
 LIMITS = {"BecauseYouWatched": (1, 3)}
 # Jellyfin reaches the arrs through beefy's published ports (hairpin), no shared network.
@@ -41,7 +42,8 @@ def apply(cfg, types, libs, arr):
         s.update(Enabled=sid in ORDER, AllowUserOverride=True, LowerLimit=lower, UpperLimit=upper,
                  OrderIndex=ORDER.index(sid) + 1 if sid in ORDER else len(ORDER) + 1 + i)
         out.append(s)
-    cfg["SectionSettings"] = out + list(existing.values())
+    # Stored in display order: the user API lists enabled sections in this order (empty-section placeholders).
+    cfg["SectionSettings"] = sorted(out, key=lambda s: s["OrderIndex"]) + list(existing.values())
     return cfg
 
 

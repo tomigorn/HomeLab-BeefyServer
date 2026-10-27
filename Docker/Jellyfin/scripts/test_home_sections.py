@@ -9,7 +9,8 @@ _spec.loader.exec_module(hs)
 TYPES = [
     {"Section": s, "ViewMode": "Portrait" if s == "HiddenGems" else "Landscape"}
     for s in ["MyMedia", "ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows", "WatchAgain", "BecauseYouWatched",
-              "HiddenGems", "FinishTheseCollections", "UpcomingShows", "UpcomingMovies", "DiscoverMovies", "DiscoverTV", "Discover", "MyJellyseerrRequests", "Genre"]
+              "HiddenGems", "FinishTheseCollections", "UpcomingShows", "UpcomingMovies", "DiscoverMovies", "DiscoverTV", "Discover", "MyJellyseerrRequests", "Genre",
+              "MyList", "Studio", "Starring", "DirectedBy", "CollectionsSection", "Decade"]
 ]
 LIBS = {"movies": "m1", "tvshows": "t1"}
 ARR = {"Sonarr": ("http://192.168.1.102:8989", "skey"), "Radarr": ("http://192.168.1.102:7878", "rkey")}
@@ -37,9 +38,19 @@ class Apply(unittest.TestCase):
 
     def test_jellyseerr_and_other_sections_stay_disabled(self):
         sections = by_id(hs.apply(fresh(), TYPES, LIBS, ARR))
-        for sid in ["DiscoverMovies", "DiscoverTV", "Discover", "MyJellyseerrRequests", "Genre"]:
+        for sid in ["DiscoverMovies", "DiscoverTV", "Discover", "MyJellyseerrRequests", "Genre", "Decade"]:
             self.assertFalse(sections[sid]["Enabled"], sid)
             self.assertGreater(sections[sid]["OrderIndex"], len(hs.ORDER))
+
+    def test_owner_order(self):
+        self.assertEqual(hs.ORDER, ["MyMedia", "ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows", "WatchAgain", "BecauseYouWatched",
+                                    "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection", "Studio", "Starring", "DirectedBy",
+                                    "UpcomingShows", "UpcomingMovies"])
+
+    def test_settings_are_stored_in_display_order(self):
+        cfg = hs.apply(fresh(), TYPES, LIBS, ARR)
+        ids = [s["SectionId"] for s in cfg["SectionSettings"]]
+        self.assertEqual(ids[:len(hs.ORDER)], hs.ORDER)
 
     def test_because_you_watched_shows_one_or_two_rows(self):
         s = by_id(hs.apply(fresh(), TYPES, LIBS, ARR))["BecauseYouWatched"]
