@@ -41,8 +41,8 @@ export function modal(title, ok = "Request") {
 }
 
 // A DOM with the given body; `before` runs in the window before the script (stubs), then the script itself.
-export function load(script, body, before) {
-  const dom = new JSDOM(`<!doctype html><html><head></head><body>${body}</body></html>`, { runScripts: "outside-only", url: "https://requests.example.com/movie/1" });
+export function load(script, body, before, url = "https://requests.example.com/movie/1") {
+  const dom = new JSDOM(`<!doctype html><html><head></head><body>${body}</body></html>`, { runScripts: "outside-only", url });
   if (before) before(dom.window);
   dom.window.eval(readFileSync(new URL(script, WWW), "utf8"));
   return dom.window;

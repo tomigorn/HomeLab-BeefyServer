@@ -179,8 +179,8 @@ A thin bar at the top of every Seerr page (everyone who can open Requests sees i
 
 | Part | What |
 |---|---|
-| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` (and `can-wait.js`, `menu-links.js`: [Can wait](#can-wait), [Menu links](#menu-links)) before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
-| `/_indexer-bar/` | `indexer-bar/www/` (bar.js, bar.css, starting.html, can-wait.js, menu-links.js); `usage.json` from `/srv/appdata/indexer-bar/` |
+| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` (and `can-wait.js`, `menu-links.js`, `night-label.js`: [Can wait](#can-wait), [Menu links](#menu-links), [Night label](#night-label)) before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
+| `/_indexer-bar/` | `indexer-bar/www/` (bar.js, bar.css, starting.html, can-wait.js, menu-links.js, night-label.js); `usage.json` and `night-waiting.json` from `/srv/appdata/indexer-bar/` |
 | Collector | `scripts/indexer-usage.py` as buntu, `systemd/indexer-usage.timer` every minute: Prowlarr `GET /api/v1/indexer` + `/api/v1/history/since`, counts queries + RSS (searches) and grabs (downloads) per indexer in its window. Writes names and counts only, no keys, no queries |
 | Limits + deadlines | `indexer-bar/limits.toml` (committed, no secrets); picked up on the next run, no restart |
 | Colours | limits: green < 70 %, amber 70-95 %, red ≥ 95 % with the reset time. Subscriptions: yellow ≤ 30 days left, orange ≤ 7, red on the end date and after, `lifetime` without countdown (same stages as the Telegram alerts) |
@@ -239,6 +239,18 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 | Tests (jsdom, Node ≥ 20) | `cd tests/js && npm ci && node --test` |
 | Injected | `curl -sL localhost:5055/ \| grep -o '_indexer-bar/[a-z-]*\.js'` |
 | After editing `indexer-bar/nginx.conf` | `sudo docker restart seerr-proxy` (a single-file bind mount keeps the old file on reload); scripts in `www/` are live at once |
+
+## Night label
+
+A download held by the night queue ([Can wait](#can-wait)) shows **Waiting for the night 🌙** (German UI: **Wartet auf die Nacht 🌙**) instead of "Processing" at 0 %, with the hint "starts automatically at 22:05 or on Sunday; untick 'Can wait' next time for an immediate download". Real downloads, items paused by hand outside the night categories and failed ones look as before. In the low tariff nothing is labelled (queued night items show Seerr's normal status).
+
+| Part | What |
+|---|---|
+| Data | `/_indexer-bar/night-waiting.json` (`waiting`: download ids), written every 2 min by `../Movie-Downloads/scripts/night-downloads.py` to `/srv/appdata/indexer-bar/`; empty in the low tariff |
+| Match | Seerr's `downloadStatus` item: `status` `paused` **and** `downloadId` in `waiting`; a badge only when every download behind it waits |
+| Script | `indexer-bar/www/night-label.js`: status badge (title page, request cards, Requests list), Discover card spinner → 🌙, download blocks (Manage panel, badge tooltip: label, bar grey). Titles from Seerr's own API responses (read-only) or `GET /api/v1/movie|tv/<id>` |
+| Fallback | file missing or older than 10 min, API error, Seerr changed its markup: Seerr's normal display |
+| Check | `curl -s localhost:5055/_indexer-bar/night-waiting.json \| head -c 200`; tests in [Menu links](#menu-links) (`node --test`) |
 
 ## Delete a title
 
