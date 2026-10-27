@@ -13,7 +13,7 @@ from jellyfin_api import api  # noqa: E402
 PLUGIN_ID = "b8298e012697407ab44daa8dc795e850"
 ORDER = [
     "MyMedia", "ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows",
-    "WatchAgain", "BecauseYouWatched", "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection",
+    "BecauseYouWatched", "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection",
     "Studio", "Starring", "DirectedBy", "UpcomingShows", "UpcomingMovies",
 ]
 LIMITS = {"BecauseYouWatched": (1, 3)}

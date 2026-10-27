@@ -56,8 +56,13 @@ class Apply(unittest.TestCase):
             self.assertFalse(sections[sid]["Enabled"], sid)
             self.assertGreater(sections[sid]["OrderIndex"], len(hs.ORDER))
 
+    def test_watch_again_is_off_and_locked(self):
+        sections = {s["SectionId"]: s for s in hs.apply({}, TYPES, LIBS, ARR)["SectionSettings"]}
+        self.assertFalse(sections["WatchAgain"]["Enabled"])
+        self.assertFalse(sections["WatchAgain"]["AllowUserOverride"])
+
     def test_owner_order(self):
-        self.assertEqual(hs.ORDER, ["MyMedia", "ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows", "WatchAgain", "BecauseYouWatched",
+        self.assertEqual(hs.ORDER, ["MyMedia", "ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows", "BecauseYouWatched",
                                     "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection", "Studio", "Starring", "DirectedBy",
                                     "UpcomingShows", "UpcomingMovies"])
 

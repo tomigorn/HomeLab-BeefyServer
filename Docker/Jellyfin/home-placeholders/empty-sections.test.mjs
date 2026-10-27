@@ -97,7 +97,7 @@ test("german hints", () => {
 });
 
 test("every hint has english and german, others generic", () => {
-  for (const id of ["ContinueWatching", "NextUp", "WatchAgain", "BecauseYouWatched", "HiddenGems", "FinishTheseCollections", "RecentlyWatchedMovies", "RecentlyWatchedSeries", "UpcomingShows", "UpcomingMovies", "MyList", "CollectionsSection", "Studio", "Starring", "DirectedBy"]) {
+  for (const id of ["ContinueWatching", "NextUp", "BecauseYouWatched", "HiddenGems", "FinishTheseCollections", "RecentlyWatchedMovies", "RecentlyWatchedSeries", "UpcomingShows", "UpcomingMovies", "MyList", "CollectionsSection", "Studio", "Starring", "DirectedBy"]) {
     assert.ok(es.hintFor(id, "en"), id);
     assert.ok(es.hintFor(id, "de"), id);
     assert.notEqual(es.hintFor(id, "en"), es.hintFor(id, "de"), id);
@@ -251,9 +251,7 @@ test("start: locks the home settings even without Home Screen Sections on the pa
   dom.window.close();
 });
 
-test("watch again and because you watched say what the plugin needs", () => {
-  assert.equal(es.hintFor("WatchAgain", "en"), "Nothing here yet — films and series you finished more than 4 weeks ago show up here.");
-  assert.equal(es.hintFor("WatchAgain", "de"), "Noch nichts hier – Filme und Serien, die du vor mehr als 4 Wochen fertig geschaut hast, erscheinen hier.");
+test("because you watched says what the plugin needs", () => {
   assert.equal(es.hintFor("BecauseYouWatched", "en"), "Nothing here yet — finish a film to get recommendations.");
   assert.equal(es.hintFor("BecauseYouWatched", "de"), "Noch nichts hier – schau einen Film fertig, dann gibt es Empfehlungen.");
 });
@@ -317,10 +315,10 @@ test("recent: collection is complete when every film is played", () => {
   assert.equal(es.completeCollection({ Id: "c", Type: "BoxSet" }), false);
 });
 
-test("recent: both rows sit right after Watch Again, films first, else at the end", () => {
-  assert.deepEqual(es.withRecent(["NextUp", "WatchAgain", "BecauseYouWatched"]), ["NextUp", "WatchAgain", "RecentlyWatchedMovies", "RecentlyWatchedSeries", "BecauseYouWatched"]);
+test("recent: both rows sit right after Recently Added Shows, films first, else at the end", () => {
+  assert.deepEqual(es.withRecent(["NextUp", "RecentlyAddedShows", "BecauseYouWatched"]), ["NextUp", "RecentlyAddedShows", "RecentlyWatchedMovies", "RecentlyWatchedSeries", "BecauseYouWatched"]);
   assert.deepEqual(es.withRecent(["NextUp", "MyList"]), ["NextUp", "MyList", "RecentlyWatchedMovies", "RecentlyWatchedSeries"]);
-  assert.deepEqual(es.withRecent(["WatchAgain", "RecentlyWatchedMovies", "RecentlyWatchedSeries"]), ["WatchAgain", "RecentlyWatchedMovies", "RecentlyWatchedSeries"]);
+  assert.deepEqual(es.withRecent(["RecentlyAddedShows", "RecentlyWatchedMovies", "RecentlyWatchedSeries"]), ["RecentlyAddedShows", "RecentlyWatchedMovies", "RecentlyWatchedSeries"]);
 });
 
 test("recent: names and hints in english and german", () => {
@@ -339,7 +337,7 @@ const MOV = "RecentlyWatchedMovies";
 const SER = "RecentlyWatchedSeries";
 
 test("recent: cards link to the item, show name and year, use the thumb, names are text", () => {
-  const c = home(section("WatchAgain", 6, 0, true));
+  const c = home(section("RecentlyAddedShows", 6, 0, true));
   es.syncRecent(c, MOV, [movie("m1", 0, { Name: "<b>Sirāt</b>" })], "Recently Watched Movies", fakeApi);
   es.syncRecent(c, SER, [show("s1", 0, { ProductionYear: 2019 }), boxset("c1", 0)], "Recently Watched TV Series & Collections", fakeApi);
   const sec = c.querySelector(".verticalSection.RecentlyWatchedMovies[data-hss-client]");
@@ -383,25 +381,25 @@ test("recent: no items = no row (placeholder instead), same items = untouched, r
   assert.ok(c.querySelector(".RecentlyWatchedSeries"));
 });
 
-const RNAMES = { NextUp: "Next Up", WatchAgain: "Watch Again", BecauseYouWatched: "Because You Watched", RecentlyWatchedMovies: "Recently Watched Movies", RecentlyWatchedSeries: "Recently Watched TV Series & Collections" };
+const RNAMES = { NextUp: "Next Up", RecentlyAddedShows: "Recently Added Shows", BecauseYouWatched: "Because You Watched", RecentlyWatchedMovies: "Recently Watched Movies", RecentlyWatchedSeries: "Recently Watched TV Series & Collections" };
 
-test("recent: render places both rows right after Watch Again, empty = placeholder with hint", () => {
-  const enabled = es.withRecent(["NextUp", "WatchAgain", "BecauseYouWatched"]);
-  const c = home(section("NextUp", 3, 1) + section("WatchAgain", 6, 0, true) + section("BecauseYouWatched-x", 7, 2));
+test("recent: render places both rows right after Recently Added Shows, empty = placeholder with hint", () => {
+  const enabled = es.withRecent(["NextUp", "RecentlyAddedShows", "BecauseYouWatched"]);
+  const c = home(section("NextUp", 3, 1) + section("RecentlyAddedShows", 6, 0, true) + section("BecauseYouWatched-x", 7, 2));
   es.syncRecent(c, MOV, [movie("m1", 0)], RNAMES[MOV], fakeApi);
   es.render(c, enabled, RNAMES, "en");
-  assert.deepEqual(order(c), ["NextUp", "_WatchAgain", MOV, "_" + SER, "BecauseYouWatched-x"]);
+  assert.deepEqual(order(c), ["NextUp", "_RecentlyAddedShows", MOV, "_" + SER, "BecauseYouWatched-x"]);
   assert.equal(c.querySelector("." + MOV).style.order, "6");
   assert.equal(c.querySelector(`[data-hss-placeholder="${SER}"] [data-hss-hint]`).textContent, "Nothing here yet — series you finish completely and complete film collections show up here.");
   es.syncRecent(c, MOV, [], RNAMES[MOV], fakeApi);
   es.syncRecent(c, SER, [show("s1", 0)], RNAMES[SER], fakeApi);
   es.render(c, enabled, RNAMES, "en");
-  assert.deepEqual(order(c), ["NextUp", "_WatchAgain", "_" + MOV, SER, "BecauseYouWatched-x"]);
+  assert.deepEqual(order(c), ["NextUp", "_RecentlyAddedShows", "_" + MOV, SER, "BecauseYouWatched-x"]);
 });
 
 test("recent: a new row is inserted where its placeholder is, so Jellyfin's scroller is attached once", () => {
-  const enabled = es.withRecent(["NextUp", "WatchAgain", "BecauseYouWatched"]);
-  const c = home(section("NextUp", 3, 1) + section("WatchAgain", 6, 0, true) + section("BecauseYouWatched-x", 7, 2));
+  const enabled = es.withRecent(["NextUp", "RecentlyAddedShows", "BecauseYouWatched"]);
+  const c = home(section("NextUp", 3, 1) + section("RecentlyAddedShows", 6, 0, true) + section("BecauseYouWatched-x", 7, 2));
   es.render(c, enabled, {}, "en");
   const moved = [];
   new c.ownerDocument.defaultView.MutationObserver((ms) => ms.forEach((m) => m.removedNodes.forEach((n) => n.classList && /^RecentlyWatched/.test(n.classList[1]) && moved.push(n)))).observe(c, { childList: true });
@@ -409,29 +407,8 @@ test("recent: a new row is inserted where its placeholder is, so Jellyfin's scro
   es.syncRecent(c, SER, [show("s1", 0)], "Series", fakeApi);
   assert.equal(c.querySelector("." + MOV).nextSibling, c.querySelector(`[data-hss-placeholder="${MOV}"]`));
   es.render(c, enabled, {}, "en");
-  assert.deepEqual(order(c), ["NextUp", "_WatchAgain", MOV, SER, "BecauseYouWatched-x"]);
+  assert.deepEqual(order(c), ["NextUp", "_RecentlyAddedShows", MOV, SER, "BecauseYouWatched-x"]);
   return new Promise((r) => setTimeout(r, 0)).then(() => assert.equal(moved.length, 0));
-});
-
-function watchAgain(idList) {
-  const cards = idList.map((id) => `<div class="card" data-id="${id}"></div>`).join("");
-  return `<div data-page="1" style="order:6;" class="verticalSection WatchAgain"><div class="sectionTitleContainer"><h2 class="sectionTitle">Watch Again</h2></div><div is="emby-itemscontainer" class="itemsContainer">${cards}</div></div>`;
-}
-
-test("watch again: titles already in our rows are hidden there, and shown again once they leave", () => {
-  const c = home(watchAgain(["m1", "s1", "m9"]));
-  es.hideWatchAgainDupes(c, ["m1", "s1"]);
-  const shown = () => [...c.querySelectorAll(".WatchAgain .card")].filter((e) => e.style.display !== "none").map((e) => e.getAttribute("data-id"));
-  assert.deepEqual(shown(), ["m9"]);
-  es.hideWatchAgainDupes(c, ["m1"]);
-  assert.deepEqual(shown(), ["s1", "m9"]);
-});
-
-test("watch again: all cards duplicates = placeholder instead of an empty row", () => {
-  const c = home(watchAgain(["m1"]));
-  es.hideWatchAgainDupes(c, ["m1"]);
-  es.render(c, ["WatchAgain"], { WatchAgain: "Watch Again" }, "en");
-  assert.ok(c.querySelector('[data-hss-placeholder="WatchAgain"]'));
 });
 
 function recordingApi(answer) {

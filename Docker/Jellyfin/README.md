@@ -449,28 +449,26 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 | 3 | Next Up (`NextUp`) | as vanilla |
 | 4 | Recently Added Movies (`RecentlyAddedMovies`) | vanilla "Latest" for Movies |
 | 5 | Recently Added Shows (`RecentlyAddedShows`) | vanilla "Latest" for Shows |
-| 6 | Watch Again (`WatchAgain`) | films and whole series finished more than 28 days ago (plugin rule, no setting) |
-| 7 | Recently Watched Movies / Kürzlich angesehene Filme (injector, not HSS) | films played to the end in the last 60 days, newest first, max 20 |
-| 8 | Recently Watched TV Series & Collections / Kürzlich angesehene Serien & Filmreihen (injector, not HSS) | series watched completely (every regular episode with a file; specials and unaired ignored), last episode in the last 60 days; film collections with every film played, last one in the last 60 days; newest first, max 20 |
-| 9 | Because You Watched (`BecauseYouWatched`) | 1-2 rows, similar to a played film (films only) |
-| 10 | Hidden Gems (`HiddenGems`) | rated 7.5+ (IMDb rating), not watched yet |
-| 11 | Finish These Collections (`FinishTheseCollections`) | started collections, closest to done first |
-| 12 | My List (`MyList`) | the user's favourites (♥) |
-| 13 | Collections (`CollectionsSection`) | film collections |
-| 14 | By Studio/Network (`Studio`) | one studio or network row |
-| 15 | Starring (`Starring`) | one actor row |
-| 16 | Directed by (`DirectedBy`) | one director row |
-| 17 | Upcoming Shows (`UpcomingShows`) | Sonarr calendar, next month; one card per series (next episode's season + date) |
-| 18 | Upcoming Movies (`UpcomingMovies`) | Radarr calendar (digital release), next 3 months |
+| 6 | Recently Watched Movies / Kürzlich angesehene Filme (injector, not HSS) | films played to the end in the last 60 days, newest first, max 20 |
+| 7 | Recently Watched TV Series & Collections / Kürzlich angesehene Serien & Filmreihen (injector, not HSS) | series watched completely (every regular episode with a file; specials and unaired ignored), last episode in the last 60 days; film collections with every film played, last one in the last 60 days; newest first, max 20 |
+| 8 | Because You Watched (`BecauseYouWatched`) | 1-2 rows, similar to a played film (films only) |
+| 9 | Hidden Gems (`HiddenGems`) | rated 7.5+ (IMDb rating), not watched yet |
+| 10 | Finish These Collections (`FinishTheseCollections`) | started collections, closest to done first |
+| 11 | My List (`MyList`) | the user's favourites (♥) |
+| 12 | Collections (`CollectionsSection`) | film collections |
+| 13 | By Studio/Network (`Studio`) | one studio or network row |
+| 14 | Starring (`Starring`) | one actor row |
+| 15 | Directed by (`DirectedBy`) | one director row |
+| 16 | Upcoming Shows (`UpcomingShows`) | Sonarr calendar, next month; one card per series (next episode's season + date) |
+| 17 | Upcoming Movies (`UpcomingMovies`) | Radarr calendar (digital release), next 3 months |
 
 - Upcoming cards: the plugin shows `S03E01 - TBA` and `2 Weeks, 1 Day - 11.11.2026` (`DateFormat` DD/MM/YYYY, delimiter `.`, set by `home-sections.py`). The same injector script turns the date into `Wed 11 Nov` (German `Mi., 11. Nov.`, year only when not this year; the original stays as tooltip) and keeps one Upcoming Shows card per series: the first (earliest) one, season only (`S03`); later episodes are hidden. The plugin has no grouping option and returns at most 16 upcoming episodes (no setting): a series dropping more than that in a month pushes later series out.
 - Public path: Cloudflare caches `/web/*` files. File Transformation rewrites them but keeps the original ETag, so a cached copy revalidated to 304 forever and public users kept a pre-plugin bundle ("Modular Home" errored, home vanilla; 2026-10-27). Fix in HomeLab-FastPi `Traefik/traefik/dynamic/jellyfin.yml` (router `jellyfin-web` drops If-None-Match/If-Modified-Since). Still stale: Cloudflare → Caching → Custom Purge the `/web/` URL.
-- Off on purpose: Jellyseerr Discover / Trending / My Requests, Genre, Decade, and every other section.
+- Off on purpose: Watch Again (removed 2026-10-27, owner), Jellyseerr Discover / Trending / My Requests, Genre, Decade, and every other section.
 - Empty sections stay visible: heading plus a grey one-line hint (English, German if the UI language is German). HSS itself hides empty sections and leaves out Because You Watched until a film is played.
   - Script `home-placeholders/empty-sections.js`, JavaScript Injector entry "Empty home sections" (signed-in users). It reads the user's enabled sections (`/ModularHomeViews/UserSettings`, in config order: `home-sections.py` stores them sorted) and the names (`/ModularHomeViews/Sections`), adds a placeholder where a section is missing or empty, and removes it when the section fills. No HSS markup = does nothing.
-  - Recently Watched Movies + TV Series & Collections: same script, built in the browser with the user's own session (`/Users/<id>/Items`), Jellyfin's own card markup, right after Watch Again (`RECENT_AFTER`, films first), locked like the rest (no user setting). Not via HSS `RegisterSection`: the plugin would POST user ids, unauthenticated, to a path on the public URL. Shows a finished title on the next home load (data cached 60 s).
+  - Recently Watched Movies + TV Series & Collections: same script, built in the browser with the user's own session (`/Users/<id>/Items`), Jellyfin's own card markup, right after Recently Added Shows, where Watch Again used to sit (`RECENT_AFTER`, films first), locked like the rest (no user setting). Not via HSS `RegisterSection`: the plugin would POST user ids, unauthenticated, to a path on the public URL. Shows a finished title on the next home load (data cached 60 s).
     - Queries: played films and played episodes (`IsPlayed`, `SortBy=DatePlayed`), all collections; then one `Ids=` request for the candidate series (their `UnplayedItemCount`), only if one has unwatched episodes the unwatched specials (`ParentIndexNumber=0`) and unaired ones, and one `Limit=1` request per fully watched collection (the API has no multi-parent filter). 3 requests with nothing played.
-    - A title in one of the two rows is hidden in Watch Again (it would show twice between 28 and 60 days); Watch Again shows its placeholder if that leaves it empty.
   - TV layout (Samsung app): its clock changes the page every second, so the script runs at the latest 2.5 s after the first change instead of waiting for silence.
   - Push a changed script: `python3 scripts/home-placeholders.py` → `upserted Empty home sections`, then reload (browser Ctrl+Shift+R, Samsung app: close fully). No restart.
   - Tests: in `home-placeholders/` `sudo docker run --rm --network host -u $(id -u):$(id -g) -e npm_config_cache=/tmp/npm -v "$PWD":/w -w /w node:24-alpine sh -c "npm ci && node --test"`; upsert: `cd scripts && python3 -m unittest test_home_placeholders`.

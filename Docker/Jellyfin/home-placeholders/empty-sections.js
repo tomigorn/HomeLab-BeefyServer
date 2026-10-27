@@ -8,7 +8,6 @@
       _: "Nothing here yet.",
       ContinueWatching: "Nothing to continue — start something to see it here.",
       NextUp: "No series in progress yet.",
-      WatchAgain: "Nothing here yet — films and series you finished more than 4 weeks ago show up here.",
       RecentlyWatchedMovies: "Nothing here yet — films you finish show up here.",
       RecentlyWatchedSeries: "Nothing here yet — series you finish completely and complete film collections show up here.",
       BecauseYouWatched: "Nothing here yet — finish a film to get recommendations.",
@@ -26,7 +25,6 @@
       _: "Noch nichts hier.",
       ContinueWatching: "Nichts fortzusetzen – starte etwas, dann erscheint es hier.",
       NextUp: "Noch keine angefangene Serie.",
-      WatchAgain: "Noch nichts hier – Filme und Serien, die du vor mehr als 4 Wochen fertig geschaut hast, erscheinen hier.",
       RecentlyWatchedMovies: "Noch nichts hier – Filme, die du fertig schaust, erscheinen hier.",
       RecentlyWatchedSeries: "Noch nichts hier – Serien, die du ganz fertig schaust, und komplett geschaute Filmreihen erscheinen hier.",
       BecauseYouWatched: "Noch nichts hier – schau einen Film fertig, dann gibt es Empfehlungen.",
@@ -51,11 +49,11 @@
     return t[id] || t._;
   }
 
-  // The recently watched rows are built here, not by the plugin: its Watch Again waits 28 days and RegisterSection would need an unauthenticated public endpoint.
+  // The recently watched rows are built here, not by the plugin: RegisterSection would need an unauthenticated public endpoint.
   var MOVIES = "RecentlyWatchedMovies";
   var SERIES = "RecentlyWatchedSeries";
   var RECENT_ROWS = [MOVIES, SERIES];
-  var RECENT_AFTER = "WatchAgain";
+  var RECENT_AFTER = "RecentlyAddedShows";
   var RECENT_DAYS = 60;
   var RECENT_LIMIT = 20;
   var RECENT_NAMES = {
@@ -191,23 +189,6 @@
         return out;
       });
     });
-  }
-
-  function hideWatchAgainDupes(container, ids) {
-    var shown = {};
-    for (var i = 0; i < ids.length; i++) shown[ids[i]] = true;
-    var cards = container.querySelectorAll(".verticalSection." + RECENT_AFTER + ":not([data-hss-placeholder]) .itemsContainer > [data-id]");
-    for (var j = 0; j < cards.length; j++) {
-      var card = cards[j];
-      var dupe = !!shown[card.getAttribute("data-id")];
-      if (dupe && !card.hasAttribute("data-hss-dupe")) {
-        card.setAttribute("data-hss-dupe", "");
-        card.style.display = "none";
-      } else if (!dupe && card.hasAttribute("data-hss-dupe")) {
-        card.removeAttribute("data-hss-dupe");
-        card.style.display = "";
-      }
-    }
   }
 
   function imageOf(item) {
@@ -491,13 +472,10 @@
         try {
           for (var j = 0; j < live.length; j++) {
             render(live[j], d.enabled, d.names, d.lang);
-            var shown = [];
             for (var k = 0; k < RECENT_ROWS.length; k++) {
               var items = d.recent[RECENT_ROWS[k]] || [];
               syncRecent(live[j], RECENT_ROWS[k], items, d.names[RECENT_ROWS[k]], api);
-              for (var m = 0; m < items.length; m++) shown.push(items[m].Id);
             }
-            hideWatchAgainDupes(live[j], shown);
             render(live[j], d.enabled, d.names, d.lang);
           }
         } finally {
@@ -516,7 +494,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { LOCKED_SELECTOR: LOCKED_SELECTOR, lockHomeSettings: lockHomeSettings, render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, hintFor: hintFor, namesOf: namesOf, enabledOf: enabledOf, start: start, pickMovies: pickMovies, seriesCandidates: seriesCandidates, pickSeries: pickSeries, completeCollection: completeCollection, hideWatchAgainDupes: hideWatchAgainDupes, loadRecent: loadRecent, withRecent: withRecent, recentName: recentName, syncRecent: syncRecent, RECENT_DAYS: RECENT_DAYS, RECENT_LIMIT: RECENT_LIMIT };
+    module.exports = { LOCKED_SELECTOR: LOCKED_SELECTOR, lockHomeSettings: lockHomeSettings, render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, hintFor: hintFor, namesOf: namesOf, enabledOf: enabledOf, start: start, pickMovies: pickMovies, seriesCandidates: seriesCandidates, pickSeries: pickSeries, completeCollection: completeCollection, loadRecent: loadRecent, withRecent: withRecent, recentName: recentName, syncRecent: syncRecent, RECENT_DAYS: RECENT_DAYS, RECENT_LIMIT: RECENT_LIMIT };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {
