@@ -57,4 +57,4 @@ Details: `Docker/Movie-Downloads/README.md` "Can wait: downloads at night".
 
 Kept on purpose: the live pollers (`request-tags`, `night-downloads`, `clear-data-wipe`, `indexer-usage`, `hdd-spinstate`, `queue-watchdog`, `sysstat-collect`, `jellyfin-user-defaults`) run only while beefy is awake and never wake it. Radarr/Sonarr internal tasks and Bazarr's scheduler have fixed intervals and stay.
 
-Ryot is replaced by Floppy: `ryot-db-backup.timer` is disabled. Floppy snapshots its SQLite itself at 04:20 inside the container (no systemd timer).
+Floppy snapshots its SQLite itself at 04:20 inside the container (no systemd timer).
