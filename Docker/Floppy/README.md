@@ -17,7 +17,7 @@ Review `floppy-security-review.md` (2026-10-26), mitigated without code changes:
 
 | # | Sev | Finding | Needs | Status | Mitigation |
 |---|---|---|---|---|---|
-| 1 | High | SSRF: integration URLs may point anywhere | signed-in friend | mitigated | Egress of the `floppy` subnet: tcp 80/443 to the internet only, LAN/Docker/host/CGNAT/link-local dropped, rest dropped + logged `FLOPPY-EGRESS drop`. Every integration that takes a server URL is 403 at the edge: `/import/{audiobookshelf,kavita,komga,radarr,sonarr,mylar,kapowarr,storyteller,koreader,plex,koito,gpodder}`, `/jellyfin/`, `/seerr/`, `/settings/integrations/jellyseerr/`; open: only GET `/import/audiobookshelf/cover/<signed>` (cover art of a linked ABS). Integrations are wired on beefy (Integrations), none needs Floppy LAN egress |
+| 1 | High | SSRF: integration URLs may point anywhere | signed-in friend | mitigated | Egress of the `floppy` subnet: tcp 80/443 to the internet only, LAN/Docker/host/CGNAT/link-local dropped, rest dropped + logged `FLOPPY-EGRESS drop`. Every integration that takes a server URL is 403 at the edge: `/import/{audiobookshelf,kavita,komga,radarr,sonarr,mylar,kapowarr,storyteller,koreader,plex,koito,gpodder}`, `/jellyfin/`, `/seerr/`, `/settings/integrations/jellyseerr/`; open: only GET `/import/audiobookshelf/cover/<signed>` (ABS covers, served from the copies abs-push stores). Integrations are wired on beefy (Integrations), none needs Floppy LAN egress |
 | 2 | High | `User.token` in webhook/ICS/Stremio/RSS URLs = full API key | leaked URL | mitigated | 403 for `/webhook/`, `/calendar/download/`, `/stremio-addon/`, `/apis/`, `/rss/` and all of `/api/` (UI needs only `/api/cache-status/`); that router writes no access log. Port 8012 answers fastpi and the `jellyfin` subnet only (Jellyfin and Seerr webhooks, beefy-local; other containers `FLOPPY-INGRESS drop`) |
 | 3 | Medium | Custom metadata / image override edit the shared item | signed-in friend | mitigated | `/details/metadata/`, `/details/image/` 403 (API blocked too); CSP `img-src` = Floppy + its approved artwork hosts, so a foreign image URL cannot track viewers |
 | 4 | Medium | One user's TMDB proxy applies instance-wide | signed-in friend | mitigated | `/update_tmdb_proxy` 403; check in "Checks" stays `0` |
@@ -129,9 +129,9 @@ Per Floppy user. Floppy opens no connection into the LAN for any of them.
 |---|---|---|---|
 | Jellyfin (playback, watched checkmark) | Jellyfin Webhooks plugin → `http://192.168.1.102:8012/webhook/jellyfin/<token>` (hairpin on beefy) | the user's Floppy token, bound to their Jellyfin user | on |
 | Seerr (request → Planning) | Seerr webhook → `http://192.168.1.102:8012/webhook/seerr/global/`, routed by requester name | shared secret (Secrets) | on |
-| Audiobookshelf (listening progress) | Floppy → `https://audiobookshelf.holy-grail.ch` (public URL, tcp 443), every 15 min | API key of a non-admin ABS user | not linked: tomigorn is ABS admin |
+| Audiobookshelf (listening progress, covers) | `floppy-abs-push.timer` (beefy, every 15 min while awake): reads ABS, feeds Floppy's own ABS importer via `docker exec` | API key of the member's non-admin ABS user, on the host only (`secrets/abs-push/<floppy-user>`); Floppy's account row holds a placeholder | key pending (owner) |
 
-Not used: Floppy → Jellyfin pull/push (would need egress to Jellyfin), request from Floppy (needs Seerr's single admin API key), ItemAdded/ItemDeleted (every new library item in every member's collection).
+Not used: Floppy → ABS pull (key in Floppy + egress; ABS has no progress webhook), Floppy → Jellyfin pull/push (would need egress to Jellyfin), request from Floppy (needs Seerr's single admin API key), ItemAdded/ItemDeleted (every new library item in every member's collection).
 
 ### Link a member
 The member has signed in to the Tracker once (creates the Floppy user); usernames = Holy Grail usernames.
@@ -140,7 +140,20 @@ The member has signed in to the Tracker once (creates the Floppy user); username
 |---|---|
 | Jellyfin | `cd ../Jellyfin/scripts && python3 tracker-webhook.py add <jellyfin-user> [<floppy-user>]` (also turns on MarkPlayed/MarkUnplayed) |
 | Seerr | `sudo docker exec -u abc -w /floppy floppy python manage.py shell -c "from users.models import User; User.objects.filter(username='<floppy-user>').update(jellyseerr_enabled=True, jellyseerr_allowed_usernames='<seerr-name>')"` |
-| ABS | ABS (admin) → Settings → API Keys → new key for the member's ABS user, then `scripts/audiobookshelf-link.sh link <floppy-user>` and paste it; refuses admin users (`ABS_ALLOW_ADMIN=1` overrides) |
-| ABS off | `scripts/audiobookshelf-link.sh unlink <floppy-user>` |
+| ABS | ABS (admin) → Settings → API Keys → Add, name `floppy-push`, User = the member's ABS user, no expiry; copy the key, then `sudo scripts/abs-push.py link <floppy-user>` (asks, hidden; refuses ABS admins) and `sudo systemctl start floppy-abs-push` |
+| ABS off | `sudo scripts/abs-push.py unlink <floppy-user>` (key, state, Floppy account row) |
+
+### Audiobookshelf push
+
+ABS 2.37 sends no progress events (notifications: backups, podcast downloads, RSS only), and Floppy has no inbound ABS endpoint, so a host service pushes.
+
+| | |
+|---|---|
+| Install | `sudo install -d -m 0700 secrets/abs-push && sudo install -m 0644 systemd/floppy-abs-push.* /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now floppy-abs-push.timer` |
+| fetch | `DynamicUser`, keys via `LoadCredential`, HTTPS to the fixed ABS URL only; `/api/me`, then (only when a `lastUpdate` changed or a cover is >20 h old) every item + cover → spool `/var/lib/floppy-abs-push/pending/` |
+| apply | root (`docker exec` into floppy): `scripts/abs-push-apply.py` runs Floppy's `AudiobookshelfImporter` on the spool, stores covers in Floppy's cover cache; spool → state only after `RESULT ok` |
+| Logs | `journalctl -u floppy-abs-push -n 20` (one line per member: rows, imported, covers, warnings) |
+| Selftest | `sudo scripts/abs-push.py selftest` → `ok dry-run` (synthetic book, rolled back) |
+| Tests | `cd scripts && python3 -m unittest test_abs_push` |
 
 Seerr name = Seerr display name (the Jellyfin username), case-insensitive. Test: mark a film played in Jellyfin → it shows as completed in the member's Tracker; `sudo docker logs floppy 2>&1 | grep -i -E "webhook_finished|Seerr accepted|Audiobookshelf" | tail`.

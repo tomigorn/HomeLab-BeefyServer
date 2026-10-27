@@ -1,0 +1,11 @@
+[Unit]
+Description=Audiobookshelf progress into Floppy every 15 min while beefy is awake
+Documentation=file:///home/buntu/Projects/Docker/Floppy/README.md
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,42 @@
+[Unit]
+Description=Push Audiobookshelf listening progress into Floppy (no ABS key in Floppy)
+Documentation=file:///home/buntu/Projects/Docker/Floppy/README.md
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# fetch: throwaway uid, the ABS keys only as credentials, outbound HTTPS only, no write access but its state dir.
+DynamicUser=yes
+LoadCredential=key:/home/buntu/Projects/Docker/Floppy/secrets/abs-push
+StateDirectory=floppy-abs-push
+StateDirectoryMode=0700
+BindReadOnlyPaths=/home/buntu/Projects/Docker/Floppy/scripts:/run/abs-push
+ExecStart=/usr/bin/python3 -I /run/abs-push/abs-push.py fetch
+# apply: root for docker exec into floppy; reads only the spool written above.
+ExecStartPost=+/usr/bin/python3 -I /home/buntu/Projects/Docker/Floppy/scripts/abs-push.py apply
+TimeoutStartSec=20min
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
+MemoryMax=256M
