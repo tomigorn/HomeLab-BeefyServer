@@ -1,5 +1,7 @@
 (function () {
   var SETTLE_MS = 1200;
+  // The TV layout's clock changes the DOM every second, so a plain debounce would never fire there.
+  var MAX_WAIT_MS = 2500;
   var CACHE_MS = 60000;
   var HINTS = {
     en: {
@@ -196,6 +198,7 @@
     lockHomeSettings(doc);
     var cache = null;
     var timer = null;
+    var since = 0;
 
     function data(api) {
       var userId = api.getCurrentUserId();
@@ -212,6 +215,7 @@
 
     function run() {
       timer = null;
+      since = 0;
       var api = win.ApiClient;
       if (!api || !win.HssPageMeta || !api.getCurrentUserId || !api.getCurrentUserId()) return;
       var containers = doc.querySelectorAll(".homeSectionsContainer");
@@ -240,8 +244,10 @@
     }
 
     var observer = new win.MutationObserver(function () {
+      var now = Date.now();
+      if (!since) since = now;
       if (timer) win.clearTimeout(timer);
-      timer = win.setTimeout(run, SETTLE_MS);
+      timer = win.setTimeout(run, Math.max(0, Math.min(SETTLE_MS, since + MAX_WAIT_MS - now)));
     });
     observer.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
   }

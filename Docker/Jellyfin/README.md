@@ -466,6 +466,7 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 - Off on purpose: Jellyseerr Discover / Trending / My Requests, Genre, Decade, and every other section.
 - Empty sections stay visible: heading plus a grey one-line hint (English, German if the UI language is German). HSS itself hides empty sections and leaves out Because You Watched until a film is played.
   - Script `home-placeholders/empty-sections.js`, JavaScript Injector entry "Empty home sections" (signed-in users). It reads the user's enabled sections (`/ModularHomeViews/UserSettings`, in config order: `home-sections.py` stores them sorted) and the names (`/ModularHomeViews/Sections`), adds a placeholder where a section is missing or empty, and removes it when the section fills. No HSS markup = does nothing.
+  - TV layout (Samsung app): its clock changes the page every second, so the script runs at the latest 2.5 s after the first change instead of waiting for silence.
   - Push a changed script: `python3 scripts/home-placeholders.py` → `upserted Empty home sections`, then reload (browser Ctrl+Shift+R, Samsung app: close fully). No restart.
   - Tests: in `home-placeholders/` `sudo docker run --rm --network host -u $(id -u):$(id -g) -e npm_config_cache=/tmp/npm -v "$PWD":/w -w /w node:24-alpine sh -c "npm ci && node --test"`; upsert: `cd scripts && python3 -m unittest test_home_placeholders`.
 - Locked for all users, current and new (`home-sections.py`):

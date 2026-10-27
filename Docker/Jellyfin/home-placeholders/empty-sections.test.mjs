@@ -279,3 +279,24 @@ test("watch again and because you watched say what the plugin needs", () => {
   assert.equal(es.hintFor("BecauseYouWatched", "en"), "Nothing here yet — finish a film to get recommendations.");
   assert.equal(es.hintFor("BecauseYouWatched", "de"), "Noch nichts hier – schau einen Film fertig, dann gibt es Empfehlungen.");
 });
+
+test("start: a ticking clock (TV layout) does not hold the run back", async () => {
+  const dom = new JSDOM('<html lang="en"><body><div class="currentTimeText"></div><div class="homeSectionsContainer"></div></body></html>');
+  const win = dom.window;
+  win.HssPageMeta = { Page: 1 };
+  win.ApiClient = {
+    getCurrentUserId: () => "u1",
+    getUrl: (p, q) => p + "?" + new URLSearchParams(q),
+    getJSON: (u) => Promise.resolve(u.startsWith("ModularHomeViews/UserSettings") ? { EnabledSections: ["NextUp"] }
+      : u.startsWith("Users/") ? { Items: [] } : { Items: [{ Section: "NextUp", DisplayText: "Next Up" }] })
+  };
+  es.start(win);
+  const c = win.document.querySelector(".homeSectionsContainer");
+  c.innerHTML = section("NextUp", 3, 0, true);
+  const clock = win.document.querySelector(".currentTimeText");
+  const tick = setInterval(() => { clock.textContent = String(Date.now()); }, 400);
+  await new Promise((r) => setTimeout(r, 3200));
+  clearInterval(tick);
+  assert.ok(c.querySelector('[data-hss-placeholder="NextUp"]'));
+  win.close();
+});
