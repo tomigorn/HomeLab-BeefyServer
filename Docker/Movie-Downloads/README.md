@@ -335,6 +335,7 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | failed (status `failed`, the app re-searches) | digest `failed` | at once |
 | stalled (`downloading` / `queued`, `sizeleft` not smaller) | digest `stalled` | after `QW_STALL_HOURS` (6 h) |
 | indexers recovered | digest `indexer_recovered` | at once |
+| subtitle repaired / suspect ([Subtitle check](#subtitle-check)) | digest `subtitle_repaired` / `subtitle_suspect` | at once |
 
 | | |
 |---|---|
@@ -347,7 +348,7 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Sends log | `~/.local/state/movie-downloads/watchdog-sends.log`: `<ISO time> <kind> sent\|held\|digest <title>`, last 1000 lines |
 | State | `~/.local/state/movie-downloads/queue-watchdog.json`: first seen per condition, last `sizeleft`; entries of downloads that left the queue are dropped; an unreachable app keeps its entries (exit 1) |
 | Telegram | `../_global/scripts/oob-alert.sh` (direct to api.telegram.org, no edge); the token stays in `_global/secrets/` |
-| Env | `QW_BLOCKED_MIN`, `QW_STALL_HOURS`, `QW_STATE`, `QW_EVENTS` (colon-separated dirs), `QW_ALERT`, `QW_RADARR_CONFIG`, `QW_SONARR_CONFIG` |
+| Env | `QW_BLOCKED_MIN`, `QW_STALL_HOURS`, `QW_STATE`, `QW_EVENTS` (colon-separated dirs; default the two `guard-events` dirs + `/srv/appdata/bazarr/subtitle-check/events`), `QW_ALERT`, `QW_RADARR_CONFIG`, `QW_SONARR_CONFIG` |
 | Tests | `python3 tests/test_queue_watchdog.py` |
 
 ```bash

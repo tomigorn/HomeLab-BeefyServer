@@ -349,6 +349,18 @@ class Routing(unittest.TestCase):
                          [("guard_removed", "radarr", "A Separation (2011)"), ("guard_removed", "radarr", "Other (2020)"), ("guard_removed", "sonarr", "Show (2019)")])
         self.assertEqual(list(self.events.glob("*.json")), [])
 
+    def test_subtitle_check_events_go_to_the_digest(self):
+        (self.events / "1.json").write_text(json.dumps({"app": "bazarr", "kind": "subtitle_repaired", "title": "The Hunt (2012) · en", "reasons": [], "counts": {"x": 1}}))
+        (self.events / "2.json").write_text(json.dumps({"app": "bazarr", "kind": "subtitle_suspect", "title": "Show (2019) S01E02 · de", "reasons": ["not UTF-8"]}))
+        self.go({"radarr": fake()}, T0)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(sorted((e["kind"], e["app"], e["title"]) for e in digest(self.dir)),
+                         [("subtitle_repaired", "bazarr", "The Hunt (2012) · en"), ("subtitle_suspect", "bazarr", "Show (2019) S01E02 · de")])
+        self.assertEqual(list(self.events.glob("*.json")), [])
+
+    def test_subtitle_check_events_dir_is_watched_by_default(self):
+        self.assertIn("/srv/appdata/bazarr/subtitle-check/events", qw.DEFAULT_EVENTS.split(":"))
+
     def test_blocked_is_held_overnight_and_sent_at_7(self):
         for times in (WINTER, SUMMER):
             self.setUp()

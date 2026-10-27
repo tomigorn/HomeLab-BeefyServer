@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Queue watchdog (README "Queue watchdog"): Telegram for what needs a hand, the rest into a morning-digest metrics file.
 Per (app, downloadId, condition), once until the condition clears and returns: blocked (importBlocked/importPending/failedPending state or warning/error status) for QW_BLOCKED_MIN minutes = Telegram; stalled (downloading/queued, sizeleft not falling) for QW_STALL_HOURS hours and failed (status failed) = digest.
-Guard events: scripts/grab-guard.sh writes <config dir>/guard-events/*.json inside the containers (no bot token there); removed / marked-failed = digest, "check by hand" = Telegram; the file is deleted once handled. Sent with _global/scripts/oob-alert.sh. Run by systemd/queue-watchdog.timer.
+Guard events: scripts/grab-guard.sh writes <config dir>/guard-events/*.json inside the containers (no bot token there); removed / marked-failed = digest, "check by hand" = Telegram; the file is deleted once handled. scripts/subtitle-check.py writes subtitle_repaired / subtitle_suspect events to /srv/appdata/bazarr/subtitle-check/events = digest. Sent with _global/scripts/oob-alert.sh. Run by systemd/queue-watchdog.timer.
 Indexers: /health of each app; one Telegram while indexers are disabled after failures (IndexerStatusCheck / IndexerLongTermStatusCheck), recovery = digest. Expected backoffs are left out: Treasure Maps grab limit, The Pirate Bay "no results".
 Quiet hours 22:00-07:00 Europe/Zurich: Telegrams are held and sent on the first run from 07:00 if still due.
 Digest: watchdog-digest.prom (node-exporter textfile, last 48 h) in the state dir, read by fastpi's morning digest. Every send, hold and digest event is a line in watchdog-sends.log.
@@ -37,6 +37,8 @@ EXPECTED = {"treasure maps": re.compile(r"429|limit|quota|too many", re.I), "the
 Alert = namedtuple("Alert", "key condition text title", defaults=("",))
 TZ = "Europe/Zurich"
 GUARD_DIGEST = {"removed", "marked-failed"}
+SUBTITLE_DIGEST = {"subtitle_repaired", "subtitle_suspect"}
+DEFAULT_EVENTS = "/srv/appdata/radarr/guard-events:/srv/appdata/sonarr/guard-events:/srv/appdata/bazarr/subtitle-check/events"
 DIGEST_HOURS, DIGEST_MAX, SENDS_MAX, TITLE_MAX = 48, 40, 1000, 80
 
 
@@ -221,6 +223,10 @@ def send_events(dirs, out):
         for f in sorted(pathlib.Path(d).glob("*.json")):
             try:
                 ev = json.loads(f.read_text())
+                if ev.get("kind") in SUBTITLE_DIGEST:
+                    out.digest(ev["kind"], str(ev.get("app", "bazarr")), str(ev.get("title", f.stem)))
+                    f.unlink()
+                    continue
                 text = event_text(ev)
             except (ValueError, OSError, AttributeError):
                 f.rename(f.with_suffix(".bad"))
@@ -375,7 +381,7 @@ def sender(script):
 
 def main():
     apps = {app: client(app, os.environ.get(f"QW_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml")) for app in APPS}
-    dirs = os.environ.get("QW_EVENTS", "/srv/appdata/radarr/guard-events:/srv/appdata/sonarr/guard-events").split(":")
+    dirs = os.environ.get("QW_EVENTS", DEFAULT_EVENTS).split(":")
     cfg = Config(int(os.environ.get("QW_BLOCKED_MIN", 30)), int(os.environ.get("QW_STALL_HOURS", 6)))
     script = os.environ.get("QW_ALERT", HERE.parent.parent / "_global" / "scripts" / "oob-alert.sh")
     return run(apps, os.environ.get("QW_STATE", STATE_DIR / "queue-watchdog.json"), dirs, sender(script), cfg)
