@@ -17,8 +17,8 @@ Nightly, by tier, with a functional check and automatic rollback. `Docker/_globa
 |---|---|---|
 | auto | Movie-Downloads flaresolverr, recyclarr, vpn-status; Cup-Agent cup-agent, socket-proxy-unix | stateless; pinned version tags (socat floats): a new digest is a rebuild. 24 h cool-down, never across a major, rolled back when the check fails |
 | notify | Cup-Agent socket-proxy-ro, Movie-Downloads autoheal + socket-proxy-heal | docker.sock behind them |
-| notify | gluetun, qBittorrent, Prowlarr, SABnzbd, Radarr, Sonarr, Bazarr, Seerr, Ryot + ryot-db, Portainer-Agent | state / DB migrations; gluetun holds the VPN namespace; Seerr pinned by digest; agent must match fastpi's Portainer |
-| local build | Jellyfin, clamav, ryot-go | reported as `local_build`; rebuild by hand (`docker build --network host`) |
+| notify | gluetun, qBittorrent, Prowlarr, SABnzbd, Radarr, Sonarr, Bazarr, Seerr, Floppy, Dependency-Track, Jellyfin, Antivirus, Portainer-Agent | state / DB migrations; gluetun holds the VPN namespace; Seerr pinned by digest; agent must match fastpi's Portainer |
+| local build | Jellyfin, clamav | reported as `local_build`; rebuild by hand (`docker build --network host`) |
 
 ```bash
 sudo systemctl start auto-update.service; journalctl -u auto-update -n 40   # real run now

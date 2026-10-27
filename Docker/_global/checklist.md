@@ -4,6 +4,5 @@
 |---|---|---|---|---|---|
 | Seerr | ❌ | ❌ | | | |
 | Antivirus | ❌ | ❌ | | | |
-| Ryot | ❌ | ❌ | | | |
 | Dependency-Track | ❌ | ❌ | | | |
 | Floppy | ❌ | ❌ | | | |

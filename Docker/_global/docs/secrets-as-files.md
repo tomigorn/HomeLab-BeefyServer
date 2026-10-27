@@ -44,8 +44,8 @@ secrets:
 
 | App | Option | Used in |
 |---|---|---|
-| postgres image | `POSTGRES_PASSWORD_FILE` | Ryot (`ryot-db`) |
-| libpq / psycopg | `passfile=/run/secrets/<name>` in the DSN, file `*:*:*:<user>:<password>`, mode `0400` | Ryot (`ryot-go`) |
+| postgres image | `POSTGRES_PASSWORD_FILE` | Dependency-Track (`dt-db`) |
+| libpq / psycopg | `passfile=/run/secrets/<name>` in the DSN, file `*:*:*:<user>:<password>`, mode `0400` | |
 | gluetun | `WIREGUARD_PRIVATE_KEY_SECRETFILE` (default `/run/secrets/wireguard_private_key`) | Movie-Downloads |
 | Recyclarr | `!secret <key>` in `recyclarr.yml`, values in `/config/secrets.yml` | Movie-Downloads |
 | linuxserver images | `FILE__<VAR>=/run/secrets/<name>` | |
@@ -54,7 +54,7 @@ secrets:
 
 | Case | How | Used in |
 |---|---|---|
-| Image has a shell | compose `entrypoint: [sh, -ec, …]` reads the files, exports the variables, then `exec`s the original entrypoint + cmd (overriding `entrypoint` drops the image `CMD`). The value is then only in the process env, not in `docker inspect` | Ryot (`ryot`) |
+| Image has a shell | compose `entrypoint: [sh, -ec, …]` reads the files, exports the variables, then `exec`s the original entrypoint + cmd (overriding `entrypoint` drops the image `CMD`). The value is then only in the process env, not in `docker inspect` | Floppy (`floppy`, `REDIS_URL`) |
 | No shell | stays in env, noted next to the variable in compose | Portainer-Agent `AGENT_SECRET` |
 
 ## Git

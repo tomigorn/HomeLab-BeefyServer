@@ -24,10 +24,8 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65107:65107 | movie-recyclarr | | |
 | 65108 | jellyfin (app; s6 PID1 root) | 44 video, 990 render | CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID |
 | 65109 | seerr | | |
-| 65110 | ryot-go | | |
 | 65111 | movie-vpn-status (read_only) | | |
-| 1001 | ryot (image user, writes its own /home/ryot) | | NET_BIND_SERVICE (caddy file cap) |
-| 70 | ryot-db, dt-db | | |
+| 70 | dt-db | | |
 | 65112 | clamav | 1100, 65118 | none |
 | 65113 | cup-agent | | |
 | 65114 | cup-socket-proxy-ro | 973 docker | |
@@ -61,7 +59,7 @@ Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secre
 - Base image tracking (Cup `images.extra`) and the rebuild routine of each local image: `Docker/Cup-Agent/README.md`, Locally built images, and the `Rebuild` line in each README.
 
 ## Backup of the switch
-`~/backups/pre-uid-20261022-230855/`: `appdata.tgz`, `jellyfin.tgz`, `seerr.tgz`, `ryot-dumpall.sql`, `perms.before` (all 600).
+`~/backups/pre-uid-20261022-230855/`: `appdata.tgz`, `jellyfin.tgz`, `seerr.tgz`, `perms.before` (all 600).
 
 ## Host access (2026-10-24)
 | What | Setting |
@@ -76,7 +74,7 @@ Script: `_global/scripts/docker-user-guard.sh` (idempotent; `--persist` writes `
 | Direction | Rule |
 |---|---|
 | LAN → published container ports | allowlist: only `192.168.1.2` (fastpi: Traefik, Prometheus, Portainer, Cup). A newly published port is closed by default |
-| containers → LAN | dropped, except `jellyfin` net (Jellyfin, Seerr) and `ryot` net → `192.168.1.2:443` (sso + tracker via `extra_hosts`). Container → beefy's own published ports is unaffected (DNAT, bridge to bridge) |
+| containers → LAN | dropped, except `jellyfin` net (Jellyfin, Seerr) and `dependency-track` net → `192.168.1.2:443` (sso via `extra_hosts`). Container → beefy's own published ports is unaffected (DNAT, bridge to bridge) |
 | `floppy` net `172.28.16.0/24` | internet only, tcp 80/443 (rest dropped + logged `FLOPPY-EGRESS drop`): 10/8, 172.16/12 (other Docker networks, also via published ports), 192.168/16, 100.64/10, 169.254/16 dropped (user-supplied integration URLs = SSRF) |
 | gluetun namespace (qBit, SAB, Prowlarr) | same DOCKER-USER drop, and `FIREWALL_OUTBOUND_SUBNETS` = bridge only; replies to fastpi still leave via eth0 |
 | IPv6 | chain `BEEFY-INPUT6` on `enp6s0`: only tcp/22 accepts new connections (docker-proxy listens on `[::]` for every published port) |

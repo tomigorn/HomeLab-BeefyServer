@@ -168,10 +168,10 @@ def test_render_prom_every_series_carries_the_host():
 
 
 def test_build_refs_are_the_images_of_services_with_a_build_section():
-    cfg = {"services": {"ryot": {"image": "ghcr.io/ignisda/ryot:v1"},
-                        "ryot-go": {"image": "ryot-go:local", "build": {"context": "."}},
+    cfg = {"services": {"app": {"image": "ghcr.io/example/app:v1"},
+                        "app-helper": {"image": "app-helper:local", "build": {"context": "."}},
                         "nameless": {"build": {"context": "."}}}}
-    assert build_refs(cfg) == {"ryot-go:local"}
+    assert build_refs(cfg) == {"app-helper:local"}
     assert build_refs({}) == set()
 
 
