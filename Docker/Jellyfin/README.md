@@ -243,7 +243,7 @@ Set via the API (they live in /config, not in this repo):
   never run because beefy sleeps at night.
 - **Scheduled tasks moved into beefy's maintenance window 03:58–04:45 (2026-10-26, was 04:00–06:00 on 2026-10-19)** so the cold
   HDD wakes once a night and no task waits for a wake that never reaches its interval. `scripts/night-tasks.py` sets them (idempotent, `--dry-run`; tests `python3 -m unittest test_night_tasks`):
-  IMDb ratings 04:08, Scan Media Library 04:10, Trickplay 04:24, Chapter Images 04:30, Media Segment Scan 04:33,
+  IMDb ratings 04:08, Scan Media Library 04:10, Intro Skipper analysis 04:13 (and 22:05), Trickplay 04:24, Chapter Images 04:30, Media Segment Scan 04:33,
   subtitles 04:35, audio normalization 04:36, lyrics 04:37, channels 04:38, guide 04:39, cache/log/transcode clean 04:40-04:42, Update Plugins 04:43, Optimize database 04:44, Sunday: Refresh People 04:31, upcoming episodes 04:32.
   The startup triggers of Clean Transcode and Update Plugins are gone (they ran on every day wake); JavaScript Injector Startup keeps its own. New movies do not wait for these: Radarr
   Connect triggers a refresh of the new folder on import (see
@@ -478,6 +478,29 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 |---|---|
 | Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-home-sections`, `jf.home-sections-*`; `../CUSTOMIZATIONS.md`) |
 | Rollback | stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/{Home Screen Sections,Plugin Pages,File Transformation}_*`, start. Pre-change backup: `/srv/appdata/jellyfin-pre-hss-2026-10-27.tgz` (root, 600) |
+
+## Skip intro / credits buttons: Intro Skipper (2026-10-27)
+Episodes and films get **"Skip intro" / "Skip credits"** buttons. Buttons only, nothing is skipped automatically.
+
+| Plugin | Repo | Version | Config |
+|---|---|---|---|
+| Intro Skipper (intro-skipper) | `https://intro-skipper.org/manifest.json` | 12.0.6.0 (targetAbi 12.2) | `/config/data/plugins/configurations/IntroSkipper.xml`; defaults kept in `~/backups/jellyfin/IntroSkipper.xml.default-12.0.6.0` |
+
+- Detects intros, credits, recaps, previews (also from subtitles: "Previously on", "Was bisher geschah"), commercials. It writes them as Jellyfin's native **media segments**; Intro Skipper is the only segment provider (both libraries, default on).
+- Changed from the defaults: automatic analysis of new items **off** (it would run in the day), subtitle recap/preview detection **on**. Auto skip intro/credits stays **off**, File Transformation injection stays **off**: the client's native button is the only one.
+- Analysis: task "Detect and Analyze Media Segments" daily **22:05** (night downloads) and **04:13** (window, after the 04:10 library scan), set by `scripts/night-tasks.py`. Already analysed seasons are skipped, so a night run only does new episodes. The idle watcher sees the run as CPU/disk load (15 % / 2 MB/s); 04:13 is inside the window hold.
+- Re-analyse a series: Dashboard -> Intro Skipper (main menu) -> series / season -> erase its segments, then Dashboard -> Scheduled Tasks -> "Detect and Analyze Media Segments" -> run (in the evening; beefy's CPU is busy for minutes per season).
+
+| Client | Button |
+|---|---|
+| Web, Jellyfin Android / iOS app, Samsung TV (Tizen) app (wrap the web client) | yes: Intro and Credits default to "Ask to skip" |
+| Android TV app | own media segment setting (Settings -> Playback), not tested here |
+| Recap, Preview, Commercial | off by default on every device: Settings -> Playback -> Advanced (bottom) -> "Ask to skip". Per device, the server cannot set it |
+
+| Task | Command (in `Docker/Jellyfin/`) |
+|---|---|
+| Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-intro-skipper`, `jf.intro-skipper-*`, `jf.segment-provider`) |
+| Rollback | stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/Intro Skipper_*`, start. Pre-change backup: `~/backups/jellyfin/jellyfin-config-pre-introskipper-2026-10-27-210156.tar.gz` |
 
 ## IMDb link and rating (2026-10-25)
 - Film and series pages (web) show an **IMDb** and **TMDB** link row (`ExternalUrls`, built from `ProviderIds`); all 9 items have both IDs, nothing to fix. Apps show no link row.

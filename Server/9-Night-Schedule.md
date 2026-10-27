@@ -17,7 +17,7 @@ beefy sleeps (S5) and its timers cannot wake it. Everything recurring runs in on
 | 03:58 | window opens |
 | 04:00 | beefy-mover (+≤5 min), Seerr radarr-scan |
 | 04:01-04:06 | apt-daily, logrotate, dpkg-db-backup, Seerr download-sync-reset 04:03, fwupd-refresh 04:04, clamav-scan 04:05, Seerr sonarr-scan 04:05, sysstat-rotate/summary |
-| 04:07-04:12 | Sun clamav-hostscan 04:07, Jellyfin IMDb 04:08, Jellyfin scan 04:10, auto-update 04:12 |
+| 04:07-04:13 | Sun clamav-hostscan 04:07, Jellyfin IMDb 04:08, Jellyfin scan 04:10, auto-update 04:12, Jellyfin Intro Skipper analysis 04:13 |
 | 04:14-04:20 | description-scout 04:14, Recyclarr 04:15, nfo-scout 04:16, night-search 04:17 (new episodes/films + cutoff-unmet, Treasure Maps ≤ 30), language-missing 04:18, original-audio sweep 04:20 (+ Sun image-cleanup) |
 | 04:21-04:29 | subtitle-check 04:21 (subtitles changed since the last run, SSD only; findings to the queue-watchdog digest), Seerr jellyfin-full-scan 04:22, Jellyfin trickplay 04:24, Sun fstrim 04:26, Sun xfs/e2 scrub 04:28/04:29 |
 | 04:30-04:44 | anacron 04:30 (`cron.daily` 04:35: chkrootkit, rkhunter), Jellyfin chapters 04:30, Seerr availability-sync 04:30, image-cache 04:32, segments 04:33, apt-daily-upgrade 04:34, Sun blocklisted-tags 04:34, man-db 04:36, tmpfiles-clean 04:40, update-notifier 04:41, Jellyfin daily tasks 04:35-04:44 |
@@ -30,6 +30,7 @@ fastpi pulls from beefy at 04:02-04:20 (never wakes it: `fetch_nowake`).
 | Time | What |
 |---|---|
 | 22:05 | fastpi `beefy-night-downloads-wake` wakes beefy only when paused downloads wait (`HomeLab-FastPi` `Docker/Beefy-Waker`); beefy awake anyway: `night-downloads.timer` 22:05 |
+| 22:05 | Jellyfin Intro Skipper analysis (only when beefy is awake; new episodes only) |
 | boot, every 2 min | `night-downloads.timer`: low tariff (22:00-06:00, all Sunday): one night download per client at a time, FIFO; after 06:00 (not Sunday) pauses night items still downloading unless ETA < 15 min, they resume the next night |
 
 Details: `Docker/Movie-Downloads/README.md` "Can wait: downloads at night".
