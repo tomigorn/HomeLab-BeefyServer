@@ -146,7 +146,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 |---|---|---|
 | qBittorrent | category `radarr` save path | `/data/torrents/movies` |
 | qBittorrent | seed limits | **ratio 2.0 OR 30 days, then stop** (§14.0) |
-| qBittorrent | no-password bypass | only Radarr 172.28.10.201, Sonarr .202, vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), the gateway .1 (host scripts), localhost (qbit-port.sh) and 192.168.1.2 (Traefik); the clamd container and the rest need the password (review M5, 2026-10-25). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist` |
+| qBittorrent | no-password bypass | only Radarr 172.28.10.201, Sonarr .202, vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), Seerr download-now .205 (moves/starts night torrents; added by `../Seerr/scripts/download-now-setup.sh`), the gateway .1 (host scripts), localhost (qbit-port.sh) and 192.168.1.2 (Traefik); the clamd container and the rest need the password (review M5, 2026-10-25). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist` |
 | SABnzbd | incomplete / complete | `/data/usenet/incomplete` / `/data/usenet/complete/movies` |
 | Radarr | root folder | `/data/media/movies` |
 | Radarr | **Use Hardlinks instead of Copy** | **on** (§13.6) |
@@ -379,6 +379,7 @@ Radarr/Sonarr use a tagged client only for a title with a matching tag, otherwis
 | Seerr label | outside the low tariff the waiting download ids also go to `/srv/appdata/indexer-bar/night-waiting.json` (env `ND_PUBLIC`, empty = off): Seerr shows them as "Waiting for the night 🌙" (`../Seerr/README.md` "Night label") |
 | First download only | Connect **Download now: first download only** (`scripts/download-now-hook.sh`, On Import/Upgrade) removes `download-now` after the first import; upgrades and later episodes wait again |
 | Existing titles | `scripts/request-tags.sh` copies `download-now` only onto a title that was in Radarr/Sonarr before the request; the paused item then resumes within 2 min |
+| Download now (Seerr) | Seerr admins: title page → **Manage** → **⚡ Download now — at daytime power price**: tag + the title's night items move to the normal categories and start; nothing grabbed = search (`../Seerr/README.md` "Download now") |
 | By hand | Radarr/Sonarr: add the tag `download-now` to the title. Resuming a night item in qBittorrent/SABnzbd lasts only until the next run (paused again by day, or FIFO at night) |
 | Setup | `scripts/night-downloads-setup.sh` (tag, clients, categories; idempotent), `scripts/language-policy.sh` (Connect script) |
 | Check | `scripts/night-downloads.py --dry-run`; simulate a time: `ND_NOW=2026-10-27T22:10 scripts/night-downloads.py --dry-run` (`ND_NOW` refused without `--dry-run`) |

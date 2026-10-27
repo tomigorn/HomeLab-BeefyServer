@@ -54,7 +54,7 @@ if want prowlarr; then
   check md.prowlarr-apps '^Radarr:fullSync Sonarr:fullSync$' "$(md_arr prowlarr 9696 /api/v1/applications | jq -r '[.[] | "\(.name):\(.syncLevel)"] | sort | join(" ")' 2>&1)"
 fi
 if want qbittorrent; then
-  check md.qbit-auth-bypass '^true 6 192\.168\.1\.2/32 172\.28\.10\.204/32$' "$(md_qb /app/preferences | jq -r '(.bypass_auth_subnet_whitelist | split("\n")) as $w | "\(.bypass_auth_subnet_whitelist_enabled) \($w | length) \($w | map(select(. == "192.168.1.2/32" or . == "172.28.10.204/32")) | join(" "))"' 2>&1)"
+  check md.qbit-auth-bypass '^true 7 192\.168\.1\.2/32 172\.28\.10\.204/32 172\.28\.10\.205/32$' "$(md_qb /app/preferences | jq -r '(.bypass_auth_subnet_whitelist | split("\n")) as $w | "\(.bypass_auth_subnet_whitelist_enabled) \($w | length) \($w | map(select(. == "192.168.1.2/32" or . == "172.28.10.204/32" or . == "172.28.10.205/32")) | join(" "))"' 2>&1)"
   check md.qbit-categories '^radarr=/data/torrents/movies radarr-night=/data/torrents/movies sonarr=/data/torrents/tv sonarr-night=/data/torrents/tv$' "$(md_qb /torrents/categories | jq -r '[to_entries | sort_by(.key)[] | "\(.key)=\(.value.savePath)"] | join(" ")' 2>&1)"
   check md.qbit-clamav-autorun '^true /clamav-hook/clamav-hook\.py --qbit "%I" "%F" ok$' "$(md_qb /app/preferences | jq -r '"\(.autorun_enabled) \(.autorun_program)"' 2>&1) $(docker exec movie-qbittorrent sh -c 'test -x /clamav-hook/clamav-hook.py && echo ok' 2>&1)"
   check md.qbit-tun0-seeding '^tun0 2 43200$' "$(md_qb /app/preferences | jq -r '"\(.current_network_interface) \(.max_ratio) \(.max_seeding_time)"' 2>&1)"
