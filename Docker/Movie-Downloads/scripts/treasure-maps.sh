@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Adds or updates the Newznab indexer "Treasure Maps" in Prowlarr; Prowlarr syncs it to Radarr and Sonarr. Idempotent.
 #   ~/Projects/Docker/Movie-Downloads/scripts/treasure-maps.sh
-# API key: secrets/treasure-maps.apikey (gitignored, 600), read on every run: replace the file and re-run to switch keys. Free tier: 100 API calls + 5 grabs per 24 h, so RSS is off (app profile "Search only").
+# API key: secrets/treasure-maps.apikey (gitignored, 600), read on every run: replace the file and re-run to switch keys. Supporter until 2031-11-17: no search limit, 400 downloads a day, max 5 requests/s (README "Treasure Maps rules"). RSS stays off (app profile "Search only").
 set -euo pipefail
 
 DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -27,7 +27,7 @@ existing, _ = dec.raw_decode(raw[end:].lstrip())
 cur = next((i for i in existing if i["name"] == os.environ["NAME"]), None)
 ix = cur or next(i for i in schema if i["implementation"] == "Newznab" and i["name"] == "Generic Newznab")
 values = {"baseUrl": "https://treasure-maps.com", "apiPath": "/api", "apiKey": os.environ["TK"],
-          "baseSettings.queryLimit": 100, "baseSettings.grabLimit": 5, "baseSettings.limitsUnit": 0}
+          "baseSettings.queryLimit": None, "baseSettings.grabLimit": 400, "baseSettings.limitsUnit": 0}
 for f in ix["fields"]:
     if f["name"] in values:
         f["value"] = values[f["name"]]

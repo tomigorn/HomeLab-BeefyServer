@@ -297,8 +297,14 @@ class Scout(unittest.TestCase):
     def test_tm_daily_getnfo_cap(self):
         rels = [rel("Treasure Maps", f"The.Secret.In.Their.Eyes.2009.MULTi.1080p.BluRay.x264-G{i}", f"{i:032x}", 3) for i in range(12)]
         api = FakeApi(rels, {})
-        self.run_scout(api, max_push=0)
+        self.run_scout(api, max_push=0, tm_day=5)
         self.assertEqual(len(api.fetches), 5)
+
+    def test_tm_daily_getnfo_default_is_50(self):
+        rels = [rel("Treasure Maps", f"The.Secret.In.Their.Eyes.2009.MULTi.1080p.BluRay.x264-G{i}", f"{i:032x}", 3) for i in range(60)]
+        api = FakeApi(rels, {})
+        self.run_scout(api, max_push=0)
+        self.assertEqual(len(api.fetches), 50)
 
     def test_state_none_and_pushed_are_not_redone(self):
         api = FakeApi([SECRET_GEEK, SECRET_PLANET], {("NzbPlanet", "b" * 32): PLANET_NFO})

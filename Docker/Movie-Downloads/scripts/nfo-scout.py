@@ -325,7 +325,7 @@ class Budget:
 
 class Scout:
     def __init__(self, radarr, sonarr, prowlarr, fetch, state_path, log, dry_run=False, max_push=3, usage=None, now=None,
-                 max_fetch=200, tm_day=5, tm_pct=70, tm_search_day=10, retry_unsupported_days=30, call_delay=0, dub_paths=None):
+                 max_fetch=200, tm_day=50, tm_pct=70, tm_search_day=100, retry_unsupported_days=30, call_delay=0, dub_paths=None):
         self.radarr, self.sonarr, self.prowlarr, self.fetch, self.log = radarr, sonarr, prowlarr, fetch, log
         self.state_path = pathlib.Path(state_path)
         self.dry_run, self.max_push, self.tm_search_day = dry_run, max_push, tm_search_day
@@ -669,8 +669,8 @@ def main():
                   indexer_fetch(env("NS_PROWLARR_DB", "/srv/appdata/prowlarr/prowlarr.db")), env("NS_STATE", STATE_DIR / "nfo-scout.json"), log,
                   dub_paths={a.capitalize(): env(f"NS_{a.upper()}_DUB_ONLY", f"/srv/appdata/{a}/dub-only.json") for a in clients},
                   dry_run=a.dry_run, max_push=int(env("NS_MAX_PUSH", 3)), usage=read_usage(env("NS_USAGE", "/srv/appdata/indexer-bar/usage.json")),
-                  max_fetch=int(env("NS_MAX_FETCH", 200)), tm_day=int(env("NS_TM_MAX_DAY", 5)), tm_pct=int(env("NS_TM_MAX_PCT", 70)),
-                  tm_search_day=int(env("NS_TM_MAX_SEARCH_DAY", 10)), call_delay=float(env("NS_CALL_DELAY", 1)))
+                  max_fetch=int(env("NS_MAX_FETCH", 200)), tm_day=int(env("NS_TM_MAX_DAY", 50)), tm_pct=int(env("NS_TM_MAX_PCT", 70)),
+                  tm_search_day=int(env("NS_TM_MAX_SEARCH_DAY", 100)), call_delay=float(env("NS_CALL_DELAY", 1)))
     return scout.run(tmdb=a.tmdb, tvdb=a.tvdb)
 
 

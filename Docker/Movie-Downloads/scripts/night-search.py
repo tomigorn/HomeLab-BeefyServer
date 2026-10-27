@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Night search (README "Upgrades"): inside the maintenance window, searches what RSS cannot have caught while beefy slept, within the Treasure Maps budget.
 Order: monitored episodes aired in the last 14 days without a file, monitored movies released (digital/physical) in the last 60 days without a file, then a few cutoff-unmet movies and episodes (least recently searched first).
-A season with 3+ missing episodes is one SeasonSearch. Budget: at most NS_TM_MAX searches (default 30) and never above NS_TM_MAX_PCT % of Treasure Maps' window (bar: /srv/appdata/indexer-bar/usage.json); what does not fit is logged and comes first next night.
+A season with 3+ missing episodes is one SeasonSearch. Budget: at most NS_TM_MAX searches (default 200) and never above NS_TM_MAX_PCT % of Treasure Maps' window (bar: /srv/appdata/indexer-bar/usage.json); what does not fit is logged and comes first next night.
 Waits for the searches to finish, so the maintenance window keeps beefy awake meanwhile. Usage: scripts/night-search.py [--dry-run]"""
 import datetime
 import json
@@ -99,6 +99,8 @@ def tm_budget(usage, now, cap, pct, fallback):
         s = next(i for i in usage["indexers"] if i["name"] == INDEXER)["searches"]
         if not usage.get("ok") or (now - gen).total_seconds() > BAR_MAX_AGE:
             return fallback
+        if s["limit"] is None:
+            return cap
         return max(0, min(cap, int(s["limit"] * pct / 100) - s["used"]))
     except (KeyError, TypeError, StopIteration, ValueError):
         return fallback
@@ -219,7 +221,7 @@ def env_int(name, default):
 
 
 def main():
-    cfg = dict(cap=env_int("NS_TM_MAX", 30), pct=env_int("NS_TM_MAX_PCT", 70), fallback=env_int("NS_TM_FALLBACK", 10),
+    cfg = dict(cap=env_int("NS_TM_MAX", 200), pct=env_int("NS_TM_MAX_PCT", 70), fallback=env_int("NS_TM_FALLBACK", 10),
                new_ep_days=env_int("NS_NEW_EPISODE_DAYS", 14), new_film_days=env_int("NS_NEW_FILM_DAYS", 60), min_gap_hours=env_int("NS_MIN_GAP_HOURS", 20),
                season_min=env_int("NS_SEASON_MIN", 3), cutoff_movies=env_int("NS_CUTOFF_MOVIES", 5), cutoff_episodes=env_int("NS_CUTOFF_EPISODES", 5),
                cost_movie=env_int("NS_COST_MOVIE", 1), cost_episode=env_int("NS_COST_EPISODE", 1), cost_season=env_int("NS_COST_SEASON", 3),

@@ -275,19 +275,35 @@ All Newznab, synced by Prowlarr to Radarr (movie categories 2000-2090) and Sonar
 |---|---|---|---|---|---|
 | NZBgeek | 25 | `https://api.nzbgeek.info` | Standard (RSS + search) | none | UI |
 | NzbPlanet | 26 | `https://api.nzbplanet.net` | Standard (RSS + search) | 20,000 API calls per day (query limit 20000, unit Day) | UI |
-| Treasure Maps | 30 | `https://treasure-maps.com` | **Search only** (no RSS) | free tier: 100 API calls + 5 downloads per rolling 24 h (query 100, grab 5, unit Day); API trial until ~2026-11-19 | `scripts/treasure-maps.sh` |
+| Treasure Maps | 30 | `https://treasure-maps.com` | **Search only** (no RSS) | Supporter until 2031-11-17: no search limit (query limit off), 400 downloads a day (grab 400, unit Day), max 5 requests/s ([rules](#treasure-maps-rules)) | `scripts/treasure-maps.sh` |
 
 Priority (set 2026-10-26, owner):
 - Only a tie-breaker: Radarr/Sonarr pick by quality and custom format score first; priority decides only between equal releases. Lower = preferred.
 - Unlimited before limited: NZBgeek 25, NzbPlanet 26, Treasure Maps 30, torrents 40, NZBIndex 50. So the 5 Treasure Maps grabs a day go to releases the others do not have.
-- Treasure Maps becomes lifetime/unlimited: priority 27 (`PRIORITY` in `scripts/treasure-maps.sh`, re-run it).
+- Treasure Maps is now unlimited for searches but not lifetime (Supporter to 2031-11-17), so it stays at 30; to prefer it: `PRIORITY` in `scripts/treasure-maps.sh`, re-run it.
 - Change: Prowlarr -> Indexers -> edit -> Indexer Priority (or the API), then `ApplicationIndexerSync`; Radarr/Sonarr follow. Check: `GET /api/v3/indexer` on both shows the same numbers.
 - The query/grab limits stop Prowlarr before the indexer blocks the account (Prowlarr counts a rolling 24 h for unit Day). The same limits feed the usage bar above Seerr: `../Seerr/README.md` "Indexer bar" (`../Seerr/indexer-bar/limits.toml`, keep both equal).
 
 - Treasure Maps is the German source: tags German releases with the standard category too (`2040` + `Movies - DE/HD`), so the normal sync categories find them. Knives Out 2019: 31 `German.DL` releases, the other two indexers 0.
-- RSS off because Radarr (every 30 min) + Sonarr (every 15 min) would use ~144 calls/day. Search costs ~3 calls per movie search.
+- RSS off since the trial (~144 calls/day were too many then); with Supporter there is no search limit, so the profile "Search only" can be switched to RSS if wanted (still ≤ 5 requests/s).
+- Prowlarr spaces requests to one indexer by its own fixed minimum interval (observed ≥ 1 s between two queries), far under 5/s; there is no per-indexer rate field to raise.
 - `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) on every run, enables the indexer and is idempotent. New key: replace the file, re-run the script. A rejected key makes it exit 1 and change nothing.
-- **Enabled and in use** (priority 30, grab limit 5/day, search limit 100/day). Account was replaced after the 2026-10-19 block (duplicate after the site migration).
+- **Enabled and in use** (priority 30, grab limit 400/day, no search limit). Account was replaced after the 2026-10-19 block (duplicate after the site migration).
+
+### Treasure Maps rules
+
+Provider terms (owner, 2026-10-28), account upgraded to Supporter, valid until **2031-11-17**:
+
+| Rule | What it means for us |
+|---|---|
+| Burst limit | max **5 requests/s** per user over all API + RSS endpoints; more = HTTP 429, repeated abuse = suspension. Prowlarr spaces its calls ≥ 1 s; `nfo-scout.py` waits `NS_CALL_DELAY` (1 s) between calls. Never add a parallel caller |
+| Search limit | none for regular accounts (`t=user`: `apirequests` 999999); the 100/day was the 30-day trial only |
+| NZB downloads | separate daily limit per tier. Supporter: **400/day** (`t=user` `downloadrequests`), = Prowlarr grab limit 400 + bar `downloads = 400` in `../Seerr/indexer-bar/limits.toml` |
+| Newznab vs REST | `*arr` use Newznab (`?apikey=` in the URL, so a URL with the key is never logged or posted). The separate REST API (key in a header) is for custom scripts only, not for `*arr` |
+| API key | personal: never in git or logs (`secrets/treasure-maps.apikey`, gitignored, 600); leaked = reset it on the site, replace the file, re-run `scripts/treasure-maps.sh` |
+| Data | no re-hosting, mirroring or redistributing; no circumventing restrictions |
+
+Self-set caps (not provider limits): night search ≤ 200 searches a night (`NS_TM_MAX`), NFO scout ≤ 50 getnfo calls and ≤ 100 searches per 24 h. Check the real numbers without printing the key: `t=user` on the Newznab endpoint (username, role, `apicurrent`, `downloadcurrent`, `downloadrequests`, expiry).
 
 Torrent indexers (`scripts/torrent-indexers.sh`, idempotent, also the FlareSolverr proxy). Each one twice:
 
@@ -312,7 +328,7 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Radarr | parses the release year (`/api/v3/parse`); more than 2 years off the movie's year *and* secondary year → queue item removed from SABnzbd/qBit, blocklisted, Radarr searches again |
 | Sonarr | parses the year from the release title (`parsedEpisodeInfo.seriesTitleInfo.year`) and keeps it when it is within 2 years of the series start year, inside the series run (`firstAired` year to `lastAired` year, or the current year while it continues) or within 1 year of the grabbed episodes air years (`sonarr_release_episodeairdates`, else `/api/v3/episode` for `sonarr_release_seasonnumber`): groups name a season pack with the season air year (`The.Boys.2024.S04`, 2026-10-27). A same-named series outside the run → removed, blocklisted, re-searched |
 | Kept | no year in the title, ±2 years (premiere vs release year: *Plan 9 from Outer Space* is 1957 on TMDB, 1959 in release names), unknown app-side year; Sonarr daily shows carry an air date, not a title year, so they are always kept |
-| Cost | each wrong grab uses one of Treasure Maps' 5 grabs/day and a few seconds of download |
+| Cost | each wrong grab uses one of Treasure Maps' 400 grabs/day and a few seconds of download |
 | Not covered | a remake / same-named show with the same title *and* year; a release whose title carries no year |
 | Queue lookup | by download id over the whole queue with `includeUnknownMovieItems=true` (Sonarr `includeUnknownSeriesItems`), never the `movieIds`/`seriesIds` filter: a release the app cannot map to the title (the wrong year, *A Separation* 2026 vs 2011, 2026-10-24) is queued with `movieId` null, which the filter and the default listing both hide, so the guard never saw it |
 | Sonarr detached | Sonarr writes the grab history and lists the queue item only after the script returns, so Sonarr removals run in a detached background copy (`GG_DETACH=0` = inline, log `/config/grab-guard.log`); inline, the queue and history lookups could never succeed |
@@ -340,7 +356,7 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | | |
 |---|---|
 | Indexers | `/health` of each app: **one** Telegram while indexers are disabled after failures (`IndexerStatusCheck`, `IndexerLongTermStatusCheck`: indexer names, disabled until / last error when `/indexerstatus` answers, fix `System → Status → test all indexers` or `POST /api/v3/indexer/testall`), recovery = digest. Never runs testall itself. State key `indexers/<app>` |
-| Indexer exceptions | no alert for Treasure Maps backoffs (grab limit: error empty or 429 / limit) and The Pirate Bay (flaky "no results", [Indexers](#indexers-prowlarr)); any other error on them alerts. Found 2026-10-26: 5 of 6 indexers sat in a 24 h backoff after 401s during a Prowlarr key rotation |
+| Indexer exceptions | no alert for Treasure Maps backoffs (daily download limit or 429 burst: error empty or 429 / limit) and The Pirate Bay (flaky "no results", [Indexers](#indexers-prowlarr)); any other error on them alerts. Found 2026-10-26: 5 of 6 indexers sat in a 24 h backoff after 401s during a Prowlarr key rotation |
 | Message | app, title (+year / SxxExx), release, state, status messages, how long, hint `Radarr → Activity → Queue` (Sonarr: `Sonarr → …`) |
 | Once | per app + download id + condition; again only after the condition cleared and came back (or a failed or held Telegram: retried next run) |
 | Quiet hours | 22:00–07:00 Europe/Zurich (DST-safe); beefy asleep at 07:00 = the first run after it wakes |
@@ -543,7 +559,7 @@ Why this shape:
 | RSS | Radarr every 30 min, Sonarr every 15 min, NZBgeek + NzbPlanet (Treasure Maps is search-only). Runs only while beefy is awake: new releases that appear while it sleeps are missed by RSS |
 | Night search | `systemd/night-search.timer`, daily 04:17 (inside the 03:55 wake, after Recyclarr 04:15): `scripts/night-search.py`, 1 Treasure Maps call per movie or episode, ~3 per season |
 | Order | 1 episodes aired in the last 14 days without a file; 2 movies released (digital or physical) in the last 60 days without a file; 3 cutoff-unmet: 5 movies + 5 episodes. Monitored only, not in the queue, not searched in the last 20 h, least recently searched first. 3+ missing episodes of one season = one `SeasonSearch`, else `EpisodeSearch` |
-| Indexer budget | ≤ 30 Treasure Maps searches a night (`NS_TM_MAX`) and never above 70 % of its window (`NS_TM_MAX_PCT`, read from the indexer bar `usage.json`; bar missing or older than 15 min = 10, `NS_TM_FALLBACK`). Over budget: the rest is logged `skipped (budget)` and, being least recently searched, comes first next night. Radarr's own `CutoffUnmetMoviesSearch` has no cap, hence the script |
+| Indexer budget | ≤ 200 Treasure Maps searches a night (`NS_TM_MAX`); with a search limit set in the bar also never above 70 % of its window (`NS_TM_MAX_PCT`); none set (Supporter) = just the cap; bar missing or older than 15 min = 10 (`NS_TM_FALLBACK`). Over budget: the rest is logged `skipped (budget)` and, being least recently searched, comes first next night. Radarr's own `CutoffUnmetMoviesSearch` has no cap, hence the script |
 | Downloads | land in the untagged night clients, `night-downloads.timer` (every 2 min) resumes them at once in the low tariff; the idle watcher counts download traffic as busy, and the script waits for its searches (cap 30 min), so the window holds beefy awake |
 
 ```bash
@@ -580,7 +596,7 @@ Owner's order 2026-10-26, inside one quality (quality always ranks first: any al
 | rejects stay rejected | −50000000 + best positive (≈ 33000000) < minimum 0; sums stay far inside int32 |
 | 2160p SDR allowed | `SDR` 0 in the 4K and Any profiles (TRaSH's `SDR` matches only 2160p without an HDR marker); any allowed 2160p beats any 1080p (quality first) |
 
-Upgrades (5 grabs/day on Treasure Maps):
+Upgrades (400 grabs/day on Treasure Maps):
 
 | | |
 |---|---|
@@ -867,7 +883,7 @@ Radarr/Sonarr read languages only from the release name, so `MULTi` = the origin
 | Step | What |
 |---|---|
 | Titles | Radarr: monitored movies missing or below the cutoff (`/wanted/missing`, `/wanted/cutoff`); Sonarr: monitored series with such episodes; `audio-swiss-german` titles skipped ([Description scout](#description-scout)) |
-| Search | Prowlarr `/api/v1/search`, only the usenet indexers below; by IMDb id (movies) / TVDB id (series) where supported, else title (+ year). Treasure Maps only below 70 % of its window and max 10 searches/day |
+| Search | Prowlarr `/api/v1/search`, only the usenet indexers below; by IMDb id (movies) / TVDB id (series) where supported, else title (+ year). Treasure Maps max 100 searches/day (`NS_TM_MAX_SEARCH_DAY`), and below 70 % of its window if the bar sets a search limit |
 | Candidate | name has `MULTi` / `Multi-Audio`, `/parse` gives fewer than 2 languages, same title (the description scout's guards: `/parse` maps it, year); best quality first |
 | Source | NzbPlanet, Treasure Maps: `t=getnfo` (NFO text in the RSS item); NZBgeek: `t=details` `language` attributes (no getnfo: it answers with its newest releases). Direct to the indexer (Prowlarr's proxy: "No such function (getnfo)"), base URL + key from Prowlarr's DB, never logged; own user agent (Treasure Maps rejects a bare `Prowlarr`) |
 | Parse | audio only: values of `Audio` / `Language` / `Sprache` / `Ton` / `Idioma` / … keys and their indented continuation lines, MediaInfo `Audio #n` blocks. Dropped: `Subs` / `Untertitel` / `Sous-titres` / MediaInfo `Text`, the rest of a list after a subtitle word, keys like `Audio/Subs`. Names in EN/DE/FR/ES/IT, ISO 639-2 (`ger`, `eng`, `spa`), `VFF`/`VFQ` = French, upper-case `DE`/`EN`/`FR`/`IT` |
@@ -879,9 +895,9 @@ Radarr/Sonarr read languages only from the release name, so `MULTi` = the origin
 |---|---|---|
 | `NS_MAX_PUSH` | 3 | pushes per run, both apps |
 | `NS_MAX_FETCH` | 200 | NFO/details calls per indexer per run |
-| `NS_TM_MAX_DAY` | 5 | Treasure Maps NFO calls per rolling 24 h (2026-10-26: it refused getnfo after 6 in minutes, searches kept working) |
+| `NS_TM_MAX_DAY` | 50 | Treasure Maps NFO calls per rolling 24 h (was 5 on the trial: 2026-10-26 it refused getnfo after 6 in minutes; recheck after the Supporter upgrade) |
 | `NS_TM_MAX_PCT` | 70 | no Treasure Maps search or NFO call from searches used (bar, `/srv/appdata/indexer-bar/usage.json`) + own NFO calls ≥ 70 % of its limit; bar missing or older than 15 min = none |
-| `NS_TM_MAX_SEARCH_DAY` | 10 | Treasure Maps searches per 24 h |
+| `NS_TM_MAX_SEARCH_DAY` | 100 | Treasure Maps searches per 24 h |
 | `NS_CALL_DELAY` | 1 | seconds between calls to one indexer |
 | `NS_APPS` | `radarr,sonarr` | one app only: `radarr` |
 

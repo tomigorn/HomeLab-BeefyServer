@@ -77,6 +77,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Recyclarr cron 04:15, local config + CFs mounted | compose | compose | `md.recyclarr-config`: → 15 4 * * * ok | env renamed |
 | Prowlarr torrent indexers: 4 × min 5, 4 × min 1 | Prowlarr | torrent-indexers.sh | `md.prowlarr-torrent-indexers`: → min5=4 min1=4 | |
 | FlareSolverr proxy for 1337x + EZTV | Prowlarr | torrent-indexers.sh | `md.prowlarr-flaresolverr`: → FlareSolverr 4 | |
+| Treasure Maps limits (Supporter): query limit off, grab limit 400/day, unit Day; bar `downloads = 400`, deadline 2031-11-17 | Prowlarr; `Seerr/indexer-bar/limits.toml` | `scripts/treasure-maps.sh` (re-run) | `md.prowlarr-treasure-limits`: → query=null grab=400 unit=0 | Re-adding the indexer resets the limits; the provider can change tier limits (`t=user`) |
 | Indexer priorities 25/26/30/50 | Prowlarr | API / treasure-maps.sh | `md.prowlarr-priorities`: → NZBgeek=25 NzbPlanet=26 Treasure Maps=30 NZBIndex=50 | |
 | Apps Radarr + Sonarr fullSync | Prowlarr | UI | `md.prowlarr-apps`: → Radarr:fullSync Sonarr:fullSync | |
 | qBittorrent auth bypass subnets (7, incl. fastpi + clamav-queue + Seerr download-now) | `qBittorrent.conf` | Web UI → Options; .205: `Seerr/scripts/download-now-setup.sh` | `md.qbit-auth-bypass`: → true 7 … | auth reset locks out the scripts |

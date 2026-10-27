@@ -113,6 +113,9 @@ class Budget(unittest.TestCase):
     def test_zero_when_above_ceiling(self):
         self.assertEqual(ns.tm_budget(self.usage(80), NOW, cap=30, pct=70, fallback=10), 0)
 
+    def test_no_search_limit_gives_the_cap(self):
+        self.assertEqual(ns.tm_budget(self.usage(5000, limit=None), NOW, cap=200, pct=70, fallback=10), 200)
+
     def test_stale_or_missing_bar_uses_fallback(self):
         self.assertEqual(ns.tm_budget(self.usage(10, age=1200), NOW, cap=30, pct=70, fallback=10), 10)
         self.assertEqual(ns.tm_budget(None, NOW, cap=30, pct=70, fallback=10), 10)

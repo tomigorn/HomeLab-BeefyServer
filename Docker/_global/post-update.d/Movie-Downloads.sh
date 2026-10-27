@@ -51,6 +51,7 @@ if want prowlarr; then
   check md.prowlarr-torrent-indexers '^min5=4 min1=4$' "$(md_arr prowlarr 9696 /api/v1/indexer | jq -r '[.[] | select(.enable) | [.fields[] | select(.name | endswith("inimumSeeders")) | .value][0] | select(. != null)] | "min5=\([.[] | select(. == 5)] | length) min1=\([.[] | select(. == 1)] | length)"' 2>&1)"
   check md.prowlarr-flaresolverr '^FlareSolverr 4$' "$(t=$(md_arr prowlarr 9696 /api/v1/tag | jq '[.[] | select(.label == "flaresolverr") | .id][0]'); echo "$(md_arr prowlarr 9696 /api/v1/indexerProxy | jq -r --argjson t "$t" '[.[] | select(.tags | index($t)) | .name] | join(",")' 2>&1) $(md_arr prowlarr 9696 /api/v1/indexer | jq --argjson t "$t" '[.[] | select(.tags | index($t))] | length' 2>&1)")"
   check md.prowlarr-priorities '^NZBgeek=25 NzbPlanet=26 Treasure Maps=30 NZBIndex=50$' "$(md_arr prowlarr 9696 /api/v1/indexer | jq -r '[.[] | {(.name): .priority}] | add | "NZBgeek=\(.NZBgeek) NzbPlanet=\(.NzbPlanet) Treasure Maps=\(."Treasure Maps") NZBIndex=\(.NZBIndex)"' 2>&1)"
+  check md.prowlarr-treasure-limits '^query=null grab=400 unit=0$' "$(md_arr prowlarr 9696 /api/v1/indexer | jq -r '.[] | select(.name == "Treasure Maps") | [.fields[] | select(.name | startswith("baseSettings")) | {(.name | ltrimstr("baseSettings.")): .value}] | add | "query=\(.queryLimit) grab=\(.grabLimit) unit=\(.limitsUnit)"' 2>&1)"
   check md.prowlarr-apps '^Radarr:fullSync Sonarr:fullSync$' "$(md_arr prowlarr 9696 /api/v1/applications | jq -r '[.[] | "\(.name):\(.syncLevel)"] | sort | join(" ")' 2>&1)"
 fi
 if want qbittorrent; then
