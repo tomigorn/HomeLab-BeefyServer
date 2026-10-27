@@ -440,7 +440,7 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 
 - Repo: `https://www.iamparadox.dev/jellyfin/plugins/manifest.json` ("IAmParadox27"). The nightly "Update Plugins" task (04:43) updates them like the other plugins.
 - Config: `/config/data/plugins/configurations/Jellyfin.Plugin.HomeScreenSections.xml` (600). It holds the **Sonarr and Radarr API keys** (full keys: the arrs have no read-only key), not in git. Admins see them in Dashboard -> Plugins -> Home Screen Sections.
-- Set by `scripts/home-sections.py` (idempotent, `--dry-run`, never prints keys; tests `python3 -m unittest test_home_sections`). Rerun after changing the order or rotating an arr key.
+- Set by `scripts/home-sections.py` (idempotent, `--dry-run`, never prints keys; tests `python3 -m unittest test_home_sections`). Rerun after changing the order or rotating an arr key. `--check` → `all N users ok` (what every user actually gets).
 
 | # | Section (id) | Shows |
 |---|---|---|
@@ -449,8 +449,8 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 | 3 | Next Up (`NextUp`) | as vanilla |
 | 4 | Recently Added Movies (`RecentlyAddedMovies`) | vanilla "Latest" for Movies |
 | 5 | Recently Added Shows (`RecentlyAddedShows`) | vanilla "Latest" for Shows |
-| 6 | Watch Again (`WatchAgain`) | finished shows and collections, from the start |
-| 7 | Because You Watched (`BecauseYouWatched`) | 1-2 rows, similar to something watched |
+| 6 | Watch Again (`WatchAgain`) | films and whole series finished more than 28 days ago (plugin rule, no setting) |
+| 7 | Because You Watched (`BecauseYouWatched`) | 1-2 rows, similar to a played film (films only) |
 | 8 | Hidden Gems (`HiddenGems`) | rated 7.5+ (IMDb rating), not watched yet |
 | 9 | Finish These Collections (`FinishTheseCollections`) | started collections, closest to done first |
 | 10 | My List (`MyList`) | the user's favourites (♥) |
@@ -464,11 +464,14 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 - Upcoming cards: the plugin shows `S03E01 - TBA` and `2 Weeks, 1 Day - 11.11.2026` (`DateFormat` DD/MM/YYYY, delimiter `.`, set by `home-sections.py`). The same injector script turns the date into `Wed 11 Nov` (German `Mi., 11. Nov.`, year only when not this year; the original stays as tooltip) and keeps one Upcoming Shows card per series: the first (earliest) one, season only (`S03`); later episodes are hidden. The plugin has no grouping option and returns at most 16 upcoming episodes (no setting): a series dropping more than that in a month pushes later series out.
 - Public path: Cloudflare caches `/web/*` files. File Transformation rewrites them but keeps the original ETag, so a cached copy revalidated to 304 forever and public users kept a pre-plugin bundle ("Modular Home" errored, home vanilla; 2026-10-27). Fix in HomeLab-FastPi `Traefik/traefik/dynamic/jellyfin.yml` (router `jellyfin-web` drops If-None-Match/If-Modified-Since). Still stale: Cloudflare → Caching → Custom Purge the `/web/` URL.
 - Off on purpose: Jellyseerr Discover / Trending / My Requests, Genre, Decade, and every other section.
-- Empty sections stay visible: heading plus a grey one-line hint (English, German if the UI language is German). HSS itself hides empty sections and leaves out Because You Watched without enough history.
+- Empty sections stay visible: heading plus a grey one-line hint (English, German if the UI language is German). HSS itself hides empty sections and leaves out Because You Watched until a film is played.
   - Script `home-placeholders/empty-sections.js`, JavaScript Injector entry "Empty home sections" (signed-in users). It reads the user's enabled sections (`/ModularHomeViews/UserSettings`, in config order: `home-sections.py` stores them sorted) and the names (`/ModularHomeViews/Sections`), adds a placeholder where a section is missing or empty, and removes it when the section fills. No HSS markup = does nothing.
   - Push a changed script: `python3 scripts/home-placeholders.py` → `upserted Empty home sections`, then reload (browser Ctrl+Shift+R, Samsung app: close fully). No restart.
   - Tests: in `home-placeholders/` `sudo docker run --rm --network host -u $(id -u):$(id -g) -e npm_config_cache=/tmp/npm -v "$PWD":/w -w /w node:24-alpine sh -c "npm ci && node --test"`; upsert: `cd scripts && python3 -m unittest test_home_placeholders`.
-- Default for all users (`Enabled`): users without own settings get the list above. Users may change it (hamburger menu -> Modular Home; `AllowUserOverride`).
+- Locked for all users, current and new (`home-sections.py`):
+  - Server-side: `AllowUserOverride` off globally and on every section. The plugin then ignores the user's "Enable Modular Home" pref and their section ticks; Plugin Pages drops the "Modular Home" menu entry. Each user also gets `useModularHome=true` (display prefs `usersettings`/`emby`).
+  - Hidden only (cosmetic, injector script `lockHomeSettings`): the 10 "Home screen section" pickers in Settings → Home. They do nothing under Modular Home. "Hide watched content", library order and folder groups stay.
+  - Pagination on, 30 sections per page (`LazyLoadEnabled`, `NumSectionsPerPage`): the client sends a fresh page hash per home load, so new watch history (Because You Watched, Starring ...) shows on the next load. Without it the plugin reuses one section list per user while the home is opened within the hour.
 - Upcoming: Jellyfin calls `http://192.168.1.102:8989` / `:7878`, beefy's own published ports (DNAT bridge to bridge, no firewall rule, no shared network).
 
 | Client | Shows the sections |
