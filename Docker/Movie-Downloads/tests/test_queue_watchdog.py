@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """scripts/queue-watchdog.py: which queue items alert and when, the one-alert-per-condition state, guard event files and sending, against fake Radarr/Sonarr and a fake sender.
 Usage: python3 tests/test_queue_watchdog.py"""
+import calendar
 import importlib.util
 import json
 import pathlib
@@ -14,6 +15,10 @@ spec.loader.exec_module(qw)
 MIN, HOUR = 60, 3600
 T0 = 1_800_000_000
 
+
+def utc(*t):
+    return calendar.timegm(t + (0,) * (6 - len(t)))
+
 BLOCKED = {"id": 5, "downloadId": "abc", "title": "A.Separation.2026.2160p.WEB-DL-HDSWEB", "status": "completed", "trackedDownloadStatus": "warning",
            "trackedDownloadState": "importBlocked", "sizeleft": 0, "movie": {"title": "A Separation", "year": 2011},
            "statusMessages": [{"title": "A.Separation.2026", "messages": ["Found matching movie via grab history, but release was matched to movie by ID. Manual Import required."]}]}
@@ -21,6 +26,20 @@ DOWNLOADING = {"id": 6, "downloadId": "dl1", "title": "Some.Film.2020.1080p-X", 
                "trackedDownloadState": "downloading", "sizeleft": 1000, "movie": {"title": "Some Film", "year": 2020}}
 EP = {"id": 7, "downloadId": "ep1", "title": "Show.S02E03.1080p-X", "status": "failed", "trackedDownloadStatus": "error", "trackedDownloadState": "downloading",
       "sizeleft": 5, "series": {"title": "Show", "year": 2019}, "episode": {"seasonNumber": 2, "episodeNumber": 3}, "statusMessages": []}
+
+
+def digest(d):
+    f = pathlib.Path(d) / "watchdog-digest.json"
+    return json.loads(f.read_text()) if f.exists() else []
+
+
+def sends(d):
+    f = pathlib.Path(d) / "watchdog-sends.log"
+    return f.read_text().splitlines() if f.exists() else []
+
+
+WINTER = {"23:00": utc(2027, 1, 15, 22), "06:59": utc(2027, 1, 16, 5, 59), "07:00": utc(2027, 1, 16, 6), "21:59": utc(2027, 1, 15, 20, 59)}
+SUMMER = {"23:00": utc(2027, 7, 15, 21), "06:59": utc(2027, 7, 16, 4, 59), "07:00": utc(2027, 7, 16, 5), "21:59": utc(2027, 7, 15, 19, 59)}
 
 
 def fake(records=(), fail=False, health=(), status=None, indexers=(), health_fail=False):
@@ -224,27 +243,30 @@ class Run(unittest.TestCase):
         ev = {"app": "radarr", "action": "removed", "title": "A Separation", "year": 2011, "release": "A.Separation.2026.2160p-X", "releaseYear": 2026}
         (self.events / name).write_text(json.dumps(dict(ev, **kw)))
 
-    def test_guard_events_become_messages_and_are_deleted(self):
+    def test_guard_events_are_deleted_only_manual_is_sent(self):
         self.event("1.json")
         self.event("2.json", app="sonarr", action="marked-failed")
         self.event("3.json", action="manual")
         self.assertEqual(self.go({"radarr": fake()}, T0), 0)
-        self.assertEqual(len(self.sent), 3)
+        self.assertEqual(len(self.sent), 1)
         self.assertEqual(list(self.events.glob("*.json")), [])
-        first = self.sent[0]
-        for part in ("Wrong-film guard", "Radarr", "A Separation (2011)", "A.Separation.2026.2160p-X", "2026", "removed"):
-            self.assertIn(part, first)
-        self.assertIn("marked failed", self.sent[1])
-        self.assertIn("Sonarr", self.sent[1])
-        self.assertIn("check by hand", self.sent[2])
+        [manual] = self.sent
+        for part in ("Wrong-film guard", "Radarr", "A Separation (2011)", "A.Separation.2026.2160p-X", "2026", "check by hand"):
+            self.assertIn(part, manual)
+        self.assertTrue(manual.startswith("🔴 <b>Wrong-film guard: Radarr</b>\n\n• "))
+        self.assertIn("<blockquote expandable>Radarr → Activity → Queue</blockquote>", manual)
+
+    def test_removed_guard_message_text_is_unchanged(self):
+        first = qw.event_text({"app": "radarr", "action": "removed", "title": "A Separation", "year": 2011, "release": "A.Separation.2026.2160p-X", "releaseYear": 2026})
         self.assertTrue(first.startswith("🟠 <b>Wrong-film guard: Radarr</b>\n\n• "))
-        self.assertIn("<blockquote expandable>Radarr → Activity → Queue</blockquote>", self.sent[2])
+        self.assertIn("marked failed", qw.event_text({"app": "sonarr", "action": "marked-failed"}))
 
     def test_dub_only_event_message(self):
-        self.event(reason="dub-only", release="X.2011.MULTi.1080p-GRP", languages=["German", "French"], original="Persian", title="A Separation", releaseYear=2011)
+        first = qw.event_text({"app": "radarr", "action": "removed", "reason": "dub-only", "release": "X.2011.MULTi.1080p-GRP", "languages": ["German", "French"],
+                               "original": "Persian", "title": "A Separation", "year": 2011, "releaseYear": 2011})
         self.event("2.json", reason="dub-only", action="manual", release="Y-GRP", languages=["German", "French"], original="Persian")
         self.assertEqual(self.go({"radarr": fake()}, T0), 0)
-        first = self.sent[0]
+        self.sent.insert(0, first)
         self.assertTrue(first.startswith("🟠 <b>Dub-only release removed: Radarr</b>\n\n• "))
         for part in ("A Separation (2011)", "<code>X.2011.MULTi.1080p-GRP</code>", "German, French", "Persian", "removed from the queue"):
             self.assertIn(part, first)
@@ -253,7 +275,7 @@ class Run(unittest.TestCase):
         self.assertIn("check by hand", self.sent[1])
 
     def test_guard_event_stays_when_the_send_fails(self):
-        self.event()
+        self.event(action="manual")
         self.fail_send = True
         self.assertEqual(self.go({"radarr": fake()}, T0), 1)
         self.assertEqual(len(list(self.events.glob("*.json"))), 1)
@@ -268,6 +290,196 @@ class Run(unittest.TestCase):
         (self.events / "9.json.tmp").write_text("{}")
         self.go({"radarr": fake()}, T0)
         self.assertTrue((self.events / "9.json.tmp").exists())
+
+
+class QuietHours(unittest.TestCase):
+    def test_quiet_from_22_to_7_zurich_time_in_winter_and_summer(self):
+        cfg = qw.Config()
+        for times in (WINTER, SUMMER):
+            self.assertTrue(qw.in_quiet_hours(times["23:00"], cfg))
+            self.assertTrue(qw.in_quiet_hours(times["06:59"], cfg))
+            self.assertFalse(qw.in_quiet_hours(times["07:00"], cfg))
+            self.assertFalse(qw.in_quiet_hours(times["21:59"], cfg))
+            self.assertTrue(qw.in_quiet_hours(times["21:59"] + MIN, cfg))
+
+
+class Routing(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+        self.events = self.dir / "events"
+        self.events.mkdir()
+        self.sent = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def send(self, text):
+        self.sent.append(text)
+        return True
+
+    def go(self, apps, now):
+        return qw.run(apps, self.dir / "queue-watchdog.json", [self.events], self.send, qw.Config(), now)
+
+    def event(self, name="1.json", **kw):
+        ev = {"app": "radarr", "action": "removed", "title": "A Separation", "year": 2011, "release": "A.Separation.2026.2160p-X", "releaseYear": 2026}
+        (self.events / name).write_text(json.dumps(dict(ev, **kw)))
+
+    def test_failed_download_goes_to_the_digest_not_telegram(self):
+        self.assertEqual(self.go({"sonarr": fake([EP])}, T0), 0)
+        self.assertEqual(self.sent, [])
+        self.assertEqual([(e["kind"], e["app"], e["title"], e["ts"]) for e in digest(self.dir)], [("failed", "sonarr", "Show (2019) S02E03", T0)])
+        self.go({"sonarr": fake([EP])}, T0 + 15 * MIN)
+        self.assertEqual(len(digest(self.dir)), 1)
+
+    def test_stalled_download_goes_to_the_digest_not_telegram(self):
+        apps = {"radarr": fake([DOWNLOADING])}
+        self.go(apps, T0)
+        self.go(apps, T0 + 6 * HOUR + MIN)
+        self.assertEqual(self.sent, [])
+        self.assertEqual([(e["kind"], e["title"]) for e in digest(self.dir)], [("stalled", "Some Film (2020)")])
+
+    def test_removed_and_marked_failed_guard_events_go_to_the_digest(self):
+        self.event("1.json")
+        self.event("2.json", app="sonarr", action="marked-failed", title="Show", year=2019)
+        self.event("3.json", reason="dub-only", languages=["German"], original="Persian", title="Other", year=2020)
+        self.go({"radarr": fake()}, T0)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(sorted((e["kind"], e["app"], e["title"]) for e in digest(self.dir)),
+                         [("guard_removed", "radarr", "A Separation (2011)"), ("guard_removed", "radarr", "Other (2020)"), ("guard_removed", "sonarr", "Show (2019)")])
+        self.assertEqual(list(self.events.glob("*.json")), [])
+
+    def test_blocked_is_held_overnight_and_sent_at_7(self):
+        for times in (WINTER, SUMMER):
+            self.setUp()
+            apps = {"radarr": fake([BLOCKED])}
+            self.go(apps, times["23:00"] - 31 * MIN)
+            self.go(apps, times["23:00"])
+            self.go(apps, times["06:59"])
+            self.assertEqual(self.sent, [])
+            self.go(apps, times["07:00"])
+            self.assertEqual(len(self.sent), 1)
+            self.assertTrue(self.sent[0].startswith("🟠 <b>Radarr queue: blocked</b>"))
+            self.go(apps, times["07:00"] + 15 * MIN)
+            self.assertEqual(len(self.sent), 1)
+            self.assertEqual([l.split()[1:3] for l in sends(self.dir)], [["blocked", "held"], ["blocked", "sent"]])
+            self.tearDown()
+
+    def test_blocked_that_cleared_overnight_is_never_sent(self):
+        self.go({"radarr": fake([BLOCKED])}, WINTER["23:00"] - 31 * MIN)
+        self.go({"radarr": fake([BLOCKED])}, WINTER["23:00"])
+        self.go({"radarr": fake()}, WINTER["06:59"])
+        self.go({"radarr": fake()}, WINTER["07:00"])
+        self.assertEqual(self.sent, [])
+
+    def test_blocked_by_day_is_sent_at_once(self):
+        apps = {"radarr": fake([BLOCKED])}
+        self.go(apps, WINTER["21:59"] - 31 * MIN)
+        self.go(apps, WINTER["21:59"])
+        self.assertEqual(len(self.sent), 1)
+
+    def test_manual_guard_event_is_held_overnight_and_kept(self):
+        self.event(action="manual")
+        self.go({"radarr": fake()}, SUMMER["23:00"])
+        self.go({"radarr": fake()}, SUMMER["06:59"])
+        self.assertEqual(self.sent, [])
+        self.assertEqual(len(list(self.events.glob("*.json"))), 1)
+        self.go({"radarr": fake()}, SUMMER["07:00"])
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("check by hand", self.sent[0])
+        self.assertEqual(list(self.events.glob("*.json")), [])
+
+    def test_indexers_disabled_is_held_overnight(self):
+        bad = {"radarr": fake(health=[hc([NZB])])}
+        self.go(bad, WINTER["23:00"])
+        self.go(bad, WINTER["06:59"])
+        self.assertEqual(self.sent, [])
+        self.go(bad, WINTER["07:00"])
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("indexers disabled", self.sent[0])
+
+
+class DigestFile(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_render_exact_format(self):
+        text = qw.render_digest([{"kind": "guard_removed", "app": "radarr", "title": "Some Film (2024)", "ts": 1793070000}], 1793070100)
+        self.assertEqual(text, "\n".join([
+            "# HELP beefy_watchdog_event_timestamp_seconds Auto-handled queue-watchdog event (digest only), one series per event, last 48 h.",
+            "# TYPE beefy_watchdog_event_timestamp_seconds gauge",
+            'beefy_watchdog_event_timestamp_seconds{kind="guard_removed",app="radarr",title="Some Film (2024)"} 1793070000',
+            "# HELP beefy_watchdog_digest_updated_timestamp_seconds Last queue-watchdog run that wrote this file.",
+            "# TYPE beefy_watchdog_digest_updated_timestamp_seconds gauge",
+            "beefy_watchdog_digest_updated_timestamp_seconds 1793070100",
+        ]) + "\n")
+
+    def test_label_values_are_escaped_and_title_trimmed(self):
+        text = qw.render_digest([{"kind": "failed", "app": "radarr", "title": 'a\\b"c\nd' + "x" * 100, "ts": T0}], T0)
+        line = [l for l in text.splitlines() if l.startswith("beefy_watchdog_event_timestamp_seconds{")][0]
+        self.assertIn('title="a\\\\b\\"c\\nd' + "x" * 73 + '"}', line)
+
+    def test_prune_dedups_keeps_48h_and_caps_at_40_newest_first(self):
+        ev = [{"kind": "failed", "app": "radarr", "title": f"F{i}", "ts": T0 - i * MIN} for i in range(50)]
+        ev += [{"kind": "failed", "app": "radarr", "title": "F3", "ts": T0 + MIN}, {"kind": "stalled", "app": "radarr", "title": "old", "ts": T0 - 49 * HOUR}]
+        out = qw.prune_digest(ev, T0 + MIN)
+        self.assertEqual(len(out), 40)
+        self.assertEqual(out[0], {"kind": "failed", "app": "radarr", "title": "F3", "ts": T0 + MIN})
+        self.assertEqual([e["ts"] for e in out], sorted((e["ts"] for e in out), reverse=True))
+        self.assertEqual(sum(e["title"] == "F3" for e in out), 1)
+        self.assertNotIn("old", [e["title"] for e in out])
+
+    def test_same_title_other_kind_is_its_own_series(self):
+        out = qw.prune_digest([{"kind": "failed", "app": "radarr", "title": "A", "ts": T0}, {"kind": "stalled", "app": "radarr", "title": "A", "ts": T0}], T0)
+        self.assertEqual(len(out), 2)
+
+    def test_file_is_written_on_an_empty_run(self):
+        qw.run({"radarr": fake()}, self.dir / "queue-watchdog.json", [], lambda t: True, qw.Config(), T0)
+        text = (self.dir / "watchdog-digest.prom").read_text()
+        self.assertIn("beefy_watchdog_digest_updated_timestamp_seconds 1800000000\n", text)
+        self.assertNotIn("beefy_watchdog_event_timestamp_seconds{", text)
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["queue-watchdog.json", "watchdog-digest.json", "watchdog-digest.prom"])
+
+    def test_file_is_written_even_when_an_app_is_down(self):
+        qw.run({"radarr": fake(fail=True)}, self.dir / "queue-watchdog.json", [], lambda t: True, qw.Config(), T0)
+        self.assertTrue((self.dir / "watchdog-digest.prom").exists())
+
+    def test_digest_events_from_a_run_land_in_the_prom_file(self):
+        qw.run({"sonarr": fake([EP])}, self.dir / "queue-watchdog.json", [], lambda t: True, qw.Config(), T0)
+        self.assertIn('beefy_watchdog_event_timestamp_seconds{kind="failed",app="sonarr",title="Show (2019) S02E03"} 1800000000', (self.dir / "watchdog-digest.prom").read_text())
+
+
+class SendsLog(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_sent_and_digest_lines(self):
+        qw.run({"radarr": fake([BLOCKED]), "sonarr": fake([EP])}, self.dir / "queue-watchdog.json", [], lambda t: True, qw.Config(), T0)
+        qw.run({"radarr": fake([BLOCKED]), "sonarr": fake()}, self.dir / "queue-watchdog.json", [], lambda t: True, qw.Config(), T0 + 31 * MIN)
+        lines = sends(self.dir)
+        self.assertEqual([l.split(" ", 3)[1:] for l in lines], [["failed", "digest", "Show (2019) S02E03"], ["blocked", "sent", "A Separation (2011)"]])
+        self.assertTrue(lines[0].startswith("2027-01-15T09:00:00+01:00 "))
+
+    def test_failed_send_is_not_logged(self):
+        qw.run({"radarr": fake(health=[hc([NZB])])}, self.dir / "queue-watchdog.json", [], lambda t: False, qw.Config(), T0)
+        self.assertEqual(sends(self.dir), [])
+
+    def test_log_keeps_the_last_1000_lines(self):
+        f = self.dir / "watchdog-sends.log"
+        f.write_text("".join(f"old {i}\n" for i in range(1200)))
+        qw.log_send(f, T0, "failed", "digest", "X")
+        lines = f.read_text().splitlines()
+        self.assertEqual(len(lines), 1000)
+        self.assertEqual(lines[0], "old 201")
+        self.assertTrue(lines[-1].endswith(" failed digest X"))
 
 
 NZB, NZBP, TM, TPB = "NZBgeek (Prowlarr)", "NzbPlanet (Prowlarr)", "Treasure Maps (Prowlarr)", "The Pirate Bay (Prowlarr)"
@@ -347,17 +559,17 @@ class IndexerRun(unittest.TestCase):
         self.assertEqual(len(self.sent), 1)
         self.assertIn("indexers disabled", self.sent[0])
         self.assertEqual(self.go({"sonarr": fake()}, T0 + 45 * MIN), 0)
-        self.assertEqual(len(self.sent), 2)
-        self.assertTrue(self.sent[1].startswith("✅ <b>Sonarr: indexers recovered</b>"))
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual([(e["kind"], e["app"]) for e in digest(self.dir)], [("indexer_recovered", "sonarr")])
         self.assertEqual(self.go({"sonarr": fake()}, T0 + 60 * MIN), 0)
-        self.assertEqual(len(self.sent), 2)
+        self.assertEqual(len(self.sent), 1)
 
     def test_alert_again_after_it_cleared_and_came_back(self):
         bad = {"radarr": fake(health=[hc([NZB])])}
         self.go(bad, T0)
         self.go({"radarr": fake()}, T0 + 15 * MIN)
         self.go(bad, T0 + 30 * MIN)
-        self.assertEqual(len(self.sent), 3)
+        self.assertEqual(len(self.sent), 2)
 
     def test_apps_are_tracked_separately(self):
         self.go({"radarr": fake(health=[hc([NZB])]), "sonarr": fake(health=[hc([NZB])])}, T0)
@@ -377,10 +589,10 @@ class IndexerRun(unittest.TestCase):
     def test_no_recovered_message_when_only_exempt_ones_remain(self):
         self.go({"radarr": fake(health=[hc([NZB, TPB])])}, T0)
         self.go({"radarr": fake(health=[hc([TPB])])}, T0 + 15 * MIN)
-        self.assertEqual(len(self.sent), 2)
-        self.assertIn("recovered", self.sent[1])
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(len(digest(self.dir)), 1)
         self.go({"radarr": fake(health=[hc([TPB])])}, T0 + 30 * MIN)
-        self.assertEqual(len(self.sent), 2)
+        self.assertEqual(len(digest(self.dir)), 1)
 
     def test_failed_send_is_retried_next_run(self):
         bad = {"radarr": fake(health=[hc([NZB])])}
@@ -390,13 +602,13 @@ class IndexerRun(unittest.TestCase):
         self.assertEqual(self.go(bad, T0 + 15 * MIN), 0)
         self.assertEqual(len(self.sent), 1)
 
-    def test_failed_recovered_send_is_retried(self):
+    def test_recovered_needs_no_send(self):
         self.go({"radarr": fake(health=[hc([NZB])])}, T0)
         self.fail_send = True
-        self.assertEqual(self.go({"radarr": fake()}, T0 + 15 * MIN), 1)
-        self.fail_send = False
-        self.assertEqual(self.go({"radarr": fake()}, T0 + 30 * MIN), 0)
-        self.assertEqual(len(self.sent), 2)
+        self.assertEqual(self.go({"radarr": fake()}, T0 + 15 * MIN), 0)
+        self.assertEqual(len(self.sent), 1)
+        [e] = digest(self.dir)
+        self.assertEqual((e["kind"], e["title"]), ("indexer_recovered", NZB))
 
     def test_health_api_error_keeps_the_state_and_does_not_fake_a_recovery(self):
         self.go({"radarr": fake(health=[hc([NZB])])}, T0)

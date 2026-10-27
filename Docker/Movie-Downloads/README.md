@@ -316,28 +316,34 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Not covered | a remake / same-named show with the same title *and* year; a release whose title carries no year |
 | Queue lookup | by download id over the whole queue with `includeUnknownMovieItems=true` (Sonarr `includeUnknownSeriesItems`), never the `movieIds`/`seriesIds` filter: a release the app cannot map to the title (the wrong year, *A Separation* 2026 vs 2011, 2026-10-24) is queued with `movieId` null, which the filter and the default listing both hide, so the guard never saw it |
 | Fallback | not in the queue after `GG_WAIT` (90 s) → the `grabbed` history record with the same download id is marked failed (`POST /history/failed/{id}`: blocklist + new search); no record or the call fails → `check by hand` |
-| Telegram | every wrong-year or dub-only case (removed / marked failed / check by hand) writes `<config dir>/guard-events/*.json` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`); [Queue watchdog](#queue-watchdog) sends it within 15 min and deletes the file. The containers hold no bot token: no secret mount, no outbound call from the apps |
-| Dub-only | the grabbed release title is on `/config/dub-only.json` ([NFO scout](#nfo-scout): ≥ 2 languages in the NFO, the original missing) with the same title id and younger than 30 days → same removal as above (queue lookup, remove + blocklist + re-search, history fallback), whatever the year. Exact title match only; no list or an unreadable one = no action. Telegram `Dub-only release removed` with title, release and languages |
+| Telegram | every wrong-year or dub-only case (removed / marked failed / check by hand) writes `<config dir>/guard-events/*.json` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`); [Queue watchdog](#queue-watchdog) handles it within 15 min (removed / marked failed → morning digest, check by hand → Telegram) and deletes the file. The containers hold no bot token: no secret mount, no outbound call from the apps |
+| Dub-only | the grabbed release title is on `/config/dub-only.json` ([NFO scout](#nfo-scout): ≥ 2 languages in the NFO, the original missing) with the same title id and younger than 30 days → same removal as above (queue lookup, remove + blocklist + re-search, history fallback), whatever the year. Exact title match only; no list or an unreadable one = no action. Morning digest entry (`guard_removed`); `Dub-only release` Telegram only when it could not be removed |
 | Registered by | `scripts/language-policy.sh` (both apps, idempotent) |
 | Tests | `tests/test_grab_guard.sh`, `tests/test_grab_guard_sonarr.sh`; live: `sudo docker exec movie-radarr env radarr_eventtype=Grab radarr_movie_id=<id> radarr_release_title=<name> radarr_download_id=x GG_WAIT=0 bash /scripts/grab-guard.sh` (Sonarr: `movie-sonarr`, `sonarr_eventtype`, `sonarr_series_id`, `sonarr_release_title`, `sonarr_download_id`) |
 
 ### Queue watchdog
 
-`scripts/queue-watchdog.py` (beefy host, `systemd/queue-watchdog.timer`, every 15 min, first run 15 min after boot) sends **one** Telegram per stuck Radarr/Sonarr queue item (unknown items included) and per wrong-film guard event.
+`scripts/queue-watchdog.py` (beefy host, `systemd/queue-watchdog.timer`, every 15 min, first run 15 min after boot) sends **one** Telegram per item that needs a hand; what the apps handle themselves goes to fastpi's 06:30 morning digest instead.
 
-| Condition | Alert when |
-|---|---|
-| blocked | state `importBlocked` / `importPending` / `failedPending`, or status `warning` / `error`, for more than `QW_BLOCKED_MIN` (30 min) |
-| stalled | `downloading` / `queued` and `sizeleft` not smaller for more than `QW_STALL_HOURS` (6 h) |
-| failed | status `failed`, at once |
-| guard event | each `guard-events/*.json` from [Wrong-film guard](#wrong-film-guard) |
+| Message | Where | When |
+|---|---|---|
+| blocked: state `importBlocked` / `importPending` / `failedPending`, or status `warning` / `error` (needs a manual import) | Telegram | after `QW_BLOCKED_MIN` (30 min); 22:00–07:00 held, sent on the first run from 07:00 if still blocked |
+| guard "could not be removed: check by hand" | Telegram | at once; 22:00–07:00 held (event file kept), sent from 07:00 |
+| indexers disabled after failures | Telegram | at once; 22:00–07:00 held, sent from 07:00 if still disabled |
+| guard removed / marked failed, re-searching (wrong film, dub-only) | digest `guard_removed` | at once |
+| failed (status `failed`, the app re-searches) | digest `failed` | at once |
+| stalled (`downloading` / `queued`, `sizeleft` not smaller) | digest `stalled` | after `QW_STALL_HOURS` (6 h) |
+| indexers recovered | digest `indexer_recovered` | at once |
 
 | | |
 |---|---|
-| Indexers | `/health` of each app: **one** Telegram while indexers are disabled after failures (`IndexerStatusCheck`, `IndexerLongTermStatusCheck`: indexer names, disabled until / last error when `/indexerstatus` answers, fix `System → Status → test all indexers` or `POST /api/v3/indexer/testall`), a short ✅ when it clears. Never runs testall itself. State key `indexers/<app>` |
+| Indexers | `/health` of each app: **one** Telegram while indexers are disabled after failures (`IndexerStatusCheck`, `IndexerLongTermStatusCheck`: indexer names, disabled until / last error when `/indexerstatus` answers, fix `System → Status → test all indexers` or `POST /api/v3/indexer/testall`), recovery = digest. Never runs testall itself. State key `indexers/<app>` |
 | Indexer exceptions | no alert for Treasure Maps backoffs (grab limit: error empty or 429 / limit) and The Pirate Bay (flaky "no results", [Indexers](#indexers-prowlarr)); any other error on them alerts. Found 2026-10-26: 5 of 6 indexers sat in a 24 h backoff after 401s during a Prowlarr key rotation |
 | Message | app, title (+year / SxxExx), release, state, status messages, how long, hint `Radarr → Activity → Queue` (Sonarr: `Sonarr → …`) |
-| Once | per app + download id + condition; again only after the condition cleared and came back (or a failed Telegram: retried next run) |
+| Once | per app + download id + condition; again only after the condition cleared and came back (or a failed or held Telegram: retried next run) |
+| Quiet hours | 22:00–07:00 Europe/Zurich (DST-safe); beefy asleep at 07:00 = the first run after it wakes |
+| Digest | `~/.local/state/movie-downloads/watchdog-digest.prom`, rewritten every run: `beefy_watchdog_event_timestamp_seconds{kind,app,title}` (last 48 h, one series per kind + app + title, newest 40, title ≤ 80 chars) + `beefy_watchdog_digest_updated_timestamp_seconds`; events kept in `watchdog-digest.json` |
+| Sends log | `~/.local/state/movie-downloads/watchdog-sends.log`: `<ISO time> <kind> sent\|held\|digest <title>`, last 1000 lines |
 | State | `~/.local/state/movie-downloads/queue-watchdog.json`: first seen per condition, last `sizeleft`; entries of downloads that left the queue are dropped; an unreachable app keeps its entries (exit 1) |
 | Telegram | `../_global/scripts/oob-alert.sh` (direct to api.telegram.org, no edge); the token stays in `_global/secrets/` |
 | Env | `QW_BLOCKED_MIN`, `QW_STALL_HOURS`, `QW_STATE`, `QW_EVENTS` (colon-separated dirs), `QW_ALERT`, `QW_RADARR_CONFIG`, `QW_SONARR_CONFIG` |
@@ -1032,8 +1038,8 @@ Every language, profile and delete feature works the same for movies and series 
 | Description scout | ✓ | ✓ since 2026-10-23 (episodes and season packs) | `description-scout.py` |
 | NFO scout (MULTi releases) | ✓ | ✓ new 2026-10-26 (episodes and season packs) | `nfo-scout.py`, [NFO scout](#nfo-scout) |
 | Unknown quality in the old & rare profiles (+ twins) | ✓ | ✓ | `recyclarr/recyclarr.yml` |
-| Wrong-film guard (finds unmapped queue items, history fallback, Telegram) | ✓ year | ✓ series start year | `grab-guard.sh` |
-| Queue watchdog (Telegram: stuck, stalled, failed, guard events) | ✓ | ✓ new 2026-10-25 | `queue-watchdog.py`, [watchdog](#queue-watchdog) |
+| Wrong-film guard (finds unmapped queue items, history fallback, digest / Telegram) | ✓ year | ✓ series start year | `grab-guard.sh` |
+| Queue watchdog (Telegram: blocked, check by hand, indexers; digest: the rest) | ✓ | ✓ new 2026-10-25 | `queue-watchdog.py`, [watchdog](#queue-watchdog) |
 | Live check | ✓ | ✓ since 2026-10-23 | `swiss-german-check.py` |
 | Swiss German not found alert (Telegram) | ✓ | ✓ new 2026-10-23 | `language-missing.py`, [alert](#swiss-german-not-found-alert) |
 | Night search (new, cutoff-unmet) | ✓ movies | ✓ episodes | `night-search.py` |

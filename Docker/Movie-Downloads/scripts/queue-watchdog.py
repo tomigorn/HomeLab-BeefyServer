@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Queue watchdog (README "Queue watchdog"): one Telegram per stuck Radarr/Sonarr queue item and per wrong-film guard event.
-Per (app, downloadId, condition), once until the condition clears and returns: blocked (importBlocked/importPending/failedPending state or warning/error status) for QW_BLOCKED_MIN minutes, stalled (downloading/queued, sizeleft not falling) for QW_STALL_HOURS hours, failed (status failed).
-Guard events: scripts/grab-guard.sh writes <config dir>/guard-events/*.json inside the containers (no bot token there); each becomes a message and the file is deleted. Sent with _global/scripts/oob-alert.sh. Run by systemd/queue-watchdog.timer.
-Indexers: /health of each app; one Telegram while indexers are disabled after failures (IndexerStatusCheck / IndexerLongTermStatusCheck), one when they recover. Expected backoffs are left out: Treasure Maps grab limit, The Pirate Bay "no results".
+"""Queue watchdog (README "Queue watchdog"): Telegram for what needs a hand, the rest into a morning-digest metrics file.
+Per (app, downloadId, condition), once until the condition clears and returns: blocked (importBlocked/importPending/failedPending state or warning/error status) for QW_BLOCKED_MIN minutes = Telegram; stalled (downloading/queued, sizeleft not falling) for QW_STALL_HOURS hours and failed (status failed) = digest.
+Guard events: scripts/grab-guard.sh writes <config dir>/guard-events/*.json inside the containers (no bot token there); removed / marked-failed = digest, "check by hand" = Telegram; the file is deleted once handled. Sent with _global/scripts/oob-alert.sh. Run by systemd/queue-watchdog.timer.
+Indexers: /health of each app; one Telegram while indexers are disabled after failures (IndexerStatusCheck / IndexerLongTermStatusCheck), recovery = digest. Expected backoffs are left out: Treasure Maps grab limit, The Pirate Bay "no results".
+Quiet hours 22:00-07:00 Europe/Zurich: Telegrams are held and sent on the first run from 07:00 if still due.
+Digest: watchdog-digest.prom (node-exporter textfile, last 48 h) in the state dir, read by fastpi's morning digest. Every send, hold and digest event is a line in watchdog-sends.log.
 Usage: scripts/queue-watchdog.py"""
+import datetime
 import html
 import json
 import os
@@ -15,6 +18,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zoneinfo
 from collections import namedtuple
 from dataclasses import dataclass
 
@@ -30,7 +34,10 @@ ACTIONS = {
 }
 INDEXER_CHECKS = {"IndexerStatusCheck", "IndexerLongTermStatusCheck"}
 EXPECTED = {"treasure maps": re.compile(r"429|limit|quota|too many", re.I), "the pirate bay": re.compile(r"no results", re.I)}
-Alert = namedtuple("Alert", "key condition text")
+Alert = namedtuple("Alert", "key condition text title", defaults=("",))
+TZ = "Europe/Zurich"
+GUARD_DIGEST = {"removed", "marked-failed"}
+DIGEST_HOURS, DIGEST_MAX, SENDS_MAX, TITLE_MAX = 48, 40, 1000, 80
 
 
 class ApiError(Exception):
@@ -41,6 +48,78 @@ class ApiError(Exception):
 class Config:
     blocked_min: int = 30
     stall_hours: int = 6
+    tz: str = TZ
+    quiet_from: int = 22
+    quiet_until: int = 7
+
+
+def in_quiet_hours(now, cfg):
+    hour = datetime.datetime.fromtimestamp(now, zoneinfo.ZoneInfo(cfg.tz)).hour
+    return hour >= cfg.quiet_from or hour < cfg.quiet_until
+
+
+def write_atomic(path, text):
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def log_send(path, now, kind, status, title):
+    """One line per sent, held or digested event, the last SENDS_MAX kept."""
+    path = pathlib.Path(path)
+    stamp = datetime.datetime.fromtimestamp(now, zoneinfo.ZoneInfo(TZ)).isoformat(timespec="seconds")
+    old = path.read_text().splitlines() if path.exists() else []
+    lines = old + [f"{stamp} {kind} {status} {' '.join(str(title).split())}"]
+    write_atomic(path, "\n".join(lines[-SENDS_MAX:]) + "\n")
+
+
+def prune_digest(events, now):
+    """Events of the last DIGEST_HOURS, one per (kind, app, title) with the newest time, newest first, at most DIGEST_MAX."""
+    newest = {}
+    for e in events:
+        k = (e["kind"], e["app"], e["title"])
+        if e["ts"] > now - DIGEST_HOURS * 3600 and (k not in newest or e["ts"] > newest[k]["ts"]):
+            newest[k] = e
+    return sorted(newest.values(), key=lambda e: e["ts"], reverse=True)[:DIGEST_MAX]
+
+
+def _lv(value):
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def render_digest(events, now):
+    lines = ["# HELP beefy_watchdog_event_timestamp_seconds Auto-handled queue-watchdog event (digest only), one series per event, last 48 h.",
+             "# TYPE beefy_watchdog_event_timestamp_seconds gauge"]
+    lines += [f'beefy_watchdog_event_timestamp_seconds{{kind="{_lv(e["kind"])}",app="{_lv(e["app"])}",title="{_lv(str(e["title"])[:TITLE_MAX])}"}} {int(e["ts"])}'
+              for e in prune_digest(events, now)]
+    lines += ["# HELP beefy_watchdog_digest_updated_timestamp_seconds Last queue-watchdog run that wrote this file.",
+              "# TYPE beefy_watchdog_digest_updated_timestamp_seconds gauge",
+              f"beefy_watchdog_digest_updated_timestamp_seconds {int(now)}"]
+    return "\n".join(lines) + "\n"
+
+
+class Out:
+    """Telegram (held in quiet hours) or digest, every outcome logged."""
+
+    def __init__(self, send, now, cfg, held_before, log_path):
+        self.send, self.now, self.quiet, self.log = send, now, in_quiet_hours(now, cfg), log_path
+        self.held_before, self.held, self.events = held_before, {}, []
+
+    def immediate(self, hold_id, kind, title, text):
+        """'sent', 'held' or 'failed'."""
+        if self.quiet:
+            self.held[hold_id] = self.held_before.get(hold_id, self.now)
+            if hold_id not in self.held_before:
+                log_send(self.log, self.now, kind, "held", title)
+            return "held"
+        if not self.send(text):
+            return "failed"
+        log_send(self.log, self.now, kind, "sent", title)
+        return "sent"
+
+    def digest(self, kind, app, title):
+        self.events.append({"kind": kind, "app": app, "title": title, "ts": int(self.now)})
+        log_send(self.log, self.now, kind, "digest", title)
 
 
 def duration(seconds):
@@ -108,7 +187,7 @@ def evaluate(app, records, state, now, cfg):
         for cond, d in due.items():
             if d and cond not in st["alerted"]:
                 st["alerted"].append(cond)
-                alerts.append(Alert(key, cond, message(app, rec, cond, since[cond], now)))
+                alerts.append(Alert(key, cond, message(app, rec, cond, since[cond], now), label(app, rec)))
         keep[key] = st
     return alerts, {k: v for k, v in state.items() if not k.startswith(app + ":")} | keep
 
@@ -132,20 +211,29 @@ def event_text(ev):
     return "\n".join(lines)
 
 
-def send_events(dirs, send):
+def event_title(ev):
+    return f"{ev.get('title', '?')} ({ev['year']})" if ev.get("year") else str(ev.get("title", "?"))
+
+
+def send_events(dirs, out):
     rc = 0
     for d in dirs:
         for f in sorted(pathlib.Path(d).glob("*.json")):
             try:
-                text = event_text(json.loads(f.read_text()))
-            except (ValueError, OSError):
+                ev = json.loads(f.read_text())
+                text = event_text(ev)
+            except (ValueError, OSError, AttributeError):
                 f.rename(f.with_suffix(".bad"))
                 continue
-            if send(text):
+            if ev.get("action") in GUARD_DIGEST:
+                out.digest("guard_removed", str(ev.get("app", "?")), event_title(ev))
                 f.unlink()
-            else:
-                rc = 1
-    return rc
+                continue
+            r = out.immediate(f"event:{f}", "guard_manual", event_title(ev), text)
+            if r == "sent":
+                f.unlink()
+            rc |= r == "failed"
+    return int(rc)
 
 
 def fetch(app, api):
@@ -202,7 +290,7 @@ def indexer_message(app, failed, now):
     return "\n".join(lines)
 
 
-def indexer_check(app, api, state, send, now):
+def indexer_check(app, api, state, out, now):
     key = f"indexers/{app}"
     try:
         health = api("GET", "/health") or []
@@ -215,12 +303,12 @@ def indexer_check(app, api, state, send, now):
         return 1
     bad = unexpected(failed_indexers(health, status, indexers))
     if bad and key not in state:
-        if not send(indexer_message(app, bad, now)):
-            return 1
-        state[key] = {"names": sorted(bad), "since": now}
-    elif not bad and key in state:
-        if not send(f"✅ <b>{app.capitalize()}: indexers recovered</b>\n\n📅 {time.strftime('%Y-%m-%d %H:%M', time.localtime(now))}\n• No indexer is disabled after failures any more"):
-            return 1
+        r = out.immediate(key, "indexers_disabled", ", ".join(sorted(bad)), indexer_message(app, bad, now))
+        if r == "sent":
+            state[key] = {"names": sorted(bad), "since": now}
+        return int(r == "failed")
+    if not bad and key in state:
+        out.digest("indexer_recovered", app, ", ".join(state[key].get("names") or []))
         del state[key]
     return 0
 
@@ -229,9 +317,12 @@ def run(apps, state_path, event_dirs, send, cfg, now=None):
     now = time.time() if now is None else now
     state_path = pathlib.Path(state_path)
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    digest_path = state_path.parent / "watchdog-digest.json"
+    out = Out(send, now, cfg, state.pop("held", {}), state_path.parent / "watchdog-sends.log")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
     rc = 0
     for app, api in apps.items():
-        rc |= indexer_check(app, api, state, send, now)
+        rc |= indexer_check(app, api, state, out, now)
         try:
             records = fetch(app, api)
         except ApiError as e:
@@ -240,15 +331,21 @@ def run(apps, state_path, event_dirs, send, cfg, now=None):
             continue
         alerts, state = evaluate(app, records, state, now, cfg)
         for a in alerts:
-            if not send(a.text):
+            if a.condition != "blocked":
+                out.digest(a.condition, app, a.title)
+                continue
+            r = out.immediate(f"{a.key}:blocked", "blocked", a.title, a.text)
+            if r != "sent":
                 state[a.key]["alerted"].remove(a.condition)
-                rc = 1
-    rc |= send_events(event_dirs, send)
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = state_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, indent=1, sort_keys=True))
-    tmp.replace(state_path)
-    return rc
+            rc |= r == "failed"
+    rc |= send_events(event_dirs, out)
+    if out.held:
+        state["held"] = out.held
+    write_atomic(state_path, json.dumps(state, indent=1, sort_keys=True))
+    events = prune_digest((json.loads(digest_path.read_text()) if digest_path.exists() else []) + out.events, now)
+    write_atomic(digest_path, json.dumps(events, indent=1))
+    write_atomic(state_path.parent / "watchdog-digest.prom", render_digest(events, now))
+    return int(rc)
 
 
 def client(app, config):
