@@ -24,7 +24,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Jobs in the maintenance window | Seerr settings | `Seerr/scripts/night-jobs.py` | `seerr.night-jobs`: night-jobs.py --dry-run → 0 job(s) would change | new job ids, reset schedules |
 | Webhook to Floppy (types 142) | Seerr settings | `Seerr/scripts/seerr-webhook.py apply` | `seerr.webhook-floppy`: settings.json → True 142 http://192.168.1.102:8012/webhook/seerr/global/ | agent config renamed |
 | Avatar DB write path (fastpi Avatar-Picker writes the user row as uid 65109) | `db/db.sqlite3` | HomeLab-FastPi `Avatar-Picker/README.md` | `seerr.avatar-db`: owner, user.avatar + avatarVersion columns, linked_accounts rows → 65109 2 n | migration renames columns, other uid |
-| Reaches sso (OIDC discovery) | default route on `jellyfin` net (gw_priority) | compose | `seerr.sso-reach`: wget discovery in the container → requests-login issuer | network/route change; note: no extra_hosts, resolves via Cloudflare |
+| Reaches sso (OIDC discovery) over the LAN | `extra_hosts` sso → 192.168.1.2 + default route on `jellyfin` net (gw_priority) | compose | `seerr.sso-reach`: wget discovery in the container → requests-login issuer; `seerr.extra-hosts`: getent → 192.168.1.2 | network/route change; without extra_hosts sso resolves via Cloudflare |
 | seerr-proxy injects bar.css, bar.js, can-wait.js, menu-links.js, night-label.js | `Seerr/indexer-bar/nginx.conf`, `www/` | `docker restart seerr-proxy` | `seerr.proxy-inject`: the 5 files in the page → all 5 | Seerr gzip/HTML change defeats sub_filter |
 | Indexer bar data (usage.json, indexer-usage.timer) | `/srv/appdata/indexer-bar` | Seerr README "Indexer bar" | `seerr.indexer-bar-data`: usage.json → true, n indexers | |
 | Night label data (night-waiting.json from night-downloads.py) | `/srv/appdata/indexer-bar` | Movie-Downloads `night-downloads.timer` | `seerr.night-label-data`: .waiting → array | |
@@ -145,6 +145,5 @@ Only in `post-update-check.sh all` (no compose project).
 
 | Item | Live | Docs |
 |---|---|---|
-| Seerr sso | no extra_hosts: resolves via Cloudflare (OIDC discovery works) | Jellyfin/DT pin sso to fastpi |
 | description-scout.service | installed copy differs from `Movie-Downloads/systemd/` in Description only | reinstall when touched |
 | ryot-db-backup user timer | unit files present, disabled | Ryot retired |

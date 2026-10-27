@@ -24,6 +24,9 @@ services:
       - no-new-privileges
     cap_drop:
       - ALL
+    # sso straight to fastpi over the LAN (DOCKER-USER allows the jellyfin subnet to 192.168.1.2:443); not via Cloudflare
+    extra_hosts:
+      - "sso.holy-grail.ch:192.168.1.2"
     environment:
       - TZ=${TZ}
       - LOG_LEVEL=${LOG_LEVEL}

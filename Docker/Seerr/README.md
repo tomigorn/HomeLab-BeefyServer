@@ -21,7 +21,7 @@ curl -s http://127.0.0.1:5055/api/v1/status     # preview: {"version":"develop-2
 | | |
 |---|---|
 | Port | `5055` on beefy, reachable from fastpi only (DOCKER-USER rule); owned by `seerr-proxy` (nginx, [Indexer bar](#indexer-bar)), Seerr itself publishes nothing |
-| Networks | joins `movie-downloads` and `jellyfin` (external): `radarr:7878`, `sonarr:8989`, `jellyfin:8096`; `seerr-front` (own) with `seerr-proxy`. Default route stays on `jellyfin` (`gw_priority`): only that subnet may reach sso on fastpi |
+| Networks | joins `movie-downloads` and `jellyfin` (external): `radarr:7878`, `sonarr:8989`, `jellyfin:8096`; `seerr-front` (own) with `seerr-proxy`. Default route stays on `jellyfin` (`gw_priority`): only that subnet may reach sso on fastpi; `extra_hosts` pins `sso.holy-grail.ch` to 192.168.1.2 so OIDC stays on the LAN |
 | Config | `/srv/appdata/seerr` (`settings.json` holds the API key and the Jellyfin token; `db/db.sqlite3`) |
 | Traefik / Authentik | `HomeLab-FastPi` -> `Traefik/traefik/dynamic/requests.yml`; Authentik apps `requests` (forward auth) and `requests-login` (OIDC, hidden tile), group **`streaming-requesters`** (`Authentik/scripts/provision-media-groups.py`) |
 | OIDC client | `SEERR_OIDC_CLIENT_ID` / `SEERR_OIDC_CLIENT_SECRET` in `.env` (gitignored), written from fastpi by the provisioning run (`HomeLab-FastPi` `Authentik/README.md`); `scripts/configure.sh` puts them into `settings.json` |
