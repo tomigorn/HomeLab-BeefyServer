@@ -30,7 +30,7 @@ fastpi pulls from beefy at 04:02-04:20 (never wakes it: `fetch_nowake`).
 | Time | What |
 |---|---|
 | 22:05 | fastpi `beefy-night-downloads-wake` wakes beefy only when paused downloads wait (`HomeLab-FastPi` `Docker/Beefy-Waker`); beefy awake anyway: `night-downloads.timer` 22:05 |
-| boot, every 2 min | `night-downloads.timer`: resumes paused night downloads in the low tariff (22:00-06:00, all Sunday); a download running at 06:00 finishes |
+| boot, every 2 min | `night-downloads.timer`: low tariff (22:00-06:00, all Sunday): one night download per client at a time, FIFO; after 06:00 (not Sunday) pauses night items still downloading unless ETA < 15 min, they resume the next night |
 
 Details: `Docker/Movie-Downloads/README.md` "Can wait: downloads at night".
 

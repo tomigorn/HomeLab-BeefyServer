@@ -1,5 +1,5 @@
 [Unit]
-Description=Resume paused night downloads in the low tariff (22:00-06:00, Sunday) or for download-now titles
+Description=Night downloads: FIFO in the low tariff (22:00-06:00, Sunday), paused by day unless ETA under 15 min, download-now any time
 Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
 After=docker.service
 
