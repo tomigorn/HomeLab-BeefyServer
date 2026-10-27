@@ -12,14 +12,18 @@
   var EPISODE = /^(.*): (?:Season|Staffel) (\d+) (?:Episode|Folge) (\d+)$/;
   var GERMAN = /^(Verarbeiten|Verfügbar|Teilweise verfügbar|Angefragt|Gelöscht)$/;
 
-  var state = { waiting: null, waitingAt: 0, waitingLoading: null, media: {}, posters: {}, loading: {} };
+  var RELEASED_FOR = 10 * 60 * 1000;
+  var state = { waiting: null, waitingAt: 0, waitingLoading: null, media: {}, posters: {}, loading: {}, released: {} };
 
   function waitingSet(data, now) {
     if (!data || !Array.isArray(data.waiting)) return null;
     var t = Date.parse(data.updated);
     if (!(now - t <= MAX_AGE)) return null;
     var s = {};
-    for (var i = 0; i < data.waiting.length; i++) s[String(data.waiting[i]).toLowerCase()] = true;
+    for (var i = 0; i < data.waiting.length; i++) {
+      var id = String(data.waiting[i]).toLowerCase();
+      if (!(state.released[id] > now)) s[id] = true;
+    }
     return s;
   }
 
@@ -241,6 +245,13 @@
     downloadBlocks(doc, set, loc);
   }
 
+  // Download now (download-now.js) started these: no label even while night-waiting.json still lists them (rewritten every 2 min)
+  function release(ids) {
+    var until = Date.now() + RELEASED_FOR;
+    for (var i = 0; i < (ids || []).length; i++) state.released[String(ids[i]).toLowerCase()] = until;
+    schedule();
+  }
+
   var timer = null;
   function schedule() {
     if (timer || typeof window === "undefined") return;
@@ -279,7 +290,7 @@
     };
   }
 
-  var api = { waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, state: state };
+  var api = { waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
   if (typeof window === "undefined") return;
   window.hgNightLabel = api;
   try {

@@ -86,6 +86,19 @@ test("title page: a night-paused download shows the night label with the hint, t
   assert.equal(shown(w, b.querySelector(".z-10")), false);
 });
 
+test("released by Download now: the label goes at once and stays gone while the night list still names it", async () => {
+  const w = page(header(badge("tv/76479")), "/tv/76479");
+  await settle();
+  const b = w.document.querySelector(".media-status a");
+  assert.equal(visibleText(w, b), "Waiting for the night 🌙");
+  w.hgNightLabel.release([BOYS_ID]);
+  await settle();
+  assert.equal(visibleText(w, b), "Processing|S2");
+  w.hgNightLabel.refresh();
+  await settle();
+  assert.equal(visibleText(w, b), "Processing|S2");
+});
+
 test("German UI gets the German label", async () => {
   const w = page(header(badge("tv/76479", "Verarbeiten")), "/tv/76479");
   await settle();
