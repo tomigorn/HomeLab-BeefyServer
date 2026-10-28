@@ -1,19 +1,25 @@
-// "Waiting for the night" label (README "Night label"): a download paused by the "Can wait" night queue shows the night label instead of Seerr's "Processing" at 0 %. The night list comes from night-downloads.py; missing, stale or unexpected = Seerr unchanged.
+// "Waiting for the night" label (README "Night label"): a download paused by the "Can wait" night queue shows the night label instead of Seerr's "Processing" at 0 %; a "Can wait" request not downloading gets a 🌙, a title not released yet a 📅. Both lists come from night-downloads.py; missing, stale or unexpected = Seerr unchanged.
 (function () {
   "use strict";
   var WAITING_URL = "/_indexer-bar/night-waiting.json";
+  var REQUESTS_URL = "/_indexer-bar/request-state.json";
   var MAX_AGE = 10 * 60 * 1000;
   var TTL = 60 * 1000;
   var TEXT = {
     en: { label: "Waiting for the night 🌙", tip: "Starts automatically at 22:05 or on Sunday; untick 'Can wait' next time for an immediate download" },
     de: { label: "Wartet auf die Nacht 🌙", tip: "Startet automatisch um 22:05 oder am Sonntag; nächstes Mal „Can wait“ abwählen für einen sofortigen Download" },
   };
+  var FLAGS = {
+    en: { moon: "Waiting for the night — downloads at night (cheaper power)", compass: "No release found yet — searched again in tonight's scheduled search (04:17)", cal: "Not released yet", expected: "expected", locale: "en-GB" },
+    de: { moon: "Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom)", compass: "Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter", cal: "Noch nicht erschienen", expected: "erwartet", locale: "de-CH" },
+  };
+  var PENDING = /^(4K )?(Pending|Ausstehend)$/;
   var MEDIA_LINK = /^\/(movie|tv)\/(\d+)$/;
   var EPISODE = /^(.*): (?:Season|Staffel) (\d+) (?:Episode|Folge) (\d+)$/;
   var GERMAN = /^(Verarbeiten|Verfügbar|Teilweise verfügbar|Angefragt|Gelöscht)$/;
 
   var RELEASED_FOR = 10 * 60 * 1000;
-  var state = { waiting: null, waitingAt: 0, waitingLoading: null, media: {}, posters: {}, loading: {}, released: {} };
+  var state = { waiting: null, requests: null, waitingAt: 0, waitingLoading: null, media: {}, posters: {}, loading: {}, released: {} };
 
   function waitingSet(data, now) {
     if (!data || !Array.isArray(data.waiting)) return null;
@@ -25,6 +31,71 @@
       if (!(state.released[id] > now)) s[id] = true;
     }
     return s;
+  }
+
+  function requestSets(data, now) {
+    if (!data || !Array.isArray(data.canWait) || !data.unreleased || typeof data.unreleased !== "object") return null;
+    if (!(now - Date.parse(data.updated) <= MAX_AGE)) return null;
+    var can = {};
+    for (var i = 0; i < data.canWait.length; i++) can[String(data.canWait[i])] = true;
+    return { canWait: can, unreleased: data.unreleased, noRelease: data.noRelease && typeof data.noRelease === "object" ? data.noRelease : {} };
+  }
+
+  function busy(m) {
+    if (!m) return false;
+    if (m.status === 5) return true;
+    for (var i = 0; i < m.items.length; i++) if (String(m.items[i].status).toLowerCase() !== "paused") return true;
+    return false;
+  }
+
+  // which icons a title gets: 🌙 Can wait (not downloading, not available), 📅 not released yet
+  function flags(key, rs, m) {
+    if (!rs || !key) return { moon: false, compass: false, cal: false, date: null };
+    var has = Object.prototype.hasOwnProperty, done = !!(m && m.status === 5);
+    var moon = rs.canWait[key] === true && !busy(m) && !done;
+    var compass = has.call(rs.noRelease, key) && !busy(m) && !done;
+    var cal = has.call(rs.unreleased, key) && !done;
+    return { moon: moon, compass: compass, cal: cal, date: cal ? rs.unreleased[key] : null };
+  }
+
+  function dateText(iso, l) {
+    var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+    if (!d) return "";
+    try { return new Date(Date.UTC(+d[1], +d[2] - 1, +d[3])).toLocaleDateString(FLAGS[l].locale, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }); } catch (e) { return iso; }
+  }
+
+  // [icon, hint] in display order 🌙🧭📅
+  function flagList(f, l) {
+    var out = [];
+    if (f.moon) out.push(["🌙", FLAGS[l].moon]);
+    if (f.compass) out.push(["🧭", FLAGS[l].compass]);
+    if (f.cal) out.push(["📅", FLAGS[l].cal + (f.date ? " — " + FLAGS[l].expected + " " + dateText(f.date, l) : "")]);
+    return out;
+  }
+
+  // touch has no hover: a tap on an icon shows its hint instead of following the badge link or opening the card
+  function tapHint(doc, el, list) {
+    el.__hgHint = list;
+    if (el.__hgTap) return;
+    el.__hgTap = true;
+    el.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      var tip = doc.getElementById("hg-flag-tip");
+      if (!tip) {
+        tip = doc.createElement("div");
+        tip.id = "hg-flag-tip";
+        tip.setAttribute("role", "tooltip");
+        doc.body.appendChild(tip);
+        doc.addEventListener("click", function (e) { if (e.target !== tip) tip.style.display = "none"; });
+        (doc.defaultView || window).addEventListener("scroll", function () { tip.style.display = "none"; }, true);
+      }
+      tip.textContent = el.__hgHint.map(function (x) { return x[0] + " " + x[1]; }).join("\n");
+      var r = el.getBoundingClientRect(), vw = (doc.defaultView && doc.defaultView.innerWidth) || 360;
+      tip.style.display = "block";
+      tip.style.top = Math.round(r.bottom + 6) + "px";
+      tip.style.left = Math.max(8, Math.min(Math.round(r.left), vw - 264)) + "px";
+    });
   }
 
   function isWaiting(it, set) {
@@ -44,10 +115,10 @@
       if (!o || typeof o !== "object" || depth > 6) return;
       if (Array.isArray(o)) { for (var i = 0; i < o.length && i < 500; i++) walk(o[i], depth + 1); return; }
       var info = o.mediaInfo && typeof o.mediaInfo === "object" ? o.mediaInfo : (Array.isArray(o.downloadStatus) ? o : null);
-      if (info && info.tmdbId && (info.mediaType === "movie" || info.mediaType === "tv") && Array.isArray(info.downloadStatus)) {
+      if (info && info.tmdbId && (info.mediaType === "movie" || info.mediaType === "tv") && (info !== o || Array.isArray(info.downloadStatus))) {
         var key = info.mediaType + "/" + info.tmdbId, prev = state.media[key] || {};
         var names = info === o ? prev.names || [] : [o.title, o.name, o.originalTitle, o.originalName].filter(Boolean);
-        state.media[key] = { items: info.downloadStatus, items4k: Array.isArray(info.downloadStatus4k) ? info.downloadStatus4k : [], names: names.length ? names : prev.names || [], at: now };
+        state.media[key] = { items: Array.isArray(info.downloadStatus) ? info.downloadStatus : [], items4k: Array.isArray(info.downloadStatus4k) ? info.downloadStatus4k : [], status: info.status, names: names.length ? names : prev.names || [], at: now };
         if (info !== o && o.posterPath) state.posters[o.posterPath] = key;
       }
       for (var k in o) if (k !== "downloadStatus" && k !== "downloadStatus4k" && Object.prototype.hasOwnProperty.call(o, k)) walk(o[k], depth + 1);
@@ -71,7 +142,8 @@
   function loadWaiting(force) {
     if (!force && state.waitingAt && Date.now() - state.waitingAt < TTL) return Promise.resolve();
     if (state.waitingLoading) return state.waitingLoading;
-    state.waitingLoading = getJSON(WAITING_URL).then(function (d) { state.waiting = d; }, function () { state.waiting = null; }).then(function () {
+    var requests = getJSON(REQUESTS_URL).then(function (d) { state.requests = d; }, function () { state.requests = null; });
+    state.waitingLoading = Promise.all([requests, getJSON(WAITING_URL).then(function (d) { state.waiting = d; }, function () { state.waiting = null; })]).then(function () {
       state.waitingAt = Date.now();
       state.waitingLoading = null;
     });
@@ -138,9 +210,56 @@
     for (var j = 0; j < hidden.length; j++) hidden[j].removeAttribute("data-hg-night-hide");
     var grey = root.querySelectorAll("[data-hg-night-grey]");
     for (var g = 0; g < grey.length; g++) grey[g].removeAttribute("data-hg-night-grey");
-    if (root.getAttribute("data-hg-night") === "title") root.removeAttribute("title");
+    if (root.getAttribute("data-hg-night") === "title") { root.removeAttribute("title"); root.removeAttribute("aria-label"); }
     root.removeAttribute("data-hg-night-moon");
+    root.removeAttribute("data-hg-night-pill");
+    root.removeAttribute("data-hg-night-icons");
+    if (root.getAttribute("role") === "img") root.removeAttribute("role");
     root.removeAttribute("data-hg-night");
+  }
+
+  function setFlags(doc, b, place, f, l) {
+    var list = flagList(f, l), want = list.map(function (x) { return x[0]; }).join("");
+    if ((b.getAttribute("data-hg-flags") || "") === want) return;
+    var old = b.querySelectorAll("[data-hg-flag-own]");
+    for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+    if (!want) { b.removeAttribute("data-hg-flags"); return; }
+    for (var j = 0; j < list.length; j++) {
+      var e = doc.createElement("span");
+      e.setAttribute("data-hg-flag-own", "");
+      e.setAttribute("role", "img");
+      e.setAttribute("aria-label", list[j][1]);
+      e.title = list[j][1];
+      e.style.cssText = "margin-left:.25rem;cursor:help";
+      e.textContent = list[j][0];
+      tapHint(doc, e, [list[j]]);
+      place.appendChild(e);
+    }
+    b.setAttribute("data-hg-flags", want);
+  }
+
+  // StatusBadge without a download in progress ("Requested", "Pending"): 🌙/📅 after the text
+  function flagBadges(doc, rs, loc) {
+    var rows = doc.querySelectorAll("div.relative.z-20"), seen = [];
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i], b = row.parentElement, span = row.querySelector(":scope > span");
+      if (!b || !span || !/\binline-flex\b/.test(b.className) || !/\brounded-full\b/.test(b.className)) continue;
+      seen.push([b, row, span.textContent.trim()]);
+    }
+    var pend = doc.querySelectorAll("a.inline-flex.rounded-full, span.inline-flex.rounded-full");
+    for (var p = 0; p < pend.length; p++) {
+      var pb = pend[p], txt = "";
+      for (var c = 0; c < pb.childNodes.length; c++) if (pb.childNodes[c].nodeType === 3) txt += pb.childNodes[c].textContent;
+      if (/bg-yellow-500\/80/.test(pb.className) && PENDING.test(txt.trim())) seen.push([pb, pb, txt.trim()]);
+    }
+    for (var k = 0; k < seen.length; k++) {
+      var badge = seen[k][0], text = seen[k][2], key = badgeKey(badge, loc), m = key && state.media[key];
+      if (key && rs && (rs.canWait[key] || Object.prototype.hasOwnProperty.call(rs.unreleased, key) || Object.prototype.hasOwnProperty.call(rs.noRelease, key))) loadMedia(key);
+      var f = flags(key, rs, m);
+      if (badge.getAttribute("data-hg-night") !== null) f.moon = false;
+      if (/^(4K\s)?(Available|Verfügbar)$/.test(text)) f = { moon: false, compass: false, cal: false };
+      setFlags(doc, badge, seen[k][1], f, lang(doc, text.replace(/^4K\s/, "")));
+    }
   }
 
   // StatusBadge while in progress: progress overlay + text row with "Processing" (4K prefixed)
@@ -164,26 +283,33 @@
     }
   }
 
-  // TitleCard (Discover, lists): StatusBadgeMini spinner; the title comes from the poster Seerr's list response named
-  function titleCards(doc, set) {
-    var spinners = doc.querySelectorAll(".pointer-events-none.z-40 svg");
-    for (var i = 0; i < spinners.length; i++) {
-      var svg = spinners[i];
-      if (!svg.querySelector("animateTransform")) continue;
-      var card = svg.closest('[role="link"]'), holder = svg.parentElement;
+  // TitleCard (Discover, lists): StatusBadgeMini chip; the title comes from the poster Seerr's list response named. Night-paused or Can wait 🌙, not released 📅, both side by side in a pill
+  function titleCards(doc, set, rs) {
+    var badges = doc.querySelectorAll('[role="link"] .pointer-events-none.z-40.flex');
+    for (var i = 0; i < badges.length; i++) {
+      var card = badges[i].closest('[role="link"]'), holder = badges[i].firstElementChild && badges[i].firstElementChild.firstElementChild;
       var img = card && card.querySelector("img");
       if (!img || !holder) continue;
       var src = "";
       try { src = decodeURIComponent((img.getAttribute("src") || "") + " " + (img.getAttribute("srcset") || "")); } catch (e) { src = img.getAttribute("src") || ""; }
       var key = null;
       for (var p in state.posters) if (src.indexOf(p) >= 0) { key = state.posters[p]; break; }
-      var m = key && state.media[key];
-      if (!(m && allWaiting(m.items, set))) { restore(holder); continue; }
-      if (holder.hasAttribute("data-hg-night")) continue;
-      hide(svg);
-      holder.appendChild(own(doc, "span", "🌙", ""));
-      holder.setAttribute("data-hg-night-moon", "");
-      holder.setAttribute("title", TEXT[lang(doc)].tip);
+      var m = key && state.media[key], f = flags(key, rs, m), l = lang(doc);
+      var list = flagList(f, l);
+      if (m && allWaiting(m.items, set) && !f.moon) list.unshift(["🌙", TEXT[l].label.replace(/\s*🌙$/, "") + " — " + TEXT[l].tip]);
+      var want = list.map(function (x) { return x[0]; }).join("");
+      if (!want) { restore(holder); continue; }
+      if (holder.getAttribute("data-hg-night-icons") === want) continue;
+      restore(holder);
+      for (var c = 0; c < holder.children.length; c++) hide(holder.children[c]);
+      var tips = list.map(function (x) { return x[1]; }).join(" · ");
+      holder.appendChild(own(doc, "span", want, ""));
+      holder.setAttribute(list.length > 1 ? "data-hg-night-pill" : "data-hg-night-moon", "");
+      holder.setAttribute("title", tips);
+      holder.setAttribute("aria-label", tips);
+      holder.setAttribute("role", "img");
+      tapHint(doc, holder, list);
+      holder.setAttribute("data-hg-night-icons", want);
       holder.setAttribute("data-hg-night", "title");
     }
   }
@@ -234,16 +360,18 @@
     if (doc.getElementById("hg-night-style")) return;
     var s = doc.createElement("style");
     s.id = "hg-night-style";
-    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{width:100% !important;background:#4b5563 !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}";
+    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{width:100% !important;background:#4b5563 !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}#hg-flag-tip{position:fixed;z-index:10000;max-width:16rem;padding:.4rem .6rem;border-radius:.5rem;background:#111827;color:#f3f4f6;border:1px solid #4b5563;font-size:.75rem;line-height:1.1rem;white-space:pre-line;box-shadow:0 4px 12px rgba(0,0,0,.4)}";
     (doc.head || doc.documentElement).appendChild(s);
   }
 
   function apply(doc, loc) {
     var set = waitingSet(state.waiting, Date.now());
     if (set && !Object.keys(set).length) set = null;
+    var rs = requestSets(state.requests, Date.now());
     style(doc);
     statusBadges(doc, set, loc);
-    titleCards(doc, set);
+    flagBadges(doc, rs, loc);
+    titleCards(doc, set, rs);
     downloadBlocks(doc, set, loc);
   }
 
@@ -292,7 +420,7 @@
     };
   }
 
-  var api = { waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
+  var api = { requestSets: requestSets, flags: flags, waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
   if (typeof window === "undefined") return;
   window.hgNightLabel = api;
   try {
@@ -302,7 +430,7 @@
     new MutationObserver(function (records) {
       for (var i = 0; i < records.length; i++) {
         var t = records[i].target;
-        if (!(t.closest && t.closest("[data-hg-night]"))) { schedule(); return; }
+        if (!(t.closest && t.closest("[data-hg-night],[data-hg-flags]"))) { schedule(); return; }
       }
     }).observe(document.body, { childList: true, subtree: true, characterData: true });
     setInterval(refresh, TTL);

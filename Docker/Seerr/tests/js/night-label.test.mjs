@@ -225,3 +225,158 @@ test("Requests page: the request list carries no title names, so the tooltip sti
   await settle();
   assert.equal(visibleText(w, w.document.querySelector('[role="tooltip"] .capitalize').parentElement), "Waiting for the night 🌙");
 });
+
+// request-state.json (night-downloads.py): open requests that are "Can wait" and those not released yet
+const RS_URL = "/_indexer-bar/request-state.json";
+const reqState = (canWait, unreleased = {}, age = 0) => ({ canWait, unreleased, updated: new Date(Date.now() - age).toISOString() });
+const RS_ROUTES = {
+  ...ROUTES,
+  "/api/v1/movie/700": details("movie", 700, "Tied Up", "/tied.jpg", []),
+  "/api/v1/movie/701": details("movie", 701, "The Cat in the Hat", "/cat.jpg", []),
+  "/api/v1/movie/702": details("movie", 702, "Unreleased Now", "/now.jpg", []),
+  "/api/v1/movie/704": details("movie", 704, "More Than Honey", "/honey.jpg", []),
+  "/api/v1/movie/703": { ...details("movie", 703, "Done", "/done.jpg", []), mediaInfo: { tmdbId: 703, mediaType: "movie", status: 5, downloadStatus: [], downloadStatus4k: [] } },
+};
+const RS = reqState(["movie/700", "movie/701", "movie/703", "movie/550", "tv/76479"], { "movie/701": "2027-02-02", "movie/702": null });
+const rsPage = (body, path, rs = RS, waiting = fresh([]), calls) => night(body, fakeXHR({ ...RS_ROUTES, [RS_URL]: rs }, { value: waiting }, calls), path);
+// StatusBadge without a download: "Requested" (Processing status), Pending as plain text
+const plainBadge = (key, text = "Requested") => `<a href="/${key}?manage=1" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap transition cursor-pointer !no-underline bg-indigo-500/80 border border-indigo-500 !text-indigo-100 hover:bg-indigo-500 false overflow-hidden"><div class="relative z-20 flex items-center false"><span>${text}</span></div></a>`;
+const pendingBadge = (key, text = "Pending") => `<a href="/${key}?manage=1" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap transition cursor-pointer !no-underline bg-yellow-500/80 border-yellow-500 border !text-yellow-100 hover:bg-yellow-500">${text}</a>`;
+const flagTip = (b) => [...b.querySelectorAll("[data-hg-flag-own]")].map((e) => e.getAttribute("aria-label")).join(" | ");
+const clockCard = (poster, colour = "indigo") => titleCard(poster).replace(/<svg[\s\S]*?<\/svg>/, '<svg viewBox="0 0 24 24" class="clock"><path d="M12 2"></path></svg>').replace(/indigo/g, colour);
+
+test("Can wait title with nothing grabbed: the Requested badge gets a 🌙 with the night hint", async () => {
+  const w = rsPage(header(plainBadge("movie/700")), "/movie/700");
+  await settle();
+  const b = w.document.querySelector(".media-status a");
+  assert.equal(visibleText(w, b), "Requested|🌙");
+  assert.equal(flagTip(b), "Waiting for the night — downloads at night (cheaper power)");
+});
+
+test("Can wait and not released yet: 🌙 and 📅 with the date; not released alone: only 📅", async () => {
+  const w = rsPage(header(plainBadge("movie/701")) + requestCard("movie/702", "Unreleased Now").replace(badge("movie/702"), plainBadge("movie/702")), "/movie/701");
+  await settle();
+  const [cat, now] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  assert.equal(visibleText(w, cat), "Requested|🌙|📅");
+  assert.equal(flagTip(cat), "Waiting for the night — downloads at night (cheaper power) | Not released yet — expected 2 Feb 2027");
+  assert.equal(visibleText(w, now), "Requested|📅");
+  assert.equal(flagTip(now), "Not released yet");
+});
+
+test("Pending approval badge gets the 🌙 too", async () => {
+  const w = rsPage(header(pendingBadge("movie/700")), "/movie/700");
+  await settle();
+  const b = w.document.querySelector(".media-status a");
+  assert.equal(b.textContent, "Pending🌙");
+  assert.equal(flagTip(b), "Waiting for the night — downloads at night (cheaper power)");
+});
+
+test("no 🌙 while Seerr shows a running download, once available, for titles not Can wait, or with a stale or missing file", async () => {
+  const w = rsPage(header(badge("movie/550", "Processing", "")) + requestCard("movie/703", "Done").replace(badge("movie/703"), plainBadge("movie/703", "Available")) + requestCard("movie/1", "Other").replace(badge("movie/1"), plainBadge("movie/1")), "/movie/550");
+  await settle();
+  assert.deepEqual([...w.document.querySelectorAll('a[href$="?manage=1"]')].map((b) => visibleText(w, b)), ["Processing", "Available", "Requested"]);
+  for (const rs of [reqState(["movie/700"], {}, 20 * 60 * 1000), null]) {
+    const w2 = rsPage(header(plainBadge("movie/700")), "/movie/700", rs);
+    await settle();
+    assert.equal(visibleText(w2, w2.document.querySelector(".media-status a")), "Requested");
+  }
+});
+
+test("night-paused download of a Can wait title: the night label, no second moon", async () => {
+  const w = rsPage(header(badge("tv/76479")), "/tv/76479", RS, WAITING);
+  await settle();
+  assert.equal(visibleText(w, w.document.querySelector(".media-status a")), "Waiting for the night 🌙");
+});
+
+test("German UI: German hints and date", async () => {
+  const w = rsPage(header(plainBadge("movie/701", "Angefragt")), "/movie/701");
+  await settle();
+  assert.equal(flagTip(w.document.querySelector(".media-status a")), "Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom) | Noch nicht erschienen — erwartet 2. Feb. 2027");
+});
+
+test("the request is downloaded or switched to Download now while the page is open: the 🌙 goes", async () => {
+  const rs = { value: RS };
+  const routes = { ...RS_ROUTES };
+  Object.defineProperty(routes, RS_URL, { get: () => rs.value, enumerable: true });
+  const w = night(header(plainBadge("movie/700")), fakeXHR(routes, { value: fresh([]) }), "/movie/700");
+  await settle();
+  const b = w.document.querySelector(".media-status a");
+  assert.equal(visibleText(w, b), "Requested|🌙");
+  rs.value = reqState([]);
+  w.hgNightLabel.refresh();
+  await settle();
+  assert.equal(visibleText(w, b), "Requested");
+  assert.equal(b.querySelectorAll("[data-hg-flag-own]").length, 0);
+});
+
+test("Discover cards: 🌙 in the 26px circle, 🌙📅 side by side in a pill, 📅 alone, nothing for others; re-renders add nothing twice", async () => {
+  const list = (id, poster, status = 3, items = []) => ({ id, mediaType: "movie", title: String(id), posterPath: poster, mediaInfo: { tmdbId: id, mediaType: "movie", status, downloadStatus: items, downloadStatus4k: [] } });
+  const routes = { ...RS_ROUTES, [RS_URL]: RS, "/api/v1/discover/movies": { results: [list(700, "/tied.jpg"), list(701, "/cat.jpg"), list(702, "/now.jpg"), list(550, "/fight.jpg", 3, [FIGHT_ITEM]), list(9, "/other.jpg")] } };
+  const w = night(clockCard("/tied.jpg") + clockCard("/cat.jpg") + clockCard("/now.jpg") + titleCard("/fight.jpg") + clockCard("/other.jpg"), fakeXHR(routes, { value: fresh([]) }), "/discover/movies");
+  const x = new w.XMLHttpRequest();
+  x.open("GET", "/api/v1/discover/movies");
+  x.send();
+  await settle();
+  w.document.body.insertAdjacentHTML("beforeend", "<p>re-render</p>");
+  await settle();
+  const [tied, cat, now, fight, other] = [...w.document.querySelectorAll('[role="link"]')].map((c) => c.querySelector(".pointer-events-none.z-40.flex"));
+  assert.equal(visibleText(w, tied), "🌙");
+  assert.ok(tied.querySelector("[data-hg-night-moon]"));
+  assert.equal(visibleText(w, cat), "🌙📅");
+  assert.ok(cat.querySelector("[data-hg-night-pill]"));
+  assert.equal(cat.querySelector("[data-hg-night-moon]"), null);
+  assert.match(cat.querySelector("[data-hg-night]").getAttribute("title"), /^Waiting for the night — downloads at night \(cheaper power\) · Not released yet — expected 2 Feb 2027$/);
+  assert.equal(visibleText(w, now), "📅");
+  assert.equal(fight.querySelector("[data-hg-night-own]"), null);
+  assert.ok(shown(w, fight.querySelector("svg")));
+  assert.equal(other.querySelector("[data-hg-night-own]"), null);
+  assert.equal(tied.querySelectorAll("[data-hg-night-own]").length, 1);
+  assert.match(w.document.getElementById("hg-night-style").textContent, /\[data-hg-night-pill\]\{[^}]*height:1\.625rem[^}]*!important/);
+});
+
+const COMPASS_EN = "No release found yet — searched again in tonight's scheduled search (04:17)";
+const RS_C = { ...reqState(["movie/704", "movie/700"], { "movie/700": "2027-02-02" }), noRelease: { "movie/704": "2026-10-28T10:00:23Z", "movie/702": "2026-10-28T10:00:23Z" } };
+
+test("searched, no release found: 🧭 beside the 🌙 (and alone for a title that is not Can wait), order 🌙🧭📅", async () => {
+  const w = rsPage(header(plainBadge("movie/704")) + requestCard("movie/702", "Now").replace(badge("movie/702"), plainBadge("movie/702")) + requestCard("movie/700", "Tied").replace(badge("movie/700"), plainBadge("movie/700")), "/movie/704", RS_C);
+  await settle();
+  const [honey, now, tied] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  assert.equal(visibleText(w, honey), "Requested|🌙|🧭");
+  assert.equal(flagTip(honey), "Waiting for the night — downloads at night (cheaper power) | " + COMPASS_EN);
+  assert.equal(visibleText(w, now), "Requested|🧭");
+  assert.equal(visibleText(w, tied), "Requested|🌙|📅");
+});
+
+test("German 🧭 hint", async () => {
+  const w = rsPage(header(plainBadge("movie/702", "Angefragt")), "/movie/702", RS_C);
+  await settle();
+  assert.equal(flagTip(w.document.querySelector(".media-status a")), "Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter");
+});
+
+test("tap on an icon shows its hint and does not open the link or the card", async () => {
+  const routes = { ...RS_ROUTES, [RS_URL]: RS_C, "/api/v1/discover/movies": { results: [{ id: 704, mediaType: "movie", title: "Honey", posterPath: "/honey.jpg", mediaInfo: { tmdbId: 704, mediaType: "movie", status: 3, downloadStatus: [], downloadStatus4k: [] } }] } };
+  const w = night(clockCard("/honey.jpg") + header(plainBadge("movie/704")), fakeXHR(routes, { value: fresh([]) }), "/movie/704");
+  const x = new w.XMLHttpRequest();
+  x.open("GET", "/api/v1/discover/movies");
+  x.send();
+  await settle();
+  let opened = 0;
+  w.document.querySelector('[role="link"]').addEventListener("click", () => opened++);
+  w.document.querySelector(".media-status a").addEventListener("click", () => opened++);
+  const chip = w.document.querySelector('[role="link"] [data-hg-night]');
+  assert.equal(chip.textContent, "🌙🧭");
+  assert.equal(chip.getAttribute("aria-label"), "Waiting for the night — downloads at night (cheaper power) · " + COMPASS_EN);
+  chip.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  const tip = w.document.getElementById("hg-flag-tip");
+  assert.ok(tip && shown(w, tip));
+  assert.equal(tip.textContent, "🌙 Waiting for the night — downloads at night (cheaper power)\n🧭 " + COMPASS_EN);
+  const icon = w.document.querySelector(".media-status [data-hg-flag-own]");
+  const ev = new w.MouseEvent("click", { bubbles: true, cancelable: true });
+  icon.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, true);
+  assert.equal(tip.textContent, "🌙 Waiting for the night — downloads at night (cheaper power)");
+  assert.equal(opened, 0);
+  w.document.body.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
+  assert.equal(shown(w, tip), false);
+  assert.match(w.document.getElementById("hg-night-style").textContent, /\[data-hg-night\]\[data-hg-night-icons\]\{[^}]*pointer-events:auto/);
+});
