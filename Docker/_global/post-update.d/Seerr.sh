@@ -28,8 +28,10 @@ if want seerr; then
   check seerr.extra-hosts '^192\.168\.1\.2$' "$(docker exec seerr getent ahostsv4 sso.holy-grail.ch 2>&1 | awk 'NR==1{print $1}')"
 fi
 if want seerr-proxy; then
-  check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
+  check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '\(src\|href\)="/_indexer-bar/[a-z-]*\.\(js\|css\)"' | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
   check seerr.data-needs-session '^401 401 401 401$' "$(for u in /_indexer-bar/usage.json /_indexer-bar/night-waiting.json /_indexer-bar/request-state.json '/_download-now/api?type=movie&tmdb=603'; do curl -s -m 8 -o /dev/null -w '%{http_code} ' "http://127.0.0.1:5055$u"; done | xargs 2>&1)"
+  check seerr.bar-config '^1$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -c 'bar.js" data-ib-data="/_indexer-bar/usage.json"')"
+  check seerr.bar-texts '^hint note$' "$(seerr_data /_indexer-bar/usage.json | jq -r '"\(if .storage[0].hint.en then "hint" else "no-hint" end) \(if .note.en then "note" else "no-note" end)"' 2>&1)"
   check seerr.bar-storage '^SSD HDD$' "$(seerr_data /_indexer-bar/usage.json | jq -r '[.storage[].name] | join(" ")' 2>&1)"
   check seerr.indexer-bar-data '^true [0-9]+$' "$(seerr_data /_indexer-bar/usage.json | jq -r '"\(.ok) \(.indexers|length)"' 2>&1)"
   check seerr.night-label-data '^array$' "$(seerr_data /_indexer-bar/night-waiting.json | jq -r '.waiting|type' 2>&1)"
