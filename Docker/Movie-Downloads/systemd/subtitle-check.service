@@ -12,3 +12,28 @@ Environment=SC_STATE=/srv/appdata/bazarr/subtitle-check
 ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/subtitle-check.py --scan /srv/.disks/ssd-hot/media=/srv/video/media
 NoNewPrivileges=true
 PrivateTmp=true
+# Parses subtitle files from releases (untrusted): buntu, but sandboxed, no network; writes only its state dir and repaired subtitles.
+ReadWritePaths=/srv/appdata/bazarr/subtitle-check /srv/video/media
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources

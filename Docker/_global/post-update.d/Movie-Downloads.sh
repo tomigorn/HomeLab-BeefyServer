@@ -42,6 +42,7 @@ if want radarr sonarr recyclarr; then
   check md.scoring 'all checks passed' "$(python3 "$MD_DIR/scripts/scoring-check.py" 2>&1 | tail -1)"
   check md.swiss-german 'all checks passed' "$(python3 "$MD_DIR/scripts/swiss-german-check.py" 2>&1 | tail -1)"
   check md.host-timers '^ok$' "$(m=''; for u in request-tags.timer night-downloads.timer night-search.timer clear-data-wipe.timer queue-watchdog.timer description-scout.timer nfo-scout.timer language-missing.timer original-audio.timer subtitle-check.timer original-audio-import.path; do [ "$(systemctl is-active "$u")" = active ] || m="$m $u"; done; echo "${m:-ok}")"
+  check md.parser-sandbox '^nfo-scout=strict,read-only,same subtitle-check=strict,read-only,yes,same$' "$(for u in nfo-scout subtitle-check; do printf '%s=%s,%s%s,%s ' "$u" "$(systemctl show -p ProtectSystem --value "$u")" "$(systemctl show -p ProtectHome --value "$u")" "$([ "$u" = subtitle-check ] && echo ",$(systemctl show -p PrivateNetwork --value "$u")")" "$(cmp -s "$MD_DIR/systemd/$u.service" "/etc/systemd/system/$u.service" && echo same || echo differs)"; done | xargs)"
   check md.night-downloads '^low tariff: (True|False), waiting for the night: [0-9]+$' "$(python3 "$MD_DIR/scripts/night-downloads.py" --dry-run 2>&1 | grep '^low tariff')"
 fi
 if want recyclarr; then
