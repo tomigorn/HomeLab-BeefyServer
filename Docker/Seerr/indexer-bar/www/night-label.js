@@ -6,8 +6,8 @@
   var MAX_AGE = 10 * 60 * 1000;
   var TTL = 60 * 1000;
   var TEXT = {
-    en: { label: "Waiting for the night 🌙", tip: "Starts automatically at 22:05 or on Sunday; untick 'Can wait' next time for an immediate download" },
-    de: { label: "Wartet auf die Nacht 🌙", tip: "Startet automatisch um 22:05 oder am Sonntag; nächstes Mal „Can wait“ abwählen für einen sofortigen Download" },
+    en: { label: "Waiting for the night 🌙", short: "🌙 Tonight", tip: "Starts automatically at 22:05 or on Sunday; untick 'Can wait' next time for an immediate download" },
+    de: { label: "Wartet auf die Nacht 🌙", short: "🌙 Heute Nacht", tip: "Startet automatisch um 22:05 oder am Sonntag; nächstes Mal „Kann warten“ abwählen für einen sofortigen Download" },
   };
   var FLAGS = {
     en: { moon: "Waiting for the night — downloads at night (cheaper power)", compass: "No release found yet — searched again in tonight's scheduled search (04:17)", cal: "Not released yet", expected: "expected", moonShort: "Waiting for the night", compassNight: ", downloads at night when found", restNight: "the rest downloads at night", compassShort: "No release found yet — searched again tonight (04:17)", nextEp: "next episode", soFar: "Everything released so far is in Jellyfin", nextExp: "Next episode expected", nightShort: "downloads at night", soFarLabel: "Available so far", locale: "en-GB" },
@@ -30,7 +30,10 @@
   var PART = /^(4K\s)?(Partially Available|Teilweise verfügbar)$/i;
   var MEDIA_LINK = /^\/(movie|tv)\/(\d+)$/;
   var EPISODE = /^(.*): (?:Season|Staffel) (\d+) (?:Episode|Folge) (\d+)$/;
-  var GERMAN = /^(Verarbeiten|Verfügbar|Teilweise verfügbar|Angefragt|Gelöscht)$/;
+  var GERMAN = /^(Verarbeiten|Verfügbar|Teilweise verfügbar|Angefragt|Ausstehend|Gelöscht)$/;
+  var POSTER = /\/t\/p\/[^/]+(\/[^/?&\s"]+)/;
+  var CAP = 1500;
+  var BAR = "div.relative.h-6.overflow-hidden.rounded-full.bg-gray-700";
 
   var RELEASED_FOR = 10 * 60 * 1000;
   var state = { waiting: null, requests: null, waitingAt: 0, waitingLoading: null, media: {}, posters: {}, loading: {}, released: {}, requested: {}, poll: 15 * 1000 };
@@ -139,7 +142,14 @@
     return list.map(function (x) { return x[0] === "🌙" ? FLAGS[l].moonShort : x[0] === "🧭" && moon ? x[1] + FLAGS[l].compassNight : x[1]; }).join(" · ");
   }
 
-  // one static hint box, placed once below the badge (no title tooltip, no move handlers)
+  function hideTip(doc) {
+    var tip = doc.getElementById("hg-flag-tip");
+    if (!tip) return;
+    tip.style.display = "none";
+    if (tip.__for && tip.__for.getAttribute("aria-describedby") === "hg-flag-tip") tip.__for.removeAttribute("aria-describedby");
+  }
+
+  // one static hint box, placed once below the badge (no title tooltip, no move handlers); Escape closes it
   function showTip(doc, el) {
     var tip = doc.getElementById("hg-flag-tip");
     if (!tip) {
@@ -147,11 +157,14 @@
       tip.id = "hg-flag-tip";
       tip.setAttribute("role", "tooltip");
       doc.body.appendChild(tip);
-      doc.addEventListener("click", function (e) { if (e.target !== tip) tip.style.display = "none"; });
-      (doc.defaultView || window).addEventListener("scroll", function () { tip.style.display = "none"; }, true);
+      doc.addEventListener("click", function (e) { if (e.target !== tip) hideTip(doc); });
+      doc.addEventListener("keydown", function (e) { if (e.key === "Escape") hideTip(doc); });
+      (doc.defaultView || window).addEventListener("scroll", function () { hideTip(doc); }, true);
     }
+    if (tip.__for && tip.__for !== el && tip.__for.getAttribute("aria-describedby") === "hg-flag-tip") tip.__for.removeAttribute("aria-describedby");
     tip.textContent = el.__hgHint;
     tip.__for = el;
+    if (!el.hasAttribute("aria-describedby")) el.setAttribute("aria-describedby", "hg-flag-tip");
     var r = el.getBoundingClientRect(), vw = (doc.defaultView && doc.defaultView.innerWidth) || 360;
     tip.style.display = "block";
     tip.style.top = Math.round(r.bottom + 6) + "px";
@@ -159,25 +172,51 @@
     return tip;
   }
 
-  // mouse: the hint shows while hovering; touch has no hover: the first tap shows it, a second tap goes through (link, card)
-  function tapHint(doc, el, text) {
+  // mouse: the hint shows while hovering (pop = a Seerr popup trigger: the hint goes into Seerr's popup instead); keyboard focus shows it too; touch: the first tap shows it, a second tap goes through (link, card)
+  function tapHint(doc, el, text, pop) {
     el.__hgHint = text;
+    el.__hgPop = !!pop;
     if (text) el.setAttribute("data-hg-hint", text); else el.removeAttribute("data-hg-hint");
     if (el.__hgTap) return;
     el.__hgTap = true;
-    el.addEventListener("pointerenter", function (ev) { if (ev.pointerType === "mouse" && el.__hgHint) { showTip(doc, el).__hover = true; } });
-    el.addEventListener("pointerleave", function (ev) {
-      var tip = doc.getElementById("hg-flag-tip");
-      if (ev.pointerType === "mouse" && tip && tip.__for === el) tip.style.display = "none";
+    el.addEventListener("pointerdown", function (ev) { el.__hgPt = ev.pointerType; });
+    el.addEventListener("pointerenter", function (ev) {
+      if (ev.pointerType !== "mouse" || !el.__hgHint) return;
+      state.hover = el;
+      if (!el.__hgPop) showTip(doc, el);
     });
-    el.addEventListener("click", function (ev) {
-      if (!el.__hgHint) return;
+    el.addEventListener("pointerleave", function (ev) {
+      if (ev.pointerType !== "mouse") return;
+      if (state.hover === el) state.hover = null;
       var tip = doc.getElementById("hg-flag-tip");
-      if (tip && tip.__for === el && tip.style.display !== "none") { tip.style.display = "none"; return; }
+      if (tip && tip.__for === el) hideTip(doc);
+    });
+    el.addEventListener("focus", function () { if (el.__hgHint && !el.__hgPop) showTip(doc, el); });
+    el.addEventListener("blur", function () { var tip = doc.getElementById("hg-flag-tip"); if (tip && tip.__for === el) hideTip(doc); });
+    el.addEventListener("click", function (ev) {
+      var touch = el.__hgPt === "touch";
+      el.__hgPt = null;
+      if (!el.__hgHint || !touch) return;
+      var tip = doc.getElementById("hg-flag-tip");
+      if (tip && tip.__for === el && tip.style.display !== "none") { hideTip(doc); return; }
       ev.preventDefault();
       ev.stopPropagation();
-      showTip(doc, el).__hover = false;
+      showTip(doc, el);
     });
+  }
+
+  // Seerr's own popup on a hovered status pill: our hint as one line inside it (no second tooltip on top)
+  function popHint(doc, node) {
+    var el = state.hover;
+    if (!el || !el.__hgPop || !el.__hgHint || !el.isConnected || node.parentNode !== doc.body || !/\bz-50\b/.test(node.className || "") || !/\babsolute\b/.test(node.className || "")) return;
+    var line = node.querySelector("[data-hg-pop-hint]");
+    if (!line) {
+      line = doc.createElement("div");
+      line.setAttribute("data-hg-night-own", "");
+      line.setAttribute("data-hg-pop-hint", "");
+      node.appendChild(line);
+    }
+    if (line.textContent !== el.__hgHint) line.textContent = el.__hgHint;
   }
 
   // Seerr's own mini badge: spinner = downloading, green check = available, green minus = partly available
@@ -239,6 +278,16 @@
     if (!(Date.parse(state.requested[key]) >= Date.parse(at))) state.requested[key] = at;
   }
 
+  // the session caches stay small: oldest titles go first, posters of dropped titles with them
+  function prune() {
+    var keys = Object.keys(state.media);
+    if (keys.length <= CAP && Object.keys(state.posters).length <= CAP) return;
+    keys.sort(function (a, b) { return (state.media[a].at || 0) - (state.media[b].at || 0); });
+    for (var i = 0; i < keys.length - CAP; i++) { delete state.media[keys[i]]; delete state.requested[keys[i]]; }
+    var posters = Object.keys(state.posters);
+    for (var j = 0; j < posters.length; j++) if (!state.media[state.posters[posters[j]]] || posters.length - j > CAP) delete state.posters[posters[j]];
+  }
+
   // Collects what Seerr's API returned: download lists per title, poster -> title, title names.
   function remember(json) {
     var now = Date.now();
@@ -256,6 +305,7 @@
       }
       for (var k in o) if (k !== "downloadStatus" && k !== "downloadStatus4k" && Object.prototype.hasOwnProperty.call(o, k)) walk(o[k], depth + 1);
     })(json, 0);
+    prune();
   }
 
   function getJSON(url) {
@@ -327,6 +377,8 @@
     var tv = doc.querySelector('a[href="/discover/tv"]');
     if (tv && /\bSerien\b/.test(tv.textContent)) return "de";
     if (tv && /\bSeries\b/.test(tv.textContent)) return "en";
+    var own = doc.querySelector(".media-status span:not([data-hg-night-own]):not([data-hg-flag-own])");
+    if (own && GERMAN.test(own.textContent.trim())) return "de";
     return /^de\b/i.test((doc.defaultView && doc.defaultView.navigator.language) || "") ? "de" : "en";
   }
 
@@ -355,6 +407,7 @@
     root.removeAttribute("data-hg-night-solid");
     if (root.getAttribute("role") === "img") root.removeAttribute("role");
     root.__hgHint = null;
+    root.__hgFlagsKey = null;
     root.removeAttribute("data-hg-hint");
     root.removeAttribute("data-hg-night");
   }
@@ -404,7 +457,7 @@
       place.appendChild(e);
     }
     b.style.cursor = "help";
-    tapHint(doc, b, merged(list, l));
+    tapHint(doc, b, merged(list, l), true);
     b.setAttribute("data-hg-flags", want);
   }
 
@@ -473,8 +526,9 @@
       var t = TEXT[lang(doc, text.replace(/^4K\s/, ""))];
       hide(overlay);
       for (var c = 0; c < row.children.length; c++) hide(row.children[c]);
-      row.appendChild(own(doc, "span", (is4k ? "4K " : "") + t.label));
-      if (!b.hasAttribute("title")) { b.setAttribute("title", t.tip); b.setAttribute("data-hg-night", "title"); } else b.setAttribute("data-hg-night", "");
+      row.appendChild(own(doc, "span", (is4k ? "4K " : "") + t.short));
+      tapHint(doc, b, t.label + " — " + t.tip, true);
+      b.setAttribute("data-hg-night", "");
     }
   }
 
@@ -487,8 +541,8 @@
       if (!img || !holder) continue;
       var src = "";
       try { src = decodeURIComponent((img.getAttribute("src") || "") + " " + (img.getAttribute("srcset") || "")); } catch (e) { src = img.getAttribute("src") || ""; }
-      var key = null;
-      for (var p in state.posters) if (src.indexOf(p) >= 0) { key = state.posters[p]; break; }
+      var pm = POSTER.exec(src), key = pm ? state.posters[pm[1]] || null : null;
+      if (!pm) for (var p in state.posters) if (src.indexOf(p) >= 0) { key = state.posters[p]; break; }
       var m = key && state.media[key], f = flags(key, rs, m), l = lang(doc);
       if (m && m.at === 0) loadMedia(key);
       var kind = nativeKind(holder), list = flagList(f, l, kind === "part", true), qs = queueStatus(f, l);
@@ -512,8 +566,8 @@
       holder.appendChild(icon);
       if (kind && status) holder.setAttribute("data-hg-night-solid", "");
       holder.setAttribute(list.length > 1 ? "data-hg-night-pill" : "data-hg-night-moon", "");
-      holder.setAttribute("aria-label", tips);
-      holder.setAttribute("role", "img");
+      icon.setAttribute("role", "img");
+      icon.setAttribute("aria-label", tips);
       tapHint(doc, holder, tips);
       holder.setAttribute("data-hg-night-icons", want);
       holder.setAttribute("data-hg-night", "title");
@@ -541,7 +595,7 @@
   }
 
   function downloadBlocks(doc, set, loc) {
-    var bars = doc.querySelectorAll("div.relative.h-6.overflow-hidden.rounded-full.bg-gray-700");
+    var bars = doc.querySelectorAll(BAR);
     var hint = pathKey(loc);
     if (bars.length && hint && set) loadMedia(hint);
     for (var i = 0; i < bars.length; i++) {
@@ -556,7 +610,6 @@
       fill.setAttribute("data-hg-night-grey", "");
       var badge = own(doc, "span", t.label);
       badge.className = status.className.replace(/\bcapitalize\b/, "").replace(/bg-indigo-500\/80|border-indigo-500|!text-indigo-100/g, "") + " bg-gray-600 border border-gray-500 text-gray-100";
-      badge.title = t.tip;
       status.parentNode.insertBefore(badge, status.nextSibling);
       block.setAttribute("data-hg-night", "");
     }
@@ -566,7 +619,7 @@
     if (doc.getElementById("hg-night-style")) return;
     var s = doc.createElement("style");
     s.id = "hg-night-style";
-    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{width:100% !important;background:#4b5563 !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night-solid]{background-color:rgba(99,102,241,.8) !important;border-color:#818cf8 !important;--tw-ring-color:#818cf8 !important;color:#eef2ff !important}[data-hg-half]{display:inline-block;width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:2px solid #fff;background:linear-gradient(90deg,#fff 50%,transparent 50%);vertical-align:middle}[data-hg-night-own] > [data-hg-half] + *{margin-left:.2rem}[data-hg-spin]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-spin] svg{display:block;width:100%;height:100%;animation:hg-spin .8s steps(8) infinite}@keyframes hg-spin{to{transform:rotate(360deg)}}a[data-hg-part],span[data-hg-part]{background-color:rgba(2,132,199,.8) !important;border-color:#0ea5e9 !important;color:#e0f2fe !important}a[data-hg-part]:hover{background-color:#0284c7 !important}[data-hg-flag-own] > [data-hg-half]{width:.75rem;height:.75rem}[data-hg-flag-own] > [data-hg-spin],[data-hg-flag-own] > [data-hg-search]{width:.85rem;height:.85rem}[data-hg-search]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-search] svg{display:block;width:100%;height:100%}[data-hg-search=\"wait\"] svg{opacity:.8}[data-hg-search=\"live\"] svg{animation:hg-pulse 1.4s ease-in-out infinite}@keyframes hg-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.84)}}[data-hg-night-own] > [data-hg-search] + *,[data-hg-night-own] > * + [data-hg-search]{margin-left:.15rem}@media (prefers-reduced-motion:reduce){[data-hg-spin] svg,[data-hg-search=\"live\"] svg{animation:none}}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}#hg-flag-tip{position:fixed;z-index:10000;max-width:16rem;padding:.4rem .6rem;border-radius:.5rem;background:#111827;color:#f3f4f6;border:1px solid #4b5563;font-size:.75rem;line-height:1.1rem;white-space:pre-line;box-shadow:0 4px 12px rgba(0,0,0,.4)}";
+    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{background:#4b5563 !important;transition:none !important}[data-hg-pop-hint]{margin:.25rem 0;padding:0 .25rem;font-size:.75rem;line-height:1.1rem;color:#d1d5db;white-space:normal}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night-solid]{background-color:rgba(99,102,241,.8) !important;border-color:#818cf8 !important;--tw-ring-color:#818cf8 !important;color:#eef2ff !important}[data-hg-half]{display:inline-block;width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:2px solid #fff;background:linear-gradient(90deg,#fff 50%,transparent 50%);vertical-align:middle}[data-hg-night-own] > [data-hg-half] + *{margin-left:.2rem}[data-hg-spin]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-spin] svg{display:block;width:100%;height:100%;animation:hg-spin .8s steps(8) infinite}@keyframes hg-spin{to{transform:rotate(360deg)}}a[data-hg-part],span[data-hg-part]{background-color:rgba(2,132,199,.8) !important;border-color:#0ea5e9 !important;color:#e0f2fe !important}a[data-hg-part]:hover{background-color:#0284c7 !important}[data-hg-flag-own] > [data-hg-half]{width:.75rem;height:.75rem}[data-hg-flag-own] > [data-hg-spin],[data-hg-flag-own] > [data-hg-search]{width:.85rem;height:.85rem}[data-hg-search]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-search] svg{display:block;width:100%;height:100%}[data-hg-search=\"wait\"] svg{opacity:.8}[data-hg-search=\"live\"] svg{animation:hg-pulse 1.4s ease-in-out infinite}@keyframes hg-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.84)}}[data-hg-night-own] > [data-hg-search] + *,[data-hg-night-own] > * + [data-hg-search]{margin-left:.15rem}@media (prefers-reduced-motion:reduce){[data-hg-spin] svg,[data-hg-search=\"live\"] svg{animation:none}}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}#hg-flag-tip{position:fixed;z-index:10000;max-width:16rem;padding:.4rem .6rem;border-radius:.5rem;background:#111827;color:#f3f4f6;border:1px solid #4b5563;font-size:.75rem;line-height:1.1rem;white-space:pre-line;box-shadow:0 4px 12px rgba(0,0,0,.4)}";
     (doc.head || doc.documentElement).appendChild(s);
   }
 
@@ -636,19 +689,29 @@
     return flagList(flags(key, requestSets(state.requests, Date.now()), state.media[key]), lang(document));
   }
 
-  var api = { icons: icons, hintText: function (list) { return merged(list, lang(document)); }, hint: function (el, text) { tapHint(document, el, text); }, requestSets: requestSets, flags: flags, waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
+  var api = { lang: function () { return lang(document); }, icons: icons, hintText: function (list) { return merged(list, lang(document)); }, hint: function (el, text) { tapHint(document, el, text); }, requestSets: requestSets, flags: flags, waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
   if (typeof window === "undefined") return;
   window.hgNightLabel = api;
   try {
     hookXHR(window.XMLHttpRequest);
     if (!window.MutationObserver || !document.body) return;
     schedule();
+    // runs before the next paint: a popup Seerr just added is patched at once (no flash), the rest is debounced
     new MutationObserver(function (records) {
+      var due = false, blocks = false;
       for (var i = 0; i < records.length; i++) {
-        var t = records[i].target;
-        if (!(t.closest && t.closest("[data-hg-night],[data-hg-flags]"))) { schedule(); return; }
+        var r = records[i], t = r.target;
+        for (var n = 0; n < r.addedNodes.length; n++) {
+          var a = r.addedNodes[n];
+          if (a.nodeType !== 1) continue;
+          if (a.parentNode === document.body) popHint(document, a);
+          if (state.waitingAt && a.querySelector && (a.matches(BAR) || a.querySelector(BAR))) blocks = true;
+        }
+        if (!due && !(t.closest && t.closest("[data-hg-night],[data-hg-flags]"))) due = true;
       }
-    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+      if (blocks) { try { var set = waitingSet(state.waiting, Date.now()); if (set && Object.keys(set).length) downloadBlocks(document, set, window.location); } catch (e) { /* never break Seerr */ } }
+      if (due) schedule();
+    }).observe(document.body, { childList: true, subtree: true });
     setInterval(refresh, TTL);
   } catch (e) { /* never break Seerr */ }
 })();

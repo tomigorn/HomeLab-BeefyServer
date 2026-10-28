@@ -81,8 +81,8 @@ test("title page: a night-paused download shows the night label with the hint, t
   const w = page(header(badge("tv/76479")), "/tv/76479");
   await settle();
   const b = w.document.querySelector(".media-status a");
-  assert.equal(visibleText(w, b), "Waiting for the night 🌙");
-  assert.match(b.getAttribute("title"), /22:05 or on Sunday; untick 'Can wait' next time/);
+  assert.equal(visibleText(w, b), "🌙 Tonight");
+  assert.match(b.getAttribute("data-hg-hint"), /22:05 or on Sunday; untick 'Can wait' next time/);
   assert.equal(shown(w, b.querySelector(".z-10")), false);
 });
 
@@ -90,7 +90,7 @@ test("released by Download now: the label goes at once and stays gone while the 
   const w = page(header(badge("tv/76479")), "/tv/76479");
   await settle();
   const b = w.document.querySelector(".media-status a");
-  assert.equal(visibleText(w, b), "Waiting for the night 🌙");
+  assert.equal(visibleText(w, b), "🌙 Tonight");
   w.hgNightLabel.release([BOYS_ID]);
   await settle();
   assert.equal(visibleText(w, b), "Processing|S2");
@@ -103,8 +103,8 @@ test("German UI gets the German label", async () => {
   const w = page(header(badge("tv/76479", "Verarbeiten")), "/tv/76479");
   await settle();
   const b = w.document.querySelector(".media-status a");
-  assert.equal(visibleText(w, b), "Wartet auf die Nacht 🌙");
-  assert.match(b.getAttribute("title"), /22:05 oder am Sonntag/);
+  assert.equal(visibleText(w, b), "🌙 Heute Nacht");
+  assert.match(b.getAttribute("data-hg-hint"), /22:05 oder am Sonntag/);
 });
 
 test("a running download and a paused item outside the night list stay as Seerr shows them", async () => {
@@ -137,7 +137,7 @@ test("request cards and the Requests list: each card by its own title", async ()
   const w = page(requestCard("tv/76479", "The Boys") + requestCard("movie/550", "Fight Club") + requestItem("tv/76479", "The Boys") + requestItem("movie/550", "Fight Club"), "/requests");
   await settle();
   const badges = [...w.document.querySelectorAll('a[href$="?manage=1"]')].map((b) => visibleText(w, b));
-  assert.deepEqual(badges, ["Waiting for the night 🌙", "Processing|S2", "Waiting for the night 🌙", "Processing|S2"]);
+  assert.deepEqual(badges, ["🌙 Tonight", "Processing|S2", "🌙 Tonight", "Processing|S2"]);
 });
 
 test("a series with one night item and one running download, and a running 4K download, stay normal", async () => {
@@ -145,7 +145,7 @@ test("a series with one night item and one running download, and a running 4K do
   await settle();
   const [mixed, fourk, fourk4k] = [...w.document.querySelectorAll('a[href$="?manage=1"]')].map((b) => visibleText(w, b));
   assert.equal(mixed, "Processing|S2");
-  assert.equal(fourk, "Waiting for the night 🌙");
+  assert.equal(fourk, "🌙 Tonight");
   assert.equal(fourk4k, "4K Processing|S2");
 });
 
@@ -188,7 +188,7 @@ test("the night starts while the page is open: the label goes away again", async
   const waiting = { value: WAITING };
   const w = night(header(badge("tv/76479")), fakeXHR(ROUTES, waiting), "/tv/76479");
   await settle();
-  assert.equal(visibleText(w, w.document.querySelector(".media-status a")), "Waiting for the night 🌙");
+  assert.equal(visibleText(w, w.document.querySelector(".media-status a")), "🌙 Tonight");
   waiting.value = { ...fresh([]), low_tariff: true };
   w.hgNightLabel.refresh();
   await settle();
@@ -207,7 +207,7 @@ test("a badge rendered later is relabelled (MutationObserver), and only once", a
   await settle();
   const b = w.document.querySelector(".media-status a");
   assert.equal(b.querySelectorAll("[data-hg-night-own]").length, 1);
-  assert.equal(visibleText(w, b), "Waiting for the night 🌙");
+  assert.equal(visibleText(w, b), "🌙 Tonight");
 });
 
 test("unknown markup: nothing breaks, nothing is added", async () => {
@@ -285,7 +285,7 @@ test("no 🌙 while Seerr shows a running download, once available, for titles n
 test("night-paused download of a Can wait title: the night label, no second moon", async () => {
   const w = rsPage(header(badge("tv/76479")), "/tv/76479", RS, WAITING);
   await settle();
-  assert.equal(visibleText(w, w.document.querySelector(".media-status a")), "Waiting for the night 🌙");
+  assert.equal(visibleText(w, w.document.querySelector(".media-status a")), "🌙 Tonight");
 });
 
 test("German UI: German hints and date", async () => {
@@ -371,22 +371,24 @@ test("one merged hint on the whole badge and card pill; a tap shows it, a second
   const chip = w.document.querySelector('[role="link"] [data-hg-night]');
   assert.equal(chip.textContent, "🌙🧭");
   assert.equal(chip.getAttribute("data-hg-hint"), MERGED);
-  assert.equal(chip.getAttribute("aria-label"), MERGED);
+  assert.equal(chip.querySelector("[data-hg-night-own]").getAttribute("aria-label"), MERGED);
+  assert.equal(chip.hasAttribute("role"), false);
   assert.equal(badgeEl.getAttribute("data-hg-hint"), MERGED);
   assert.equal(badgeEl.querySelector("[data-hg-flag-own]").hasAttribute("title"), false);
-  chip.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  const tap = (el) => { const d = new w.MouseEvent("pointerdown", { bubbles: true }); Object.defineProperty(d, "pointerType", { value: "touch" }); el.dispatchEvent(d); el.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true })); };
+  tap(chip);
   const tip = w.document.getElementById("hg-flag-tip");
   assert.ok(tip && shown(w, tip));
   assert.equal(tip.textContent, MERGED);
   assert.equal(card, 0);
-  chip.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  tap(chip);
   assert.equal(card, 1);
   assert.equal(shown(w, tip), false);
-  badgeEl.querySelector("span").dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  tap(badgeEl.querySelector("span"));
   assert.equal(link, 0);
   assert.ok(shown(w, tip));
   assert.equal(tip.textContent, MERGED);
-  badgeEl.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  tap(badgeEl);
   assert.equal(link, 1);
   w.document.body.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
   assert.equal(shown(w, tip), false);
@@ -698,26 +700,74 @@ test("Partially Available pill: restyled away from green, ◐ first with the mis
   assert.equal(solo.getAttribute("data-hg-hint"), "Teilweise verfügbar");
 });
 
-test("hints are static: shown on mouse hover below the badge, placed once, no move handlers", async () => {
+test("hints are static: a pill's hint goes into Seerr's own popup, a card's shows once below it; no move handlers, Escape closes", async () => {
   const types = [];
-  const w = night(header(plainBadge("movie/700")), (win) => {
-    fakeXHR({ ...RS_ROUTES, [RS_URL]: RS }, { value: fresh([]) })(win);
+  const routes = { ...RS_ROUTES, [RS_URL]: RS, "/api/v1/discover/movies": { results: [{ id: 700, mediaType: "movie", title: "Tied", posterPath: "/tied.jpg", mediaInfo: { tmdbId: 700, mediaType: "movie", status: 3, downloadStatus: [], downloadStatus4k: [] } }] } };
+  const w = night(clockCard("/tied.jpg") + header(plainBadge("movie/700")), (win) => {
+    fakeXHR(routes, { value: fresh([]) })(win);
     const add = win.EventTarget.prototype.addEventListener;
     win.EventTarget.prototype.addEventListener = function (t, ...rest) { types.push(t); return add.call(this, t, ...rest); };
   }, "/movie/700");
+  const x = new w.XMLHttpRequest();
+  x.open("GET", "/api/v1/discover/movies");
+  x.send();
   await settle();
-  const b = w.document.querySelector(".media-status a");
-  assert.equal(b.hasAttribute("title"), false);
-  const ev = (t) => { const e = new w.MouseEvent(t, { bubbles: false }); Object.defineProperty(e, "pointerType", { value: "mouse" }); return e; };
-  b.dispatchEvent(ev("pointerenter"));
+  const ev = (t, type = "mouse") => { const e = new w.MouseEvent(t, { bubbles: t === "pointerdown" || t === "click", cancelable: true }); Object.defineProperty(e, "pointerType", { value: type }); return e; };
+  const pill = w.document.querySelector(".media-status a");
+  assert.equal(pill.hasAttribute("title"), false);
+  pill.dispatchEvent(ev("pointerenter"));
+  assert.equal(w.document.getElementById("hg-flag-tip"), null, "no tip of ours over a Seerr popup trigger");
+  w.document.body.insertAdjacentHTML("beforeend", '<div class="z-50 text-sm absolute font-normal bg-gray-800">Manage Movie</div>');
+  await tick();
+  const popup = w.document.body.lastElementChild;
+  assert.equal(popup.querySelector("[data-hg-pop-hint]").textContent, "Waiting for the night — downloads at night (cheaper power)");
+  pill.dispatchEvent(ev("pointerleave"));
+  const chip = w.document.querySelector('[role="link"] [data-hg-night]');
+  chip.dispatchEvent(ev("pointerenter"));
   const tip = w.document.getElementById("hg-flag-tip");
   assert.ok(tip && shown(w, tip));
   assert.equal(tip.textContent, "Waiting for the night — downloads at night (cheaper power)");
-  const top = tip.style.top;
-  assert.ok(top);
-  b.dispatchEvent(ev("pointerleave"));
+  assert.equal(chip.getAttribute("aria-describedby"), "hg-flag-tip");
+  assert.ok(tip.style.top);
+  w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" }));
   assert.equal(shown(w, tip), false);
+  assert.equal(chip.hasAttribute("aria-describedby"), false);
+  chip.dispatchEvent(ev("pointerdown"));
+  const click = ev("click");
+  chip.dispatchEvent(click);
+  assert.equal(click.defaultPrevented, false, "a mouse click goes straight through");
   assert.ok(!types.some((t) => /move/.test(t)), types.join(","));
+});
+
+test("night-paused popup: patched before the next paint, the bar keeps its width and does not animate", async () => {
+  const w = page(header(badge("tv/76479")), "/tv/76479");
+  await settle();
+  w.document.body.insertAdjacentHTML("beforeend", `<div class="z-50 absolute">${downloadBlock(BOYS_ITEM.title, "paused")}</div>`);
+  await tick();
+  const block = w.document.body.lastElementChild.querySelector(".p-4");
+  assert.equal(visibleText(w, block.querySelector(".capitalize").parentElement), "Waiting for the night 🌙");
+  const css = w.document.getElementById("hg-night-style").textContent;
+  assert.match(css, /\[data-hg-night-grey\]\{[^}]*transition:none !important/);
+  assert.doesNotMatch(css, /\[data-hg-night-grey\]\{[^}]*width/);
+  assert.equal(w.document.querySelector(".media-status a [data-hg-night-own]").textContent, "🌙 Tonight");
+});
+
+test("caches stay small: thousands of remembered posters are pruned, cards still find theirs", async () => {
+  const w = rsPage(clockCard("/tied.jpg"), "/discover/movies");
+  await settle();
+  const many = { results: Array.from({ length: 3000 }, (_, i) => ({ id: 5000 + i, mediaType: "movie", title: String(i), posterPath: `/m${i}.jpg`, mediaInfo: { tmdbId: 5000 + i, mediaType: "movie", status: 3, downloadStatus: [], downloadStatus4k: [] } })) };
+  w.hgNightLabel.remember(many);
+  w.hgNightLabel.remember({ results: [{ id: 700, mediaType: "movie", title: "Tied", posterPath: "/tied.jpg", mediaInfo: { tmdbId: 700, mediaType: "movie", status: 3, downloadStatus: [], downloadStatus4k: [] } }] });
+  assert.ok(Object.keys(w.hgNightLabel.state.posters).length <= 1500);
+  assert.ok(Object.keys(w.hgNightLabel.state.media).length <= 1500);
+  w.hgNightLabel.apply(w.document, w.location);
+  assert.equal(visibleText(w, cardOf(w)), "🌙");
+});
+
+test("shared language for the other scripts", async () => {
+  const w = rsPage('<a href="/discover/tv">Serien</a>', "/");
+  await settle();
+  assert.equal(w.hgNightLabel.lang(), "de");
 });
 
 // series complete so far (every aired requested episode here, only unaired left): ✅ + 📅 + 🌙, the pill reads "Available so far", stays green
