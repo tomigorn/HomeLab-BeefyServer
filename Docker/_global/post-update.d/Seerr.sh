@@ -1,6 +1,8 @@
 # Seerr customizations (Docker/CUSTOMIZATIONS.md "Seerr"). Sourced by post-update-check.sh.
 SEERR_DIR=/srv/appdata/seerr
 seerr_api() { curl -s -m 8 "http://127.0.0.1:5055/api/v1$1"; }
+# data paths need a Seerr session: the admin API key stands in for one
+seerr_data() { curl -s -m 8 -H "X-Api-Key: $(cat "$DIR/../../Seerr/secrets/api-key")" "http://127.0.0.1:5055$1"; }
 # Download now as a plain requester: "<own request title> <title only others requested>" → HTTP codes
 seerr_dn_requester() {
   local k reqs uid q
@@ -27,10 +29,11 @@ if want seerr; then
 fi
 if want seerr-proxy; then
   check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
-  check seerr.bar-storage '^SSD HDD$' "$(curl -s -m 8 http://127.0.0.1:5055/_indexer-bar/usage.json | jq -r '[.storage[].name] | join(" ")' 2>&1)"
-  check seerr.indexer-bar-data '^true [0-9]+$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/usage.json | jq -r '"\(.ok) \(.indexers|length)"' 2>&1)"
-  check seerr.night-label-data '^array$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-waiting.json | jq -r '.waiting|type' 2>&1)"
-  check seerr.request-state-data '^array object object object object fresh$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-state.json | jq -r '"\(.canWait|type) \(.unreleased|type) \(.noRelease|type) \(.searching|type) \(.queue|type)"' 2>&1) $([ $(( $(date +%s) - $(stat -c %Y /srv/appdata/indexer-bar/request-state.json 2>/dev/null || echo 0) )) -lt 600 ] && echo fresh || echo stale)"
+  check seerr.data-needs-session '^401 401 401 401$' "$(for u in /_indexer-bar/usage.json /_indexer-bar/night-waiting.json /_indexer-bar/request-state.json '/_download-now/api?type=movie&tmdb=603'; do curl -s -m 8 -o /dev/null -w '%{http_code} ' "http://127.0.0.1:5055$u"; done | xargs 2>&1)"
+  check seerr.bar-storage '^SSD HDD$' "$(seerr_data /_indexer-bar/usage.json | jq -r '[.storage[].name] | join(" ")' 2>&1)"
+  check seerr.indexer-bar-data '^true [0-9]+$' "$(seerr_data /_indexer-bar/usage.json | jq -r '"\(.ok) \(.indexers|length)"' 2>&1)"
+  check seerr.night-label-data '^array$' "$(seerr_data /_indexer-bar/night-waiting.json | jq -r '.waiting|type' 2>&1)"
+  check seerr.request-state-data '^array object object object object fresh$' "$(seerr_data /_indexer-bar/request-state.json | jq -r '"\(.canWait|type) \(.unreleased|type) \(.noRelease|type) \(.searching|type) \(.queue|type)"' 2>&1) $([ $(( $(date +%s) - $(stat -c %Y /srv/appdata/indexer-bar/request-state.json 2>/dev/null || echo 0) )) -lt 600 ] && echo fresh || echo stale)"
   check seerr.request-state-live '^active [1-9]' "$(systemctl is-active request-state.timer 2>&1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'hg-pulse' 2>&1)"
   check seerr.status-icons-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'tonight.s scheduled search (04:17)' 2>&1)"
   check seerr.partly-half-circle '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'data-hg-half' 2>&1)"
@@ -38,10 +41,10 @@ if want seerr-proxy; then
 fi
 if want download-now seerr-proxy; then
   check seerr.download-now-health '^\{"ok": true\}$' "$(curl -s -m 5 http://127.0.0.1:5055/_download-now/health 2>&1)"
-  check seerr.download-now-auth '^403$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5055/_download-now/api?type=movie&tmdb=603' 2>&1)"
+  check seerr.download-now-auth '^401$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5055/_download-now/api?type=movie&tmdb=603' 2>&1)"
   check seerr.download-now-backend '^(started|downloading|searching|available)$' "$(t=$(curl -s -m 8 -H "X-Api-Key: $(grep -oP '(?<=<ApiKey>)[^<]+' /srv/appdata/radarr/config.xml)" http://127.0.0.1:7878/api/v3/movie | jq -r '.[0].tmdbId' 2>&1); curl -s -m 20 -H "X-Api-Key: $(cat "$DIR/../../Seerr/secrets/api-key")" "http://127.0.0.1:5055/_download-now/api?type=movie&tmdb=$t" | jq -r .state 2>&1)"
   check seerr.download-now-requester '^200 403 $' "$(seerr_dn_requester "$DIR/../../Seerr/secrets/api-key" 2>&1)"
-  check seerr.my-request-auth '^403$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5055/_download-now/request?type=movie&tmdb=603' 2>&1)"
+  check seerr.my-request-auth '^401$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5055/_download-now/request?type=movie&tmdb=603' 2>&1)"
   check seerr.my-request-requester '^200 403 $' "$(seerr_dn_requester "$DIR/../../Seerr/secrets/api-key" /_download-now/request 2>&1)"
   check seerr.delete-keeps-files '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/my-request.js | grep -c 'data-delete-keep' 2>&1)"
   check seerr.download-now-script '^media-actions closest\("main"\)$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/download-now.js | grep -o 'media-actions' | head -1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/menu-links.js | grep -o 'closest("main")' | head -1)"

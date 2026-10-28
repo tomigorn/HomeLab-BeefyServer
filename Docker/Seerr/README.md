@@ -181,6 +181,7 @@ A thin bar at the top of every Seerr page (everyone who can open Requests sees i
 | Part | What |
 |---|---|
 | `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` (and `can-wait.js`, `menu-links.js`, `night-label.js`, `download-now.js`: [Can wait](#can-wait), [Menu links](#menu-links), [Night label](#night-label), [Download now](#download-now)); `/_download-now/` goes to the `download-now` backend before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
+| Session gate | `usage.json`, `night-waiting.json`, `request-state.json` and `/_download-now/` (not `/health`) need a Seerr session: nginx `auth_request` asks Seerr `GET /api/v1/auth/me` with the caller's own cookie (or `X-Api-Key`/`X-Api-User`), cached 10 s per credentials; none/invalid = 401. The bar scripts render only after a 200, never on `/login`, `/setup`, `/resetpassword`, and re-check after client-side navigation (login without reload). Check: `seerr.data-needs-session` |
 | `/_indexer-bar/` | `indexer-bar/www/` (bar.js, bar.css, starting.html, can-wait.js, menu-links.js, night-label.js, download-now.js); `usage.json` and `night-waiting.json` from `/srv/appdata/indexer-bar/` |
 | Collector | `scripts/indexer-usage.py` as buntu, `systemd/indexer-usage.timer` every minute: Prowlarr `GET /api/v1/indexer` + `/api/v1/history/since`, counts queries + RSS (searches) and grabs (downloads) per indexer in its window. Writes names and counts only, no keys, no queries |
 | Storage | `SSD` (ssd-hot + ssd-hot2 together) and `HDD` chips: used/total and %, from `os.statvfs` of each branch (`1 − f_bavail/f_blocks`, the mergerfs measure). SSD green < 70 %, yellow 70-80, red ≥ 80; HDD green < 80, yellow 80-90, red ≥ 90. Hover (and **more**): free space, both SSDs' %, and the rule (mover from 70 % down to 60 % with titles unplayed for 30 days, from 80 % new downloads go to the HDD; HDD from 90 % no imports). EN/DE. The collector also writes `~/.local/state/indexer-bar/storage.prom` (sizes only), which fastpi pulls for its alerts |
@@ -332,7 +333,7 @@ A press: tag `download-now` on the title (Radarr/Sonarr) → the title's unfinis
 | Tests | `python3 tests/test_download_now.py`; JS: `node --test` in `tests/js` |
 | Dry run (admin, Seerr API key) | `curl -s -H "X-Api-Key: $(cat secrets/api-key)" 'localhost:5055/_download-now/api?type=movie&tmdb=<id>'` |
 | Requester | `-H 'X-Api-User: <requester id>'`: own request's title → 200, a title only others requested → 403 (`seerr.download-now-requester` checks both) |
-| Refused | same without the key → 403 |
+| Refused | same without the key → 401 (the session gate; the backend itself answers 403 for a session without the right) |
 
 ## My request
 
