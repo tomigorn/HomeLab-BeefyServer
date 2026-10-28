@@ -98,7 +98,7 @@ Files under `secrets/` (gitignored), never in `.env`: `docker inspect` stays cle
 | `secrets/recyclarr.yml` (`radarr_api_key: '…'`, `sonarr_api_key: '…'`) | recyclarr | `65107:65107 0400` | mounted as `/config/secrets.yml`, `!secret` in `recyclarr/recyclarr.yml` |
 | `secrets/vpn-status.apikey` | vpn-status, gluetun healthcheck | `65111 0400` | bind `:ro` |
 | `secrets/hook/*.apikey` | Radarr/Sonarr hooks | `buntu:hook-secret 0640` | bind `:ro` |
-| `secrets/qbit-webui.password` (qBittorrent WebUI user `admin`) | host scripts: night-downloads, clear-data-wipe → title-wipe-hook, night-downloads-setup, post-update check | `buntu:buntu 0600` | read from the file, sent only as POST body (`scripts/qbit-api.sh`, `night-downloads.py` `qbit_client`): login on 403, `QBT_SID_8080` cookie |
+| `secrets/qbit-webui.password` (qBittorrent WebUI user `admin`) | host scripts: night-downloads, clear-data-wipe → title-wipe-hook, night-downloads-setup (also writes it into Radarr/Sonarr's qBittorrent clients), post-update check | `buntu:buntu 0600` | read from the file, sent only as POST body (`scripts/qbit-api.sh`, `night-downloads.py` `qbit_client`): login on 403, `QBT_SID_8080` cookie |
 
 Check: `sudo docker inspect movie-gluetun movie-recyclarr --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1` (`WIREGUARD_PRIVATE_KEY` is the image's empty default).
 
@@ -147,7 +147,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 |---|---|---|
 | qBittorrent | category `radarr` save path | `/data/torrents/movies` |
 | qBittorrent | seed limits | **ratio 2.0 OR 30 days, then stop** (§14.0) |
-| qBittorrent | no-password bypass | only Radarr 172.28.10.201, Sonarr .202, vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), Seerr download-now .205 (moves/starts night torrents; added by `../Seerr/scripts/download-now-setup.sh`), localhost (qbit-port.sh, ClamAV autorun) and 192.168.1.2 (Traefik); everything else needs the password, including the host scripts and every other bridge (they arrive as the gateway .1, removed 2026-10-28, review S-01). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist`; rollback: `backups/pre-qbit-password-2026-10-28/rollback.sh` (not in git, puts .1 back) |
+| qBittorrent | no-password bypass | only vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), Seerr download-now .205 (moves/starts night torrents; added by `../Seerr/scripts/download-now-setup.sh`), localhost (qbit-port.sh, ClamAV autorun) and 192.168.1.2 (Traefik); everything else needs the password, including Radarr/Sonarr (their qBittorrent clients log in as `admin`; credentials written by `scripts/night-downloads-setup.sh` from the secret file), the host scripts and every other bridge (they arrive as the gateway .1, removed 2026-10-28, review S-01). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist`; rollback: `backups/pre-qbit-password-2026-10-28/rollback.sh` (not in git, puts .1 back), `backups/pre-qbit-arr-creds-2026-10-28/rollback.sh` (puts .201/.202 back) |
 | SABnzbd | incomplete / complete | `/data/usenet/incomplete` / `/data/usenet/complete/movies` |
 | Radarr | root folder | `/data/media/movies` |
 | Radarr | **Use Hardlinks instead of Copy** | **on** (§13.6) |
@@ -401,7 +401,7 @@ Radarr/Sonarr use a tagged client only for a title with a matching tag, otherwis
 | Existing titles | `scripts/request-tags.sh` copies `download-now` only onto a title that was in Radarr/Sonarr before the request; the paused item then resumes within 2 min |
 | Download now (Seerr) | Seerr admins: title page → **Manage** → **⚡ Download now — at daytime power price**: tag + the title's night items move to the normal categories and start; nothing grabbed = search (`../Seerr/README.md` "Download now") |
 | By hand | Radarr/Sonarr: add the tag `download-now` to the title. Resuming a night item in qBittorrent/SABnzbd lasts only until the next run (paused again by day, or FIFO at night) |
-| Setup | `scripts/night-downloads-setup.sh` (tag, clients, categories; idempotent), `scripts/language-policy.sh` (Connect script) |
+| Setup | `scripts/night-downloads-setup.sh` (tag, clients incl. the qBittorrent login from `secrets/qbit-webui.password`, categories; idempotent), `scripts/language-policy.sh` (Connect script) |
 | Check | `scripts/night-downloads.py --dry-run` (+ the TV order table: series, SxxEyy, action, client); simulate a time: `ND_NOW=2026-10-27T22:10 scripts/night-downloads.py --dry-run` (`ND_NOW` refused without `--dry-run`) |
 | Tests | `python3 tests/test_night_downloads.py`, `tests/test_download_now_hook.sh`, `tests/test_request_tags.sh` |
 
@@ -1292,7 +1292,7 @@ ssh beefy curl -s localhost:8087/api/status   # vpn_ip, real_ip, forwarded_port,
 
 Every UI in this stack sits behind Authentik forward auth on fastpi's Traefik, and the
 apps' own logins are turned off — Radarr/Sonarr/Prowlarr auth = `External`, Bazarr = `None`,
-SABnzbd username/password empty, qBittorrent bypassed for its pinned callers (password in `secrets/qbit-webui.password` for the rest). Full
+SABnzbd username/password empty, qBittorrent bypassed for vpn-status, ClamAV queue, Seerr and Traefik only (Radarr/Sonarr log in; password in `secrets/qbit-webui.password` for the rest). Full
 setup, including the Authentik objects that must be created by hand, is in
 `HomeLab-FastPi` → `Docker/Traefik/docs/2026-10-06-authentik-sso.md`.
 

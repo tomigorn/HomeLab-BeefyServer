@@ -1,6 +1,7 @@
 # Movie-Downloads customizations (Docker/CUSTOMIZATIONS.md "Movie-Downloads"). Sourced by post-update-check.sh.
 MD_DIR="$DIR/../../Movie-Downloads"
 md_arr() { curl -s -m 8 -H "X-Api-Key: $(grep -oP '(?<=<ApiKey>)[^<]+' "/srv/appdata/$1/config.xml")" "http://127.0.0.1:$2$3"; }
+md_arrtest() { curl -s -m 30 -X POST -H "X-Api-Key: $(grep -oP '(?<=<ApiKey>)[^<]+' "/srv/appdata/$1/config.xml")" "http://127.0.0.1:$2/api/v3/downloadclient/testall" | jq -r '"\(map(.isValid) | all) \(length)"' 2>&1; }
 md_has() { jq -r --argjson want "$1" '[.[].name] as $n | ($want - $n) | if length == 0 then "ok" else "missing: " + join(", ") end' 2>&1; }
 md_auth() { grep -oP '(?<=<AuthenticationMethod>)[^<]+' "/srv/appdata/$1/config.xml" 2>&1; }
 md_sab() { curl -s -m 8 "http://127.0.0.1:8081/api?output=json&apikey=$(cat "$MD_DIR/secrets/hook/sabnzbd.apikey")&$1"; }
@@ -8,6 +9,7 @@ md_bz() { curl -s -m 8 -H "X-API-KEY: $(cat "$MD_DIR/secrets/hook/bazarr.apikey"
 md_qb() { QBIT_TIMEOUT=8 qbit_api http://127.0.0.1:8080 "$1"; }
 if want radarr; then
   check md.radarr-auth '^External$' "$(md_auth radarr)"
+  check md.radarr-qbit-login '^true 4$' "$(md_arrtest radarr 7878)"
   check md.radarr-profiles '^ok$' "$(md_arr radarr 7878 /api/v3/qualityprofile | md_has '["4K HDR - UHD Bluray + WEB (1080p fallback)","4K HDR - UHD Bluray + WEB (1080p fallback) - English original","4K preferred · older versions allowed","4K preferred · older versions allowed - English original","Swiss German (Mundart) only - any quality","HD Bluray + WEB","Anime - Remux + WEB 1080p"]')"
   check md.radarr-cutoffs '^25000000 20000000 25000000 20000000 1200000$' "$(md_arr radarr 7878 /api/v3/qualityprofile | jq -r '[.[] | {(.name): .cutoffFormatScore}] | add | [."4K HDR - UHD Bluray + WEB (1080p fallback)", ."4K HDR - UHD Bluray + WEB (1080p fallback) - English original", ."4K preferred · older versions allowed", ."4K preferred · older versions allowed - English original", ."Swiss German (Mundart) only - any quality"] | join(" ")' 2>&1)"
   check md.radarr-own-cfs '^ok$' "$(md_arr radarr 7878 /api/v3/customformat | md_has '["Bad Group: BlackBit","Bad Group: Vyndros","Audio: Swiss German","Language: Original + English","Language: Not Original","Resolution: 2160p","Resolution: 1080p","Resolution: 720p","Resolution: SD","Resolution: DVD"]')"
@@ -24,6 +26,7 @@ if want radarr; then
 fi
 if want sonarr; then
   check md.sonarr-auth '^External$' "$(md_auth sonarr)"
+  check md.sonarr-qbit-login '^true 4$' "$(md_arrtest sonarr 8989)"
   check md.sonarr-profiles '^ok$' "$(md_arr sonarr 8989 /api/v3/qualityprofile | md_has '["4K HDR - WEB-2160p (1080p fallback)","4K HDR - WEB-2160p (1080p fallback) - English original","4K preferred · older versions allowed","4K preferred · older versions allowed - English original","Swiss German (Mundart) only - any quality","WEB-1080p","Anime - Bluray + WEB 1080p"]')"
   check md.sonarr-cutoffs '^25000000 20000000 25000000 20000000 1200000$' "$(md_arr sonarr 8989 /api/v3/qualityprofile | jq -r '[.[] | {(.name): .cutoffFormatScore}] | add | [."4K HDR - WEB-2160p (1080p fallback)", ."4K HDR - WEB-2160p (1080p fallback) - English original", ."4K preferred · older versions allowed", ."4K preferred · older versions allowed - English original", ."Swiss German (Mundart) only - any quality"] | join(" ")' 2>&1)"
   check md.sonarr-own-cfs '^ok$' "$(md_arr sonarr 8989 /api/v3/customformat | md_has '["Bad Group: BlackBit","Bad Group: Vyndros","Audio: Swiss German","Language: Original + English","Language: Not Original","Resolution: 2160p","Resolution: 1080p","Resolution: 720p","Resolution: SD","Season Pack"]')"
@@ -61,7 +64,7 @@ if want qbittorrent; then
   QBIT_PASS_FILE=$MD_DIR/secrets/qbit-webui.password QBIT_JAR=
   # shellcheck source=../../Movie-Downloads/scripts/qbit-api.sh
   . "$MD_DIR/scripts/qbit-api.sh"
-  check md.qbit-auth-bypass '^true 6 no-gateway 192\.168\.1\.2/32 172\.28\.10\.204/32 172\.28\.10\.205/32$' "$(md_qb /app/preferences | jq -r '(.bypass_auth_subnet_whitelist | split("\n")) as $w | "\(.bypass_auth_subnet_whitelist_enabled) \($w | length) \(if $w | index("172.28.10.1/32") then "gateway" else "no-gateway" end) \($w | map(select(. == "192.168.1.2/32" or . == "172.28.10.204/32" or . == "172.28.10.205/32")) | join(" "))"' 2>&1)"
+  check md.qbit-auth-bypass '^true 4 no-gateway 192\.168\.1\.2/32 172\.28\.10\.204/32 172\.28\.10\.205/32$' "$(md_qb /app/preferences | jq -r '(.bypass_auth_subnet_whitelist | split("\n")) as $w | "\(.bypass_auth_subnet_whitelist_enabled) \($w | length) \(if $w | index("172.28.10.1/32") then "gateway" else "no-gateway" end) \($w | map(select(. == "192.168.1.2/32" or . == "172.28.10.204/32" or . == "172.28.10.205/32")) | join(" "))"' 2>&1)"
   check md.qbit-webui-login '^403 ok$' "$(curl -s -o /dev/null -m 8 -w '%{http_code}' http://127.0.0.1:8080/api/v2/app/version) $(md_qb /app/version >/dev/null && echo ok || echo 'login failed')"
   check md.qbit-categories '^radarr=/data/torrents/movies radarr-night=/data/torrents/movies sonarr=/data/torrents/tv sonarr-night=/data/torrents/tv$' "$(md_qb /torrents/categories | jq -r '[to_entries | sort_by(.key)[] | "\(.key)=\(.value.savePath)"] | join(" ")' 2>&1)"
   check md.qbit-clamav-autorun '^true /clamav-hook/clamav-hook\.py --qbit "%I" "%F" ok$' "$(md_qb /app/preferences | jq -r '"\(.autorun_enabled) \(.autorun_program)"' 2>&1) $(docker exec movie-qbittorrent sh -c 'test -x /clamav-hook/clamav-hook.py && echo ok' 2>&1)"

@@ -283,7 +283,7 @@ services:
       - "${RADARR_PORT}:7878"
     networks:
       movie-downloads:
-        # pinned: qBittorrent lets this address in without a password (WebUI AuthSubnetWhitelist)
+        # pinned address (no longer in the qBittorrent auth whitelist: Radarr logs in)
         ipv4_address: 172.28.10.201
 
 # #########################################################
@@ -357,7 +357,7 @@ services:
       - "${SONARR_PORT}:8989"
     networks:
       movie-downloads:
-        # pinned: qBittorrent lets this address in without a password (WebUI AuthSubnetWhitelist)
+        # pinned address (no longer in the qBittorrent auth whitelist: Sonarr logs in)
         ipv4_address: 172.28.10.202
 
 # #########################################################
