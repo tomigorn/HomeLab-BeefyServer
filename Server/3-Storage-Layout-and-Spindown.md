@@ -13,6 +13,48 @@ of the time.
 
 > ⚠️ **This process wipes all data drives.** Only the NVMe OS disk is left untouched.
 
+## Storage — current state (2026-10-28)
+
+| Branch | Disk | Size | Role | mergerfs minfreespace |
+|---|---|---|---|---|
+| `/srv/.disks/ssd-hot` | 870 QVO 8 TB `…A00268B`, ext4, `-m 0` | 7.2 TiB | hot tier, first | 1479G (20 %) |
+| `/srv/.disks/ssd-hot2` | 870 QVO 8 TB `…909892P` (ex-audio, added 2026-10-28), ext4 label `ssd-hot2`, `-m 0` | 7.2 TiB | hot tier, second | 1479G (20 %) |
+| `/srv/.disks/hdd-cold` | Exos 30 TB `…K1S05Y9M`, xfs | 27.3 TiB | cold tier | 2800G (10 %) |
+
+- Pool `/srv/video` = `ssd-hot : ssd-hot2 : hdd-cold`, `category.create=ff`: new files go to the first branch with more free than its minfreespace, so downloads fill ssd-hot to 80 %, then ssd-hot2, then the HDD. Existing data never moves by itself. Branches can be changed live: `sudo setfattr -n user.mergerfs.branches -v '<list>' /srv/video/.mergerfs` (+ the same list in `/etc/fstab`).
+- Hardlinks after an overflow work: a download created on ssd-hot2 or the HDD gets its library hardlink on the same branch (mergerfs clones the folder there; tested 2026-10-28 with 2 and 3 branches).
+- "% used" everywhere (bar, mover, alerts, mergerfs) = `1 − f_bavail/f_blocks` per branch; "SSD" = both SSDs together.
+
+| Limit | Value | Where |
+|---|---|---|
+| Mover starts / stops | SSD tier ≥ 70 % → ≤ 60 % | `/etc/beefy-mover.conf` |
+| Mover takes | titles nobody played and nobody added for 30 days; from 75 % also > 7 days | same |
+| Hard stop SSD | each SSD keeps 20 % free for new files (mergerfs) | fstab |
+| Hard stop HDD | 2800G free (mergerfs) | fstab |
+| Soft stop downloads/imports | pool free < 5758 GiB: Radarr/Sonarr refuse imports, SABnzbd pauses, qBittorrent held | Movie-Downloads README "Storage limits" |
+| Alerts (fastpi) | SSD ≥ 80 %, HDD ≥ 80 % warn / ≥ 90 % critical, mover failed/not run, overflow, verify failures | HomeLab-FastPi `Docker/grafana/README.md` |
+| Seerr bar | SSD green < 70, yellow 70-80, red ≥ 80; HDD 80/90 | `Docker/Seerr/README.md` "Indexer bar" |
+| hd-idle | HDD parks after 20 min (1200 s, since 2026-10-28) | `/etc/default/hd-idle` |
+
+### The mover (§5, built 2026-10-28)
+
+| Part | What |
+|---|---|
+| `beefy_mover.py` → `/usr/local/sbin/beefy-mover` | timer 04:00 (+≤5 min); below 70 % it exits without touching the HDD. Reads Jellyfin (LastPlayedDate of every user over the title's movie/episodes) and Radarr `movieFile.dateAdded` / Sonarr newest `episodeFile.dateAdded` once at the start; an API down, no user, or < 90 % of the SSD videos known to Jellyfin → nothing moves (fails closed). Unit = movie folder / whole series folder, oldest last use first. Skips hardlinked (seeding), open, changed < 24 h, `.partial~`, pinned (`/etc/beefy-mover-pins`) |
+| Bounds | no title starts that cannot finish by 04:40 at 1.5 × size / 200 MiB/s; ≤ 600 GiB per run; HDD keeps 10 %; about 0.3-0.5 TiB per night, the rest the next night |
+| `tier-move` + `tier_helper.py` (`/usr/local/sbin/tier-helper`) | per file: rsync -aHAX (≈ 195 MB/s cap) into `<dst>/.tier-staging/`, fsync, page cache dropped, compare read back from disk, source (inode, size, ctime) unchanged, atomic rename into place, then delete the source. Sidecars stay on the SSD. Exit 3 = media lock busy, 4 = source changed (both skipped, tried next night) |
+| Lock | `/run/lock/beefy-media.lock`, shared by tier-move (mover, promoter, manual) and original-audio |
+| Output | `journalctl -u beefy-mover`; `/var/lib/beefy-mover/mover.prom` (fastpi alerts + morning digest); `/var/lib/beefy-mover/smart-cycles.log` (HDD Start_Stop / Power_Cycle per night, to compare spin-ups per boot) |
+
+```bash
+sudo beefy-mover --plan                                    # every title in move order: size, last played, added, skip reason
+sudo beefy-mover --dry-run --no-deadline                   # what tonight would move
+sudo beefy-mover --only "media/movies/X (2020) [tmdbid-1]" # move one title now (file guards stay, dates ignored)
+./test_beefy_mover.py && ./test_tier_helper.py && ./test-tier-move
+```
+
+Pause it: `DRY_RUN=1` or `MAX_MOVE_GIB=0` in `/etc/beefy-mover.conf`. Install/update: `sudo bash 3-Storage-Layout-and-Spindown/install-mover.sh`.
+
 ---
 
 ## 0. Status — as-built (2026-06-17)
@@ -24,7 +66,7 @@ of the time.
 - ✅ Mounted by **UUID** via the managed `/etc/fstab` block; mergerfs pool `/srv/video`
   reports **35 TB** (8 TB hot + 27 TB cold). The 7.3 TB audio SSD was retired 2026-07-03.
 - ✅ Spin-down: **`hd-idle` active + enabled**, parking only the cold HDD by serial after
-  5 min (`-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 300`).
+  20 min since 2026-10-28, 5 min before (`-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 1200`).
 - ✅ `smartd` active (HDD `-n standby`), `fstrim.timer` enabled, `user_allow_other` set.
 - ✅ **Spin-state logger active** — checks via `smartctl` every minute, logs to
   `/var/log/hdd-spinstate.log` **only on state change**, rotates at 15k lines (§11).
@@ -55,6 +97,8 @@ Samba shares, and the remaining services (download/seed stack, Jellyfin). Owners
 > sudo rmdir /srv/audio                                          # remove the empty mountpoint
 > sudo systemctl daemon-reload && sudo mount -a                  # must NOT re-add /srv/audio
 > ```
+>
+> **2026-10-28:** this SSD is the second hot branch `ssd-hot2` now (top of this doc).
 >
 > The former **audio SSD** (Samsung 870 QVO 8 TB, serial `…909892P`, UUID `9a2d3432…`) becomes
 > an **unused spare** — still installed and SMART-monitored, but **not wiped, mounted, or
@@ -268,7 +312,7 @@ Keeps the SSD hot tier as the *active working set* and demotes cold content to t
 > Bazarr / arr deep rescans, the §9 integrity hash scan, bulk renames) is scheduled into the *same*
 > window so the drive wakes **once per night** instead of being trickle-woken all day. Every
 > "schedule it into the mover window" reference elsewhere in this doc means this 04:00–06:00 slot.
-> The mover/promoter are **not built yet** (§0); until they are, see §14.1 for the interim reality.
+> The mover is built (2026-10-28, "Storage — current state" at the top); the promoter's trigger is not.
 
 - **Demotes** large video files SSD → HDD when old / not-recently-accessed and the SSD is
   filling. Paths in `/srv/video` **never change** when a file moves between tiers.
@@ -1045,7 +1089,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313   /srv/.disks/hdd-cold  xfs   noatime,
 
 | Item | State |
 |---|---|
-| `hd-idle` | **active + enabled** — `-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 300 -l /var/log/hd-idle.log` (idle=300 s / 5 min; **full by-id path** required) |
+| `hd-idle` | **active + enabled** — `-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 1200 -l /var/log/hd-idle.log` (idle=1200 s / 20 min since 2026-10-28; **full by-id path** required) |
 | `smartmontools` (smartd) | active (`-n standby` on the HDD) |
 | `fstrim.timer` | enabled (weekly TRIM, all SSDs) |
 | `user_allow_other` in `/etc/fuse.conf` | set |

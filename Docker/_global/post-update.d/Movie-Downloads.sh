@@ -22,6 +22,7 @@ if want radarr; then
   check md.radarr-autotagging '^(2[0-9]|[3-9][0-9]) lang-$' "$(md_arr radarr 7878 /api/v3/autotagging | jq -r '[.[] | select(.name | startswith("lang-"))] | "\(length) lang-"' 2>&1)"
   check md.radarr-old-rare-indexers '^old-rare min1=[3-9] min5=[3-9]$' "$(t=$(md_arr radarr 7878 /api/v3/tag | jq '[.[] | select(.label == "old-rare") | .id][0]'); md_arr radarr 7878 /api/v3/indexer | jq -r --argjson t "$t" '[.[] | {r: (.tags | index($t) != null), s: ([.fields[] | select(.name | endswith("minimumSeeders")) | .value][0])} | select(.s != null)] | "old-rare min1=\([.[] | select(.r and .s == 1)] | length) min5=\([.[] | select((.r | not) and .s == 5)] | length)"' 2>&1)"
   check md.radarr-media-management '^true /data/.recyclebin 7 afterManual true srt,ass,ssa,sub,idx$' "$(md_arr radarr 7878 /api/v3/config/mediamanagement | jq -r '"\(.copyUsingHardlinks) \(.recycleBin) \(.recycleBinCleanupDays) \(.rescanAfterRefresh) \(.importExtraFiles) \(.extraFileExtensions)"' 2>&1)"
+  check md.radarr-min-free '^5896192$' "$(md_arr radarr 7878 /api/v3/config/mediamanagement | jq -r .minimumFreeSpaceWhenImporting 2>&1)"
   check md.radarr-metadata-off '^0 enabled$' "$(md_arr radarr 7878 /api/v3/metadata | jq -r '[.[] | select(.enable)] | "\(length) enabled"' 2>&1)"
 fi
 if want sonarr; then
@@ -39,6 +40,7 @@ if want sonarr; then
   check md.sonarr-autotagging '^(2[0-9]|[3-9][0-9]) lang-$' "$(md_arr sonarr 8989 /api/v3/autotagging | jq -r '[.[] | select(.name | startswith("lang-"))] | "\(length) lang-"' 2>&1)"
   check md.sonarr-old-rare-indexers '^old-rare min1=[3-9] min5=[3-9]$' "$(t=$(md_arr sonarr 8989 /api/v3/tag | jq '[.[] | select(.label == "old-rare") | .id][0]'); md_arr sonarr 8989 /api/v3/indexer | jq -r --argjson t "$t" '[.[] | {r: (.tags | index($t) != null), s: ([.fields[] | select(.name | endswith("minimumSeeders")) | .value][0])} | select(.s != null)] | "old-rare min1=\([.[] | select(.r and .s == 1)] | length) min5=\([.[] | select((.r | not) and .s == 5)] | length)"' 2>&1)"
   check md.sonarr-media-management '^true /data/.recyclebin 7 afterManual true srt,ass,ssa,sub,idx$' "$(md_arr sonarr 8989 /api/v3/config/mediamanagement | jq -r '"\(.copyUsingHardlinks) \(.recycleBin) \(.recycleBinCleanupDays) \(.rescanAfterRefresh) \(.importExtraFiles) \(.extraFileExtensions)"' 2>&1)"
+  check md.sonarr-min-free '^5896192$' "$(md_arr sonarr 8989 /api/v3/config/mediamanagement | jq -r .minimumFreeSpaceWhenImporting 2>&1)"
   check md.sonarr-metadata-off '^0 enabled$' "$(md_arr sonarr 8989 /api/v3/metadata | jq -r '[.[] | select(.enable)] | "\(length) enabled"' 2>&1)"
   check md.sonarr-id-parse '^The Boys 2024 4$' "$(md_arr sonarr 8989 '/api/v3/parse?title=The.Boys.2024.S04.2160p.AMZN.WEB-DL-GRP' | jq -r '.parsedEpisodeInfo | "\(.seriesTitleInfo.titleWithoutYear) \(.seriesTitleInfo.year) \(.seasonNumber)"' 2>&1)"
   check md.sonarr-id-import '^id-match auto-import: [0-9]+ candidate\(s\), [0-9]+ importable$' "$(python3 "$MD_DIR/scripts/queue-watchdog.py" --dry-run 2>&1 | tail -1)"
@@ -47,6 +49,7 @@ if want radarr sonarr recyclarr; then
   check md.scoring 'all checks passed' "$(python3 "$MD_DIR/scripts/scoring-check.py" 2>&1 | tail -1)"
   check md.swiss-german 'all checks passed' "$(python3 "$MD_DIR/scripts/swiss-german-check.py" 2>&1 | tail -1)"
   check md.host-timers '^ok$' "$(m=''; for u in request-tags.timer night-downloads.timer request-state.timer night-search.timer clear-data-wipe.timer queue-watchdog.timer description-scout.timer nfo-scout.timer language-missing.timer original-audio.timer subtitle-check.timer original-audio-import.path clear-data-wipe-added.path; do [ "$(systemctl is-active "$u")" = active ] || m="$m $u"; done; echo "${m:-ok}")"
+  check md.original-audio-lock '^2$' "$(systemctl show original-audio.service original-audio-import.service -p ExecStart 2>&1 | grep -c '/run/lock/beefy-media.lock')"
   check md.parser-sandbox '^nfo-scout=strict,read-only,same subtitle-check=strict,read-only,yes,same$' "$(for u in nfo-scout subtitle-check; do printf '%s=%s,%s%s,%s ' "$u" "$(systemctl show -p ProtectSystem --value "$u")" "$(systemctl show -p ProtectHome --value "$u")" "$([ "$u" = subtitle-check ] && echo ",$(systemctl show -p PrivateNetwork --value "$u")")" "$(cmp -s "$MD_DIR/systemd/$u.service" "/etc/systemd/system/$u.service" && echo same || echo differs)"; done | xargs)"
   check md.original-audio-units '^path=active,success import=success,0,cap_fowner sweep=success,cap_fowner same$' "$(v() { systemctl show -p "$2" --value "$1"; }; i=original-audio-import; echo "path=$(systemctl is-active $i.path),$(v $i.path Result) import=$(v $i.service Result),$(v $i.service StartLimitIntervalUSec),$(v $i.service AmbientCapabilities) sweep=$(v original-audio.service Result),$(v original-audio.service AmbientCapabilities) $(for u in original-audio.service $i.service $i.path; do cmp -s "$MD_DIR/systemd/$u" "/etc/systemd/system/$u" || echo "$u"; done | xargs | sed -e 's/^$/same/;t' -e 's/^/differs: /')")"
   check md.night-downloads '^low tariff: (True|False), waiting for the night: [0-9]+$' "$(python3 "$MD_DIR/scripts/night-downloads.py" --dry-run 2>&1 | grep '^low tariff')"
@@ -73,11 +76,13 @@ if want qbittorrent; then
   check md.qbit-clamav-autorun '^true /clamav-hook/clamav-hook\.py --qbit "%I" "%F" ok$' "$(md_qb /app/preferences | jq -r '"\(.autorun_enabled) \(.autorun_program)"' 2>&1) $(docker exec movie-qbittorrent sh -c 'test -x /clamav-hook/clamav-hook.py && echo ok' 2>&1)"
   check md.qbit-tun0-seeding '^tun0 2 43200$' "$(md_qb /app/preferences | jq -r '"\(.current_network_interface) \(.max_ratio) \(.max_seeding_time)"' 2>&1)"
   check md.qbit-queueing '^true [1-9][0-9]*$' "$(md_qb /app/preferences | jq -r '"\(.queueing_enabled) \(.max_active_downloads)"' 2>&1)"
+  check md.qbit-disk-hold '^5758 ok$' "$(grep -oP '(?<="ND_MIN_FREE_GIB", ")[0-9]+' "$MD_DIR/scripts/night-downloads.py") $(jq -e 'has("disk_held")' "$HOME/.local/state/movie-downloads/night-downloads.json" >/dev/null 2>&1 && echo ok || echo 'no disk_held in the state')"
   qbit_logout
 fi
 if want sabnzbd; then
   check md.sab-host-whitelist '^sabnzbd,gluetun,sabnzbd\.holy-grail\.ch,192\.168\.1\.102$' "$(md_sab mode=get_config | jq -r '.config.misc.host_whitelist | join(",")' 2>&1)"
   check md.sab-unwanted-ext '^22 2 775$' "$(md_sab mode=get_config | jq -r '.config.misc | "\(.unwanted_extensions | length) \(.action_on_unwanted_extensions) \(.permissions)"' 2>&1)"
+  check md.sab-low-space '^5758G 5758G (true|1)$' "$(md_sab mode=get_config | jq -r '.config.misc | "\(.download_free) \(.complete_free) \(.fulldisk_autoresume)"' 2>&1)"
   check md.sab-clamav-script '^/clamav-hook \*=clamav-hook\.py ok$' "$(md_sab mode=get_config | jq -r '"\(.config.misc.script_dir) *=\(.config.categories[] | select(.name == "*") | .script)"' 2>&1) $(docker exec movie-sabnzbd sh -c 'test -x /clamav-hook/clamav-hook.py && echo ok' 2>&1)"
   check md.sab-categories '^movies=movies movies-night=movies tv=tv tv-night=tv$' "$(md_sab mode=get_config | jq -r '[.config.categories | sort_by(.name)[] | select(.name | test("^(movies|tv)(-night)?$")) | "\(.name)=\(.dir)"] | join(" ")' 2>&1)"
   check md.sab-clamd-reach 'PONG' "$(docker exec movie-sabnzbd python3 -c 'import socket; s = socket.create_connection(("clamav", 3310), 3); s.sendall(b"zPING\0"); print(s.recv(8).decode().strip("\0"))' 2>&1)"

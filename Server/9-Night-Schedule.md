@@ -15,7 +15,7 @@ beefy sleeps (S5) and its timers cannot wake it. Everything recurring runs in on
 | Time | Job |
 |---|---|
 | 03:58 | window opens |
-| 04:00 | beefy-mover (+≤5 min), Seerr radarr-scan |
+| 04:00 | beefy-mover (+≤5 min; only when the SSDs are ≥ 70 %, starts no title after 04:40), Seerr radarr-scan |
 | 04:01-04:06 | apt-daily, logrotate, dpkg-db-backup, Seerr download-sync-reset 04:03, fwupd-refresh 04:04, clamav-scan 04:05, Seerr sonarr-scan 04:05, sysstat-rotate/summary |
 | 04:07-04:13 | Sun clamav-hostscan 04:07, Jellyfin IMDb 04:08, Jellyfin scan 04:10, auto-update 04:12, Jellyfin Intro Skipper analysis 04:13 |
 | 04:14-04:20 | description-scout 04:14, Recyclarr 04:15, nfo-scout 04:16, night-search 04:17 (new episodes/films + cutoff-unmet, Treasure Maps ≤ 200), language-missing 04:18, original-audio sweep 04:20 (+ Sun image-cleanup) |

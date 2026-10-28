@@ -27,6 +27,7 @@ if want seerr; then
 fi
 if want seerr-proxy; then
   check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
+  check seerr.bar-storage '^SSD HDD$' "$(curl -s -m 8 http://127.0.0.1:5055/_indexer-bar/usage.json | jq -r '[.storage[].name] | join(" ")' 2>&1)"
   check seerr.indexer-bar-data '^true [0-9]+$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/usage.json | jq -r '"\(.ok) \(.indexers|length)"' 2>&1)"
   check seerr.night-label-data '^array$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-waiting.json | jq -r '.waiting|type' 2>&1)"
   check seerr.request-state-data '^array object object object object fresh$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-state.json | jq -r '"\(.canWait|type) \(.unreleased|type) \(.noRelease|type) \(.searching|type) \(.queue|type)"' 2>&1) $([ $(( $(date +%s) - $(stat -c %Y /srv/appdata/indexer-bar/request-state.json 2>/dev/null || echo 0) )) -lt 600 ] && echo fresh || echo stale)"
