@@ -10,8 +10,8 @@
     de: { label: "Wartet auf die Nacht 🌙", tip: "Startet automatisch um 22:05 oder am Sonntag; nächstes Mal „Can wait“ abwählen für einen sofortigen Download" },
   };
   var FLAGS = {
-    en: { moon: "Waiting for the night — downloads at night (cheaper power)", compass: "No release found yet — searched again in tonight's scheduled search (04:17)", cal: "Not released yet", expected: "expected", locale: "en-GB" },
-    de: { moon: "Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom)", compass: "Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter", cal: "Noch nicht erschienen", expected: "erwartet", locale: "de-CH" },
+    en: { moon: "Waiting for the night — downloads at night (cheaper power)", compass: "No release found yet — searched again in tonight's scheduled search (04:17)", cal: "Not released yet", expected: "expected", moonShort: "Waiting for the night", compassNight: ", downloads at night when found", locale: "en-GB" },
+    de: { moon: "Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom)", compass: "Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter", cal: "Noch nicht erschienen", expected: "erwartet", moonShort: "Wartet auf die Nacht", compassNight: ", lädt nachts, sobald gefunden", locale: "de-CH" },
   };
   var PENDING = /^(4K )?(Pending|Ausstehend)$/;
   var MEDIA_LINK = /^\/(movie|tv)\/(\d+)$/;
@@ -73,15 +73,24 @@
     return out;
   }
 
-  // touch has no hover: a tap on an icon shows its hint instead of following the badge link or opening the card
-  function tapHint(doc, el, list) {
-    el.__hgHint = list;
+  // one hint for a badge's icons together: 🌙 shortened when combined, 🧭 with the night when 🌙 is there
+  function merged(list, l) {
+    if (list.length === 1) return list[0][1];
+    var moon = list.some(function (x) { return x[0] === "🌙"; });
+    return list.map(function (x) { return x[0] === "🌙" ? FLAGS[l].moonShort : x[0] === "🧭" && moon ? x[1] + FLAGS[l].compassNight : x[1]; }).join(" · ");
+  }
+
+  // touch has no hover: the first tap on a badge with icons shows its hint, a second tap goes through (link, card)
+  function tapHint(doc, el, text) {
+    el.__hgHint = text;
     if (el.__hgTap) return;
     el.__hgTap = true;
     el.addEventListener("click", function (ev) {
+      if (!el.__hgHint) return;
+      var tip = doc.getElementById("hg-flag-tip");
+      if (tip && tip.__for === el && tip.style.display !== "none") { tip.style.display = "none"; return; }
       ev.preventDefault();
       ev.stopPropagation();
-      var tip = doc.getElementById("hg-flag-tip");
       if (!tip) {
         tip = doc.createElement("div");
         tip.id = "hg-flag-tip";
@@ -90,7 +99,8 @@
         doc.addEventListener("click", function (e) { if (e.target !== tip) tip.style.display = "none"; });
         (doc.defaultView || window).addEventListener("scroll", function () { tip.style.display = "none"; }, true);
       }
-      tip.textContent = el.__hgHint.map(function (x) { return x[0] + " " + x[1]; }).join("\n");
+      tip.textContent = el.__hgHint;
+      tip.__for = el;
       var r = el.getBoundingClientRect(), vw = (doc.defaultView && doc.defaultView.innerWidth) || 360;
       tip.style.display = "block";
       tip.style.top = Math.round(r.bottom + 6) + "px";
@@ -215,6 +225,7 @@
     root.removeAttribute("data-hg-night-pill");
     root.removeAttribute("data-hg-night-icons");
     if (root.getAttribute("role") === "img") root.removeAttribute("role");
+    root.__hgHint = null;
     root.removeAttribute("data-hg-night");
   }
 
@@ -223,18 +234,27 @@
     if ((b.getAttribute("data-hg-flags") || "") === want) return;
     var old = b.querySelectorAll("[data-hg-flag-own]");
     for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
+    if (b.hasAttribute("data-hg-flags-title")) {
+      var prev = b.getAttribute("data-hg-flags-title");
+      if (prev) b.setAttribute("title", prev); else b.removeAttribute("title");
+      b.removeAttribute("data-hg-flags-title");
+    }
+    b.__hgHint = null;
     if (!want) { b.removeAttribute("data-hg-flags"); return; }
     for (var j = 0; j < list.length; j++) {
       var e = doc.createElement("span");
       e.setAttribute("data-hg-flag-own", "");
       e.setAttribute("role", "img");
       e.setAttribute("aria-label", list[j][1]);
-      e.title = list[j][1];
-      e.style.cssText = "margin-left:.25rem;cursor:help";
+      e.style.cssText = "margin-left:.25rem";
       e.textContent = list[j][0];
-      tapHint(doc, e, [list[j]]);
       place.appendChild(e);
     }
+    var hint = merged(list, l), before = b.getAttribute("title") || "";
+    b.setAttribute("data-hg-flags-title", before);
+    b.setAttribute("title", before ? before + " · " + hint : hint);
+    b.style.cursor = "help";
+    tapHint(doc, b, b.getAttribute("title"));
     b.setAttribute("data-hg-flags", want);
   }
 
@@ -302,13 +322,13 @@
       if (holder.getAttribute("data-hg-night-icons") === want) continue;
       restore(holder);
       for (var c = 0; c < holder.children.length; c++) hide(holder.children[c]);
-      var tips = list.map(function (x) { return x[1]; }).join(" · ");
+      var tips = merged(list, l);
       holder.appendChild(own(doc, "span", want, ""));
       holder.setAttribute(list.length > 1 ? "data-hg-night-pill" : "data-hg-night-moon", "");
       holder.setAttribute("title", tips);
       holder.setAttribute("aria-label", tips);
       holder.setAttribute("role", "img");
-      tapHint(doc, holder, list);
+      tapHint(doc, holder, tips);
       holder.setAttribute("data-hg-night-icons", want);
       holder.setAttribute("data-hg-night", "title");
     }
@@ -420,7 +440,13 @@
     };
   }
 
-  var api = { requestSets: requestSets, flags: flags, waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
+  // for other scripts (my-request.js): a title's icons with their hints, and the tap hint
+  function icons(key) {
+    if (typeof document === "undefined") return [];
+    return flagList(flags(key, requestSets(state.requests, Date.now()), state.media[key]), lang(document));
+  }
+
+  var api = { icons: icons, hintText: function (list) { return merged(list, lang(document)); }, hint: function (el, text) { tapHint(document, el, text); }, requestSets: requestSets, flags: flags, waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
   if (typeof window === "undefined") return;
   window.hgNightLabel = api;
   try {

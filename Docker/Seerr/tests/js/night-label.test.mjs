@@ -242,7 +242,7 @@ const rsPage = (body, path, rs = RS, waiting = fresh([]), calls) => night(body, 
 // StatusBadge without a download: "Requested" (Processing status), Pending as plain text
 const plainBadge = (key, text = "Requested") => `<a href="/${key}?manage=1" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap transition cursor-pointer !no-underline bg-indigo-500/80 border border-indigo-500 !text-indigo-100 hover:bg-indigo-500 false overflow-hidden"><div class="relative z-20 flex items-center false"><span>${text}</span></div></a>`;
 const pendingBadge = (key, text = "Pending") => `<a href="/${key}?manage=1" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap transition cursor-pointer !no-underline bg-yellow-500/80 border-yellow-500 border !text-yellow-100 hover:bg-yellow-500">${text}</a>`;
-const flagTip = (b) => [...b.querySelectorAll("[data-hg-flag-own]")].map((e) => e.getAttribute("aria-label")).join(" | ");
+const flagTip = (b) => b.getAttribute("title");
 const clockCard = (poster, colour = "indigo") => titleCard(poster).replace(/<svg[\s\S]*?<\/svg>/, '<svg viewBox="0 0 24 24" class="clock"><path d="M12 2"></path></svg>').replace(/indigo/g, colour);
 
 test("Can wait title with nothing grabbed: the Requested badge gets a 🌙 with the night hint", async () => {
@@ -258,7 +258,7 @@ test("Can wait and not released yet: 🌙 and 📅 with the date; not released a
   await settle();
   const [cat, now] = w.document.querySelectorAll('a[href$="?manage=1"]');
   assert.equal(visibleText(w, cat), "Requested|🌙|📅");
-  assert.equal(flagTip(cat), "Waiting for the night — downloads at night (cheaper power) | Not released yet — expected 2 Feb 2027");
+  assert.equal(flagTip(cat), "Waiting for the night · Not released yet — expected 2 Feb 2027");
   assert.equal(visibleText(w, now), "Requested|📅");
   assert.equal(flagTip(now), "Not released yet");
 });
@@ -291,7 +291,7 @@ test("night-paused download of a Can wait title: the night label, no second moon
 test("German UI: German hints and date", async () => {
   const w = rsPage(header(plainBadge("movie/701", "Angefragt")), "/movie/701");
   await settle();
-  assert.equal(flagTip(w.document.querySelector(".media-status a")), "Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom) | Noch nicht erschienen — erwartet 2. Feb. 2027");
+  assert.equal(flagTip(w.document.querySelector(".media-status a")), "Wartet auf die Nacht · Noch nicht erschienen — erwartet 2. Feb. 2027");
 });
 
 test("the request is downloaded or switched to Download now while the page is open: the 🌙 goes", async () => {
@@ -307,6 +307,7 @@ test("the request is downloaded or switched to Download now while the page is op
   await settle();
   assert.equal(visibleText(w, b), "Requested");
   assert.equal(b.querySelectorAll("[data-hg-flag-own]").length, 0);
+  assert.equal(b.hasAttribute("title"), false);
 });
 
 test("Discover cards: 🌙 in the 26px circle, 🌙📅 side by side in a pill, 📅 alone, nothing for others; re-renders add nothing twice", async () => {
@@ -325,7 +326,7 @@ test("Discover cards: 🌙 in the 26px circle, 🌙📅 side by side in a pill, 
   assert.equal(visibleText(w, cat), "🌙📅");
   assert.ok(cat.querySelector("[data-hg-night-pill]"));
   assert.equal(cat.querySelector("[data-hg-night-moon]"), null);
-  assert.match(cat.querySelector("[data-hg-night]").getAttribute("title"), /^Waiting for the night — downloads at night \(cheaper power\) · Not released yet — expected 2 Feb 2027$/);
+  assert.match(cat.querySelector("[data-hg-night]").getAttribute("title"), /^Waiting for the night · Not released yet — expected 2 Feb 2027$/);
   assert.equal(visibleText(w, now), "📅");
   assert.equal(fight.querySelector("[data-hg-night-own]"), null);
   assert.ok(shown(w, fight.querySelector("svg")));
@@ -342,7 +343,8 @@ test("searched, no release found: 🧭 beside the 🌙 (and alone for a title th
   await settle();
   const [honey, now, tied] = w.document.querySelectorAll('a[href$="?manage=1"]');
   assert.equal(visibleText(w, honey), "Requested|🌙|🧭");
-  assert.equal(flagTip(honey), "Waiting for the night — downloads at night (cheaper power) | " + COMPASS_EN);
+  assert.equal(flagTip(honey), "Waiting for the night · " + COMPASS_EN + ", downloads at night when found");
+  assert.equal(flagTip(now), COMPASS_EN);
   assert.equal(visibleText(w, now), "Requested|🧭");
   assert.equal(visibleText(w, tied), "Requested|🌙|📅");
 });
@@ -353,30 +355,47 @@ test("German 🧭 hint", async () => {
   assert.equal(flagTip(w.document.querySelector(".media-status a")), "Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter");
 });
 
-test("tap on an icon shows its hint and does not open the link or the card", async () => {
+test("one merged hint on the whole badge and card pill; a tap shows it, a second tap goes through", async () => {
   const routes = { ...RS_ROUTES, [RS_URL]: RS_C, "/api/v1/discover/movies": { results: [{ id: 704, mediaType: "movie", title: "Honey", posterPath: "/honey.jpg", mediaInfo: { tmdbId: 704, mediaType: "movie", status: 3, downloadStatus: [], downloadStatus4k: [] } }] } };
   const w = night(clockCard("/honey.jpg") + header(plainBadge("movie/704")), fakeXHR(routes, { value: fresh([]) }), "/movie/704");
   const x = new w.XMLHttpRequest();
   x.open("GET", "/api/v1/discover/movies");
   x.send();
   await settle();
-  let opened = 0;
-  w.document.querySelector('[role="link"]').addEventListener("click", () => opened++);
-  w.document.querySelector(".media-status a").addEventListener("click", () => opened++);
+  const MERGED = "Waiting for the night · " + COMPASS_EN + ", downloads at night when found";
+  let card = 0, link = 0;
+  w.document.querySelector('[role="link"]').addEventListener("click", () => card++);
+  const badgeEl = w.document.querySelector(".media-status a");
+  badgeEl.addEventListener("click", (e) => { if (!e.defaultPrevented) link++; });
   const chip = w.document.querySelector('[role="link"] [data-hg-night]');
   assert.equal(chip.textContent, "🌙🧭");
-  assert.equal(chip.getAttribute("aria-label"), "Waiting for the night — downloads at night (cheaper power) · " + COMPASS_EN);
+  assert.equal(chip.getAttribute("title"), MERGED);
+  assert.equal(chip.getAttribute("aria-label"), MERGED);
+  assert.equal(badgeEl.getAttribute("title"), MERGED);
+  assert.equal(badgeEl.querySelector("[data-hg-flag-own]").hasAttribute("title"), false);
   chip.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
   const tip = w.document.getElementById("hg-flag-tip");
   assert.ok(tip && shown(w, tip));
-  assert.equal(tip.textContent, "🌙 Waiting for the night — downloads at night (cheaper power)\n🧭 " + COMPASS_EN);
-  const icon = w.document.querySelector(".media-status [data-hg-flag-own]");
-  const ev = new w.MouseEvent("click", { bubbles: true, cancelable: true });
-  icon.dispatchEvent(ev);
-  assert.equal(ev.defaultPrevented, true);
-  assert.equal(tip.textContent, "🌙 Waiting for the night — downloads at night (cheaper power)");
-  assert.equal(opened, 0);
+  assert.equal(tip.textContent, MERGED);
+  assert.equal(card, 0);
+  chip.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.equal(card, 1);
+  assert.equal(shown(w, tip), false);
+  badgeEl.querySelector("span").dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.equal(link, 0);
+  assert.ok(shown(w, tip));
+  assert.equal(tip.textContent, MERGED);
+  badgeEl.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.equal(link, 1);
   w.document.body.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
   assert.equal(shown(w, tip), false);
   assert.match(w.document.getElementById("hg-night-style").textContent, /\[data-hg-night\]\[data-hg-night-icons\]\{[^}]*pointer-events:auto/);
+  assert.equal(w.hgNightLabel.hintText([["🌙", "x"], ["📅", "Not released yet — expected 2 Feb 2027"]]), "Waiting for the night · Not released yet — expected 2 Feb 2027");
+});
+
+test("icons(key) for other scripts: the title's icons with their hints", async () => {
+  const w = rsPage(header(plainBadge("movie/704")), "/movie/704", RS_C);
+  await settle();
+  assert.equal(JSON.stringify(w.hgNightLabel.icons("movie/704")), JSON.stringify([["🌙", "Waiting for the night — downloads at night (cheaper power)"], ["🧭", COMPASS_EN]]));
+  assert.equal(JSON.stringify(w.hgNightLabel.icons("movie/9")), "[]");
 });
