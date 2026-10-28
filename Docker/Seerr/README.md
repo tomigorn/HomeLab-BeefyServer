@@ -255,7 +255,7 @@ Status icons, for every open request (pending or approved, not available):
 | 🧭 | searched (Radarr `lastSearchTime`; Sonarr: missing aired episodes of the requested seasons), nothing queued, no search running, released | No release found yet — searched again in tonight's scheduled search (04:17) / Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter |
 | 📅 | not released: Radarr `isAvailable` false (date: `inCinemas` for minimum availability In Cinemas, else `releaseDate`); Sonarr: none of the missing episodes of the requested seasons has aired (date: next air date), or no episodes yet and status `upcoming` (`nextAiring`) | Not released yet — expected 2 Feb 2027 / Noch nicht erschienen — erwartet 2. Feb. 2027 |
 
-Order 🌙🧭📅, combined. Placements: status badges (title page, request cards, Requests list; after "Requested"/"Pending"), Discover cards (in Seerr's status circle: one icon = the 26px circle, two = a pill). Hover = `title`; touch: a tap on an icon shows the hint and does not open the card or the badge link.
+Order 🌙🧭📅, combined. Placements: status badges (title page, request cards, Requests list; after "Requested"/"Pending"), Discover cards (in Seerr's status circle: one icon = the 26px circle, two = a pill). One merged hint on the whole badge / pill (`title`), e.g. 🌙🧭 "Waiting for the night · No release found yet — searched again in tonight's scheduled search (04:17), downloads at night when found"; touch: the first tap shows it, a second tap opens the link or card as usual.
 
 | Part | What |
 |---|---|
