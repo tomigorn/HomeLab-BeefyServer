@@ -545,10 +545,25 @@ test("discover: studios and genres by item count, most first, ties by name, at m
   assert.equal(es.DISCOVER_LIMIT, 20);
 });
 
-test("discover: networks are only the studios the server marked as networks", () => {
-  const shows = [series("x", ["Prime Video", "Amazon Studios"], []), series("y", ["HBO", "Production Partners"], []), series("z", ["Prime Video"], [])];
-  assert.deepEqual(es.countBy(shows, "Studios", ["id-Prime Video", "id-HBO"]).map((s) => s.Name), ["Prime Video", "HBO"]);
-  assert.deepEqual(es.countBy(shows, "Studios", []), []);
+const WB = { name: "Warner Bros.", ids: ["id-Warner Bros. Pictures", "id-Warner Bros. Entertainment"] };
+const DIS = { name: "Walt Disney", ids: ["id-Walt Disney Pictures"] };
+const PIX = { name: "Pixar", ids: ["id-Pixar"] };
+
+test("one card per title: each title counts only for its first (biggest) studio, others and unlisted studios get nothing", () => {
+  const items = [film("hp1", ["Heyday Films", "Warner Bros. Pictures", "1492 Pictures"], []), film("hp2", ["Warner Bros. Entertainment"], []),
+    film("toy", ["Pixar", "Walt Disney Pictures"], []), film("up", ["Pixar"], []), film("indie", ["Small Films"], [])];
+  const cards = es.assignCards(items, [WB, DIS, PIX]);
+  assert.deepEqual(cards.map((c) => [c.name, c.items]), [["Warner Bros.", ["hp1", "hp2"]], ["Walt Disney", ["toy"]], ["Pixar", ["up"]]]);
+  assert.deepEqual(cards[0].ids, WB.ids);
+});
+
+test("one card per title: most titles first, ties in list order, at most 20, no list = no cards", () => {
+  const items = [film("a", ["Pixar"], []), film("b", ["Pixar"], []), film("c", ["Walt Disney Pictures"], []), film("d", ["Warner Bros. Pictures"], [])];
+  assert.deepEqual(es.assignCards(items, [WB, DIS, PIX]).map((c) => c.name), ["Pixar", "Warner Bros.", "Walt Disney"]);
+  const many = Array.from({ length: 30 }, (_, i) => ({ name: "S" + i, ids: ["id-S" + i] }));
+  assert.equal(es.assignCards(many.map((g, i) => film("f" + i, ["S" + i], [])), many).length, 20);
+  assert.deepEqual(es.assignCards(items, undefined), []);
+  assert.deepEqual(es.assignCards(items, ["id-Pixar"]).map((c) => [c.name, c.items]), [[null, ["a", "b"]]]);
 });
 
 test("discover: each genre's backdrop is its best rated title with a backdrop, a different one per genre where possible", () => {
@@ -588,13 +603,14 @@ function discoverApi(movies, shows, logos, views = VIEWS) {
 }
 
 test("discover: loads four rows with the user's session in four requests, logos by tag, libraries as parent", async () => {
-  const movies = [film("a", ["Disney", "Pixar"], ["Comedy"], 8), film("b", ["Disney"], ["Drama"], 7)];
+  const movies = [film("a", ["Walt Disney Pictures", "Pixar"], ["Comedy"], 8), film("b", ["Walt Disney Pictures"], ["Drama"], 7), film("c", ["Pixar"], ["Drama"], 7), film("d", ["Warner Bros. Entertainment"], ["Drama"], 7)];
   const shows = [series("x", ["Prime Video", "Amazon Studios"], ["Drama"], 8.4)];
-  const api = discoverApi(movies, shows, { "id-Disney": "L1", "id-Prime Video": "L2" });
-  const rows = await es.loadDiscover(api, "u1", ["id-Prime Video"]);
-  assert.deepEqual(rows[STU].map((c) => [c.Name, c.Type, c.ParentId, c.logo]), [["Disney", "Studio", "lib-m", "L1"], ["Pixar", "Studio", "lib-m", null]]);
-  assert.deepEqual(rows[NET].map((c) => [c.Name, c.ParentId, c.logo]), [["Prime Video", "lib-s", "L2"]]);
-  assert.deepEqual(rows[MGEN].map((c) => [c.Name, c.Type, c.ParentId, c.backdrop.Id]), [["Comedy", "Genre", "lib-m", "a"], ["Drama", "Genre", "lib-m", "b"]]);
+  const api = discoverApi(movies, shows, { "id-Walt Disney Pictures": "L1", "id-Prime Video": "L2", "id-Warner Bros. Entertainment": "L3" });
+  const rows = await es.loadDiscover(api, "u1", { studios: [WB, DIS, PIX], networks: [{ name: "Prime Video", ids: ["id-Prime Video"] }] });
+  assert.deepEqual(rows[STU].map((c) => [c.Id, c.Name, c.Type, c.ParentId, c.logo, c.items]), [
+    ["id-Walt Disney Pictures", "Walt Disney", "Studio", "lib-m", "L1", ["a", "b"]], ["id-Warner Bros. Entertainment", "Warner Bros.", "Studio", "lib-m", "L3", ["d"]], ["id-Pixar", "Pixar", "Studio", "lib-m", null, ["c"]]]);
+  assert.deepEqual(rows[NET].map((c) => [c.Name, c.ParentId, c.logo, c.items]), [["Prime Video", "lib-s", "L2", ["x"]]]);
+  assert.deepEqual(rows[MGEN].map((c) => [c.Name, c.Type, c.ParentId, c.backdrop.Id]), [["Drama", "Genre", "lib-m", "b"], ["Comedy", "Genre", "lib-m", "a"]]);
   assert.deepEqual(rows[SGEN].map((c) => [c.Name, c.ParentId, c.backdrop.Id]), [["Drama", "lib-s", "x"]]);
   assert.equal(rows[STU][0].ServerId, "s1");
   assert.equal(api.calls.length, 4);
@@ -604,25 +620,25 @@ test("discover: loads four rows with the user's session in four requests, logos 
     assert.equal(q.Fields, "Studios,Genres");
     assert.equal(q.EnableUserData, false);
   }
-  assert.deepEqual(items.find((q) => q.Ids).Ids.split(",").sort(), ["id-Disney", "id-Pixar", "id-Prime Video"]);
+  assert.deepEqual(items.find((q) => q.Ids).Ids.split(",").sort(), ["id-Pixar", "id-Prime Video", "id-Walt Disney Pictures", "id-Warner Bros. Entertainment", "id-Warner Bros. Pictures"]);
   assert.equal(api.calls.find(([p]) => p === "UserViews")[1].userId, "u1");
 });
 
 test("discover: no networks list = empty Networks row, two movie libraries = no parent filter, empty library = three requests", async () => {
-  const api = discoverApi([film("a", ["Disney"], ["Comedy"], 8)], [series("x", ["HBO"], ["Drama"], 8)], {}, [...VIEWS, { Id: "lib-m2", CollectionType: "movies" }]);
-  const rows = await es.loadDiscover(api, "u1", undefined);
+  const api = discoverApi([film("a", ["Walt Disney Pictures"], ["Comedy"], 8)], [series("x", ["HBO"], ["Drama"], 8)], {}, [...VIEWS, { Id: "lib-m2", CollectionType: "movies" }]);
+  const rows = await es.loadDiscover(api, "u1", { studios: [DIS] });
   assert.deepEqual(rows[NET], []);
   assert.equal(rows[STU][0].ParentId, null);
   assert.equal(rows[SGEN][0].ParentId, "lib-s");
   const empty = discoverApi([], [], {});
-  const none = await es.loadDiscover(empty, "u1", []);
+  const none = await es.loadDiscover(empty, "u1", { studios: [DIS], networks: [] });
   assert.deepEqual(none, { [STU]: [], [NET]: [], [MGEN]: [], [SGEN]: [] });
   assert.equal(empty.calls.length, 3);
 });
 
-test("discover: studio cards show the logo on a dark card, else the name, and link to the studio's list in its library", () => {
+test("discover: studio cards show the logo on a dark card, else the name, and the title count; they open their own list, not Jellyfin's studio page", () => {
   const c = home(section("DirectedBy", 15, 1));
-  const cards = [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: "lib-m", logo: "L1" }, { Id: "st2", Name: "<b>Pixar</b>", Type: "Studio", ServerId: "s1", ParentId: null, logo: null }];
+  const cards = [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: "lib-m", logo: "L1", items: ["m1", "m2"] }, { Id: "st2", Name: "<b>Pixar</b>", Type: "Studio", ServerId: "s1", ParentId: null, logo: null, items: ["m3"] }];
   es.syncDiscover(c, STU, cards, "Studios", fakeApi);
   const sec = c.querySelector(".verticalSection.DiscoverStudios[data-hss-client]");
   assert.equal(sec.querySelector("h2").textContent, "Studios");
@@ -632,14 +648,16 @@ test("discover: studio cards show the logo on a dark card, else the name, and li
   assert.equal(a.getAttribute("data-type"), "Studio");
   assert.equal(a.getAttribute("data-parentid"), "lib-m");
   assert.equal(a.getAttribute("aria-label"), "Disney");
-  assert.equal(a.querySelector("a.cardImageContainer.itemAction[data-action=link]").getAttribute("href"), "#/list?studioId=st1&serverId=s1&parentId=lib-m");
+  assert.equal(a.querySelector(".itemAction, [data-action], a"), null);
+  assert.equal(a.querySelector(".cardImageContainer.hssOpen").getAttribute("role"), "button");
+  assert.equal(a.getAttribute("data-hss-items"), "m1,m2");
+  assert.equal(a.querySelector(".hssCount").textContent, "2");
   assert.match(a.querySelector(".hssLogo").style.backgroundImage, /Items\/st1\/Images\/Logo\?tag=L1/);
   assert.equal(a.querySelector(".hssName"), null);
   assert.equal(b.querySelector(".hssLogo"), null);
   assert.equal(b.querySelector(".hssName").textContent, "<b>Pixar</b>");
   assert.equal(b.querySelector("b"), null);
-  assert.equal(b.querySelector("a.cardImageContainer").getAttribute("href"), "#/list?studioId=st2&serverId=s1");
-  assert.equal(b.hasAttribute("data-parentid"), false);
+  assert.equal(b.querySelector(".hssCount").textContent, "1");
 });
 
 test("discover: genre cards are the name over a duotone backdrop in the genre's colours and link to the genre in its library", () => {
@@ -659,21 +677,27 @@ test("discover: genre cards are the name over a duotone backdrop in the genre's 
   assert.equal(w.querySelector(".hssGenreName").textContent, "War");
 });
 
-test("discover: TV layout gets focusable button cards that open the list", () => {
+test("discover: TV layout gets focusable button cards; genres open Jellyfin's list, studios and networks their own", () => {
   const dom = new JSDOM('<html class="layout-tv"><body><div class="homeSectionsContainer"></div></body></html>');
   const c = dom.window.document.querySelector(".homeSectionsContainer");
-  es.syncDiscover(c, NET, [{ Id: "n1", Name: "HBO", Type: "Studio", ServerId: "s1", ParentId: "lib-s", logo: "L" }], "Networks", fakeApi);
+  es.syncDiscover(c, NET, [{ Id: "n1", Name: "HBO", Type: "Studio", ServerId: "s1", ParentId: "lib-s", logo: "L", items: ["x"] }], "Networks", fakeApi);
+  es.syncDiscover(c, MGEN, [{ Id: "g1", Name: "Comedy", Type: "Genre", ServerId: "s1", ParentId: "lib-m", backdrop: null }], "Movie Genres", fakeApi);
   const card = c.querySelector(".DiscoverNetworks .card");
   assert.equal(card.tagName, "BUTTON");
-  assert.equal(card.getAttribute("data-action"), "link");
-  assert.ok(card.classList.contains("itemAction"));
+  assert.ok(card.classList.contains("hssOpen"));
   assert.ok(card.classList.contains("show-focus"));
+  assert.equal(card.classList.contains("itemAction"), false);
+  assert.equal(card.hasAttribute("data-action"), false);
   assert.equal(card.querySelector("a"), null);
+  const genre = c.querySelector(".DiscoverMovieGenres .card");
+  assert.equal(genre.tagName, "BUTTON");
+  assert.equal(genre.getAttribute("data-action"), "link");
+  assert.ok(genre.classList.contains("itemAction"));
 });
 
 test("discover: same cards = untouched, no cards = no row", () => {
   const c = home("");
-  const cards = [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: null, logo: "L1" }];
+  const cards = [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: null, logo: "L1", items: ["m1"] }];
   es.syncDiscover(c, STU, cards, "Studios", fakeApi);
   const sec = c.querySelector(".DiscoverStudios");
   const card = sec.querySelector(".card");
@@ -681,6 +705,9 @@ test("discover: same cards = untouched, no cards = no row", () => {
   assert.equal(sec.querySelector(".card"), card);
   es.syncDiscover(c, STU, [{ ...cards[0], logo: "L2" }], "Studios", fakeApi);
   assert.notEqual(sec.querySelector(".card"), card);
+  const again = sec.querySelector(".card");
+  es.syncDiscover(c, STU, [{ ...cards[0], logo: "L2", items: ["m1", "m2"] }], "Studios", fakeApi);
+  assert.notEqual(sec.querySelector(".card"), again);
   es.syncDiscover(c, STU, [], "Studios", fakeApi);
   assert.equal(c.querySelector(".DiscoverStudios"), null);
 });
@@ -921,11 +948,79 @@ test("no late jump: once the plugin listed all its sections, a slot it left out 
   win.close();
 });
 
-test("cache: discover rows reload when the server's networks list changed", () => {
+test("cache: discover rows reload when the server's studio or network cards changed", () => {
   const now = 10 * 86400000;
-  const c = { base: { at: now }, recent: { at: now }, discover: { at: now, nets: es.netsKey(["a", "b"]) } };
-  assert.deepEqual(es.staleParts(c, now, ["b", "a"]), []);
-  assert.deepEqual(es.staleParts(c, now, ["a"]), ["discover"]);
-  assert.deepEqual(es.staleParts(c, now, undefined), ["discover"]);
+  const cards = { studios: [WB, DIS], networks: [{ name: "HBO", ids: ["h"] }] };
+  const c = { base: { at: now }, recent: { at: now }, discover: { at: now, nets: es.netsKey(cards) } };
+  assert.deepEqual(es.staleParts(c, now, { studios: [WB, DIS], networks: [{ name: "HBO", ids: ["h"] }] }), []);
+  assert.deepEqual(es.staleParts(c, now, { studios: [DIS, WB], networks: cards.networks }), ["discover"]);
+  assert.deepEqual(es.staleParts(c, now, { studios: [WB, DIS] }), ["discover"]);
   assert.deepEqual(es.staleParts(c, now), ["discover"]);
+});
+
+function listHome(tv) {
+  const dom = new JSDOM(`<html lang="en"${tv ? ' class="layout-tv"' : ""}><body><div class="homeSectionsContainer"></div></body></html>`, { url: "https://jf.example.com/web/" });
+  const win = dom.window;
+  const asked = [];
+  win.ApiClient = {
+    getCurrentUserId: () => "u1",
+    getScaledImageUrl: fakeApi.getScaledImageUrl,
+    getUrl: (p, q) => { asked.push([p, q]); return p + "?" + new URLSearchParams(q); },
+    getJSON: () => Promise.resolve({ Items: [movie("m2", 0, { Name: "Beta" }), movie("m1", 0, { Name: "Alpha" })] })
+  };
+  es.start(win);
+  const c = win.document.querySelector(".homeSectionsContainer");
+  es.syncDiscover(c, STU, [{ Id: "st1", Name: "Warner Bros.", Type: "Studio", ServerId: "s1", ParentId: "lib-m", logo: null, items: ["m1", "m2"] }], "Studios", fakeApi);
+  return { win, c, asked };
+}
+
+test("studio list: a card opens a page with exactly its titles, fetched by id with the user's session, titled with name and count", async () => {
+  const { win, c, asked } = listHome(false);
+  c.querySelector(".DiscoverStudios .hssOpen").dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 20));
+  const page = win.document.querySelector(".hssList");
+  assert.ok(page);
+  assert.ok(page.classList.contains("focuscontainer"));
+  assert.equal(page.querySelector("h2").textContent, "Warner Bros. · 2");
+  assert.deepEqual([...page.querySelectorAll(".card")].map((x) => x.getAttribute("data-id")), ["m2", "m1"]);
+  const q = asked.find(([p, q]) => p === "Users/u1/Items" && q.Ids)[1];
+  assert.deepEqual(q.Ids.split(",").sort(), ["m1", "m2"]);
+  assert.equal(q.SortBy, "SortName");
+  win.close();
+});
+
+test("studio list: Escape (or the TV back key) closes it and gives the focus back to the card, nothing else sees the key", async () => {
+  const { win, c } = listHome(true);
+  const card = c.querySelector(".DiscoverStudios .card");
+  card.focus();
+  card.dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(win.document.activeElement, win.document.querySelector(".hssList .card"));
+  let leaked = false;
+  win.document.addEventListener("keydown", () => { leaked = true; });
+  win.document.activeElement.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  assert.equal(win.document.querySelector(".hssList"), null);
+  assert.equal(leaked, false);
+  assert.equal(win.document.activeElement, card);
+  card.dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 20));
+  win.document.activeElement.dispatchEvent(new win.KeyboardEvent("keydown", { keyCode: 10009, bubbles: true, cancelable: true }));
+  assert.equal(win.document.querySelector(".hssList"), null);
+  win.close();
+});
+
+test("studio list: picking a title or the close button closes the page", async () => {
+  const { win, c } = listHome(false);
+  const open = async () => {
+    c.querySelector(".DiscoverStudios .hssOpen").dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 20));
+  };
+  await open();
+  win.document.querySelector(".hssList .card .cardImageContainer").dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(win.document.querySelector(".hssList"), null);
+  await open();
+  win.document.querySelector(".hssList .hssListClose").dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.equal(win.document.querySelector(".hssList"), null);
+  win.close();
 });

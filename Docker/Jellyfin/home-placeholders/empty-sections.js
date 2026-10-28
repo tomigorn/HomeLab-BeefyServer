@@ -238,6 +238,27 @@
     return out.slice(0, DISCOVER_LIMIT);
   }
 
+  // groups: the server's studio or network cards in precedence order ({name, ids}; a bare id = one studio). Each title counts only for its first card.
+  function assignCards(items, groups) {
+    if (!Array.isArray(groups)) return [];
+    var cards = groups.map(function (g, i) {
+      var one = typeof g === "string";
+      return { name: one ? null : g.name || null, ids: one ? [g] : g.ids || [], items: [], rank: i };
+    });
+    for (var i = 0; i < (items || []).length; i++) {
+      var mine = (items[i].Studios || []).map(function (s) { return s && s.Id; });
+      for (var k = 0; k < cards.length; k++) {
+        if (cards[k].ids.some(function (id) { return mine.indexOf(id) !== -1; })) {
+          cards[k].items.push(items[i].Id);
+          break;
+        }
+      }
+    }
+    var out = cards.filter(function (c) { return c.items.length; });
+    out.sort(function (a, b) { return b.items.length - a.items.length || a.rank - b.rank; });
+    return out.slice(0, DISCOVER_LIMIT).map(function (c) { return { name: c.name, ids: c.ids, items: c.items }; });
+  }
+
   function pickBackdrops(genres, items) {
     var ranked = (items || []).filter(function (i) { return i.BackdropImageTags && i.BackdropImageTags.length; });
     ranked.sort(function (a, b) { return (b.CommunityRating || 0) - (a.CommunityRating || 0); });
@@ -287,8 +308,8 @@
     return GENRE_SPARE[h % GENRE_SPARE.length];
   }
 
-  // networks: the studio ids studio-logos.py marked as TMDB networks (window.HssNetworks); none = no Networks row.
-  function loadDiscover(api, userId, networks) {
+  // cards: {studios, networks} from studio-logos.py (window.HssStudios / HssNetworks); none = no row.
+  function loadDiscover(api, userId, cards) {
     var path = "Users/" + userId + "/Items";
     function titles(type) {
       return api.getJSON(api.getUrl(path, { IncludeItemTypes: type, Recursive: true, Fields: "Studios,Genres", EnableImageTypes: "Backdrop", ImageTypeLimit: 1, EnableUserData: false }))
@@ -305,9 +326,12 @@
       }
       var movies = r[1];
       var shows = r[2];
-      var studios = countBy(movies, "Studios");
-      var nets = Array.isArray(networks) ? countBy(shows, "Studios", networks) : [];
-      var ids = studios.concat(nets).map(function (s) { return s.Id; });
+      var studios = assignCards(movies, cards && cards.studios);
+      var nets = assignCards(shows, cards && cards.networks);
+      var ids = [];
+      studios.concat(nets).forEach(function (c) { ids = ids.concat(c.ids); });
+      var named = {};
+      movies.concat(shows).forEach(function (i) { (i.Studios || []).forEach(function (s) { if (s && s.Id) named[s.Id] = s.Name; }); });
       var logos = !ids.length ? Promise.resolve([]) : api.getJSON(api.getUrl(path, { Ids: ids.join(","), EnableImageTypes: "Logo", ImageTypeLimit: 1, EnableUserData: false }))
         .then(function (x) { return (x && x.Items) || []; });
       return logos.then(function (found) {
@@ -315,7 +339,10 @@
         for (var i = 0; i < found.length; i++) if (found[i].ImageTags && found[i].ImageTags.Logo) tag[found[i].Id] = found[i].ImageTags.Logo;
         var server = (movies[0] || shows[0] || {}).ServerId || "";
         function studioCards(list, parent) {
-          return list.map(function (s) { return { Id: s.Id, Name: s.Name, Type: "Studio", ServerId: server, ParentId: parent, logo: tag[s.Id] || null }; });
+          return list.map(function (c) {
+            var rep = c.ids.filter(function (id) { return tag[id]; })[0] || c.ids.filter(function (id) { return named[id]; })[0] || c.ids[0];
+            return { Id: rep, Name: c.name || named[rep] || "", Type: "Studio", ServerId: server, ParentId: parent, logo: tag[rep] || null, items: c.items };
+          });
         }
         function genreCards(items, parent) {
           var genres = countBy(items, "GenreItems");
@@ -390,15 +417,20 @@
   var DISCOVER_CARD_TV = '<div class="cardBox"><div class="cardScalable"><div class="cardPadder cardPadder-overflowBackdrop"></div>' +
     '<div class="cardImageContainer cardContent"></div></div></div>';
 
+  // Studio and network cards open their own list (openList): Jellyfin's studio page would also show the titles counted under a bigger studio.
+  var DISCOVER_CARD_OPEN = '<div class="cardBox"><div class="cardScalable"><div class="cardPadder cardPadder-overflowBackdrop"></div>' +
+    '<div class="cardImageContainer cardContent hssOpen" role="button" tabindex="0"></div></div></div>';
+
   function discoverCard(doc, item, api, tv) {
     var card = doc.createElement(tv ? "button" : "div");
-    var kind = item.Type === "Studio" ? "hssStudioCard" : "hssGenreCard";
-    card.className = (tv ? "card overflowBackdropCard show-focus show-animation itemAction " : "card overflowBackdropCard card-hoverable ") + "hssDiscoverCard " + kind;
+    var studio = item.Type === "Studio";
+    var kind = studio ? "hssStudioCard" : "hssGenreCard";
+    card.className = (tv ? "card overflowBackdropCard show-focus show-animation " + (studio ? "hssOpen " : "itemAction ") : "card overflowBackdropCard card-hoverable ") + "hssDiscoverCard " + kind;
     if (tv) {
       card.setAttribute("type", "button");
-      card.setAttribute("data-action", "link");
+      if (!studio) card.setAttribute("data-action", "link");
     }
-    card.innerHTML = tv ? DISCOVER_CARD_TV : DISCOVER_CARD;
+    card.innerHTML = tv ? DISCOVER_CARD_TV : studio ? DISCOVER_CARD_OPEN : DISCOVER_CARD;
     card.setAttribute("data-id", item.Id);
     card.setAttribute("data-serverid", item.ServerId || "");
     card.setAttribute("data-type", item.Type);
@@ -407,8 +439,12 @@
     card.setAttribute("data-context", "home");
     card.setAttribute("aria-label", item.Name || "");
     var box = card.querySelector(".cardImageContainer");
-    if (!tv) box.setAttribute("href", discoverHref(item));
-    if (item.Type === "Studio") {
+    if (!tv && !studio) box.setAttribute("href", discoverHref(item));
+    if (studio) {
+      card.setAttribute("data-hss-items", (item.items || []).join(","));
+      var count = doc.createElement("div");
+      count.className = "hssCount";
+      count.textContent = String((item.items || []).length);
       var inner = doc.createElement("div");
       if (item.logo) {
         inner.className = "hssLogo";
@@ -418,6 +454,7 @@
         inner.textContent = item.Name || "";
       }
       box.appendChild(inner);
+      box.appendChild(count);
       return card;
     }
     var colors = genreColors(item.Name);
@@ -443,7 +480,7 @@
   }
 
   function discoverKey(item) {
-    return [item.Id, item.ParentId || "", item.logo || "", item.backdrop ? item.backdrop.Id + "/" + item.backdrop.tag : "", item.Name].join("|");
+    return [item.Id, item.ParentId || "", item.logo || "", item.backdrop ? item.backdrop.Id + "/" + item.backdrop.tag : "", item.Name, (item.items || []).join(" ")].join("|");
   }
 
   function syncDiscover(container, id, items, name, api) {
@@ -696,6 +733,10 @@
     ".hssLogo { position: absolute; top: 20%; right: 14%; bottom: 20%; left: 14%; background: center / contain no-repeat; }",
     ".hssName, .hssGenreName { " + FULL + " display: flex; align-items: center; justify-content: center; padding: 0 0.6em; text-align: center; color: #fff; line-height: 1.15; }",
     ".hssName { font-weight: 700; font-size: 1.25em; }",
+    ".hssCount { position: absolute; right: 0.6em; bottom: 0.4em; font-size: 0.85em; font-weight: 600; color: rgba(255, 255, 255, 0.7); }",
+    ".hssList { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 1000; overflow-y: auto; background: #101010; padding: 1em 0 3em; }",
+    ".hssListHead { display: flex; align-items: center; justify-content: space-between; }",
+    ".hssList .itemsContainer { display: flex; flex-wrap: wrap; }",
     ".hssDuo { " + FULL + " background: var(--hss-light); isolation: isolate; filter: brightness(0.8); }",
     ".hssDuoImg { " + FULL + " background: center / cover no-repeat; filter: grayscale(1) contrast(1.15); mix-blend-mode: multiply; }",
     ".hssDuoTint { " + FULL + " background: var(--hss-dark); mix-blend-mode: lighten; }",
@@ -751,11 +792,11 @@
     return part && typeof part.at === "number" ? now - part.at : Infinity;
   }
 
-  function netsKey(nets) {
-    return Array.isArray(nets) ? nets.slice().sort().join(",") : "";
+  function netsKey(cards) {
+    return JSON.stringify([(cards && cards.studios) || null, (cards && cards.networks) || null]);
   }
 
-  // nets: the server's networks list (window.HssNetworks); the discover rows reload when it changed.
+  // nets: the server's cards ({studios, networks}); the discover rows reload when they changed.
   function staleParts(c, now, nets) {
     return PARTS.filter(function (p) {
       if (p === "discover") return ageOf(c && c.discover, now) > DISCOVER_TTL_MS || c.discover.nets !== netsKey(nets);
@@ -787,8 +828,89 @@
     return out;
   }
 
+  function cardsOf(win) {
+    return { studios: win.HssStudios, networks: win.HssNetworks };
+  }
+
+  var BACK_KEYS = { Escape: 1, Esc: 1, Backspace: 1, GoBack: 1, BrowserBack: 1 };
+  var BACK_CODES = { 27: 1, 8: 1, 461: 1, 10009: 1 };
+  var LIST_PAGE = '<div class="hssListHead padded-left padded-right"><h2 class="sectionTitle sectionTitle-cards"></h2>' +
+    '<button type="button" is="paper-icon-button-light" class="hssListClose paper-icon-button-light" aria-label="Close"><span class="material-icons close" aria-hidden="true"></span></button></div>' +
+    '<div is="emby-itemscontainer" class="itemsContainer vertical-wrap padded-left padded-right"></div>';
+
+  // A full-screen list of exactly the card's titles, with the user's session; Escape / back closes it.
+  function openList(win, from, card) {
+    var doc = win.document;
+    var api = win.ApiClient;
+    var ids = (card.getAttribute("data-hss-items") || "").split(",").filter(Boolean);
+    closeList(doc, false);
+    if (!api || !ids.length) return;
+    var tv = doc.documentElement.classList.contains("layout-tv");
+    var page = doc.createElement("div");
+    page.className = "hssList focuscontainer";
+    page.innerHTML = LIST_PAGE;
+    page.querySelector("h2").textContent = (card.getAttribute("aria-label") || "") + " \u00b7 " + ids.length;
+    page.hssFrom = from;
+    doc.body.appendChild(page);
+    api.getJSON(api.getUrl("Users/" + api.getCurrentUserId() + "/Items", { Ids: ids.join(","), SortBy: "SortName", Fields: "PrimaryImageAspectRatio", EnableImageTypes: "Primary,Backdrop,Thumb", ImageTypeLimit: 1, EnableUserData: false })).then(function (r) {
+      if (!page.parentNode) return;
+      var list = page.querySelector(".itemsContainer");
+      var items = (r && r.Items) || [];
+      for (var i = 0; i < items.length; i++) {
+        var c = recentCard(doc, items[i], api, tv);
+        c.setAttribute("data-index", String(i));
+        list.appendChild(c);
+      }
+      if (tv && list.firstChild) list.firstChild.focus();
+    }, function () {});
+  }
+
+  function closeList(doc, refocus) {
+    var page = doc.querySelector(".hssList");
+    if (!page) return false;
+    page.remove();
+    if (refocus && page.hssFrom && page.hssFrom.isConnected) page.hssFrom.focus();
+    return true;
+  }
+
+  function listEvents(win) {
+    var doc = win.document;
+    doc.addEventListener("click", function (e) {
+      var t = e.target && e.target.closest ? e.target : null;
+      if (!t) return;
+      var from = t.closest(".hssOpen");
+      var card = from && from.closest(".hssDiscoverCard[data-hss-items]");
+      if (card) {
+        e.preventDefault();
+        e.stopPropagation();
+        openList(win, from, card);
+        return;
+      }
+      if (t.closest(".hssListClose")) closeList(doc, true);
+      else if (t.closest(".hssList .card")) win.setTimeout(function () { closeList(doc, false); }, 0);
+    }, true);
+    win.addEventListener("keydown", function (e) {
+      var t = e.target;
+      if (!doc.querySelector(".hssList")) {
+        if ((e.key === "Enter" || e.key === " ") && t && t.classList && t.classList.contains("hssOpen") && t.tagName !== "BUTTON") {
+          e.preventDefault();
+          t.click();
+        }
+        return;
+      }
+      if (!BACK_KEYS[e.key] && !BACK_CODES[e.keyCode]) return;
+      if (t && /^(INPUT|TEXTAREA)$/.test(t.tagName)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      closeList(doc, true);
+    }, true);
+    win.addEventListener("popstate", function () { closeList(doc, false); });
+    win.addEventListener("hashchange", function () { closeList(doc, false); });
+  }
+
   function start(win) {
     var doc = win.document;
+    listEvents(win);
     lockHomeSettings(doc);
     homeStyles(doc);
     var mem = {};
@@ -824,8 +946,8 @@
           ]).then(function (r) { return { enabled: enabledOf(r[0]), names: namesOf(r[1]), modes: modesOf(r[1]) }; });
         }
         if (p === "recent") return loadRecent(api, userId).then(function (rows) { return { rows: slimRows(rows) }; });
-        var nets = netsKey(win.HssNetworks);
-        return loadDiscover(api, userId, win.HssNetworks).then(function (rows) { return { rows: rows, nets: nets }; });
+        var cards = cardsOf(win);
+        return loadDiscover(api, userId, cards).then(function (rows) { return { rows: rows, nets: netsKey(cards) }; });
       });
       return Promise.all(jobs.map(function (j) { return j.then(null, function () { return null; }); })).then(function (vals) {
         var old = state(userId, lang) || {};
@@ -936,7 +1058,7 @@
     }
 
     function refresh(api, st, lang) {
-      var parts = staleParts(st, Date.now(), win.HssNetworks);
+      var parts = staleParts(st, Date.now(), cardsOf(win));
       if (!parts.length || inflight || !liveContainers().length) return;
       inflight = fetchParts(api, api.getCurrentUserId(), lang, parts).then(function (next) {
         inflight = null;
@@ -992,7 +1114,7 @@
       hintFor: hintFor, namesOf: namesOf, modesOf: modesOf, enabledOf: enabledOf, start: start, pickMovies: pickMovies, seriesCandidates: seriesCandidates, pickSeries: pickSeries,
       completeCollection: completeCollection, loadRecent: loadRecent, withRecent: withRecent, recentName: recentName, syncRecent: syncRecent, RECENT_DAYS: RECENT_DAYS, RECENT_LIMIT: RECENT_LIMIT,
       withDiscover: withDiscover, discoverName: discoverName, countBy: countBy, pickBackdrops: pickBackdrops, genreColors: genreColors, loadDiscover: loadDiscover, syncDiscover: syncDiscover, DISCOVER_LIMIT: DISCOVER_LIMIT,
-      readCache: readCache, writeCache: writeCache, staleParts: staleParts, netsKey: netsKey, usable: usable, RECENT_TTL_MS: RECENT_TTL_MS, DISCOVER_TTL_MS: DISCOVER_TTL_MS
+      readCache: readCache, writeCache: writeCache, staleParts: staleParts, netsKey: netsKey, assignCards: assignCards, usable: usable, RECENT_TTL_MS: RECENT_TTL_MS, DISCOVER_TTL_MS: DISCOVER_TTL_MS
     };
   } else if (window.MutationObserver && document.body) {
     start(window);
