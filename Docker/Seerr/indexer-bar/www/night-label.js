@@ -144,8 +144,8 @@
     for (var i = 0; i < 8; i++) {
       var ln = doc.createElementNS(ns, "line");
       ln.setAttribute("x1", "12"); ln.setAttribute("y1", "3"); ln.setAttribute("x2", "12"); ln.setAttribute("y2", "7");
-      ln.setAttribute("stroke", "currentColor"); ln.setAttribute("stroke-width", "2.6"); ln.setAttribute("stroke-linecap", "round");
-      ln.setAttribute("opacity", String(0.2 + i * 0.1)); ln.setAttribute("transform", "rotate(" + i * 45 + " 12 12)");
+      ln.setAttribute("stroke", "currentColor"); ln.setAttribute("stroke-width", "3.2"); ln.setAttribute("stroke-linecap", "round");
+      ln.setAttribute("opacity", String(0.3 + i * 0.1)); ln.setAttribute("transform", "rotate(" + i * 45 + " 12 12)");
       svg.appendChild(ln);
     }
     span.appendChild(svg);
