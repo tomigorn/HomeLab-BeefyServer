@@ -1,0 +1,13 @@
+[Unit]
+Description=Seerr Clear Data wipe right after a title was added, so a request cleared within 2 min is in the snapshot
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStartPre=/bin/sleep 5
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/clear-data-wipe.sh
+NoNewPrivileges=true
+PrivateTmp=true

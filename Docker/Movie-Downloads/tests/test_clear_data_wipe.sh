@@ -166,5 +166,28 @@ run "{\"media\": [$BAD]}"
 run "{\"media\": [$(m 30 movie 10331), $BAD], $REQUESTED}"
 assert_eq "  requested again before the retry: retry dropped" "" "$(cat "$T/hooks")"
 
+echo "Requested and cleared between two timer runs"
+reset; run "{\"media\": [$BAD]}"
+run "{\"media\": [$(m 31 movie 10331), $BAD], $REQUESTED}"
+run "{\"media\": [$BAD], $TMDB}"
+assert_eq "the run the Radarr add triggers snapshots the new row, the next run wipes it" "wipe radarr 10331 Night of the Living Dead 1968|radarr.xml" "$(cat "$T/hooks")"
+U="$HERE/../systemd"
+assert_eq "  path unit: Radarr and Sonarr stamps start the add-triggered run" "PathChanged=/srv/appdata/radarr/title-added.stamp
+PathChanged=/srv/appdata/sonarr/title-added.stamp
+Unit=clear-data-wipe-added.service" "$(grep -E '^(PathChanged|Unit)=' "$U/clear-data-wipe-added.path" 2>/dev/null)"
+grep -q '^ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/clear-data-wipe.sh$' "$U/clear-data-wipe-added.service" 2>/dev/null && ok "  the service runs this script" || bad "  the service runs this script"
+grep -q '^StartLimitIntervalSec=0$' "$U/clear-data-wipe-added.service" 2>/dev/null && ok "  bursts of adds never trip the start limit" || bad "  bursts of adds never trip the start limit"
+
+echo "One run at a time (timer and add trigger)"
+reset; run "{\"media\": [$NOTLD, $BAD]}"
+flock "$T/snap.lock" sleep 3 & HOLD=$!
+sleep 0.3
+run "{\"media\": [$BAD], $TMDB}" CW_LOCK_WAIT=1
+assert_eq "another run holds the lock: nothing wiped, exit 0" "|0" "$(cat "$T/hooks")|$RC"
+grep -q 'another run' "$T/log" && ok "  logged" || bad "  logged" "$(cat "$T/log")"
+wait $HOLD
+run "{\"media\": [$BAD], $TMDB}"
+assert_eq "  the next run wipes it" "wipe radarr 10331 Night of the Living Dead 1968|radarr.xml" "$(cat "$T/hooks")"
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

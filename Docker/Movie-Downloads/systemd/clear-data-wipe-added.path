@@ -1,0 +1,11 @@
+[Unit]
+Description=Seerr Clear Data snapshot: Radarr/Sonarr just added a title (request)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Path]
+PathChanged=/srv/appdata/radarr/title-added.stamp
+PathChanged=/srv/appdata/sonarr/title-added.stamp
+Unit=clear-data-wipe-added.service
+
+[Install]
+WantedBy=multi-user.target

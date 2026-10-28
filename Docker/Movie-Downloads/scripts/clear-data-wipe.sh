@@ -3,6 +3,7 @@
 # A row that is back with a new id and no request was re-created by Seerr's own Jellyfin/Radarr/Sonarr sync: also cleared, and that row is removed after the wipe. A new row with a request (requested again) is left alone.
 # Wipes nothing on the first run (no snapshot), when Seerr's list is unreadable, empty or incomplete, when a row is back in a second listing, or when more than CW_MAX rows are gone at once (run once by hand with CW_MAX=<n> if that was intended).
 # Skips blocklisted rows (status 6: un-blocklisting deletes the row) and series without a tvdb id. A failed wipe is retried on the next runs (CW_TRIES).
+# Also run by systemd/clear-data-wipe-added.path a few seconds after Radarr/Sonarr add a title (language-policy-hook.sh writes the stamp): a title requested and cleared within one timer interval is in the snapshot too. One run at a time (flock, CW_LOCK_WAIT seconds).
 set -uo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -18,6 +19,8 @@ TRIES=${CW_TRIES:-5}
 mkdir -p "$(dirname "$SNAP")" "$(dirname "$LOG")"
 
 log() { local l; while IFS= read -r l; do echo "$l"; echo "$(date '+%F %T') $l" >> "$LOG"; done; }
+exec 9> "$SNAP.lock"
+flock -w "${CW_LOCK_WAIT:-300}" 9 || { echo "another run still busy after ${CW_LOCK_WAIT:-300} s, nothing done" | log; exit 0; }
 key=$(tr -d '[:space:]' < "$SEERR_KEY") || { echo "no Seerr API key at $SEERR_KEY" | log; exit 1; }
 seerr() { curl -sf -m 30 -H "X-Api-Key: $key" "$SEERR/api/v1$1" "${@:2}" </dev/null; }
 details() { seerr "/${1%%:*}/${1#*:}"; } # details <movie|tv>:<tmdbId>: Seerr's page of the title, with .mediaInfo while a row exists
