@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download now (README "Download now"): the button in Seerr's Manage panel. Seerr admins / manage-requests only, checked against Seerr itself on every call.
+"""Download now (README "Download now"): the button on Seerr's title page. Seerr admins / manage-requests on any title, everyone else only on a title with their own (not declined) request; checked against Seerr itself on every call.
 A press tags the title download-now in Radarr/Sonarr, moves its downloads out of the night categories (qBittorrent radarr-night/sonarr-night, SABnzbd movies-night/tv-night) into the normal ones and resumes the paused ones; nothing grabbed yet = a search, which grabs through the tagged normal clients.
 GET /_download-now/api?type=movie|tv&tmdb=<id>: what a press would do (no change). POST /_download-now/api {"type","tmdbId"}: do it. The API keys stay here, the browser only sees the state."""
 import http.client
@@ -21,6 +21,7 @@ NIGHT_QBIT = {"radarr-night": "radarr", "sonarr-night": "sonarr"}
 NIGHT_SAB = {"movies-night": "movies", "tv-night": "tv"}
 PAUSED_QBIT = {"pausedDL", "stoppedDL"}
 MAY = 2 | 16  # Seerr ADMIN | MANAGE_REQUESTS
+DECLINED = 3
 APP = {"movie": "radarr", "tv": "sonarr"}
 AUTH_HEADERS = ("X-Api-Key", "X-Api-User")
 TMDB = re.compile(r"^[1-9][0-9]{0,9}$")
@@ -53,6 +54,18 @@ def allowed(me):
     return isinstance(p, int) and not isinstance(p, bool) and bool(p & MAY)
 
 
+def owns(me, media):
+    uid = me.get("id") if isinstance(me, dict) else None
+    if not isinstance(uid, int) or isinstance(uid, bool):
+        return False
+    info = media.get("mediaInfo") if isinstance(media, dict) else None
+    reqs = info.get("requests") if isinstance(info, dict) else None
+    if not isinstance(reqs, list):
+        return False
+    return any(isinstance(r, dict) and isinstance(r.get("requestedBy"), dict) and r["requestedBy"].get("id") == uid
+               and r.get("status") != DECLINED for r in reqs)
+
+
 def missing(kind, title):
     if kind == "movie":
         return not title.get("hasFile")
@@ -81,9 +94,10 @@ def plan(kind, title, tag_id, queue, torrents, slots):
 
 
 def find_title(kind, arr, media, tmdb):
-    info = (media or {}).get("mediaInfo") or {}
+    media = media if isinstance(media, dict) else {}
+    info = media.get("mediaInfo") if isinstance(media.get("mediaInfo"), dict) else {}
     sid = info.get("externalServiceId")
-    tvdb = info.get("tvdbId") or ((media or {}).get("externalIds") or {}).get("tvdbId")
+    tvdb = info.get("tvdbId") or (media.get("externalIds") or {}).get("tvdbId")
     path = "/movie" if kind == "movie" else "/series"
 
     def same(t):
@@ -103,13 +117,9 @@ def find_title(kind, arr, media, tmdb):
     return found[0] if found else None
 
 
-def assess(kind, tmdb, auth, deps):
+def assess(kind, tmdb, media, deps):
     app = APP[kind]
     arr = deps.arr(app)
-    try:
-        media = deps.seerr(f"/{kind}/{tmdb}", auth)
-    except ApiError:
-        media = None
     title = find_title(kind, arr, media, tmdb)
     if not title:
         return None, {"state": "not-found", "app": app, "released": []}
@@ -194,17 +204,24 @@ def handle(method, path, headers, body, deps):
         me = deps.seerr("/auth/me", auth) if auth else None
     except ApiError:
         me = None
-    if not allowed(me):
+    if not isinstance(me, dict):
+        return 403, {"state": "error", "error": "forbidden"}
+    try:
+        media = deps.seerr(f"/{kind}/{tmdb}", auth)
+    except ApiError:
+        media = None
+    role = "manager" if allowed(me) else "own request" if owns(me, media) else None
+    if not role:
         return 403, {"state": "error", "error": "forbidden"}
     try:
         if method == "GET":
-            title, p = assess(kind, int(tmdb), auth, deps)
+            title, p = assess(kind, int(tmdb), media, deps)
         else:
             with LOCK:
-                title, p = assess(kind, int(tmdb), auth, deps)
+                title, p = assess(kind, int(tmdb), media, deps)
                 if title:
                     apply(kind, p, deps)
-                    print(f"user {me.get('id')} {kind} {tmdb} ({title.get('title')}): {p['state']}, moved {len(p['qbit']) + len(p['sab'])}, tag {'added' if p['add_tag'] else 'kept'}", flush=True)
+                    print(f"user {me.get('id')} ({role}) {kind} {tmdb} ({title.get('title')}): {p['state']}, moved {len(p['qbit']) + len(p['sab'])}, tag {'added' if p['add_tag'] else 'kept'}", flush=True)
     except Exception as e:
         print(f"{kind} {tmdb}: {type(e).__name__} {redact(e)}", file=sys.stderr, flush=True)
         return 502, {"state": "error", "error": "download clients not reachable"}

@@ -95,8 +95,8 @@ services:
 # #########################################################
 # DOWNLOAD-NOW ############################################
 # #########################################################
-# Backend of the "Download now" button in the Manage panel (README "Download now"). seerr-proxy sends
-# /_download-now/ here; every call is checked against Seerr (/api/v1/auth/me: admin or manage-requests).
+# Backend of the "Download now" button on the title page (README "Download now"). seerr-proxy sends
+# /_download-now/ here; every call is checked against Seerr (admin / manage-requests, or the caller's own request).
 # Holds the Radarr/Sonarr/SABnzbd keys (secrets/download-now, scripts/download-now-setup.sh); qBittorrent
 # lets 172.28.10.205 in without a password. Publishes nothing.
   download-now:

@@ -150,7 +150,7 @@ email) are not set up: Settings -> Notifications.
 |---|---|
 | a film or series | **Request**, leave the profile on the default (4K HDR, 1080p fallback) |
 | it now, not tonight | untick **Can wait — download tonight (cheaper power)** ([Can wait](#can-wait)) |
-| it now, at daytime power price (already requested, admins) | **Manage** → **⚡ Download now — at daytime power price** ([Download now](#download-now)) |
+| it now, at daytime power price (already requested: your own request, or any title for admins) | title page → **⚡ Download now — at daytime power price** ([Download now](#download-now)) |
 | an old or niche title | nothing: on add it moves to **4K preferred · older versions allowed** by itself (released ≤ 12 years ago, or ≥ 2 years old with few votes) |
 | force the older-versions profile for a new title | **Advanced** → Quality Profile **4K preferred · older versions allowed** |
 | a must-have audio language | **Advanced** → Tags `audio-<language>`: not grabbed without it |
@@ -257,33 +257,40 @@ A download held by the night queue ([Can wait](#can-wait)) shows **Waiting for t
 
 ## Download now
 
-Admins (and users with **Manage Requests**) get a button in the Manage panel: title page → **Manage** (slide-over, under **Open in Radarr/Sonarr**; without admin at the top) → **⚡ Download now — at daytime power price** (German UI: **⚡ Jetzt herunterladen — zum Tagstrompreis**).
+**⚡ Download now — at daytime power price** (German UI: **⚡ Jetzt herunterladen — zum Tagstrompreis**) sits on the title page, first in the button row next to Request/Play (amber, Seerr's button shape; on the phone its own line above the row).
 
-| Before the press | Panel shows |
+| Who | Sees the button on |
 |---|---|
-| downloads wait in a night category | the button + "Waiting for the night 🌙. Starts at once instead, at the higher daytime power price." |
-| nothing grabbed yet, file missing | the button + "Nothing grabbed yet. Searches now …" |
-| already downloading (normal category) | "Already downloading — nothing to do", no button |
-| downloaded, or not in Radarr/Sonarr | nothing |
+| Admins, users with **Manage Requests** | every title |
+| Everyone else (requesters, e.g. the owner's everyday account `tomigorn`) | only titles with **their own** request (any status but declined); never on a friend's title, so nobody starts daytime downloads for someone else |
 
-A press: tag `download-now` on the title (Radarr/Sonarr) → the title's unfinished night downloads move to the normal category (qBittorrent `radarr-night`→`radarr`, `sonarr-night`→`sonarr`; SABnzbd `movies-night`→`movies`, `tv-night`→`tv`), paused ones resume → nothing grabbed: `MoviesSearch` / `SeriesSearch`, the grab goes to the tagged normal clients. Out of the night categories `night-downloads.py` never pauses or queues them again. Feedback in the panel: ✅ Started / ✅ Searching / Already downloading / ❌ Failed; the 🌙 label goes at once (`night-label.js` `release`). Items paused by hand in a normal category stay paused.
+Why not in the Manage panel any more: requesters have no Manage button. One place for everyone keeps it simple; the Manage-panel button is gone (2026-10-28).
+
+| Before the press | Title page shows (tooltip = the note) |
+|---|---|
+| downloads wait in a night category | the button; note "Waiting for the night 🌙. Starts at once instead, at the higher daytime power price." |
+| nothing grabbed yet, file missing | the button; note "Nothing grabbed yet. Searches now …" |
+| already downloading, downloaded, not in Radarr/Sonarr, not allowed | nothing (Seerr's status badge says the rest) |
+
+A press: tag `download-now` on the title (Radarr/Sonarr) → the title's unfinished night downloads move to the normal category (qBittorrent `radarr-night`→`radarr`, `sonarr-night`→`sonarr`; SABnzbd `movies-night`→`movies`, `tv-night`→`tv`), paused ones resume → nothing grabbed: `MoviesSearch` / `SeriesSearch`, the grab goes to the tagged normal clients. Out of the night categories `night-downloads.py` never pauses or queues them again. Feedback in place of the button: ✅ Started / ✅ Searching / Already downloading / ❌ Failed; the 🌙 label goes at once (`night-label.js` `release`). Items paused by hand in a normal category stay paused.
 
 | Part | What |
 |---|---|
-| Button | `indexer-bar/www/download-now.js` (injected by `seerr-proxy`); asks `/api/v1/auth/me` first, requesters never call the backend |
+| Button | `indexer-bar/www/download-now.js` (injected by `seerr-proxy`): title page (`/movie/<id>`, `/tv/<id>`) → `.media-header .media-actions`; logged in → asks the backend (GET); 403 or any error = no button. Follows Seerr's in-app navigation (old button goes, new title asked) |
 | Backend | `download-now` container (`seerr-download-now`, `download-now/download_now.py`, python alpine, uid 65127, read-only, no caps, no port). `seerr-proxy` routes `/_download-now/` to it |
-| Who may | every call: Seerr `/api/v1/auth/me` with the caller's `connect.sid` cookie (or Seerr's API key), permission ADMIN (2) or MANAGE_REQUESTS (16), else 403. POST only with `Origin: https://requests.holy-grail.ch` and JSON |
+| Who may | every call (GET and POST): Seerr `/api/v1/auth/me` with the caller's `connect.sid` cookie (or Seerr's API key), then `GET /api/v1/movie\|tv/<id>` as the caller: permission ADMIN (2) or MANAGE_REQUESTS (16), **or** a request in `mediaInfo.requests` with `requestedBy.id` = the caller and status ≠ declined (3), else 403. Series: one own request (any season) allows the press for the whole series. POST only with `Origin: https://requests.holy-grail.ch` and JSON; searches at most every 2 min per title |
 | API | `GET /_download-now/api?type=movie\|tv&tmdb=<id>`: what a press would do (no change). `POST /_download-now/api` `{"type","tmdbId"}`: do it. Answer: `state`, `released` (download ids), `moved` |
 | Keys | `secrets/download-now/{radarr,sonarr,sabnzbd}.apikey` (buntu:65127 0640), never sent to the browser. qBittorrent: no-password bypass for 172.28.10.205 |
 | Setup | `scripts/download-now-setup.sh` (keys + qBittorrent bypass; idempotent), then `sudo docker compose up -d download-now`; after a Radarr/Sonarr/SAB key change re-run it and `sudo docker restart seerr-download-now` |
-| Log | `sudo docker logs seerr-download-now`: one line per press (user id, title, state) |
-| Fallback | backend down, Seerr changed the panel: no button, Seerr unchanged; the request's **Can wait** box still works |
+| Log | `sudo docker logs seerr-download-now`: one line per press (user id, `manager` or `own request`, title, state) |
+| Fallback | backend down, Seerr changed the title page: no button, Seerr unchanged; the request's **Can wait** box still works |
 
 | Check | Command |
 |---|---|
 | Tests | `python3 tests/test_download_now.py`; JS: `node --test` in `tests/js` |
 | Dry run (admin, Seerr API key) | `curl -s -H "X-Api-Key: $(cat secrets/api-key)" 'localhost:5055/_download-now/api?type=movie&tmdb=<id>'` |
-| Refused | same without the key → 403; with `-H 'X-Api-User: <requester id>'` → 403 |
+| Requester | `-H 'X-Api-User: <requester id>'`: own request's title → 200, a title only others requested → 403 (`seerr.download-now-requester` checks both) |
+| Refused | same without the key → 403 |
 
 ## Delete a title
 

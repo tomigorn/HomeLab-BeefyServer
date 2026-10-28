@@ -35,6 +35,10 @@ def job(n, cat="movies-night", status="Paused"):
     return {"nzo_id": n, "cat": cat, "status": status}
 
 
+def own_media(*users, status=2, sid=43):
+    return {"mediaInfo": {"externalServiceId": sid, "tvdbId": 999, "requests": [{"id": 50 + u, "status": status, "requestedBy": {"id": u}} for u in users]}}
+
+
 class Plan(unittest.TestCase):
     def test_paused_night_torrent_moves_to_the_normal_category_and_starts(self):
         p = dn.plan("movie", movie(), TAG, [rec("ABC")], [tor("abc")], [])
@@ -103,6 +107,14 @@ class Allowed(unittest.TestCase):
     def test_admin_and_manage_requests_may(self):
         self.assertTrue(dn.allowed({"id": 1, "permissions": 2}))
         self.assertTrue(dn.allowed({"id": 3, "permissions": 16 | 32}))
+
+    def test_own_request_needs_the_same_user_and_a_live_request(self):
+        mine = {"mediaInfo": {"requests": [{"status": 2, "requestedBy": {"id": 7}}]}}
+        self.assertTrue(dn.owns({"id": 7, "permissions": 8352}, mine))
+        self.assertFalse(dn.owns({"id": 5, "permissions": 8352}, mine))
+        self.assertFalse(dn.owns({"id": 7}, {"mediaInfo": {"requests": [{"status": 3, "requestedBy": {"id": 7}}]}}))
+        for me in (None, {}, {"id": True}, {"id": "7"}):
+            self.assertFalse(dn.owns(me, mine), me)
 
     def test_requesters_and_strangers_may_not(self):
         for me in ({"id": 5, "permissions": 8352}, {"permissions": "2"}, {}, None, [], {"id": 1, "permissions": None}):
@@ -224,6 +236,48 @@ class Handler(unittest.TestCase):
         self.assertEqual(post(w, {"type": "movie", "tmdbId": 673})[0], 403)
         self.assertEqual(get(w)[0], 403)
         self.assertEqual(w.writes, [])
+
+    def test_requester_may_press_on_a_title_they_requested(self):
+        w = FakeWorld(perms=8352, queue=[rec("abc")], torrents=[tor("abc")], media=own_media(7))
+        self.assertEqual(get(w)[:1], (200,))
+        self.assertEqual(w.writes, [])
+        status, out = post(w, {"type": "movie", "tmdbId": 673})
+        self.assertEqual((status, out["state"]), (200, "started"))
+        self.assertIn(("qbit", "/torrents/start", {"hashes": "abc"}), w.writes)
+
+    def test_requester_is_refused_on_someone_elses_title(self):
+        w = FakeWorld(perms=8352, queue=[rec("abc")], torrents=[tor("abc")], media=own_media(5))
+        self.assertEqual(get(w), (403, {"state": "error", "error": "forbidden"}))
+        self.assertEqual(post(w, {"type": "movie", "tmdbId": 673})[0], 403)
+        self.assertEqual(w.writes, [])
+
+    def test_a_declined_own_request_does_not_count(self):
+        w = FakeWorld(perms=8352, queue=[rec("abc")], torrents=[tor("abc")], media=own_media(7, status=3))
+        self.assertEqual(post(w, {"type": "movie", "tmdbId": 673})[0], 403)
+        self.assertEqual(w.writes, [])
+
+    def test_one_own_request_among_others_is_enough(self):
+        w = FakeWorld(perms=8352, kind="tv", media=own_media(5, 7, sid=17))
+        self.assertEqual(get(w, "type=tv&tmdb=1399")[0], 200)
+
+    def test_requester_is_refused_when_seerr_cannot_show_the_title(self):
+        w = FakeWorld(perms=8352)
+        seerr = w.seerr
+        def unknown(path, auth):
+            if path != "/auth/me":
+                raise dn.ApiError("seerr: 404")
+            return seerr(path, auth)
+        w.seerr = unknown
+        self.assertEqual(get(w)[0], 403)
+
+    def test_odd_request_shapes_are_refused_not_a_crash(self):
+        for media in ([], {"mediaInfo": []}, {"mediaInfo": {"requests": "x"}}, {"mediaInfo": {"requests": [None, {"requestedBy": 7}, {"requestedBy": {"id": "7"}}]}}):
+            self.assertEqual(get(FakeWorld(perms=8352, media=media))[0], 403, media)
+
+    def test_seerr_is_asked_for_the_title_once(self):
+        w = FakeWorld(perms=8352, media=own_media(7))
+        get(w)
+        self.assertEqual(len(w.seerr_auth), 2)
 
     def test_no_session_is_refused(self):
         w = FakeWorld(perms=None)
