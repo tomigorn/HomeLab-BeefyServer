@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Studio and network logos for the home rows Studios / Networks (home-placeholders/empty-sections.js).
-Finds each title's TMDB companies and networks through Seerr (its TMDB access, no own key), uploads the white TMDB logo as the Jellyfin studio's Logo image once, and writes the JavaScript Injector entry "Home networks" (window.HssNetworks: the studio ids that are TMDB networks).
+Finds each title's TMDB companies and networks through Seerr (its TMDB access, no own key), uploads the white TMDB logo as the Jellyfin studio's Logo image once, and writes the JavaScript Injector entry "Home networks" (window.HssNetworks: the studio ids that are well-known TMDB networks, WELL_KNOWN).
 Lookups are cached in ~/.cache/jellyfin-studio-logos.json, so a run only asks about new titles. Never prints API keys.
 Usage: studio-logos.py [--dry-run]"""
 import base64
@@ -20,10 +20,30 @@ SEERR = "http://127.0.0.1:5055"
 SEERR_KEY = HERE.parent.parent / "Seerr" / "secrets" / "api-key"
 CACHE_FILE = pathlib.Path.home() / ".cache" / "jellyfin-studio-logos.json"
 TMDB_LOGO = "https://image.tmdb.org/t/p/w500_filter(duotone,ffffff,bababa)"
+# The only networks the Networks row shows (owner 2026-10-28: well-known ones): global streamers, major US/UK/DE/CH broadcasters, Crunchyroll.
+# Matched by TMDB network id (ids checked through Seerr 2026-10-28), the name only for a network without an id; a shared name like "RTL" (HU) or "max" (AU) never matches.
+# Add one: find the id on themoviedb.org/search/network, then rerun studio-logos.py.
+WELL_KNOWN = {
+    213: "Netflix", 1024: "Prime Video", 2739: "Disney+", 2552: "Apple TV+", 453: "Hulu", 4330: "Paramount+", 3353: "Peacock",
+    6783: "Max", 3186: "HBO Max", 8304: "HBO Max", 7869: "HBO Max", 1112: "Crunchyroll", 4353: "discovery+", 4661: "AMC+",
+    49: "HBO", 6: "NBC", 16: "CBS", 2: "ABC", 19: "FOX", 71: "The CW", 174: "AMC", 88: "FX", 67: "Showtime", 318: "Starz",
+    359: "Cinemax", 41: "TNT", 30: "USA Network", 77: "Syfy", 47: "Comedy Central", 80: "Adult Swim", 56: "Cartoon Network",
+    13: "Nickelodeon", 54: "Disney Channel", 64: "Discovery", 43: "National Geographic",
+    4: "BBC One", 332: "BBC Two", 3: "BBC Three", 1155: "BBC iPlayer", 9: "ITV1", 26: "Channel 4", 99: "Channel 5", 136: "E4",
+    214: "Sky One", 1063: "Sky Atlantic",
+    31: "ZDF", 308: "Das Erste", 334: "ProSieben", 163: "SAT.1", 207: "RTL", 5428: "RTL+", 1628: "ARTE",
+    571: "SRF 1", 2563: "SRF zwei",
+}
 
 
 def norm(name):
     return re.sub(r"[^0-9a-z+]", "", (name or "").casefold())
+
+
+def well_known(network):
+    if network.get("id") is not None:
+        return network["id"] in WELL_KNOWN
+    return norm(network.get("name")) in {norm(n) for n in WELL_KNOWN.values()}
 
 
 def tmdb_ref(item):
@@ -45,7 +65,7 @@ def network_ids(series, cache):
         d = cache.get(tmdb_ref(s) or "")
         if not d:
             continue
-        names = {norm(n["name"]) for n in d["networks"]}
+        names = {norm(n["name"]) for n in d["networks"] if well_known(n)}
         out |= {st["Id"] for st in s.get("Studios") or [] if norm(st["Name"]) in names}
     return sorted(out)
 

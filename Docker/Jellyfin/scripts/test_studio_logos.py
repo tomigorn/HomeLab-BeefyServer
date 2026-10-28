@@ -48,6 +48,32 @@ class Pure(unittest.TestCase):
         series = [show("76479", ["Prime Video", "Amazon Studios"]), show("4546", ["HBO", "Production Partners"]), show("999", ["Unknown TV"])]
         self.assertEqual(sl.network_ids(series, CACHE), ["id-HBO", "id-Prime Video"])
 
+    def test_networks_row_keeps_only_well_known_networks_by_tmdb_id(self):
+        cache = {**CACHE, "tv:1": {"companies": [], "networks": [{"id": 614, "name": "TOKYO MX", "logo": "/mx.png"}, {"id": 1112, "name": "Crunchyroll", "logo": "/cr.png"}]}}
+        series = [show("1", ["TOKYO MX", "Crunchyroll"]), show("4546", ["HBO"])]
+        self.assertEqual(sl.network_ids(series, cache), ["id-Crunchyroll", "id-HBO"])
+
+    def test_well_known_networks_match_by_id_not_by_a_shared_name(self):
+        self.assertTrue(sl.well_known({"id": 213, "name": "Netflix"}))
+        self.assertTrue(sl.well_known({"id": 6783, "name": "Max"}))
+        self.assertFalse(sl.well_known({"id": 505, "name": "max"}))
+        self.assertFalse(sl.well_known({"id": 833, "name": "RTL"}))
+        self.assertFalse(sl.well_known({"id": 57, "name": "Nippon TV"}))
+
+    def test_a_network_without_id_falls_back_to_its_name(self):
+        self.assertTrue(sl.well_known({"id": None, "name": "Netflix"}))
+        self.assertFalse(sl.well_known({"name": "TOKYO MX"}))
+
+    def test_well_known_list_covers_streamers_and_major_us_uk_de_ch_broadcasters(self):
+        names = set(sl.WELL_KNOWN.values())
+        for n in ["Netflix", "Prime Video", "Disney+", "Apple TV+", "HBO", "Max", "Hulu", "Paramount+", "Peacock", "Crunchyroll", "AMC", "FX", "BBC One", "Channel 4", "Sky Atlantic", "ZDF", "Das Erste", "ProSieben", "RTL", "SRF 1", "ARTE"]:
+            self.assertIn(n, names)
+
+    def test_small_networks_get_no_logo_job(self):
+        cache = {"tv:1": {"companies": [], "networks": [{"id": 614, "name": "TOKYO MX", "logo": "/mx.png"}]}}
+        items = [show("1", ["TOKYO MX"])]
+        self.assertEqual(sl.logo_jobs([studio("TOKYO MX")], items, cache, sl.network_ids(items, cache)), [])
+
     def test_names_match_loosely(self):
         self.assertEqual(sl.norm("Apple TV+"), sl.norm("apple tv +"))
         self.assertNotEqual(sl.norm("HBO"), sl.norm("HBO Max"))
