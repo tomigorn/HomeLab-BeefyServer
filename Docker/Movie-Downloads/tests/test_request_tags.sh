@@ -72,10 +72,10 @@ run() {
   echo "$1" > "$T/state.json"; shift
   : > "$T/writes"; : > "$T/hooks"
   env -i PATH="$PATH" HOME="$T" RT_SEERR_URL="http://127.0.0.1:$PORT/seerr" RT_SEERR_KEY="$T/seerr.key" \
-    RT_RADARR_CONFIG="$T/radarr.xml" RT_SONARR_CONFIG="$T/sonarr.xml" RT_HOOK="$T/hook.sh" RT_STATE="$T/done" "$@" \
+    RT_RADARR_CONFIG="$T/radarr.xml" RT_SONARR_CONFIG="$T/sonarr.xml" RT_HOOK="$T/hook.sh" RT_STATE="$T/done" RT_DRIFT="$T/drift" "$@" \
     bash "$SCRIPT" > "$T/out" 2>&1; RC=$?
 }
-reset() { rm -f "$T/done"; }
+reset() { rm -f "$T/done" "$T/drift"; }
 req() { echo "{\"id\": $1, \"status\": $2, \"type\": \"$3\", \"tags\": [$4], \"createdAt\": \"${6:-2026-10-26T12:00:00.000Z}\", \"media\": {\"externalServiceId\": $5}}"; }
 
 echo "Movies"
@@ -124,6 +124,32 @@ run "{\"requests\": [$(req 20 2 tv 31 5)], \"sonarr\": {\"5\": {\"id\": 5, \"tit
 assert_eq "existing series: tag added, series searched" 'PUT /sonarr/api/v3/series/editor {"seriesIds":[5],"tags":[31],"applyTags":"add"}
 POST /sonarr/api/v3/command {"name":"SeriesSearch","seriesId":5}' "$(cat "$T/writes")"
 assert_eq "  hook run for that series" "SeriesAdd 5 LP_TAGS_ONLY=1 LP_CONFIG=sonarr.xml" "$(cat "$T/hooks")"
+
+echo "Changed later (My request panel, by hand)"
+film() { echo "{\"requests\": [$(req 40 2 movie "" 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"The Ring Thing\", \"qualityProfileId\": $1, \"tags\": [$2]}}}"; }
+reset
+run "$(film 7 "")"
+assert_eq "first sight of an approved request's title: only remembered" "||" "$(cat "$T/writes")|$(cat "$T/hooks")|$(cat "$T/out")"
+run "$(film 11 "")"
+assert_eq "profile changed: searched" 'POST /radarr/api/v3/command {"name":"MoviesSearch","movieIds":[8]}' "$(cat "$T/writes")"
+assert_eq "  language hook run, tags only" "MovieAdded 8 LP_TAGS_ONLY=1 LP_CONFIG=radarr.xml" "$(cat "$T/hooks")"
+assert_eq "  log line" "radarr: The Ring Thing: profile or audio/subtitle tags changed, language hook run, searched" "$(cat "$T/out")"
+run "$(film 11 "")"
+assert_eq "unchanged: nothing" "|" "$(cat "$T/writes")|$(cat "$T/hooks")"
+run "$(film 11 "2")"
+assert_eq "other tags (lang-*, download-now) do not count" "|" "$(cat "$T/writes")|$(cat "$T/hooks")"
+run "$(film 11 "2,13")"
+assert_eq "audio tag added: hook + search" 'POST /radarr/api/v3/command {"name":"MoviesSearch","movieIds":[8]}|MovieAdded 8 LP_TAGS_ONLY=1 LP_CONFIG=radarr.xml' "$(cat "$T/writes")|$(cat "$T/hooks")"
+reset
+run "{\"requests\": [$(req 41 2 movie 13 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"T\", \"qualityProfileId\": 7, \"tags\": []}}}"
+assert_eq "a title the request handling just changed is searched once" 'PUT /radarr/api/v3/movie/editor {"movieIds":[8],"tags":[13],"applyTags":"add"}
+POST /radarr/api/v3/command {"name":"MoviesSearch","movieIds":[8]}' "$(cat "$T/writes")"
+run "{\"requests\": [$(req 41 2 movie 13 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"T\", \"qualityProfileId\": 7, \"tags\": []}}}"
+assert_eq "  and remembered as read after the change (no second search next run)" "|" "$(cat "$T/writes")|$(cat "$T/hooks")"
+reset
+run "{\"requests\": [$(req 42 2 tv "" 5)], \"sonarr\": {\"5\": {\"id\": 5, \"title\": \"S\", \"qualityProfileId\": 7, \"tags\": []}}}"
+run "{\"requests\": [$(req 42 2 tv "" 5)], \"sonarr\": {\"5\": {\"id\": 5, \"title\": \"S\", \"qualityProfileId\": 13, \"tags\": []}}}" RT_SEARCH=0
+assert_eq "series, RT_SEARCH=0: hook only" "|SeriesAdd 5 LP_TAGS_ONLY=1 LP_CONFIG=sonarr.xml" "$(cat "$T/writes")|$(cat "$T/hooks")"
 
 echo "Swiss German profile language"
 SWISS='{"id": 13, "name": "Swiss German (Mundart) only - any quality", "language": {"id": -2, "name": "Original"}}'
