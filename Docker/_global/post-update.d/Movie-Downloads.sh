@@ -40,6 +40,8 @@ if want sonarr; then
   check md.sonarr-old-rare-indexers '^old-rare min1=[3-9] min5=[3-9]$' "$(t=$(md_arr sonarr 8989 /api/v3/tag | jq '[.[] | select(.label == "old-rare") | .id][0]'); md_arr sonarr 8989 /api/v3/indexer | jq -r --argjson t "$t" '[.[] | {r: (.tags | index($t) != null), s: ([.fields[] | select(.name | endswith("minimumSeeders")) | .value][0])} | select(.s != null)] | "old-rare min1=\([.[] | select(.r and .s == 1)] | length) min5=\([.[] | select((.r | not) and .s == 5)] | length)"' 2>&1)"
   check md.sonarr-media-management '^true /data/.recyclebin 7 afterManual true srt,ass,ssa,sub,idx$' "$(md_arr sonarr 8989 /api/v3/config/mediamanagement | jq -r '"\(.copyUsingHardlinks) \(.recycleBin) \(.recycleBinCleanupDays) \(.rescanAfterRefresh) \(.importExtraFiles) \(.extraFileExtensions)"' 2>&1)"
   check md.sonarr-metadata-off '^0 enabled$' "$(md_arr sonarr 8989 /api/v3/metadata | jq -r '[.[] | select(.enable)] | "\(length) enabled"' 2>&1)"
+  check md.sonarr-id-parse '^The Boys 2024 4$' "$(md_arr sonarr 8989 '/api/v3/parse?title=The.Boys.2024.S04.2160p.AMZN.WEB-DL-GRP' | jq -r '.parsedEpisodeInfo | "\(.seriesTitleInfo.titleWithoutYear) \(.seriesTitleInfo.year) \(.seasonNumber)"' 2>&1)"
+  check md.sonarr-id-import '^id-match auto-import: [0-9]+ candidate\(s\), [0-9]+ importable$' "$(python3 "$MD_DIR/scripts/queue-watchdog.py" --dry-run 2>&1 | tail -1)"
 fi
 if want radarr sonarr recyclarr; then
   check md.scoring 'all checks passed' "$(python3 "$MD_DIR/scripts/scoring-check.py" 2>&1 | tail -1)"
