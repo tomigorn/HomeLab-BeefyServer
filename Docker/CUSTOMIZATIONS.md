@@ -101,6 +101,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | VPN port forward to qBittorrent | gluetun + `scripts/qbit-port.sh` | gluetun restart | `md.vpn-port-forward`: vpn-status → true tun0 connected | gluetun control API auth change |
 | Idle watcher reads the VPN tunnel | `Server/8-Idle-Watcher` | – | `md.idle-vpn-probe`: probe_error → 0 | gluetun interface rename |
 | autoheal-movie label on 8 containers | compose | compose | `md.autoheal-label`: → 8 labelled | |
+| Network `movie-downloads` `ip_range` .0/25: dynamic addresses never take a pinned .2xx (qBit bypass list, S-13) | `Movie-Downloads/docker-compose.yaml` | down Seerr, Antivirus, Movie-Downloads, then up in reverse (network is recreated) | `md.network-ip-range`: → 172.28.10.0/24 172.28.10.0/25 | the network is created by another project first (no ip_range) |
 
 ## Floppy
 

@@ -95,6 +95,7 @@ fi
 if want gluetun; then
   check md.idle-vpn-probe '^0$' "$(sed -n 's/^beefy_idle_busy{reason="probe_error"} //p' /run/beefy-idle.prom 2>&1)"
 fi
+check md.network-ip-range '^172\.28\.10\.0/24 172\.28\.10\.0/25$' "$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{.IPRange}}{{end}}' movie-downloads 2>&1)"
 if want autoheal; then
   check md.autoheal-label '^[8-9] labelled$' "$(echo "$(docker ps -q --filter label=autoheal-movie=true | wc -l) labelled")"
 fi

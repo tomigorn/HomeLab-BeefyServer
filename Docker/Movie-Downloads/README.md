@@ -147,6 +147,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 |---|---|---|
 | qBittorrent | category `radarr` save path | `/data/torrents/movies` |
 | qBittorrent | seed limits | **ratio 2.0 OR 30 days, then stop** (§14.0) |
+| movie-downloads bridge | `ip_range` | subnet `172.28.10.0/24`, dynamic addresses only in `.0/25` (2026-10-28, review S-13): the pinned `.201`-`.205` can never go to another container. Changing it recreates the network: `docker compose down` Seerr, Antivirus, Movie-Downloads, then `up -d` in reverse |
 | qBittorrent | no-password bypass | only vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), Seerr download-now .205 (moves/starts night torrents; added by `../Seerr/scripts/download-now-setup.sh`), localhost (qbit-port.sh, ClamAV autorun) and 192.168.1.2 (Traefik); everything else needs the password, including Radarr/Sonarr (their qBittorrent clients log in as `admin`; credentials written by `scripts/night-downloads-setup.sh` from the secret file), the host scripts and every other bridge (they arrive as the gateway .1, removed 2026-10-28, review S-01). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist`; rollback: `backups/pre-qbit-password-2026-10-28/rollback.sh` (not in git, puts .1 back), `backups/pre-qbit-arr-creds-2026-10-28/rollback.sh` (puts .201/.202 back) |
 | SABnzbd | incomplete / complete | `/data/usenet/incomplete` / `/data/usenet/complete/movies` |
 | Radarr | root folder | `/data/media/movies` |

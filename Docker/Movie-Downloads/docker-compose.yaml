@@ -512,6 +512,8 @@ networks:
         # A /24, not Docker's default /16 - beefy already has 172.17.0.0/16 and
         # 172.18.0.0/16 in use. Keep this in step with BRIDGE_SUBNET in .env.
         - subnet: 172.28.10.0/24
+          # Dynamic addresses stay in .0-.127, so no container can take a pinned .2xx (qBit bypass list).
+          ip_range: 172.28.10.0/25
   # autoheal <-> its socket proxy only; internal, no internet, nothing else on it.
   movie-heal:
     name: movie-heal
