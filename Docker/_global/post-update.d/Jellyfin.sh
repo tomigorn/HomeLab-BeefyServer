@@ -1,5 +1,9 @@
 # Jellyfin customizations (Docker/CUSTOMIZATIONS.md "Jellyfin"). Sourced by post-update-check.sh.
 jf_api() { curl -s -m 8 -H "Authorization: MediaBrowser Token=\"$(cat "$DIR/../../Jellyfin/secrets/api-key")\"" "http://127.0.0.1:8096$1"; }
+jf_user_systemctl() { # buntu's user units; as root (sudo, nightly auto-update) through the repo owner's user manager
+  local u; u=$(stat -c %U "$DIR")
+  if [ "$(id -u)" = 0 ] && [ "$u" != root ]; then sudo -n -u "$u" env XDG_RUNTIME_DIR="/run/user/$(id -u "$u")" systemctl --user "$@"
+  else XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user "$@"; fi; }
 jf_plugin() { jf_api /Plugins | jq -r --arg n "$1" '[.[] | select(.Name == $n) | "\(.Status) \(.Version)"] | first // "missing"' 2>&1; }
 if want jellyfin; then
   check jf.local-build '^jellyfin-local:' "$(docker inspect -f '{{.Config.Image}}' jellyfin 2>&1)"
@@ -31,7 +35,7 @@ if want jellyfin; then
   check jf.home-discover-served '^3$' "$(jf_api /JavaScriptInjector/private.js | grep -o -E 'function (loadDiscover|syncDiscover|homeStyles)' | sort -u | wc -l)"
   check jf.home-networks '^true$' "$(jf_api /Plugins/f5a34f7b2e8a4e6aa7223a216a81b374/Configuration | jq -c '[.CustomJavaScripts[] | select(.Name == "Home networks") | .Enabled] | first' 2>&1)"
   check jf.studio-logos '^[1-9]' "$(jf_api '/Studios?Recursive=true&EnableImageTypes=Logo&ImageTypeLimit=1' | jq '[.Items[] | select(.ImageTags.Logo)] | length' 2>&1)"
-  check jf.studio-logos-timer '^active$' "$(XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user is-active jellyfin-studio-logos.timer 2>&1)"
+  check jf.studio-logos-timer '^active$' "$(jf_user_systemctl is-active jellyfin-studio-logos.timer 2>&1)"
   check jf.upcoming-cards-served '^2$' "$(jf_api /JavaScriptInjector/private.js | grep -o -E 'function upcoming(Series|Dates)' | sort -u | wc -l)"
   check jf.home-sections-config '^unchanged$' "$(python3 "$DIR/../../Jellyfin/scripts/home-sections.py" --dry-run 2>&1 | tail -1)"
   check jf.home-sections-locked '^\{"Enabled":true,"AllowUserOverride":false' "$(jf_api /HomeScreen/Meta | jq -c . 2>&1)"
@@ -46,6 +50,6 @@ if want jellyfin; then
   check jf.intro-skipper-night '^22:05 04:13$' "$(jf_api /ScheduledTasks | jq -r '[.[] | select(.Key == "IntroSkipperDetectSegmentsTask") | .Triggers[] | .TimeOfDayTicks / 600000000 | "\(. / 60 | floor | tostring | if length < 2 then "0" + . else . end):\(. % 60 | tostring | if length < 2 then "0" + . else . end)"] | join(" ")' 2>&1)"
   check jf.api-keys '^ok$' "$(jf_api /Auth/Keys | jq -r '[.Items[].AppName] as $k | if ($k | index("avatar-sync")) and ($k | index("Seerr")) then "ok" else ($k | join(",")) end' 2>&1)"
   check jf.extra-hosts '^192\.168\.1\.2$' "$(docker exec jellyfin getent ahostsv4 sso.holy-grail.ch 2>&1 | awk 'NR==1{print $1}')"
-  check jf.user-defaults-timer '^active$' "$(XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user is-active jellyfin-user-defaults.timer 2>&1)"
+  check jf.user-defaults-timer '^active$' "$(jf_user_systemctl is-active jellyfin-user-defaults.timer 2>&1)"
   check jf.user-defaults-config '^\["",true,"Smart"\]$' "$(python3 -c 'import importlib.util as u,json,sys;s=u.spec_from_file_location("m",sys.argv[1]);m=u.module_from_spec(s);s.loader.exec_module(m);d=m.DEFAULTS;print(json.dumps([d["AudioLanguagePreference"],d["PlayDefaultAudioTrack"],d["SubtitleMode"]],separators=(",",":")))' "$DIR/../../Jellyfin/scripts/user-defaults.py" 2>&1)"
 fi
