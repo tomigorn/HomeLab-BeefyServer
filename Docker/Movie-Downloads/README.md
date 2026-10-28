@@ -463,6 +463,7 @@ Seerr has no event for Clear Data (it only deletes its media row), so `scripts/c
 |---|---|
 | Record (On Grab / Import / Upgrade) | `title-wipe-hook.sh` (Connect → Custom Script **Title wipe**, both apps) appends `<tmdbId or tvdbId> <qbit/sab> <hash or nzo id>` to `/config/title-wipe.tsv` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`). Deleting in Radarr/Sonarr wipes nothing |
 | Detect | snapshot `~/.local/state/movie-downloads/seerr-media.tsv` (type, tmdbId, tvdbId, status, row id); a row gone, or back with a new id and no request (re-created by Seerr's own Jellyfin/Radarr/Sonarr sync), = Clear Data |
+| Request cleared within 2 min | the Connect script **Language policy** writes `/config/title-added.stamp` on every add; `systemd/clear-data-wipe-added.path` runs the same script 5 s later (`clear-data-wipe-added.service`), so the new row is in the snapshot before it can be cleared. One run at a time (`flock` on `seerr-media.tsv.lock`) |
 | Never wipes | first run (snapshot only); Seerr list unreadable, empty or incomplete; row back in a second listing; title requested again; more than 5 rows gone at once (`CW_MAX=<n> scripts/clear-data-wipe.sh` once by hand if intended); blocklisted rows (un-blocklisting deletes the row); series without tvdb id |
 | Radarr/Sonarr | the title by exact tmdbId/tvdbId: `DELETE …?deleteFiles=true` (file to the recycle bin `/data/.recyclebin`, 7 days) |
 | qBittorrent | the recorded hashes, only in the app's own category (`radarr` / `sonarr`): torrent **and its files**. fastpi's qBittorrent is never touched |
@@ -481,11 +482,13 @@ Install the timer:
 
 ```bash
 cd ~/Projects/Docker/Movie-Downloads/systemd
-sudo install -m 0644 clear-data-wipe.service clear-data-wipe.timer /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now clear-data-wipe.timer
+sudo install -m 0644 clear-data-wipe.service clear-data-wipe.timer clear-data-wipe-added.path clear-data-wipe-added.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now clear-data-wipe.timer clear-data-wipe-added.path
 ```
 
 Verified 2026-10-23 with throwaway *Night of the Living Dead* (1968) and *The General* (1926): Remove from Radarr → only the Radarr entry + file gone; then Clear Data → torrent + files and SABnzbd entry gone within one cycle; Clear Data alone → Radarr entry + file, torrent, SABnzbd entry, Jellyfin item gone, and the row Seerr's Jellyfin sync re-created seconds later removed; a 1990 decoy torrent in the same category stayed. Sonarr, same day: [Radarr / Sonarr parity](#radarr--sonarr-parity).
+
+Verified 2026-10-28 with throwaway *The Great Train Robbery* (1903): requested, snapshot 5 s after the Radarr add, Clear Data 14 s after the request → Radarr entry and SABnzbd job wiped on the next timer run.
 
 The records of a wiped title stay in `title-wipe.tsv`: the wipe runs as buntu and the file belongs to the app's uid (644). Harmless, those hashes and jobs no longer exist.
 
@@ -768,7 +771,8 @@ Tags picked in Seerr (request -> Advanced -> Tags) or set in Radarr/Sonarr. Defi
 | Tag | Meaning | How |
 |---|---|---|
 | `audio-<language>` | the release **must** contain that audio language; not grabbed otherwise. Normal ranking on top; `audio-swiss-german` also switches to its own profile ([Swiss German](#swiss-german)) | tag-scoped Release Profile `audio-<language>: <Language> audio required`, required term = the regex in `languages.tsv`, matched against the release name |
-| `subs-<language>` | Bazarr also fetches subtitles in that language (on top of EN + DE + original) | hook adds `bz-<original>-<requested…>` and creates the Bazarr profile `English + German + <Original> + <Requested…> (requested)` bound to it |
+| `subs-<language>` | Bazarr also fetches subtitles in that language (on top of EN + DE + original) | hook adds `bz-<original>-<requested…>` and creates the Bazarr profile `English + German + <Original> + <Requested…> (requested)` bound to it; last `subs-` tag removed → `bz-` tag removed |
+| `profile-pinned` | set by the hook / My request, do not pick: the profile was picked by hand and stays on tag changes | [Tag changes](#tag-changes) |
 | `lang-xx` | set automatically (original language), do not pick | auto-tagging |
 | `bz-…` | set by the hook, do not pick | one per subtitle combination |
 
@@ -809,9 +813,32 @@ Friendly names (docs only: Radarr/Sonarr tag labels allow only `a-z 0-9 -`, Seer
   sudo systemctl daemon-reload && sudo systemctl enable --now request-tags.timer
   journalctl -u request-tags -n 20     # "radarr: request 9, The Ring Thing: tags 13 added, searched"
   ```
+- Tags or profile changed later (My request card, Radarr/Sonarr): [Tag changes](#tag-changes).
 - Tags added to an existing title later: re-run `scripts/language-policy.sh` (runs the hook with `LP_TAGS_ONLY=1` for every title with a `subs-` tag, then rescans those titles in Bazarr: a profile changed by the sync keeps its old missing-subtitles list until then).
 - The hook reads the Bazarr key from `secrets/hook/bazarr.apikey` (gitignored, written by the script, mounted at `/secrets:ro`) and reaches `http://bazarr:6767`. Rebuild: `mkdir -p secrets/hook` before the first `docker compose up` (otherwise Docker creates it root-owned), then run the script.
 - Tests: `tests/test_language_policy_hook.sh` (hook), `tests/test_request_tags.sh` (Seerr tags), `python3 tests/test_audio_terms.py` (patterns against real names, Swiss German CF = `languages.tsv`). Live: `scripts/swiss-german-check.py`.
+
+#### Tag changes
+
+A requested title whose profile or `audio-*`/`subs-*` tags change (My request card, Radarr/Sonarr UI) is recomputed from scratch by `request-tags.sh` within 2 min: `language-policy-hook.sh` with `LP_RECOMPUTE=1`, told the previous profile and tags (`LP_PREV_PROFILE`, `LP_PREV_TAGS`, from `request-tags.drift`). Approved, failed and completed requests.
+
+| Change | Result |
+|---|---|
+| tag removed | as if never set: `audio-swiss-german` → default profile, `subs-xx` → its language leaves the `bz-` tag (none left → `bz-` tag removed) |
+| tag added | applied (`audio-swiss-german` → Swiss German profile, `subs-xx` → `bz-` tag + Bazarr profile, `audio-xx` → release profile) |
+| profile picked, not the default | kept, tag `profile-pinned`; later tag changes keep it |
+| default profile picked / `audio-swiss-german` added | `profile-pinned` removed |
+| Swiss German profile picked | tag `audio-swiss-german` added (no pin) |
+| other profile picked while `audio-swiss-german` stays | the pick wins, tag removed; picked and tag added together: Swiss German wins |
+| other profiles (anime, HD), not picked | kept |
+| default | main 4K, old (≥ 12 y) or niche → `4K preferred · older versions allowed`, English original → its twin; `old-rare` follows the profile |
+| search | once, only if profile or `audio-*` tags changed (subtitles: Bazarr only) |
+| cleanup | each run deletes `bz-*` Bazarr profiles `… (requested)` that no Radarr/Sonarr title carries, and the unused `bz-*` tags (none used by a release profile, indexer, …); any API error → nothing deleted |
+| pending request | My request adds `profile-pinned` to the request's tags for a picked non-Swiss profile; the add hook keeps a pinned profile |
+
+Not recomputed: titles without a Seerr request; a profile chosen in Seerr's request dialog is treated as before on add (family kept) but reset to the default by a later tag change unless picked in My request.
+
+Verified 2026-10-28 with throwaway *The Cabinet of Dr. Caligari* (1920): +`audio-swiss-german` +`subs-french` → Swiss German profile, `bz-fr` + Bazarr profile; −`audio-swiss-german` → back to `4K preferred · older versions allowed` + `old-rare`; −`subs-french` → `bz-fr` tag and Bazarr profile deleted, no search; profile 4K picked → `profile-pinned`, kept after +`subs-french`; default picked → pin removed.
 
 #### Original audio is the default track
 
@@ -833,7 +860,7 @@ Jellyfin plays the user's preferred language, else the track flagged *default* i
 | Release profile `audio-swiss-german: …` | hard filter on the raw release name (spellings below; regex in `languages.tsv`) |
 | Profile **Swiss German (Mundart) only - any quality** (Radarr and Sonarr) | language **Any** (Radarr; Sonarr profiles have no language: `German` and `Language: Not Original` are 0 there, so a Swiss German dub of a foreign film or series passes), all qualities Unknown, SDTV … Bluray-2160p in **one group** (a Swiss German release replaces any non-Swiss file, also a better one), cutoff Swiss German + 2160p |
 | Scores in that profile | `Audio: Swiss German` 1000000 · `Resolution: 2160p/1080p/720p/SD/DVD` 200000/150000/100000/50000/50000 · `German`, `Language: Not Original` 0 · LQ/BR-DISK/upscaled/DV w/o HDR … −2000000 · x265 HD and SDR 4K −50000 (one resolution step, taken instead of rejected: Swiss German releases are rare) · the rest as in the default profile |
-| Hook (on add, and on tags added later) | tag present → move to the profile, whatever was picked; added on the profile without the tag → tag added; profile language back to Any |
+| Hook (on add, and on tags added later) | tag present → move to the profile, whatever was picked; added on the profile without the tag → tag added; profile language back to Any; tag removed later → back to the default profile ([Tag changes](#tag-changes)) |
 | `request-tags.sh` (timer) | Seerr tags on titles already in Radarr/Sonarr; also puts the Radarr profile language back to Any (Recyclarr resets it to Original whenever it updates that profile) |
 | File name | `Audio: Swiss German` is renamed into the file name (`{Custom Formats}`), so Jellyfin shows it |
 
