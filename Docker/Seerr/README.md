@@ -294,7 +294,7 @@ A press: tag `download-now` on the title (Radarr/Sonarr) → the title's unfinis
 | Backend | `download-now` container (`seerr-download-now`, `download-now/download_now.py`, python alpine, uid 65127, read-only, no caps, no port). `seerr-proxy` routes `/_download-now/` to it |
 | Who may | every call (GET and POST): Seerr `/api/v1/auth/me` with the caller's `connect.sid` cookie (or Seerr's API key), then `GET /api/v1/movie\|tv/<id>` as the caller: permission ADMIN (2) or MANAGE_REQUESTS (16), **or** a request in `mediaInfo.requests` with `requestedBy.id` = the caller and status ≠ declined (3), else 403. Series: one own request (any season) allows the press for the whole series. POST only with `Origin: https://requests.holy-grail.ch` and JSON; searches at most every 2 min per title |
 | API | `GET /_download-now/api?type=movie\|tv&tmdb=<id>`: what a press would do (no change). `POST /_download-now/api` `{"type","tmdbId"}`: do it. Answer: `state`, `released` (download ids), `moved`, `now` (tagged `download-now`), `search` (`status` queued/started/null, `started`, `ahead` = searches queued before it, `last` = last search; null when `/command` is not readable) |
-| Keys | `secrets/download-now/{radarr,sonarr,sabnzbd}.apikey` (buntu:65127 0640), never sent to the browser. qBittorrent: no-password bypass for 172.28.10.205 |
+| Keys | `secrets/download-now/{radarr,sonarr,sabnzbd,seerr}.apikey` (buntu:65127 0640; seerr = Seerr's own key, for [My request](#my-request)), never sent to the browser. qBittorrent: no-password bypass for 172.28.10.205 |
 | Setup | `scripts/download-now-setup.sh` (keys + qBittorrent bypass; idempotent), then `sudo docker compose up -d download-now`; after a Radarr/Sonarr/SAB key change re-run it and `sudo docker restart seerr-download-now` |
 | Log | `sudo docker logs seerr-download-now`: one line per press (user id, `manager` or `own request`, title, state) |
 | Fallback | backend down, Seerr changed the title page: no button, Seerr unchanged; the request's **Can wait** box still works |
@@ -305,6 +305,35 @@ A press: tag `download-now` on the title (Radarr/Sonarr) → the title's unfinis
 | Dry run (admin, Seerr API key) | `curl -s -H "X-Api-Key: $(cat secrets/api-key)" 'localhost:5055/_download-now/api?type=movie&tmdb=<id>'` |
 | Requester | `-H 'X-Api-User: <requester id>'`: own request's title → 200, a title only others requested → 403 (`seerr.download-now-requester` checks both) |
 | Refused | same without the key → 403 |
+
+## My request
+
+Title page → card **My request** under the title header (German **Meine Anfrage**), for everyone on their **own** requests; admins / **Manage Requests** see every request as **Requests (n)** with the requester. Collapsed by default; the summary shows profile and 🌙🧭📅 ([Night label](#night-label)).
+
+| Shows | Change |
+|---|---|
+| Quality profile | any profile of the Radarr/Sonarr server (as the request dialog's Advanced) |
+| Audio & subtitles (`audio-*`, `subs-*` as "Audio: French", "Subtitles: Spanish") | remove (×), add from the existing `audio-*`/`subs-*` tags only; other tags never |
+| Can wait | on/off: off = [Download now](#download-now) (tag, night downloads move, search); on = `download-now` removed |
+| Requested date, status, seasons, 4K, `old-rare` "(automatic)", folder only when there is more than one | read-only |
+| **Delete request** | confirm dialog says what goes (below) |
+
+| Delete when | What goes |
+|---|---|
+| nobody else requested the title and Radarr/Sonarr added it with this request | everything, like **Clear Data**: Seerr request + title, Radarr/Sonarr entry + files (7 days recycle bin), downloads, Jellyfin (`clear-data-wipe.sh` within ~2 min) |
+| others requested it too, or it was in Radarr/Sonarr before | only this Seerr request; the title and its files stay |
+
+| Part | What |
+|---|---|
+| Who | same check as Download now (Seerr `auth/me` + `mediaInfo.requests`): own non-declined request, or ADMIN / MANAGE_REQUESTS. A requester cannot change a title someone else requested too (read-only, "ask an admin"); delete of their own request still works |
+| Approved request | Seerr edits only pending requests (409), so the backend changes the Radarr/Sonarr title (`/movie\|series/editor`: profile, tags add/remove); `../Movie-Downloads/scripts/request-tags.sh` sees the change within 2 min and runs the language hook (Swiss German profile, Bazarr subtitles) + one search |
+| Pending request | `PUT /api/v1/request/<id>` (profile, tags incl. `download-now`, seasons kept); Seerr hands it to Radarr/Sonarr on approval |
+| Delete | `DELETE /api/v1/media/<id>` (Clear Data) or `DELETE /api/v1/request/<id>`, with Seerr's API key (`secrets/download-now/seerr.apikey`; a requester's own approved request cannot be deleted with their session) |
+| API | `GET /_download-now/request?type=movie\|tv&tmdb=<id>` → `requests` (`id`, `status`, `profile`, `tags`, `auto`, `canWait`, `seasons`, `editable`, `deleteEffect` clear/request-only, `by` for managers), `profiles`, `tags`. `POST /_download-now/request` `{"type","tmdbId","action":"update","requestId",["profileId"],["tags"],["canWait"]}` or `{"…","action":"delete","requestId"}`; Origin + JSON only like Download now |
+| Script | `indexer-bar/www/my-request.js` (injected by `seerr-proxy`), `<details>` card after `.media-header`; 403 or error = no card |
+| Log | `sudo docker logs seerr-download-now`: one line per change (user, role, request, title, what changed / deleted how) |
+| Known gap | a title requested and deleted within the same 2 minutes is not wiped by `clear-data-wipe.sh` (never in its snapshot): `../Movie-Downloads/scripts/title-wipe-hook.sh wipe radarr <tmdb> "<title>" <year>` by hand |
+| Tests | `python3 tests/test_my_request.py`; JS `node --test` in `tests/js` (`my-request.test.mjs`) |
 
 ## Delete a title
 
