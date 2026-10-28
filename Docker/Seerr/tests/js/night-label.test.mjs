@@ -160,6 +160,12 @@ test("Discover title cards: the spinner of a night-paused title becomes a moon (
   assert.equal(visibleText(w, boys.querySelector(".pointer-events-none.z-40.flex")), "🌙");
   assert.ok(shown(w, fight.querySelector("svg")));
   assert.equal(fight.querySelector("[data-hg-night-own]"), null);
+  const css = w.document.getElementById("hg-night-style").textContent;
+  assert.ok(boys.querySelector("[data-hg-night-moon]"));
+  assert.equal(fight.querySelector("[data-hg-night-moon]"), null);
+  assert.match(css, /\[data-hg-night-moon\]\{[^}]*width:1\.625rem[^}]*!important/);
+  assert.match(css, /\[data-hg-night-moon\]\{[^}]*height:1\.625rem[^}]*!important/);
+  assert.match(css, /\[data-hg-night-moon\] > \[data-hg-night-own\]\{[^}]*font-size:\.95rem/);
 });
 
 test("Manage panel and badge tooltip: the download block shows the label, the bar is greyed, running ones stay", async () => {

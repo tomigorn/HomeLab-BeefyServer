@@ -139,6 +139,7 @@
     var grey = root.querySelectorAll("[data-hg-night-grey]");
     for (var g = 0; g < grey.length; g++) grey[g].removeAttribute("data-hg-night-grey");
     if (root.getAttribute("data-hg-night") === "title") root.removeAttribute("title");
+    root.removeAttribute("data-hg-night-moon");
     root.removeAttribute("data-hg-night");
   }
 
@@ -180,7 +181,8 @@
       if (!(m && allWaiting(m.items, set))) { restore(holder); continue; }
       if (holder.hasAttribute("data-hg-night")) continue;
       hide(svg);
-      holder.appendChild(own(doc, "span", "🌙", "display:flex;align-items:center;justify-content:center;font-size:.7rem;line-height:1;height:100%;"));
+      holder.appendChild(own(doc, "span", "🌙", ""));
+      holder.setAttribute("data-hg-night-moon", "");
       holder.setAttribute("title", TEXT[lang(doc)].tip);
       holder.setAttribute("data-hg-night", "title");
     }
@@ -232,7 +234,7 @@
     if (doc.getElementById("hg-night-style")) return;
     var s = doc.createElement("style");
     s.id = "hg-night-style";
-    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{width:100% !important;background:#4b5563 !important}";
+    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{width:100% !important;background:#4b5563 !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}";
     (doc.head || doc.documentElement).appendChild(s);
   }
 
