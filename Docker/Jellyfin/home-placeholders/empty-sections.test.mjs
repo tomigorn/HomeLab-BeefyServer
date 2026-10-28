@@ -485,11 +485,12 @@ test("start: fetches settings, names and rows, then renders after the page settl
   const c = win.document.querySelector(".homeSectionsContainer");
   c.innerHTML = section("MyMedia", 1, 2) + section("NextUp", 3, 0, true);
   await new Promise((r) => setTimeout(r, 1500));
-  assert.deepEqual(urls.sort(), ["ModularHomeViews/Sections", "ModularHomeViews/UserSettings", "Users/u1/Items", "Users/u1/Items", "Users/u1/Items"]);
+  assert.deepEqual(urls.sort(), ["ModularHomeViews/Sections", "ModularHomeViews/UserSettings", "UserViews", ...Array(5).fill("Users/u1/Items")]);
   assert.equal(c.querySelector('[data-hss-placeholder="NextUp"] h2').textContent, "Next Up");
   assert.equal(c.querySelector('[data-hss-placeholder="RecentlyWatchedMovies"] h2').textContent, "Recently Watched Movies");
   assert.equal(c.querySelector('[data-hss-placeholder="RecentlyWatchedSeries"] h2').textContent, "Recently Watched TV Series & Collections");
-  assert.equal(c.querySelectorAll("[data-hss-placeholder]").length, 3);
+  assert.equal(c.querySelector('[data-hss-placeholder="DiscoverNetworks"] h2').textContent, "Networks");
+  assert.equal(c.querySelectorAll("[data-hss-placeholder]").length, 7);
   win.close();
 });
 
@@ -511,5 +512,350 @@ test("start: a ticking clock (TV layout) does not hold the run back", async () =
   await new Promise((r) => setTimeout(r, 3200));
   clearInterval(tick);
   assert.ok(c.querySelector('[data-hss-placeholder="NextUp"]'));
+  win.close();
+});
+
+const STU = "DiscoverStudios";
+const NET = "DiscoverNetworks";
+const MGEN = "DiscoverMovieGenres";
+const SGEN = "DiscoverSeriesGenres";
+const pair = (n) => ({ Name: n, Id: "id-" + n });
+const film = (id, studios, genres, rating, backdrop = true) => ({ Id: id, Name: "Film " + id, Type: "Movie", ServerId: "s1", CommunityRating: rating, Studios: studios.map(pair), GenreItems: genres.map(pair), BackdropImageTags: backdrop ? ["b" + id] : [] });
+const series = (id, studios, genres, rating) => ({ ...film(id, studios, genres, rating), Name: "Show " + id, Type: "Series" });
+const VIEWS = [{ Id: "lib-m", CollectionType: "movies" }, { Id: "lib-s", CollectionType: "tvshows" }, { Id: "lib-c", CollectionType: "boxsets" }];
+
+test("discover: the four rows sit after Directed by, else at the end", () => {
+  assert.deepEqual(es.withDiscover(["Starring", "DirectedBy", "UpcomingShows"]), ["Starring", "DirectedBy", STU, NET, MGEN, SGEN, "UpcomingShows"]);
+  assert.deepEqual(es.withDiscover(["NextUp"]), ["NextUp", STU, NET, MGEN, SGEN]);
+  assert.deepEqual(es.withDiscover(["DirectedBy", STU, NET, MGEN, SGEN]), ["DirectedBy", STU, NET, MGEN, SGEN]);
+});
+
+test("discover: german and english names and hints", () => {
+  assert.deepEqual([STU, NET, MGEN, SGEN].map((id) => es.discoverName(id, "de-CH")), ["Studios", "Sender", "Film-Genres", "Serien-Genres"]);
+  assert.deepEqual([STU, NET, MGEN, SGEN].map((id) => es.discoverName(id, "en")), ["Studios", "Networks", "Movie Genres", "Series Genres"]);
+  for (const id of [STU, NET, MGEN, SGEN]) assert.notEqual(es.hintFor(id, "en"), es.hintFor(id, "de"), id);
+});
+
+test("discover: studios and genres by item count, most first, ties by name, at most 20", () => {
+  const items = [film("a", ["Pixar", "Disney"], ["Comedy"]), film("b", ["Disney"], ["Drama", "Comedy"]), film("c", ["A24"], ["Drama"])];
+  assert.deepEqual(es.countBy(items, "Studios").map((s) => [s.Name, s.count]), [["Disney", 2], ["A24", 1], ["Pixar", 1]]);
+  assert.deepEqual(es.countBy(items, "GenreItems").map((s) => s.Id), ["id-Comedy", "id-Drama"]);
+  const many = Array.from({ length: 30 }, (_, i) => film("f" + i, ["S" + i], []));
+  assert.equal(es.countBy(many, "Studios").length, 20);
+  assert.equal(es.DISCOVER_LIMIT, 20);
+});
+
+test("discover: networks are only the studios the server marked as networks", () => {
+  const shows = [series("x", ["Prime Video", "Amazon Studios"], []), series("y", ["HBO", "Production Partners"], []), series("z", ["Prime Video"], [])];
+  assert.deepEqual(es.countBy(shows, "Studios", ["id-Prime Video", "id-HBO"]).map((s) => s.Name), ["Prime Video", "HBO"]);
+  assert.deepEqual(es.countBy(shows, "Studios", []), []);
+});
+
+test("discover: each genre's backdrop is its best rated title with a backdrop, a different one per genre where possible", () => {
+  const items = [film("top", [], ["Action", "Comedy"], 8.5), film("mid", [], ["Comedy"], 7.0), film("nob", [], ["Comedy"], 9.9, false), film("low", [], ["Action"], 5.0)];
+  const genres = es.countBy(items, "GenreItems");
+  const picks = es.pickBackdrops(genres, items);
+  assert.deepEqual(picks["id-Comedy"], { Id: "top", tag: "btop" });
+  assert.deepEqual(picks["id-Action"], { Id: "low", tag: "blow" });
+  const alone = es.pickBackdrops(es.countBy([film("one", [], ["Drama", "Crime"], 7)], "GenreItems"), [film("one", [], ["Drama", "Crime"], 7)]);
+  assert.deepEqual(alone["id-Crime"], { Id: "one", tag: "bone" });
+  assert.equal(es.pickBackdrops(es.countBy([film("n", [], ["War"], 7, false)], "GenreItems"), [film("n", [], ["War"], 7, false)])["id-War"], undefined);
+});
+
+test("discover: genre colours are fixed per genre, german names too, unknown ones still get one", () => {
+  assert.deepEqual(es.genreColors("Action"), es.genreColors("action"));
+  assert.deepEqual(es.genreColors("Komödie"), es.genreColors("Comedy"));
+  assert.notDeepEqual(es.genreColors("Comedy"), es.genreColors("Drama"));
+  const odd = es.genreColors("Zzz Unknown");
+  assert.equal(odd.length, 2);
+  assert.deepEqual(es.genreColors("Zzz Unknown"), odd);
+  for (const c of [...es.genreColors("Horror"), ...odd]) assert.match(c, /^#[0-9a-f]{6}$/);
+});
+
+function discoverApi(movies, shows, logos, views = VIEWS) {
+  const calls = [];
+  return {
+    calls,
+    getUrl: (p, q) => { calls.push([p, q]); return p + "?" + new URLSearchParams(q); },
+    getJSON: (u) => {
+      const [p, qs] = u.split("?");
+      const q = new URLSearchParams(qs);
+      if (p === "UserViews") return Promise.resolve({ Items: views });
+      if (q.get("Ids")) return Promise.resolve({ Items: q.get("Ids").split(",").filter((id) => logos[id]).map((id) => ({ Id: id, Type: "Studio", ImageTags: { Logo: logos[id] } })) });
+      return Promise.resolve({ Items: q.get("IncludeItemTypes") === "Movie" ? movies : shows });
+    }
+  };
+}
+
+test("discover: loads four rows with the user's session in four requests, logos by tag, libraries as parent", async () => {
+  const movies = [film("a", ["Disney", "Pixar"], ["Comedy"], 8), film("b", ["Disney"], ["Drama"], 7)];
+  const shows = [series("x", ["Prime Video", "Amazon Studios"], ["Drama"], 8.4)];
+  const api = discoverApi(movies, shows, { "id-Disney": "L1", "id-Prime Video": "L2" });
+  const rows = await es.loadDiscover(api, "u1", ["id-Prime Video"]);
+  assert.deepEqual(rows[STU].map((c) => [c.Name, c.Type, c.ParentId, c.logo]), [["Disney", "Studio", "lib-m", "L1"], ["Pixar", "Studio", "lib-m", null]]);
+  assert.deepEqual(rows[NET].map((c) => [c.Name, c.ParentId, c.logo]), [["Prime Video", "lib-s", "L2"]]);
+  assert.deepEqual(rows[MGEN].map((c) => [c.Name, c.Type, c.ParentId, c.backdrop.Id]), [["Comedy", "Genre", "lib-m", "a"], ["Drama", "Genre", "lib-m", "b"]]);
+  assert.deepEqual(rows[SGEN].map((c) => [c.Name, c.ParentId, c.backdrop.Id]), [["Drama", "lib-s", "x"]]);
+  assert.equal(rows[STU][0].ServerId, "s1");
+  assert.equal(api.calls.length, 4);
+  const items = api.calls.filter(([p]) => p === "Users/u1/Items").map(([, q]) => q);
+  for (const q of items.filter((q) => q.IncludeItemTypes)) {
+    assert.equal(q.Recursive, true);
+    assert.equal(q.Fields, "Studios,Genres");
+    assert.equal(q.EnableUserData, false);
+  }
+  assert.deepEqual(items.find((q) => q.Ids).Ids.split(",").sort(), ["id-Disney", "id-Pixar", "id-Prime Video"]);
+  assert.equal(api.calls.find(([p]) => p === "UserViews")[1].userId, "u1");
+});
+
+test("discover: no networks list = empty Networks row, two movie libraries = no parent filter, empty library = three requests", async () => {
+  const api = discoverApi([film("a", ["Disney"], ["Comedy"], 8)], [series("x", ["HBO"], ["Drama"], 8)], {}, [...VIEWS, { Id: "lib-m2", CollectionType: "movies" }]);
+  const rows = await es.loadDiscover(api, "u1", undefined);
+  assert.deepEqual(rows[NET], []);
+  assert.equal(rows[STU][0].ParentId, null);
+  assert.equal(rows[SGEN][0].ParentId, "lib-s");
+  const empty = discoverApi([], [], {});
+  const none = await es.loadDiscover(empty, "u1", []);
+  assert.deepEqual(none, { [STU]: [], [NET]: [], [MGEN]: [], [SGEN]: [] });
+  assert.equal(empty.calls.length, 3);
+});
+
+test("discover: studio cards show the logo on a dark card, else the name, and link to the studio's list in its library", () => {
+  const c = home(section("DirectedBy", 15, 1));
+  const cards = [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: "lib-m", logo: "L1" }, { Id: "st2", Name: "<b>Pixar</b>", Type: "Studio", ServerId: "s1", ParentId: null, logo: null }];
+  es.syncDiscover(c, STU, cards, "Studios", fakeApi);
+  const sec = c.querySelector(".verticalSection.DiscoverStudios[data-hss-client]");
+  assert.equal(sec.querySelector("h2").textContent, "Studios");
+  const [a, b] = sec.querySelectorAll(".itemsContainer > .card");
+  assert.ok(a.classList.contains("hssStudioCard"));
+  assert.equal(a.getAttribute("data-id"), "st1");
+  assert.equal(a.getAttribute("data-type"), "Studio");
+  assert.equal(a.getAttribute("data-parentid"), "lib-m");
+  assert.equal(a.getAttribute("aria-label"), "Disney");
+  assert.equal(a.querySelector("a.cardImageContainer.itemAction[data-action=link]").getAttribute("href"), "#/list?studioId=st1&serverId=s1&parentId=lib-m");
+  assert.match(a.querySelector(".hssLogo").style.backgroundImage, /Items\/st1\/Images\/Logo\?tag=L1/);
+  assert.equal(a.querySelector(".hssName"), null);
+  assert.equal(b.querySelector(".hssLogo"), null);
+  assert.equal(b.querySelector(".hssName").textContent, "<b>Pixar</b>");
+  assert.equal(b.querySelector("b"), null);
+  assert.equal(b.querySelector("a.cardImageContainer").getAttribute("href"), "#/list?studioId=st2&serverId=s1");
+  assert.equal(b.hasAttribute("data-parentid"), false);
+});
+
+test("discover: genre cards are the name over a duotone backdrop in the genre's colours and link to the genre in its library", () => {
+  const c = home("");
+  es.syncDiscover(c, MGEN, [{ Id: "g1", Name: "Comedy", Type: "Genre", ServerId: "s1", ParentId: "lib-m", backdrop: { Id: "a", tag: "ba" } }, { Id: "g2", Name: "War", Type: "Genre", ServerId: "s1", ParentId: "lib-m", backdrop: null }], "Movie Genres", fakeApi);
+  const [g, w] = c.querySelectorAll(".DiscoverMovieGenres .itemsContainer > .card");
+  assert.ok(g.classList.contains("hssGenreCard"));
+  assert.equal(g.getAttribute("data-type"), "Genre");
+  assert.equal(g.querySelector("a.cardImageContainer").getAttribute("href"), "#/list?genreId=g1&serverId=s1&parentId=lib-m");
+  assert.equal(g.querySelector(".hssGenreName").textContent, "Comedy");
+  assert.equal(g.querySelector(".hssDuo .hssGenreName"), null, "the name stays bright: outside the dimmed duotone");
+  assert.match(g.querySelector(".hssDuoImg").style.backgroundImage, /Items\/a\/Images\/Backdrop\?tag=ba/);
+  const [dark, light] = es.genreColors("Comedy");
+  assert.equal(g.querySelector(".hssDuo").style.getPropertyValue("--hss-dark"), dark);
+  assert.equal(g.querySelector(".hssDuo").style.getPropertyValue("--hss-light"), light);
+  assert.equal(w.querySelector(".hssDuoImg"), null);
+  assert.equal(w.querySelector(".hssGenreName").textContent, "War");
+});
+
+test("discover: TV layout gets focusable button cards that open the list", () => {
+  const dom = new JSDOM('<html class="layout-tv"><body><div class="homeSectionsContainer"></div></body></html>');
+  const c = dom.window.document.querySelector(".homeSectionsContainer");
+  es.syncDiscover(c, NET, [{ Id: "n1", Name: "HBO", Type: "Studio", ServerId: "s1", ParentId: "lib-s", logo: "L" }], "Networks", fakeApi);
+  const card = c.querySelector(".DiscoverNetworks .card");
+  assert.equal(card.tagName, "BUTTON");
+  assert.equal(card.getAttribute("data-action"), "link");
+  assert.ok(card.classList.contains("itemAction"));
+  assert.ok(card.classList.contains("show-focus"));
+  assert.equal(card.querySelector("a"), null);
+});
+
+test("discover: same cards = untouched, no cards = no row", () => {
+  const c = home("");
+  const cards = [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: null, logo: "L1" }];
+  es.syncDiscover(c, STU, cards, "Studios", fakeApi);
+  const sec = c.querySelector(".DiscoverStudios");
+  const card = sec.querySelector(".card");
+  es.syncDiscover(c, STU, cards, "Studios", fakeApi);
+  assert.equal(sec.querySelector(".card"), card);
+  es.syncDiscover(c, STU, [{ ...cards[0], logo: "L2" }], "Studios", fakeApi);
+  assert.notEqual(sec.querySelector(".card"), card);
+  es.syncDiscover(c, STU, [], "Studios", fakeApi);
+  assert.equal(c.querySelector(".DiscoverStudios"), null);
+});
+
+test("home styles: discover cards and the My List heart, added once", () => {
+  const dom = new JSDOM("<html><head></head><body></body></html>");
+  es.homeStyles(dom.window.document);
+  es.homeStyles(dom.window.document);
+  const all = dom.window.document.querySelectorAll("#hss-home-style");
+  assert.equal(all.length, 1);
+  const css = all[0].textContent;
+  assert.match(css, /\.hssStudioCard/);
+  assert.match(css, /mix-blend-mode:\s*multiply/);
+  assert.match(css, /mix-blend-mode:\s*lighten/);
+  assert.match(css, /\.hssDuo \{[^}]*filter: brightness\(0\.8\)/);
+  assert.match(css, /\.verticalSection\.MyList \.sectionTitle::after/);
+  assert.match(css, /\[data-hss-placeholder="MyList"\] \.sectionTitle::after/);
+  assert.match(css, /content:\s*"favorite"/);
+  assert.match(css, /font-family:\s*"Material Icons"/);
+});
+
+test("no flash: Upcoming cards stay hidden (space kept) until rewritten, a CSS timer reveals them if the script fails", () => {
+  const dom = new JSDOM("<html><head></head><body></body></html>");
+  es.homeStyles(dom.window.document);
+  const css = dom.window.document.getElementById("hss-home-style").textContent;
+  assert.match(css, /\.verticalSection\.UpcomingShows:not\(\[data-hss-ready\]\) \.itemsContainer/);
+  assert.match(css, /\.verticalSection\.UpcomingMovies:not\(\[data-hss-ready\]\) \.itemsContainer/);
+  assert.match(css, /visibility:\s*hidden/);
+  assert.match(css, /animation:\s*hssReveal 0s 1\.5s forwards/);
+  assert.match(css, /@keyframes hssReveal\s*\{\s*to\s*\{\s*visibility:\s*visible/);
+});
+
+test("no flash: rewriting marks the Upcoming section ready, only once it has cards", () => {
+  const c = shows([["Rings", "S03E01 - TBA", "x - 11.11.2026"], ["Rings", "S03E02 - TBA", "x - 11.11.2026"]]);
+  c.insertAdjacentHTML("beforeend", '<div class="verticalSection UpcomingMovies" data-page="1"><div class="itemsContainer"></div></div>');
+  es.upcomingNow(c, "en", NOW);
+  assert.ok(c.querySelector(".UpcomingShows").hasAttribute("data-hss-ready"));
+  assert.deepEqual(visible(c), ["Rings | S03 | Wed 11 Nov"]);
+  assert.equal(c.querySelector(".UpcomingMovies").hasAttribute("data-hss-ready"), false);
+});
+
+test("no flash: start rewrites Upcoming on the first change, without waiting for the page to settle", async () => {
+  const dom = new JSDOM('<html lang="en"><body><div class="homeSectionsContainer"></div></body></html>');
+  const win = dom.window;
+  win.HssPageMeta = { Page: 1 };
+  win.ApiClient = { getCurrentUserId: () => "u1", getUrl: (p, q) => p + "?" + new URLSearchParams(q), getJSON: () => new Promise(() => {}) };
+  es.start(win);
+  const c = win.document.querySelector(".homeSectionsContainer");
+  c.innerHTML = `<div class="verticalSection UpcomingShows" data-page="1"><div class="itemsContainer"><div class="card upcoming-show-card"><div class="cardText cardText-first"><bdi><div class="itemAction textActionButton">Rings</div></bdi></div><div class="cardText cardText-secondary"><bdi><div class="itemAction textActionButton">S03E01 - TBA</div></bdi></div></div></div></div>`;
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(c.querySelector(".UpcomingShows").hasAttribute("data-hss-ready"));
+  win.close();
+});
+
+function memStore() {
+  const m = {};
+  return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); }, removeItem: (k) => { delete m[k]; }, m };
+}
+
+test("cache: per user, survives a round trip, broken or blocked storage reads as empty and never throws", () => {
+  const s = memStore();
+  es.writeCache(s, "u1", { base: { at: 1, enabled: ["NextUp"], names: {} } });
+  assert.deepEqual(es.readCache(s, "u1").base.enabled, ["NextUp"]);
+  assert.equal(es.readCache(s, "u2"), null);
+  s.setItem("hss-home:u3", "{not json");
+  assert.equal(es.readCache(s, "u3"), null);
+  const bad = { getItem: () => { throw new Error("blocked"); }, setItem: () => { throw new Error("quota"); } };
+  assert.equal(es.readCache(bad, "u1"), null);
+  es.writeCache(bad, "u1", {});
+  assert.equal(es.readCache(null, "u1"), null);
+});
+
+test("cache: watched rows and section settings refresh after a minute and show for 10 min, discover rows refresh after a day", () => {
+  const now = 10 * 86400000;
+  const entry = (age) => ({ at: now - age });
+  const c = { base: entry(30000), recent: entry(30000), discover: entry(3600000) };
+  assert.deepEqual(es.staleParts(c, now), []);
+  assert.deepEqual(es.staleParts({ ...c, recent: entry(61000) }, now), ["recent"]);
+  assert.deepEqual(es.staleParts({ ...c, discover: entry(86400001) }, now), ["discover"]);
+  assert.deepEqual(es.staleParts(null, now), ["base", "recent", "discover"]);
+  assert.equal(es.usable({ ...c, recent: entry(601000) }, now), false);
+  assert.equal(es.usable({ ...c, discover: entry(30 * 86400000) }, now), true);
+  assert.equal(es.usable({ base: entry(1000) }, now), false);
+  assert.equal(es.RECENT_TTL_MS, 600000);
+  assert.equal(es.DISCOVER_TTL_MS, 86400000);
+});
+
+test("cache: a home load paints from the cache at once, then refreshes only the stale part and repaints only when it changed", async () => {
+  const dom = new JSDOM('<html lang="en"><body><div class="homeSectionsContainer"></div></body></html>', { url: "https://jf.example.com/web/" });
+  const win = dom.window;
+  const now = Date.now();
+  const cached = {
+    lang: "en",
+    base: { at: now - 120000, enabled: ["NextUp"], names: { NextUp: "Next Up" } },
+    recent: { at: now - 120000, rows: { RecentlyWatchedMovies: [movie("m1", 0)], RecentlyWatchedSeries: [] } },
+    discover: { at: now - 1000, rows: { [STU]: [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: null, logo: null }], [NET]: [], [MGEN]: [], [SGEN]: [] } }
+  };
+  es.writeCache(win.localStorage, "u1", cached);
+  const urls = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  win.HssPageMeta = { Page: 1 };
+  win.ApiClient = {
+    getCurrentUserId: () => "u1",
+    getScaledImageUrl: fakeApi.getScaledImageUrl,
+    getUrl: (p, q) => { urls.push(p); return p + "?" + new URLSearchParams(q); },
+    getJSON: (u) => gate.then(() => u.startsWith("ModularHomeViews/UserSettings") ? { EnabledSections: ["NextUp"] }
+      : u.startsWith("ModularHomeViews/Sections") ? { Items: [{ Section: "NextUp", DisplayText: "Next Up" }] }
+      : u.includes("IncludeItemTypes=Movie") && u.includes("IsPlayed=true") ? { Items: [movie("m2", 0, { UserData: { Played: true, LastPlayedDate: new Date().toISOString() } })] } : { Items: [] })
+  };
+  es.start(win);
+  const c = win.document.querySelector(".homeSectionsContainer");
+  c.innerHTML = section("NextUp", 3, 1);
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(c.querySelector(".RecentlyWatchedMovies .card").getAttribute("data-id"), "m1");
+  assert.ok(c.querySelector(".DiscoverStudios .card"));
+  assert.ok(!urls.includes("UserViews"), "discover is fresh, not refetched");
+  release();
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(c.querySelector(".RecentlyWatchedMovies .card").getAttribute("data-id"), "m2");
+  assert.equal(es.readCache(win.localStorage, "u1").recent.rows.RecentlyWatchedMovies[0].Id, "m2");
+  win.close();
+});
+
+test("fixed slots: a section still loading gets a skeleton row of its card shape instead of the hint, the hint once it answered empty", () => {
+  const c = home(section("NextUp", 3, 1));
+  const loading = (id) => id !== "NextUp";
+  es.render(c, ["NextUp", "HiddenGems", "MyList"], NAMES, "en", loading, { HiddenGems: "Portrait" });
+  const gems = c.querySelector('[data-hss-placeholder="HiddenGems"]');
+  assert.ok(gems.hasAttribute("data-hss-loading"));
+  assert.equal(gems.querySelector("[data-hss-hint]").style.display, "none");
+  assert.equal(gems.querySelectorAll(".hssSkeleton .card.overflowPortraitCard .cardPadder-overflowPortrait").length, 6);
+  const list = c.querySelector('[data-hss-placeholder="MyList"]');
+  assert.equal(list.querySelectorAll(".hssSkeleton .card.overflowBackdropCard .cardPadder-overflowBackdrop").length, 6);
+  assert.deepEqual(order(c), ["NextUp", "_HiddenGems", "_MyList"]);
+  es.render(c, ["NextUp", "HiddenGems", "MyList"], NAMES, "en", () => false, {});
+  assert.equal(gems.hasAttribute("data-hss-loading"), false);
+  assert.equal(gems.querySelector(".hssSkeleton"), null);
+  assert.equal(gems.querySelector("[data-hss-hint]").style.display, "");
+  assert.equal(gems.querySelector("[data-hss-hint]").textContent, "No highly rated unwatched titles right now.");
+});
+
+test("fixed slots: the skeleton is idempotent and goes away when the real section arrives", () => {
+  const c = home("");
+  es.render(c, ["HiddenGems"], NAMES, "en", () => true, {});
+  const once = c.innerHTML;
+  es.render(c, ["HiddenGems"], NAMES, "en", () => true, {});
+  assert.equal(c.innerHTML, once);
+  c.insertAdjacentHTML("beforeend", section("HiddenGems", 8, 2));
+  es.render(c, ["HiddenGems"], NAMES, "en", () => true, {});
+  assert.equal(c.querySelector("[data-hss-placeholder]"), null);
+});
+
+test("fixed slots: view modes from the catalogue response", () => {
+  assert.deepEqual(es.modesOf({ Items: [{ Section: "HiddenGems", ViewMode: "Portrait" }, { Section: "NextUp", ViewMode: "Landscape" }, { Section: "x" }] }), { HiddenGems: "Portrait", NextUp: "Landscape" });
+  assert.deepEqual(es.modesOf(null), {});
+});
+
+test("fixed slots: a cached home paints every slot on the first change, before the page settles", async () => {
+  const dom = new JSDOM('<html lang="en"><body><div class="homeSectionsContainer"></div></body></html>', { url: "https://jf.example.com/web/" });
+  const win = dom.window;
+  const now = Date.now();
+  es.writeCache(win.localStorage, "u1", {
+    lang: "en",
+    base: { at: now, enabled: ["NextUp", "HiddenGems"], names: { NextUp: "Next Up", HiddenGems: "Hidden Gems" }, modes: {} },
+    recent: { at: now, rows: { RecentlyWatchedMovies: [], RecentlyWatchedSeries: [] } },
+    discover: { at: now, rows: { [STU]: [], [NET]: [], [MGEN]: [], [SGEN]: [] } }
+  });
+  win.HssPageMeta = { Page: 1 };
+  win.ApiClient = { getCurrentUserId: () => "u1", getScaledImageUrl: fakeApi.getScaledImageUrl, getUrl: (p, q) => p + "?" + new URLSearchParams(q), getJSON: () => new Promise(() => {}) };
+  es.start(win);
+  const c = win.document.querySelector(".homeSectionsContainer");
+  c.innerHTML = section("NextUp", 3, 1);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(c.querySelector('[data-hss-placeholder="HiddenGems"][data-hss-loading]'));
+  assert.ok(c.querySelector('[data-hss-placeholder="DiscoverStudios"]'));
   win.close();
 });
