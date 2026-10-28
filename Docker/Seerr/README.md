@@ -264,7 +264,7 @@ Status icons, for every open request (pending or approved, not available). Every
 | ✅ | available (Seerr's green check) | Available in Jellyfin / In Jellyfin verfügbar |
 | ◐ (half-filled circle, drawn) | partly available: aired requested episodes still missing (Seerr's green minus replaced) | Partly available / Teilweise verfügbar |
 | ◌ from the queue | Radarr/Sonarr downloads or imports while Seerr shows no download yet | Downloading now / Importing… (Wird importiert…) |
-| ✅ (downloaded) | file on disk, Seerr not yet available | Downloaded — in Jellyfin shortly / Heruntergeladen — gleich in Jellyfin |
+| ✅ (downloaded) | file on disk, Seerr not yet available | Downloaded — in Jellyfin shortly / Heruntergeladen — gleich in Jellyfin (minutes: every import triggers a Seerr scan, [Movie-Downloads README](../Movie-Downloads/README.md#seerr-availability-after-an-import)) |
 | ✅📅🌙 complete so far | series: every aired requested episode here, only unaired left (or the requested seasons done while Seerr says partly); 📅 next air date, 🌙 if Can wait; ended series: ✅ alone | Everything released so far is in Jellyfin · Next episode expected 11 Nov · downloads at night |
 
 | State of a requested title | Badge |
@@ -274,7 +274,7 @@ Status icons, for every open request (pending or approved, not available). Every
 | search queued / running | 🔍 pulsing (+🌙) |
 | found, Can wait (paused for the night) | 🌙 |
 | found, downloading / importing | ◌ (Seerr's own spinner on pills; cards ours, "Importing…") |
-| imported, Seerr not yet available | ✅ Downloaded — in Jellyfin shortly |
+| imported, Seerr not yet available | ✅ Downloaded — in Jellyfin shortly (Seerr flips to Available within about 3 to 13 min of the import) |
 | available | ✅ (Seerr's green pill) |
 | series: aired episodes missing | ◐ + state of the missing part (🌙 🧭 📅 🔍 ◌) |
 | series: complete so far | ✅📅🌙 ("Available so far" pill, green) |
