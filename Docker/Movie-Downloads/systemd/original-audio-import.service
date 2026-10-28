@@ -2,6 +2,7 @@
 Description=Original-language audio track as the default track of the files Radarr and Sonarr just imported (README Languages)
 Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
 After=docker.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
