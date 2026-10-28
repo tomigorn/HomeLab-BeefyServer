@@ -444,31 +444,43 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 
 | # | Section (id) | Shows |
 |---|---|---|
-| 1 | My Media (`MyMedia`) | library tiles, as vanilla |
-| 2 | Continue Watching (`ContinueWatching`) | as vanilla |
-| 3 | Next Up (`NextUp`) | as vanilla |
-| 4 | Recently Added Movies (`RecentlyAddedMovies`) | vanilla "Latest" for Movies |
-| 5 | Recently Added Shows (`RecentlyAddedShows`) | vanilla "Latest" for Shows |
-| 6 | Recently Watched Movies / Kürzlich angesehene Filme (injector, not HSS) | films played to the end in the last 60 days, newest first, max 20 |
-| 7 | Recently Watched TV Series & Collections / Kürzlich angesehene Serien & Filmreihen (injector, not HSS) | series watched completely (every regular episode with a file; specials and unaired ignored), last episode in the last 60 days; film collections with every film played, last one in the last 60 days; newest first, max 20 |
-| 8 | Because You Watched (`BecauseYouWatched`) | 1-2 rows, similar to a played film (films only) |
-| 9 | Hidden Gems (`HiddenGems`) | rated 7.5+ (IMDb rating), not watched yet |
-| 10 | Finish These Collections (`FinishTheseCollections`) | started collections, closest to done first |
-| 11 | My List (`MyList`) | the user's favourites (♥) |
-| 12 | Collections (`CollectionsSection`) | film collections |
-| 13 | By Studio/Network (`Studio`) | one studio or network row |
-| 14 | Starring (`Starring`) | one actor row |
-| 15 | Directed by (`DirectedBy`) | one director row |
-| 16 | Upcoming Shows (`UpcomingShows`) | Sonarr calendar, next month; one card per series (next episode's season + date) |
-| 17 | Upcoming Movies (`UpcomingMovies`) | Radarr calendar (digital release), next 3 months |
+| 1 | Continue Watching (`ContinueWatching`) | as vanilla |
+| 2 | Next Up (`NextUp`) | as vanilla |
+| 3 | Recently Added Movies (`RecentlyAddedMovies`) | vanilla "Latest" for Movies |
+| 4 | Recently Added Shows (`RecentlyAddedShows`) | vanilla "Latest" for Shows |
+| 5 | Recently Watched Movies / Kürzlich angesehene Filme (injector, not HSS) | films played to the end in the last 60 days, newest first, max 20 |
+| 6 | Recently Watched TV Series & Collections / Kürzlich angesehene Serien & Filmreihen (injector, not HSS) | series watched completely (every regular episode with a file; specials and unaired ignored), last episode in the last 60 days; film collections with every film played, last one in the last 60 days; newest first, max 20 |
+| 7 | Because You Watched (`BecauseYouWatched`) | 1-2 rows, similar to a played film (films only) |
+| 8 | Hidden Gems (`HiddenGems`) | rated 7.5+ (IMDb rating), not watched yet |
+| 9 | Finish These Collections (`FinishTheseCollections`) | started collections, closest to done first |
+| 10 | My List ♥ (`MyList`) | the user's favourites (♥); the heart is added by the injector (CSS) |
+| 11 | Collections (`CollectionsSection`) | film collections |
+| 12 | By Studio/Network (`Studio`) | one studio or network row |
+| 13 | Starring (`Starring`) | one actor row |
+| 14 | Directed by (`DirectedBy`) | one director row |
+| 15 | Studios / Studios (injector) | the user's film studios, most films first, max 20; white logo on a dark card, name when there is no logo |
+| 16 | Networks / Sender (injector) | the user's series networks (TMDB networks: Netflix, Prime Video, HBO …), most series first, max 20 |
+| 17 | Movie Genres / Film-Genres (injector) | film genres, most films first, max 20; name over a duotone backdrop (best rated film of the genre) |
+| 18 | Series Genres / Serien-Genres (injector) | same for series |
+| 19 | Upcoming Shows (`UpcomingShows`) | Sonarr calendar, next month; one card per series (next episode's season + date) |
+| 20 | Upcoming Movies (`UpcomingMovies`) | Radarr calendar (digital release), next 3 months |
 
 - Upcoming cards: the plugin shows `S03E01 - TBA` and `2 Weeks, 1 Day - 11.11.2026` (`DateFormat` DD/MM/YYYY, delimiter `.`, set by `home-sections.py`). The same injector script turns the date into `Wed 11 Nov` (German `Mi., 11. Nov.`, year only when not this year; the original stays as tooltip) and keeps one Upcoming Shows card per series: the first (earliest) one, season only (`S03`); later episodes are hidden. The plugin has no grouping option and returns at most 16 upcoming episodes (no setting): a series dropping more than that in a month pushes later series out.
 - Public path: Cloudflare caches `/web/*` files. File Transformation rewrites them but keeps the original ETag, so a cached copy revalidated to 304 forever and public users kept a pre-plugin bundle ("Modular Home" errored, home vanilla; 2026-10-27). Fix in HomeLab-FastPi `Traefik/traefik/dynamic/jellyfin.yml` (router `jellyfin-web` drops If-None-Match/If-Modified-Since). Still stale: Cloudflare → Caching → Custom Purge the `/web/` URL.
-- Off on purpose: Watch Again (removed 2026-10-27, owner), Jellyseerr Discover / Trending / My Requests, Genre, Decade, and every other section.
+- Off on purpose: My Media (library tiles; removed 2026-10-28, owner: the nav buttons above do the same), Watch Again (removed 2026-10-27, owner), Jellyseerr Discover / Trending / My Requests, Genre, Decade, and every other section.
 - Empty sections stay visible: heading plus a grey one-line hint (English, German if the UI language is German). HSS itself hides empty sections and leaves out Because You Watched until a film is played.
   - Script `home-placeholders/empty-sections.js`, JavaScript Injector entry "Empty home sections" (signed-in users). It reads the user's enabled sections (`/ModularHomeViews/UserSettings`, in config order: `home-sections.py` stores them sorted) and the names (`/ModularHomeViews/Sections`), adds a placeholder where a section is missing or empty, and removes it when the section fills. No HSS markup = does nothing.
-  - Recently Watched Movies + TV Series & Collections: same script, built in the browser with the user's own session (`/Users/<id>/Items`), Jellyfin's own card markup, right after Recently Added Shows, where Watch Again used to sit (`RECENT_AFTER`, films first), locked like the rest (no user setting). Not via HSS `RegisterSection`: the plugin would POST user ids, unauthenticated, to a path on the public URL. Shows a finished title on the next home load (data cached 60 s).
+  - Recently Watched Movies + TV Series & Collections: same script, built in the browser with the user's own session (`/Users/<id>/Items`), Jellyfin's own card markup, right after Recently Added Shows, where Watch Again used to sit (`RECENT_AFTER`, films first), locked like the rest (no user setting). Not via HSS `RegisterSection`: the plugin would POST user ids, unauthenticated, to a path on the public URL. Shows a finished title on the next home load (refreshed in the background after 60 s).
     - Queries: played films and played episodes (`IsPlayed`, `SortBy=DatePlayed`), all collections; then one `Ids=` request for the candidate series (their `UnplayedItemCount`), only if one has unwatched episodes the unwatched specials (`ParentIndexNumber=0`) and unaired ones, and one `Limit=1` request per fully watched collection (the API has no multi-parent filter). 3 requests with nothing played.
+  - Studios, Networks, Movie Genres, Series Genres (2026-10-28, like Seerr's Discover): same script, user's own session, 4 requests (`UserViews`, films and series with `Fields=Studios,Genres`, one `Ids=` request for the logo tags). Click = Jellyfin's own list (`#/list?studioId=…` / `genreId=…`, `parentId` = the Movies or Shows library). Only what the user can see, sorted by title count. Placed after Directed by (`DISCOVER_AFTER`): the "discover" block next to the plugin's by-studio/actor/director rows.
+    - Logos: `scripts/studio-logos.py` (user timer `jellyfin-studio-logos.timer`, 04:38 in the maintenance window, after the library scan). It asks Seerr (its built-in TMDB access, no own key, nothing in the browser) for each new title's companies and networks, downloads TMDB's white logo (`w500_filter(duotone,ffffff,bababa)`, like Seerr) once and stores it as the studio's **Logo** image in Jellyfin (same origin, scaled and cached by Jellyfin). Logos without a transparent background are skipped (they would be a white box). It also writes the injector entry "Home networks" (`window.HssNetworks`, the studio ids that are TMDB networks: Jellyfin keeps networks and production companies in the same Studios list). Lookups cached in `~/.cache/jellyfin-studio-logos.json` (delete it to look everything up again). `--dry-run` shows what it would do; tests `python3 -m unittest test_studio_logos`.
+    - Genre colours: fixed per genre (`GENRE_COLORS`, German names mapped), unknown genres get a stable spare colour. Duotone in CSS (greyscale backdrop × light colour, lightened with the dark colour).
+  - Speed and no jumping:
+    - Every enabled row has its slot from the first paint: a section that has not answered yet shows a skeleton row of its card shape (portrait/landscape from the catalogue) instead of the hint, so rows fill in place instead of popping in. The script sees a plugin section answer through the browser's resource timing (nothing patched); after 4 s a missing section shows its hint.
+    - Upcoming Shows/Movies cards stay invisible (space kept) until the script rewrote them (one card per series, short date), no flash of the raw episode cards; a CSS timer shows the raw cards after 1.5 s if the script never runs.
+    - Our rows (recently watched, studios, networks, genres) and the section list are cached per user in the browser (`localStorage` `hss-home:<user id>`): the home paints at once from the last load and reloads in the background (section list and watched rows after 1 min, shown from cache up to 10 min; studios/networks/genres after 24 h), repainting only what changed. Not a nightly server-side preload: that would store everyone's watch data on the server and need an admin key; the browser cache keeps it per user and fresh.
+    - Measured 2026-10-28 (LAN, owner): before, plugin rows appeared one by one 4.0-5.1 s after navigation and our rows at 6.6 s (page jumped as each arrived); after, a reload paints every slot at 1.1 s and the slow plugin rows fill their skeleton by 1.4-1.6 s; first-ever load: all slots at 4.7 s.
+    - Remaining delay: 5 of the 15 plugin requests per home load wait about 1.1 s on the public path (direct to Jellyfin they take < 0.3 s). Cause: the fastpi Beefy-Waker gate (Traefik `forwardAuth` on every Jellyfin request) runs Python's `ThreadingHTTPServer` with the default listen backlog of 5, so a burst of parallel requests gets SYNs dropped and retried after 1 s. Fix belongs in HomeLab-FastPi (`Docker/Beefy-Waker/app/waker.py`: `request_queue_size` 64).
   - TV layout (Samsung app): its clock changes the page every second, so the script runs at the latest 2.5 s after the first change instead of waiting for silence.
   - Push a changed script: `python3 scripts/home-placeholders.py` → `upserted Empty home sections`, then reload (browser Ctrl+Shift+R, Samsung app: close fully). No restart.
   - Tests: in `home-placeholders/` `sudo docker run --rm --network host -u $(id -u):$(id -g) -e npm_config_cache=/tmp/npm -v "$PWD":/w -w /w node:24-alpine sh -c "npm ci && node --test"`; upsert: `cd scripts && python3 -m unittest test_home_placeholders`.
@@ -485,6 +497,7 @@ A Netflix-like home screen for every user. The plugin replaces the home screen w
 
 | Task | Command (in `Docker/Jellyfin/`) |
 |---|---|
+| Studio logos | `python3 scripts/studio-logos.py` (`--dry-run`); timer install: `cp systemd/jellyfin-studio-logos.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now jellyfin-studio-logos.timer` |
 | Library options | `python3 scripts/library-options.py` (`--check`): automatic movie collections on the Movies library (franchises become BoxSets, e.g. Harry Potter Collection); after adding films a library scan creates them; tests `python3 -m unittest test_library_options` in `scripts/` |
 | Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-home-sections`, `jf.home-sections-*`; `../CUSTOMIZATIONS.md`) |
 | Rollback | stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/{Home Screen Sections,Plugin Pages,File Transformation}_*`, start. Pre-change backup: `/srv/appdata/jellyfin-pre-hss-2026-10-27.tgz` (root, 600) |
