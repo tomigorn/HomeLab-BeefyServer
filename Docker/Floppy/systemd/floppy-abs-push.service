@@ -6,17 +6,18 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# Every step runs the root-owned copy of scripts/abs-push*.py in /usr/local/lib/floppy-abs-push (README "Install"), never the buntu-writable repo files.
 # targets: root (docker exec into floppy) lists Floppy usernames minus /etc/floppy-abs-push/exclude.
-ExecStartPre=+/usr/bin/python3 -I /home/buntu/Projects/Docker/Floppy/scripts/abs-push.py targets
+ExecStartPre=+/usr/bin/python3 -I /usr/local/lib/floppy-abs-push/abs-push.py targets
 # fetch: throwaway uid, the floppy-sync key only as a credential, GET-only HTTPS to ABS, no write access but its state dir.
 DynamicUser=yes
 LoadCredential=abs-key:/home/buntu/Projects/Docker/Floppy/secrets/floppy-sync-abs-key
 StateDirectory=floppy-abs-push
 StateDirectoryMode=0700
-BindReadOnlyPaths=/home/buntu/Projects/Docker/Floppy/scripts:/run/abs-push
+BindReadOnlyPaths=/usr/local/lib/floppy-abs-push:/run/abs-push
 ExecStart=/usr/bin/python3 -I /run/abs-push/abs-push.py fetch
 # apply: root for docker exec into floppy; reads only the spool written above.
-ExecStartPost=+/usr/bin/python3 -I /home/buntu/Projects/Docker/Floppy/scripts/abs-push.py apply
+ExecStartPost=+/usr/bin/python3 -I /usr/local/lib/floppy-abs-push/abs-push.py apply
 TimeoutStartSec=20min
 NoNewPrivileges=yes
 PrivateTmp=yes

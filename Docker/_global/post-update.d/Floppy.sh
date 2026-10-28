@@ -15,4 +15,5 @@ if want floppy; then
   check floppy.abs-push-selftest '^ok dry-run$' "$("$FLOPPY_DIR/scripts/abs-push.py" selftest 2>&1 | tail -1)"
   check floppy.abs-push-timer '^enabled success$' "$(systemctl is-enabled floppy-abs-push.timer 2>&1) $(systemctl show -p Result --value floppy-abs-push.service 2>&1)"
   check floppy.abs-push-key '^root:root 600$' "$(stat -c '%U:%G %a' "$FLOPPY_DIR/secrets/floppy-sync-abs-key" 2>&1)"
+  check floppy.abs-push-root-copy '^root:root 644 root:root 644 same$' "$(stat -c '%U:%G %a' /usr/local/lib/floppy-abs-push/abs-push.py /usr/local/lib/floppy-abs-push/abs-push-apply.py 2>&1 | xargs) $(cmp -s "$FLOPPY_DIR/scripts/abs-push.py" /usr/local/lib/floppy-abs-push/abs-push.py && cmp -s "$FLOPPY_DIR/scripts/abs-push-apply.py" /usr/local/lib/floppy-abs-push/abs-push-apply.py && echo same || echo differs)"
 fi

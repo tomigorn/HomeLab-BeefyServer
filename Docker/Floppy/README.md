@@ -152,7 +152,8 @@ ABS 2.37 sends no progress events (notifications: backups, podcast downloads, RS
 
 | | |
 |---|---|
-| Install | `sudo install -m 0644 systemd/floppy-abs-push.* /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now floppy-abs-push.timer` |
+| Install | `sudo install -d -m 0755 /usr/local/lib/floppy-abs-push && sudo install -o root -g root -m 0644 scripts/abs-push.py scripts/abs-push-apply.py /usr/local/lib/floppy-abs-push/ && sudo install -m 0644 systemd/floppy-abs-push.* /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now floppy-abs-push.timer` |
+| Root-owned copy | the unit runs `/usr/local/lib/floppy-abs-push/abs-push*.py` (root:root 644), not the buntu-writable repo files: after every change to `scripts/abs-push*.py` repeat the first two `install` commands (post-update check `floppy.abs-push-root-copy`) |
 | Key | ABS (as an admin) → Settings → Users → add `floppy-sync`, type Admin, random password; Settings → API Keys → Add, name `floppy-sync`, no expiry, acting as `floppy-sync`; then `ssh -t beefy 'sudo ~/Projects/Docker/Floppy/scripts/abs-push.py store-key'` (hidden prompt; checks `GET /api/me` = `floppy-sync`, admin, active, else stores nothing) |
 | targets | root (`ExecStartPre=+`): active Floppy usernames minus `abr`, `audiobook-importer`, `floppy-sync`, `root` and `/etc/floppy-abs-push/exclude` → `targets.json` |
 | fetch | `DynamicUser`, key via `LoadCredential`, HTTPS to the fixed ABS URL only, **GET only** (client refuses any other method, paths outside `/api/` and redirects; tested); `/api/me` (must be `floppy-sync`), `/api/users`, `/api/users/<id>` per matching active non-root user (mediaProgress), then (only when a `lastUpdate` changed or a cover is >20 h old) every item + cover → spool `/var/lib/floppy-abs-push/pending/` |

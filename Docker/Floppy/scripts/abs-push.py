@@ -24,7 +24,8 @@ SERVICE_USER = "floppy-sync"
 SKIP_USERS = {"abr", "audiobook-importer", SERVICE_USER, "root"}
 HERE = pathlib.Path(__file__).resolve().parent
 APPLY_SNIPPET = HERE / "abs-push-apply.py"
-KEY_FILE = HERE.parent / "secrets" / "floppy-sync-abs-key"
+# The unit runs a root-owned copy from /usr/local/lib/floppy-abs-push; the key stays in the repo's secrets dir.
+KEY_FILE = pathlib.Path("/home/buntu/Projects/Docker/Floppy/secrets/floppy-sync-abs-key")
 EXCLUDE_FILE = pathlib.Path("/etc/floppy-abs-push/exclude")
 STATE_DIR = "/var/lib/floppy-abs-push"
 UNIT = "floppy-abs-push.service"
