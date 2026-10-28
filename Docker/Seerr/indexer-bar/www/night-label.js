@@ -149,7 +149,7 @@
     if (tip.__for && tip.__for.getAttribute("aria-describedby") === "hg-flag-tip") tip.__for.removeAttribute("aria-describedby");
   }
 
-  // one static hint box, placed once below the badge (no title tooltip, no move handlers); Escape closes it
+  // one static hint box anchored to the badge (below it; a status pill's above it, away from Seerr's popup), never following the mouse; Escape closes it
   function showTip(doc, el) {
     var tip = doc.getElementById("hg-flag-tip");
     if (!tip) {
@@ -167,12 +167,19 @@
     if (!el.hasAttribute("aria-describedby")) el.setAttribute("aria-describedby", "hg-flag-tip");
     var r = el.getBoundingClientRect(), vw = (doc.defaultView && doc.defaultView.innerWidth) || 360;
     tip.style.display = "block";
-    tip.style.top = Math.round(r.bottom + 6) + "px";
     tip.style.left = Math.max(8, Math.min(Math.round(r.left), vw - 264)) + "px";
+    placeTip(tip, el, el.__hgPop ? "above" : "below");
     return tip;
   }
 
-  // mouse: the hint shows while hovering (pop = a Seerr popup trigger: the hint goes into Seerr's popup instead); keyboard focus shows it too; touch: the first tap shows it, a second tap goes through (link, card)
+  function placeTip(tip, el, side) {
+    var r = el.getBoundingClientRect(), h = tip.offsetHeight;
+    if (side === "above" && r.top - h - 6 < 4) side = "below";
+    tip.setAttribute("data-side", side);
+    tip.style.top = Math.round(side === "above" ? r.top - h - 6 : r.bottom + 6) + "px";
+  }
+
+  // mouse: the hint shows while hovering; keyboard focus shows it too; touch: the first tap shows it, a second tap goes through (link, card). pop = a status pill, possibly a Seerr popup trigger
   function tapHint(doc, el, text, pop) {
     el.__hgHint = text;
     el.__hgPop = !!pop;
@@ -183,7 +190,7 @@
     el.addEventListener("pointerenter", function (ev) {
       if (ev.pointerType !== "mouse" || !el.__hgHint) return;
       state.hover = el;
-      if (!el.__hgPop) showTip(doc, el);
+      showTip(doc, el);
     });
     el.addEventListener("pointerleave", function (ev) {
       if (ev.pointerType !== "mouse") return;
@@ -191,7 +198,7 @@
       var tip = doc.getElementById("hg-flag-tip");
       if (tip && tip.__for === el) hideTip(doc);
     });
-    el.addEventListener("focus", function () { if (el.__hgHint && !el.__hgPop) showTip(doc, el); });
+    el.addEventListener("focus", function () { if (el.__hgHint) showTip(doc, el); });
     el.addEventListener("blur", function () { var tip = doc.getElementById("hg-flag-tip"); if (tip && tip.__for === el) hideTip(doc); });
     el.addEventListener("click", function (ev) {
       var touch = el.__hgPt === "touch";
@@ -205,18 +212,18 @@
     });
   }
 
-  // Seerr's own popup on a hovered status pill: our hint as one line inside it (no second tooltip on top)
-  function popHint(doc, node) {
-    var el = state.hover;
-    if (!el || !el.__hgPop || !el.__hgHint || !el.isConnected || node.parentNode !== doc.body || !/\bz-50\b/.test(node.className || "") || !/\babsolute\b/.test(node.className || "")) return;
-    var line = node.querySelector("[data-hg-pop-hint]");
-    if (!line) {
-      line = doc.createElement("div");
-      line.setAttribute("data-hg-night-own", "");
-      line.setAttribute("data-hg-pop-hint", "");
-      node.appendChild(line);
-    }
-    if (line.textContent !== el.__hgHint) line.textContent = el.__hgHint;
+  // Seerr's popup follows the cursor: our hint stays put on the other side of the pill, so the two never cover each other
+  function popAside(doc, node) {
+    var el = state.hover, tip = doc.getElementById("hg-flag-tip");
+    if (!el || !tip || tip.__for !== el || tip.style.display === "none" || !/\bz-50\b/.test(node.className || "") || !/\babsolute\b/.test(node.className || "")) return;
+    var view = doc.defaultView, later = view && view.requestAnimationFrame ? function (f) { view.requestAnimationFrame(function () { view.requestAnimationFrame(f); }); } : function (f) { setTimeout(f, 32); };
+    later(function () {
+      if (!node.isConnected || tip.__for !== el || tip.style.display === "none") return;
+      var p = node.getBoundingClientRect(), r = el.getBoundingClientRect();
+      if (!p.height) return;
+      var side = p.top + p.height / 2 < r.top + r.height / 2 ? "below" : "above";
+      if (tip.getAttribute("data-side") !== side) placeTip(tip, el, side);
+    });
   }
 
   // Seerr's own mini badge: spinner = downloading, green check = available, green minus = partly available
@@ -619,7 +626,7 @@
     if (doc.getElementById("hg-night-style")) return;
     var s = doc.createElement("style");
     s.id = "hg-night-style";
-    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{background:#4b5563 !important;transition:none !important}[data-hg-pop-hint]{margin:.25rem 0;padding:0 .25rem;font-size:.75rem;line-height:1.1rem;color:#d1d5db;white-space:normal}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night-solid]{background-color:rgba(99,102,241,.8) !important;border-color:#818cf8 !important;--tw-ring-color:#818cf8 !important;color:#eef2ff !important}[data-hg-half]{display:inline-block;width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:2px solid #fff;background:linear-gradient(90deg,#fff 50%,transparent 50%);vertical-align:middle}[data-hg-night-own] > [data-hg-half] + *{margin-left:.2rem}[data-hg-spin]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-spin] svg{display:block;width:100%;height:100%;animation:hg-spin .8s steps(8) infinite}@keyframes hg-spin{to{transform:rotate(360deg)}}a[data-hg-part],span[data-hg-part]{background-color:rgba(2,132,199,.8) !important;border-color:#0ea5e9 !important;color:#e0f2fe !important}a[data-hg-part]:hover{background-color:#0284c7 !important}[data-hg-flag-own] > [data-hg-half]{width:.75rem;height:.75rem}[data-hg-flag-own] > [data-hg-spin],[data-hg-flag-own] > [data-hg-search]{width:.85rem;height:.85rem}[data-hg-search]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-search] svg{display:block;width:100%;height:100%}[data-hg-search=\"wait\"] svg{opacity:.8}[data-hg-search=\"live\"] svg{animation:hg-pulse 1.4s ease-in-out infinite}@keyframes hg-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.84)}}[data-hg-night-own] > [data-hg-search] + *,[data-hg-night-own] > * + [data-hg-search]{margin-left:.15rem}@media (prefers-reduced-motion:reduce){[data-hg-spin] svg,[data-hg-search=\"live\"] svg{animation:none}}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}#hg-flag-tip{position:fixed;z-index:10000;max-width:16rem;padding:.4rem .6rem;border-radius:.5rem;background:#111827;color:#f3f4f6;border:1px solid #4b5563;font-size:.75rem;line-height:1.1rem;white-space:pre-line;box-shadow:0 4px 12px rgba(0,0,0,.4)}";
+    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{background:#4b5563 !important;transition:none !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night-solid]{background-color:rgba(99,102,241,.8) !important;border-color:#818cf8 !important;--tw-ring-color:#818cf8 !important;color:#eef2ff !important}[data-hg-half]{display:inline-block;width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:2px solid #fff;background:linear-gradient(90deg,#fff 50%,transparent 50%);vertical-align:middle}[data-hg-night-own] > [data-hg-half] + *{margin-left:.2rem}[data-hg-spin]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-spin] svg{display:block;width:100%;height:100%;animation:hg-spin .8s steps(8) infinite}@keyframes hg-spin{to{transform:rotate(360deg)}}a[data-hg-part],span[data-hg-part]{background-color:rgba(2,132,199,.8) !important;border-color:#0ea5e9 !important;color:#e0f2fe !important}a[data-hg-part]:hover{background-color:#0284c7 !important}[data-hg-flag-own] > [data-hg-half]{width:.75rem;height:.75rem}[data-hg-flag-own] > [data-hg-spin],[data-hg-flag-own] > [data-hg-search]{width:.85rem;height:.85rem}[data-hg-search]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-search] svg{display:block;width:100%;height:100%}[data-hg-search=\"wait\"] svg{opacity:.8}[data-hg-search=\"live\"] svg{animation:hg-pulse 1.4s ease-in-out infinite}@keyframes hg-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.84)}}[data-hg-night-own] > [data-hg-search] + *,[data-hg-night-own] > * + [data-hg-search]{margin-left:.15rem}@media (prefers-reduced-motion:reduce){[data-hg-spin] svg,[data-hg-search=\"live\"] svg{animation:none}}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}#hg-flag-tip{position:fixed;z-index:10000;max-width:16rem;padding:.4rem .6rem;border-radius:.5rem;background:#111827;color:#f3f4f6;border:1px solid #4b5563;font-size:.75rem;line-height:1.1rem;white-space:pre-line;box-shadow:0 4px 12px rgba(0,0,0,.4)}";
     (doc.head || doc.documentElement).appendChild(s);
   }
 
@@ -704,7 +711,7 @@
         for (var n = 0; n < r.addedNodes.length; n++) {
           var a = r.addedNodes[n];
           if (a.nodeType !== 1) continue;
-          if (a.parentNode === document.body) popHint(document, a);
+          if (a.parentNode === document.body) popAside(document, a);
           if (state.waitingAt && a.querySelector && (a.matches(BAR) || a.querySelector(BAR))) blocks = true;
         }
         if (!due && !(t.closest && t.closest("[data-hg-night],[data-hg-flags]"))) due = true;

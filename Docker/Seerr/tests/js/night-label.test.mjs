@@ -72,6 +72,7 @@ const downloadBlock = (name, status, pct = 0) => `
 const shown = (w, el) => w.getComputedStyle(el).display !== "none";
 const visibleText = (w, root) => [...root.querySelectorAll("*")].filter((e) => !e.children.length && shown(w, e) && [...ancestors(e)].every((a) => shown(w, a))).map((e) => e.textContent.trim()).filter(Boolean).join("|");
 function* ancestors(e) { for (let a = e.parentElement; a; a = a.parentElement) yield a; }
+const visibleTip = (w) => { const t = w.document.getElementById("hg-flag-tip"); return t && shown(w, t) ? t.textContent : null; };
 const open = [];
 afterEach(() => { while (open.length) open.pop().close(); });
 const night = (body, xhr, path) => { const w = load("night-label.js", body, xhr, "https://requests.example.com" + path); open.push(w); return w; };
@@ -700,7 +701,7 @@ test("Partially Available pill: restyled away from green, ◐ first with the mis
   assert.equal(solo.getAttribute("data-hg-hint"), "Teilweise verfügbar");
 });
 
-test("hints are static: a pill's hint goes into Seerr's own popup, a card's shows once below it; no move handlers, Escape closes", async () => {
+test("hints are static: a pill's hint shows once above it (never inside Seerr's cursor-following popup), a card's below it; no move handlers, Escape closes", async () => {
   const types = [];
   const routes = { ...RS_ROUTES, [RS_URL]: RS, "/api/v1/discover/movies": { results: [{ id: 700, mediaType: "movie", title: "Tied", posterPath: "/tied.jpg", mediaInfo: { tmdbId: 700, mediaType: "movie", status: 3, downloadStatus: [], downloadStatus4k: [] } }] } };
   const w = night(clockCard("/tied.jpg") + header(plainBadge("movie/700")), (win) => {
@@ -716,12 +717,12 @@ test("hints are static: a pill's hint goes into Seerr's own popup, a card's show
   const pill = w.document.querySelector(".media-status a");
   assert.equal(pill.hasAttribute("title"), false);
   pill.dispatchEvent(ev("pointerenter"));
-  assert.equal(w.document.getElementById("hg-flag-tip"), null, "no tip of ours over a Seerr popup trigger");
+  assert.equal(visibleTip(w), "Waiting for the night — downloads at night (cheaper power)");
   w.document.body.insertAdjacentHTML("beforeend", '<div class="z-50 text-sm absolute font-normal bg-gray-800">Manage Movie</div>');
   await tick();
-  const popup = w.document.body.lastElementChild;
-  assert.equal(popup.querySelector("[data-hg-pop-hint]").textContent, "Waiting for the night — downloads at night (cheaper power)");
+  assert.equal(w.document.body.lastElementChild.textContent, "Manage Movie", "Seerr's popup stays as it is");
   pill.dispatchEvent(ev("pointerleave"));
+  assert.equal(visibleTip(w), null);
   const chip = w.document.querySelector('[role="link"] [data-hg-night]');
   chip.dispatchEvent(ev("pointerenter"));
   const tip = w.document.getElementById("hg-flag-tip");
@@ -793,4 +794,62 @@ test("complete so far: German pill and card ✅📅🌙 instead of ◐", async (
   assert.equal(badgeIcons(card), "✅📅🌙");
   assert.ok(card.querySelector("[data-hg-night-solid]"));
   assert.equal(card.querySelector("[data-hg-night]").getAttribute("data-hg-hint"), `Alles bisher Erschienene ist in Jellyfin · Nächste Folge erwartet ${new Date(Date.UTC(2026, 10, 11)).toLocaleDateString("de-CH", { day: "numeric", month: "short", timeZone: "UTC" })} · lädt nachts`);
+});
+
+// a user without Manage Requests: Seerr gives a pill without a download neither a link nor a popup, only the downloading pill has one
+const linklessPill = (text = "Requested") => `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap cursor-default bg-indigo-500/80 border border-indigo-500 !text-indigo-100 false overflow-hidden"><div class="relative z-20 flex items-center false"><span>${text}</span></div></span>`;
+const ownCard = (key, name, pill) => `
+<div class="relative flex w-72 overflow-hidden rounded-xl" data-testid="request-card"><div class="relative z-10 flex min-w-0 flex-1 flex-col pr-4" data-testid="request-card-title">
+  <a href="/${key}" class="overflow-hidden text-base font-bold text-white">${name}</a>
+  <div class="mt-2 flex items-center text-sm sm:mt-1"><span class="mr-2 hidden font-bold sm:block">Status</span>${pill}</div>
+</div></div>`;
+const hover = (w, el) => { const e = new w.MouseEvent("pointerenter", { cancelable: true }); Object.defineProperty(e, "pointerType", { value: "mouse" }); el.dispatchEvent(e); };
+const unhover = (w, el) => { const e = new w.MouseEvent("pointerleave", { cancelable: true }); Object.defineProperty(e, "pointerType", { value: "mouse" }); el.dispatchEvent(e); };
+
+test("every request card's pill shows its own hint in our static box, with or without a Seerr popup", async () => {
+  const rs = { value: live({ canWait: ["tv/76479", "movie/700"], noRelease: { "movie/700": "2026-10-28T10:00:23Z" }, queue: { "tv/76479": { state: "paused" } }, imported: ["movie/120"] }) };
+  const routes = { ...RS_ROUTES, "/api/v1/movie/120": details("movie", 120, "Fellowship", "/fellowship.jpg", []) };
+  Object.defineProperty(routes, RS_URL, { get: () => rs.value, enumerable: true });
+  const w = night(requestCard("tv/76479", "The Boys") + ownCard("movie/120", "Fellowship", linklessPill()) + ownCard("movie/700", "Tied Up", linklessPill()), fakeXHR(routes, { value: WAITING }), "/");
+  await settle();
+  const pills = [...w.document.querySelectorAll('[data-testid="request-card"] .inline-flex.rounded-full')];
+  assert.deepEqual(pills.map((p) => visibleText(w, p)), ["🌙 Tonight", "Requested|✅", "Requested|🌙|🧭"]);
+
+  hover(w, pills[0]);
+  w.document.body.insertAdjacentHTML("beforeend", `<div class="z-50 text-sm absolute font-normal bg-gray-800">${downloadBlock(BOYS_ITEM.title, "paused")}</div>`);
+  await tick();
+  const popup = w.document.body.lastElementChild;
+  assert.match(visibleTip(w), /^Waiting for the night 🌙 — Starts automatically at 22:05/);
+  assert.equal(popup.querySelector("[data-hg-pop-hint]"), null, "nothing of ours inside Seerr's moving popup");
+  unhover(w, pills[0]);
+  popup.remove();
+
+  hover(w, pills[1]);
+  assert.equal(visibleTip(w), "Downloaded — in Jellyfin shortly");
+  assert.equal(pills[1].getAttribute("aria-describedby"), "hg-flag-tip");
+  unhover(w, pills[1]);
+  assert.equal(visibleTip(w), null);
+
+  hover(w, pills[2]);
+  assert.equal(visibleTip(w), "Waiting for the night · No release found yet — searched again in tonight's scheduled search (04:17), downloads at night when found");
+  unhover(w, pills[2]);
+
+});
+
+test("downloaded while Seerr still says Requested: ✅ 'in Jellyfin shortly', gone once Seerr says Available", async () => {
+  const rs = { value: live({ imported: ["movie/120"] }) };
+  const routes = { ...RS_ROUTES, "/api/v1/movie/120": details("movie", 120, "Fellowship", "/fellowship.jpg", []) };
+  Object.defineProperty(routes, RS_URL, { get: () => rs.value, enumerable: true });
+  const w = night(ownCard("movie/120", "Fellowship", linklessPill()), fakeXHR(routes, { value: fresh([]) }), "/");
+  await settle();
+  const pill = () => w.document.querySelector('[data-testid="request-card"] .inline-flex.rounded-full');
+  assert.equal(visibleText(w, pill()), "Requested|✅");
+  assert.equal(pill().getAttribute("data-hg-hint"), "Downloaded — in Jellyfin shortly");
+  routes["/api/v1/movie/120"].mediaInfo.status = 5;
+  rs.value = live();
+  pill().outerHTML = linklessPill("Available").replace("bg-indigo-500/80 border border-indigo-500 !text-indigo-100", "bg-green-500/80 border border-green-500 !text-green-100");
+  w.hgNightLabel.refresh();
+  await settle();
+  assert.equal(visibleText(w, pill()), "Available");
+  assert.equal(pill().hasAttribute("data-hg-hint"), false);
 });
