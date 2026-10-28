@@ -4,8 +4,9 @@ Per (app, downloadId, condition), once until the condition clears and returns: b
 Guard events: scripts/grab-guard.sh writes <config dir>/guard-events/*.json inside the containers (no bot token there); removed / marked-failed = digest, "check by hand" = Telegram; the file is deleted once handled. scripts/subtitle-check.py writes subtitle_repaired / subtitle_suspect events to /srv/appdata/bazarr/subtitle-check/events = digest. Sent with _global/scripts/oob-alert.sh. Run by systemd/queue-watchdog.timer.
 Indexers: /health of each app; one Telegram while indexers are disabled after failures (IndexerStatusCheck / IndexerLongTermStatusCheck), recovery = digest. Expected backoffs are left out: Treasure Maps grab limit, The Pirate Bay "no results".
 Quiet hours 22:00-07:00 Europe/Zurich: Telegrams are held and sent on the first run from 07:00 if still due.
+ID-matched Sonarr imports: a completed download Sonarr blocks only with "matched to series by ID" is imported (ManualImport, once per download) when the grab history, title, year, season and Sonarr's own proposals all agree; otherwise the normal blocked alert names the reason. QW_AUTO_IMPORT=0 switches it off.
 Digest: watchdog-digest.prom (node-exporter textfile, last 48 h) in the state dir, read by fastpi's morning digest. Every send, hold and digest event is a line in watchdog-sends.log.
-Usage: scripts/queue-watchdog.py"""
+Usage: scripts/queue-watchdog.py [--dry-run]   (--dry-run: only the ID-match auto-import check, prints, changes nothing)"""
 import datetime
 import html
 import json
@@ -39,6 +40,8 @@ TZ = "Europe/Zurich"
 GUARD_DIGEST = {"removed", "marked-failed"}
 SUBTITLE_DIGEST = {"subtitle_repaired", "subtitle_suspect"}
 DEFAULT_EVENTS = "/srv/appdata/radarr/guard-events:/srv/appdata/sonarr/guard-events:/srv/appdata/bazarr/subtitle-check/events"
+ID_MATCH = "matched to series by ID"
+YEAR_SLACK = 1
 DIGEST_HOURS, DIGEST_MAX, SENDS_MAX, TITLE_MAX = 48, 40, 1000, 80
 
 
@@ -53,6 +56,7 @@ class Config:
     tz: str = TZ
     quiet_from: int = 22
     quiet_until: int = 7
+    auto_import: bool = True
 
 
 def in_quiet_hours(now, cfg):
@@ -149,6 +153,8 @@ def message(app, rec, condition, since, now):
     if since is not None:
         lines.append(f"• For: {duration(now - since)}")
     note = [f"💡 Message: {html.escape(msgs)}"] if msgs else []
+    if rec.get("autoImport"):
+        note.append(f"🤖 Auto-import: not done ({html.escape(rec['autoImport'])})")
     lines.append("<blockquote expandable>" + "\n".join(note + [f"{app_name} → Activity → Queue"]) + "</blockquote>")
     return "\n".join(lines)
 
@@ -319,6 +325,144 @@ def indexer_check(app, api, state, out, now):
     return 0
 
 
+class Refused(Exception):
+    pass
+
+
+def clean(title):
+    return re.sub(r"[\W_]+", "", str(title or "").casefold())
+
+
+def series_names(series):
+    titles = [series.get("title")] + [a.get("title") for a in series.get("alternateTitles") or []]
+    return {clean(re.sub(r"\s*\(?\b(19|20)\d{2}\)?\s*$", "", t or "")) for t in titles if t} - {""}
+
+
+def id_match_groups(records):
+    """{downloadId: records} of downloads whose every queue record is completed, importBlocked, and carries only the ID-match message."""
+    groups = {}
+    for rec in records:
+        if rec.get("downloadId"):
+            groups.setdefault(rec["downloadId"], []).append(rec)
+
+    def only_id(rec):
+        msgs = [m for sm in rec.get("statusMessages") or [] for m in sm.get("messages") or []]
+        return (rec.get("status") == "completed" and rec.get("trackedDownloadState") == "importBlocked"
+                and bool(msgs) and all(ID_MATCH in m for m in msgs))
+    return {d: recs for d, recs in groups.items() if all(only_id(r) for r in recs)}
+
+
+def group_label(recs):
+    seasons = sorted({(r.get("episode") or {}).get("seasonNumber") for r in recs} - {None})
+    name = label("sonarr", dict(recs[0], episode=None))
+    return f"{name} {'/'.join(f'S{s:02d}' for s in seasons)}".rstrip() + f": {recs[0].get('title')}"
+
+
+def id_import_files(api, download_id, recs):
+    """ManualImport files for an ID-matched download, or Refused(reason)."""
+    sids = {r.get("seriesId") for r in recs}
+    if len(sids) != 1 or None in sids:
+        raise Refused("queue records name no single series")
+    sid = sids.pop()
+    series = api("GET", f"/series/{sid}") or {}
+    queued = {r.get("episodeId") for r in recs}
+    eps = [r.get("episode") or {} for r in recs]
+    seasons = {e.get("seasonNumber") for e in eps}
+    grabs = [h for h in (api("GET", "/history", {"downloadId": download_id, "pageSize": 1000}) or {}).get("records") or [] if h.get("eventType") == "grabbed"]
+    if not grabs:
+        raise Refused("no grab history for this download")
+    for h in grabs:
+        data = h.get("data") or {}
+        if h.get("seriesId") != sid or data.get("seriesMatchType") != "Id" or not series.get("tvdbId") or str(data.get("tvdbId")) != str(series.get("tvdbId")):
+            raise Refused("grab history is not this series by its TVDB id")
+    if {h.get("episodeId") for h in grabs} != queued:
+        raise Refused("grabbed episodes differ from the queued ones")
+    info = (api("GET", "/parse", {"title": recs[0].get("title")}) or {}).get("parsedEpisodeInfo") or {}
+    title = info.get("seriesTitleInfo") or {}
+    parsed_title = title.get("titleWithoutYear") or info.get("seriesTitle")
+    if clean(parsed_title) not in series_names(series):
+        raise Refused(f'release title "{parsed_title}" is not the series title')
+    year = title.get("year") or 0
+    years = {series.get("year")} | {int(e["airDate"][:4]) for e in eps if (e.get("airDate") or "")[:4].isdigit()}
+    if year and not any(y and abs(year - y) <= YEAR_SLACK for y in years):
+        raise Refused(f"release year {year} fits neither the series year nor the episode air years")
+    if seasons != {info.get("seasonNumber")}:
+        raise Refused(f"release season {info.get('seasonNumber')} is not the queued season")
+    if not info.get("fullSeason") and set(info.get("episodeNumbers") or []) != {e.get("episodeNumber") for e in eps}:
+        raise Refused("release episode numbers differ from the queued ones")
+    out_dir = (recs[0].get("outputPath") or "").rstrip("/")
+    proposals = api("GET", "/manualimport", {"downloadId": download_id, "filterExistingFiles": "true"}) or []
+    proposed = [e.get("id") for p in proposals for e in p.get("episodes") or []]
+    for p in proposals:
+        if p.get("rejections"):
+            raise Refused("Sonarr rejects a file: " + "; ".join(str(r.get("reason")) for r in p["rejections"]))
+        if (p.get("series") or {}).get("id") != sid or not p.get("episodes") or not out_dir or not str(p.get("path", "")).startswith(out_dir + "/"):
+            raise Refused("a proposed file is not this series' episode inside the download folder")
+    if not proposals or len(proposed) != len(set(proposed)) or set(proposed) != queued:
+        raise Refused("proposed files do not cover exactly the grabbed episodes")
+    keys = ("path", "folderName", "releaseGroup", "quality", "languages", "indexerFlags", "releaseType")
+    return [{k: p.get(k) for k in keys} | {"seriesId": sid, "episodeIds": [e["id"] for e in p["episodes"]], "downloadId": download_id} for p in proposals]
+
+
+def auto_import(app, api, records, state, out, now, cfg):
+    """ID-matched Sonarr downloads: import the ones that pass, mark the rest; (download ids imported this run, rc)."""
+    done, rc = set(), 0
+    if app != "sonarr" or not cfg.auto_import:
+        return done, rc
+    groups = id_match_groups(records)
+    queued = {r.get("downloadId") for r in records}
+    for key in [k for k in state if k.startswith("autoimport:sonarr:") and k.split(":", 2)[2] not in queued]:
+        del state[key]
+    for dl, recs in groups.items():
+        key = f"autoimport:sonarr:{dl}"
+        if key in state:
+            continue
+        name = group_label(recs)
+        try:
+            files = id_import_files(api, dl, recs)
+        except Refused as e:
+            print(f"auto-import refused: {name}: {e}")
+            for r in recs:
+                r["autoImport"] = str(e)
+            continue
+        except ApiError as e:
+            print(f"auto-import check failed, retried next run: {name}: {e}", file=sys.stderr)
+            rc = 1
+            continue
+        state[key] = now
+        try:
+            r = api("POST", "/command", body={"name": "ManualImport", "importMode": "auto", "files": files}) or {}
+        except ApiError as e:
+            print(f"auto-import command failed, not retried: {name}: {e}", file=sys.stderr)
+            rc = 1
+            continue
+        print(f"auto-import: {name} ({len(files)} files, command {r.get('id')})")
+        out.digest("auto_imported", app, name)
+        done.add(dl)
+    return done, rc
+
+
+def dry_run(apps, cfg):
+    """Lines describing what auto_import would do; no command, no state, no message."""
+    lines, n, ok = [], 0, 0
+    api = apps.get("sonarr")
+    if not cfg.auto_import:
+        lines.append("auto-import switched off (QW_AUTO_IMPORT=0)")
+    elif api:
+        for dl, recs in id_match_groups(fetch("sonarr", api)).items():
+            n += 1
+            name = group_label(recs)
+            try:
+                files = id_import_files(api, dl, recs)
+            except Refused as e:
+                lines.append(f"not imported: {name}: {e}")
+                continue
+            ok += 1
+            lines.append(f"would import: {name} ({len(files)} files)")
+    lines.append(f"id-match auto-import: {n} candidate(s), {ok} importable")
+    return lines
+
+
 def run(apps, state_path, event_dirs, send, cfg, now=None):
     now = time.time() if now is None else now
     state_path = pathlib.Path(state_path)
@@ -335,7 +479,9 @@ def run(apps, state_path, event_dirs, send, cfg, now=None):
             print(f"{app}: API error, state kept: {e}", file=sys.stderr)
             rc = 1
             continue
-        alerts, state = evaluate(app, records, state, now, cfg)
+        imported, r = auto_import(app, api, records, state, out, now, cfg)
+        rc |= r
+        alerts, state = evaluate(app, [rec for rec in records if rec.get("downloadId") not in imported], state, now, cfg)
         for a in alerts:
             if a.condition != "blocked":
                 out.digest(a.condition, app, a.title)
@@ -361,7 +507,9 @@ def client(app, config):
 
     def call(method, path, query=None, body=None):
         q = APPS[app] + ("&" + urllib.parse.urlencode(query) if query else "")
-        req = urllib.request.Request(f"{base}{path}?{q}", method=method, headers={"X-Api-Key": get("ApiKey")})
+        data = None if body is None else json.dumps(body).encode()
+        headers = {"X-Api-Key": get("ApiKey")} | ({"Content-Type": "application/json"} if data else {})
+        req = urllib.request.Request(f"{base}{path}?{q}", data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
                 return json.load(r)
@@ -382,7 +530,17 @@ def sender(script):
 def main():
     apps = {app: client(app, os.environ.get(f"QW_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml")) for app in APPS}
     dirs = os.environ.get("QW_EVENTS", DEFAULT_EVENTS).split(":")
-    cfg = Config(int(os.environ.get("QW_BLOCKED_MIN", 30)), int(os.environ.get("QW_STALL_HOURS", 6)))
+    cfg = Config(int(os.environ.get("QW_BLOCKED_MIN", 30)), int(os.environ.get("QW_STALL_HOURS", 6)), auto_import=os.environ.get("QW_AUTO_IMPORT", "1") != "0")
+    if sys.argv[1:] == ["--dry-run"]:
+        try:
+            print("\n".join(dry_run(apps, cfg)))
+        except ApiError as e:
+            print(f"API error: {e}", file=sys.stderr)
+            return 1
+        return 0
+    if sys.argv[1:]:
+        print("usage: " + __doc__.rsplit("Usage: ", 1)[1], file=sys.stderr)
+        return 2
     script = os.environ.get("QW_ALERT", HERE.parent.parent / "_global" / "scripts" / "oob-alert.sh")
     return run(apps, os.environ.get("QW_STATE", STATE_DIR / "queue-watchdog.json"), dirs, sender(script), cfg)
 

@@ -644,5 +644,228 @@ class IndexerRun(unittest.TestCase):
         self.assertIn("radarr:abc", json.loads(self.state.read_text()))
 
 
+ID_MSG = "Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. See the FAQ for details."
+PACK = "The.Boys.2024.S04.2160p.AMZN.WEB-DL.H.265.HDR.DDP5.1-PTerWEB"
+OUT = f"/data/usenet/complete/tv/{PACK}"
+BOYS = {"id": 16, "title": "The Boys", "year": 2019, "tvdbId": 355567, "alternateTitles": [{"title": "The Boys 2019", "seasonNumber": -1}, {"title": "Пацаны", "seasonNumber": -1}]}
+AIR = {1: "2024-06-13", 2: "2024-06-13", 3: "2024-06-13", 4: "2024-06-20", 5: "2024-06-27", 6: "2024-07-04", 7: "2024-07-11", 8: "2024-07-18"}
+
+
+def pack_queue(title=PACK, eps=range(1, 9), messages=(ID_MSG,), state="importBlocked", status="completed"):
+    return [{"id": 100 + n, "downloadId": "boys4", "title": title, "status": status, "trackedDownloadStatus": "warning", "trackedDownloadState": state,
+             "sizeleft": 0, "seriesId": 16, "episodeId": 1000 + n, "outputPath": OUT, "series": {"title": "The Boys", "year": 2019},
+             "episode": {"id": 1000 + n, "seasonNumber": 4, "episodeNumber": n, "airDate": AIR.get(n, "2024-07-18")},
+             "statusMessages": [{"title": title, "messages": list(messages)}]} for n in eps]
+
+
+def pack_history(eps=range(1, 9), series_id=16, match="Id", tvdb="355567", event="grabbed"):
+    return [{"id": 1300 + n, "eventType": event, "seriesId": series_id, "episodeId": 1000 + n, "downloadId": "boys4",
+             "data": {"seriesMatchType": match, "tvdbId": tvdb, "releaseSource": "Search", "releaseType": "SeasonPack"}} for n in eps]
+
+
+def pack_proposals(eps=range(1, 9), series_id=16, rejections=(), folder=OUT):
+    return [{"id": 600 + n, "path": f"{folder}/The.Boys.2024.S04E{n:02d}.2160p.AMZN.WEB-DL.H.265.HDR.DDP5.1-PTerWEB.mkv", "folderName": PACK,
+             "series": {"id": series_id}, "seasonNumber": 4, "episodes": [{"id": 1000 + n, "seasonNumber": 4, "episodeNumber": n}],
+             "quality": {"quality": {"id": 18, "name": "WEBDL-2160p"}, "revision": {"version": 1}}, "languages": [{"id": 1, "name": "English"}],
+             "releaseGroup": "PTerWEB", "releaseType": "seasonPack", "indexerFlags": 0, "rejections": list(rejections)} for n in eps]
+
+
+def parsed(title_wo_year="The Boys", year=2024, season=4, full=True, eps=()):
+    return {"parsedEpisodeInfo": {"seriesTitle": f"{title_wo_year} {year}" if year else title_wo_year, "seasonNumber": season, "fullSeason": full, "episodeNumbers": list(eps),
+                                  "seriesTitleInfo": {"title": f"{title_wo_year} {year}" if year else title_wo_year, "titleWithoutYear": title_wo_year, "year": year}}}
+
+
+class FakeSonarr:
+    def __init__(self, queue=None, history=None, proposals=None, parse=None, series=BOYS, fail_on=()):
+        self.queue = pack_queue() if queue is None else queue
+        self.history = pack_history() if history is None else history
+        self.proposals = pack_proposals() if proposals is None else proposals
+        self.parse = parsed() if parse is None else parse
+        self.series, self.fail_on, self.posts, self.paths = series, set(fail_on), [], []
+
+    def __call__(self, method, path, query=None, body=None):
+        self.paths.append(path)
+        if path in self.fail_on:
+            raise qw.ApiError(f"{method} {path}: down")
+        if method == "POST":
+            assert path == "/command", path
+            self.posts.append(body)
+            return {"id": 77, "name": body["name"], "status": "queued"}
+        if path == "/queue":
+            return {"totalRecords": len(self.queue), "records": list(self.queue)}
+        if path in ("/health", "/indexerstatus", "/indexer"):
+            return []
+        if path == f"/series/{self.series['id']}":
+            return self.series
+        if path == "/history":
+            assert query["downloadId"] == "boys4", query
+            return {"totalRecords": len(self.history), "records": list(self.history)}
+        if path == "/parse":
+            assert query["title"], query
+            return self.parse
+        if path == "/manualimport":
+            assert query["downloadId"] == "boys4" and "seriesId" not in query, query
+            return list(self.proposals)
+        raise AssertionError((method, path))
+
+
+class AutoImport(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+        self.state = self.dir / "state.json"
+        self.sent = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def send(self, text):
+        self.sent.append(text)
+        return True
+
+    def go(self, api, now, **cfg):
+        return qw.run({"sonarr": api}, self.state, [], self.send, qw.Config(**cfg), now)
+
+    def refused(self, api):
+        self.assertEqual(self.go(api, T0), 0)
+        self.assertEqual(api.posts, [])
+        self.go(api, T0 + 31 * MIN)
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("Sonarr queue: blocked", self.sent[0])
+        self.assertIn("Auto-import: not done", self.sent[0])
+        return self.sent[0]
+
+    def test_id_matched_season_pack_of_the_grabbed_series_is_imported(self):
+        api = FakeSonarr()
+        self.assertEqual(self.go(api, T0), 0)
+        [cmd] = api.posts
+        self.assertEqual((cmd["name"], cmd["importMode"]), ("ManualImport", "auto"))
+        self.assertEqual(sorted(f["episodeIds"][0] for f in cmd["files"]), list(range(1001, 1009)))
+        f = cmd["files"][0]
+        self.assertEqual((f["seriesId"], f["downloadId"], f["releaseGroup"], f["quality"]["quality"]["name"]), (16, "boys4", "PTerWEB", "WEBDL-2160p"))
+        self.assertTrue(f["path"].startswith(OUT + "/"))
+        [e] = digest(self.dir)
+        self.assertEqual((e["kind"], e["app"], e["title"]), ("auto_imported", "sonarr", f"The Boys (2019) S04: {PACK}"))
+        self.assertTrue(any(" auto_imported digest " in line for line in sends(self.dir)))
+
+    def test_imported_once_then_the_normal_blocked_alert_if_it_stays_blocked(self):
+        api = FakeSonarr()
+        self.go(api, T0)
+        self.go(api, T0 + 15 * MIN)
+        self.go(api, T0 + 30 * MIN)
+        self.assertEqual(len(api.posts), 1)
+        self.assertEqual(self.sent, [])
+        self.go(api, T0 + 46 * MIN)
+        self.assertEqual(len(api.posts), 1)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_attempt_state_is_dropped_once_the_download_left_the_queue(self):
+        api = FakeSonarr()
+        self.go(api, T0)
+        api.queue = []
+        self.go(api, T0 + 15 * MIN)
+        self.assertNotIn("autoimport:sonarr:boys4", json.loads(self.state.read_text()))
+
+    def test_single_episode_release_is_imported(self):
+        title = "The.Boys.2024.S04E05.2160p.AMZN.WEB-DL-PTerWEB"
+        api = FakeSonarr(queue=pack_queue(title, eps=[5]), history=pack_history([5]), proposals=pack_proposals([5]), parse=parsed(full=False, eps=[5]))
+        self.go(api, T0)
+        self.assertEqual(len(api.posts), 1)
+
+    def test_alternate_title_counts(self):
+        api = FakeSonarr(series=dict(BOYS, title="Pacany"), parse=parsed("Пацаны"))
+        self.go(api, T0)
+        self.assertEqual(len(api.posts), 1)
+
+    def test_other_title_is_refused(self):
+        self.assertIn("title", self.refused(FakeSonarr(parse=parsed("The Boys Presents Diabolical"))))
+
+    def test_year_outside_the_series_and_episode_air_years_is_refused(self):
+        self.assertIn("year", self.refused(FakeSonarr(parse=parsed(year=2010))))
+
+    def test_season_mismatch_is_refused(self):
+        self.refused(FakeSonarr(parse=parsed(season=3)))
+
+    def test_episode_numbers_must_match_for_a_single_episode(self):
+        api = FakeSonarr(queue=pack_queue(eps=[5]), history=pack_history([5]), proposals=pack_proposals([5]), parse=parsed(full=False, eps=[6]))
+        self.refused(api)
+
+    def test_grab_history_must_be_this_series_by_id_with_the_same_tvdb_id(self):
+        for hist in (pack_history(series_id=17), pack_history(match="Title"), pack_history(tvdb="1"), [], pack_history(event="downloadFolderImported")):
+            self.setUp()
+            self.refused(FakeSonarr(history=hist))
+
+    def test_grabbed_episodes_must_equal_the_queued_ones(self):
+        self.refused(FakeSonarr(history=pack_history(range(1, 8))))
+
+    def test_proposals_must_cover_exactly_the_grabbed_episodes(self):
+        for props in (pack_proposals(range(1, 8)), pack_proposals() + pack_proposals([3]), pack_proposals(list(range(1, 9)) + [9]), []):
+            self.setUp()
+            self.refused(FakeSonarr(proposals=props))
+
+    def test_proposal_rejection_or_other_series_or_foreign_path_is_refused(self):
+        rejected = pack_proposals()
+        rejected[2] = dict(rejected[2], rejections=[{"reason": "Sample", "type": "permanent"}])
+        for props in (rejected, pack_proposals(series_id=17), pack_proposals(folder="/data/media/tv/The Boys (2019) [tvdbid-355567]/Season 04")):
+            self.setUp()
+            self.refused(FakeSonarr(proposals=props))
+
+    def test_any_other_status_message_is_left_alone(self):
+        api = FakeSonarr(queue=pack_queue(messages=(ID_MSG, "Sample")))
+        self.go(api, T0)
+        self.assertEqual(api.posts, [])
+        self.assertNotIn("/manualimport", api.paths)
+
+    def test_other_blocked_reasons_are_not_candidates(self):
+        api = FakeSonarr(queue=pack_queue(messages=("No files found are eligible for import",)))
+        self.go(api, T0)
+        self.assertNotIn("/parse", api.paths)
+
+    def test_mixed_download_with_a_record_not_id_matched_is_left_alone(self):
+        q = pack_queue()
+        q[0] = dict(q[0], trackedDownloadState="importPending")
+        api = FakeSonarr(queue=q)
+        self.go(api, T0)
+        self.assertNotIn("/parse", api.paths)
+
+    def test_radarr_id_match_is_never_imported(self):
+        self.assertEqual(qw.run({"radarr": fake([BLOCKED])}, self.state, [], self.send, qw.Config(), T0), 0)
+
+    def test_switched_off_by_config(self):
+        api = FakeSonarr()
+        self.go(api, T0, auto_import=False)
+        self.assertEqual(api.posts, [])
+        self.assertNotIn("/parse", api.paths)
+
+    def test_api_error_during_the_check_is_retried_next_run(self):
+        api = FakeSonarr(fail_on={"/manualimport"})
+        self.assertEqual(self.go(api, T0), 1)
+        self.assertEqual(api.posts, [])
+        api.fail_on = set()
+        self.go(api, T0 + 15 * MIN)
+        self.assertEqual(len(api.posts), 1)
+
+    def test_failed_command_post_is_not_retried_and_falls_back_to_the_alert(self):
+        api = FakeSonarr(fail_on={"/command"})
+        self.assertEqual(self.go(api, T0), 1)
+        self.go(api, T0 + 15 * MIN)
+        self.assertEqual(api.paths.count("/command"), 1)
+        self.go(api, T0 + 46 * MIN)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_dry_run_reports_and_changes_nothing(self):
+        api = FakeSonarr()
+        lines = qw.dry_run({"sonarr": api}, qw.Config())
+        self.assertEqual(api.posts, [])
+        self.assertFalse(self.state.exists())
+        self.assertIn(f"would import: The Boys (2019) S04: {PACK} (8 files)", lines)
+        self.assertEqual(lines[-1], "id-match auto-import: 1 candidate(s), 1 importable")
+
+    def test_dry_run_names_the_reason(self):
+        lines = qw.dry_run({"sonarr": FakeSonarr(parse=parsed(year=2010))}, qw.Config())
+        self.assertTrue(any(line.startswith("not imported: ") and "year" in line for line in lines), lines)
+        self.assertEqual(lines[-1], "id-match auto-import: 1 candidate(s), 0 importable")
+
+
 if __name__ == "__main__":
     unittest.main()
