@@ -195,7 +195,7 @@ never clobbers tuned values), then `systemctl daemon-reload && enable --now`.
   (`/etc/apt/apt.conf.d/99-beefy-keep-awake`; copy in `8-Idle-Watcher/apt-99-beefy-keep-awake.conf`).
 - **Never sleeps** if a persistent connection to a service port lingers (keepalive monitor,
   left-open browser tab, idle WebSocket).
-- **`DATA_DISKS=sda,sdb,sdc`** are hardcoded basenames — verify they match beefy's real data
+- **`DATA_DISKS=sda,sdb,sdc`** (sda ssd-hot, sdb ssd-hot2, sdc hdd-cold; checked by `host.idle-disks`) are hardcoded basenames — verify they match beefy's real data
   disks (`lsblk`); a mismatch silently blinds the disk probe.
 - **Probe regexes** (`@pts/N`, `server-main.js`) can break silently across OpenSSH / VS Code
   upgrades — re-verify after major updates.

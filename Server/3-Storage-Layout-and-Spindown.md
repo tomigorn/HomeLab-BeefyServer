@@ -23,6 +23,7 @@ of the time.
 
 - Pool `/srv/video` = `ssd-hot : ssd-hot2 : hdd-cold`, `category.create=ff`: new files go to the first branch with more free than its minfreespace, so downloads fill ssd-hot to 80 %, then ssd-hot2, then the HDD. Existing data never moves by itself. Branches can be changed live: `sudo setfattr -n user.mergerfs.branches -v '<list>' /srv/video/.mergerfs` (+ the same list in `/etc/fstab`).
 - Hardlinks after an overflow work: a download created on ssd-hot2 or the HDD gets its library hardlink on the same branch (mergerfs clones the folder there; tested 2026-10-28 with 2 and 3 branches).
+- `tier-move`, `tier-report` and the promoter take `HOT` as a space-separated list of hot branches (default both SSDs): demote drains a title from all of them, promote lands on the first with room (above minfreespace), the report shows each branch. The nightly subtitle-check scans both; `host.idle-disks` and `md.subtitle-scan-branches` in the post-update check guard the idle watcher disks and the scan units.
 - "% used" everywhere (bar, mover, alerts, mergerfs) = `1 − f_bavail/f_blocks` per branch; "SSD" = both SSDs together.
 
 | Limit | Value | Where |
@@ -104,7 +105,7 @@ Samba shares, and the remaining services (download/seed stack, Jellyfin). Owners
 > an **unused spare** — still installed and SMART-monitored, but **not wiped, mounted, or
 > referenced by `setup-storage.sh`**. Its ext4 filesystem is left intact (nothing wiped), so
 > re-adding it later is trivial. The **video pool (`/srv/video` = mergerfs of `ssd-hot` +
-> `hdd-cold`) and the entire spin-down stack are unaffected.**
+> `hdd-cold`, since 2026-10-28 `ssd-hot` + `ssd-hot2` + `hdd-cold`) and the entire spin-down stack are unaffected.**
 >
 > ⚠️ **All `/srv/audio` content elsewhere in this doc is now historical** — §2 (audio-SSD row),
 > §3 (audio mount line), §8C, §13.1 / §13.2 / §13.8 (Lidarr / Readarr / Audiobookshelf + audio
@@ -165,7 +166,8 @@ serial, mounted by filesystem `UUID`, and hd-idle/smartd target the HDD by seria
 # /srv/audio            <audio-ssd> ext4  noatime      REMOVED 2026-07-03 (audio tier retired — see §0)
 /srv/.disks/ssd-hot     <hot-ssd>   ext4  relatime     mergerfs hot branch
 /srv/.disks/hdd-cold    <cold-hdd>  xfs   noatime             mergerfs cold branch
-/srv/video              mergerfs    union(ssd-hot, hdd-cold)   <-- apps + Samba use THIS
+/srv/.disks/ssd-hot2    <hot-ssd-2> ext4  relatime     mergerfs hot branch (added 2026-10-28)
+/srv/video              mergerfs    union(ssd-hot, ssd-hot2, hdd-cold)   <-- apps + Samba use THIS
 ```
 
 - **`noatime` is the load-bearing spin-down option** on the cold tier — it stops reads
@@ -575,7 +577,7 @@ app's config).
 service needs to know nothing about it** — it uses `/srv/video` (mixed, unified) and
 treats it as an ordinary folder. The split is real only to two
 **host-level** daemons — the **mover** (§5) and the **promoter** (§7) — which are the *only*
-things allowed to touch the raw branches `/srv/.disks/ssd-hot` and `/srv/.disks/hdd-cold`.
+things allowed to touch the raw branches `/srv/.disks/ssd-hot`, `/srv/.disks/ssd-hot2` and `/srv/.disks/hdd-cold`.
 Everything else that "just works" does so because of three mergerfs/mount facts already in
 place, **not** because the app is tier-aware:
 
@@ -586,7 +588,7 @@ place, **not** because the app is tier-aware:
 ### 13.0 Universal rules (apply to EVERY container — do these regardless of app)
 
 1. **Only ever mount `/srv/video`.** **NEVER** bind-mount the raw branches
-   (`/srv/.disks/ssd-hot`, `/srv/.disks/hdd-cold`) into any container. A container that writes
+   (`/srv/.disks/ssd-hot`, `/srv/.disks/ssd-hot2`, `/srv/.disks/hdd-cold`) into any container (the antivirus scanner is the one reviewed exception: read-only scan roots plus quarantine). A container that writes
    to a raw branch defeats placement, breaks the unified namespace, and can corrupt mover/promoter
    assumptions.
 2. **Bind-mount with `bind-propagation: rslave`** (§4.6) so a mergerfs remount on the host
@@ -618,7 +620,7 @@ place, **not** because the app is tier-aware:
 | **Lidarr** / **Readarr** / **Audiobookshelf** | retired 2026-07-03 (no audio tier; Audiobookshelf stays on fastpi) | — | — | — |
 | **Bazarr** (subtitles) | `/srv/video/media` (video only) | Only on a full library sub-scan (limit it) | **No** | Writes subtitle **sidecars** (kept on SSD, never demoted); drive it by webhook, not periodic disk sweeps |
 | **Jellyfin** (media server) | `/srv/video` (read); NVMe for metadata/transcode | Yes on deep scans / image-extraction of cold files (mitigate) | **No** | Real-time monitoring instead of deep scans; metadata+transcode on NVMe; relies on the promoter for instant cold play |
-| **mover** (§5, host daemon, *not yet built*) | raw branches `ssd-hot` + `hdd-cold` | **Yes — by design** | **YES — fully tier-aware** | Demotes cold/non-seeding files SSD→HDD in a batched window |
+| **mover** (§5, host daemon, *not yet built*) | raw branches `ssd-hot` + `ssd-hot2` + `hdd-cold` | **Yes — by design** | **YES — fully tier-aware** | Demotes cold/non-seeding files SSD→HDD in a batched window |
 | **promoter** (§7, host daemon, *not yet built*) | raw branches | **Yes — wakes it to pre-copy** | **YES — fully tier-aware** | Copies a cold title to SSD on detail-view, before play |
 | **Traefik / fastpi** (edge, the Pi) | *none* | No | **No — never, see §13.12** | Reverse-proxies HTTP only; never touches files |
 
@@ -752,7 +754,7 @@ is gone) so apps correctly see the two paths as the same file.
 confusion, so state it flatly:
 
 - **`/srv/video` is not a disk** — it's the mergerfs *union view*, with no storage of its own.
-  Every path under it physically resides on exactly one branch: `/srv/.disks/ssd-hot/…` (SSD) or
+  Every path under it physically resides on exactly one branch: `/srv/.disks/ssd-hot/…` or `/srv/.disks/ssd-hot2/…` (SSD) or
   `/srv/.disks/hdd-cold/…` (HDD). `/srv/video/X` is just the logical name for whichever branch
   actually holds `X`.
 - **A hardlink can never span two filesystems** (kernel rule, not a mergerfs quirk). So the two
@@ -760,8 +762,8 @@ confusion, so state it flatly:
   SSD and the other on HDD.
 - **In practice both legs are on the SSD.** The download lands on SSD (`category.create=ff`), and
   the arr's hardlink import creates the second name on that **same SSD branch** (mergerfs issues
-  the `link()` on `ssd-hot`). So `…/torrents/…` and `…/media/…` both resolve to
-  `/srv/.disks/ssd-hot/…`, link count 2, one copy of the data, on the SSD.
+  the `link()` on that branch, `ssd-hot` or, once it is full, `ssd-hot2`). So `…/torrents/…` and `…/media/…` both resolve to
+  `/srv/.disks/ssd-hot/…` (or `ssd-hot2`), link count 2, one copy of the data, on the SSD.
 - **The HDD never holds a hardlink.** Demotion is **copy→verify→delete** (not move) and runs only
   once all-but-one name is gone (torrent removed / seeding stopped, §5); the surviving name is
   copied to the HDD as a **fresh, lone file** (link count 1, no longer linked to anything). So:
@@ -871,7 +873,7 @@ cleaned up after import anyway).
 
 Listed for completeness; both are **PLANNED, not yet built** (§0, §5, §7). Unlike everything
 above, these run on the **host** (not in containers) and **are fully aware of the SSD/HDD split**
-— they read/write the raw branches `/srv/.disks/ssd-hot` and `/srv/.disks/hdd-cold` directly and
+— they read/write the raw branches `/srv/.disks/ssd-hot`, `/srv/.disks/ssd-hot2` and `/srv/.disks/hdd-cold` directly and
 own all promotion/demotion policy (batched windows, seeding pins, sidecar exclusion, crash-safe
 copy→fsync→verify→delete). **No containerized service should ever replicate their job.** When a
 future Claude builds them, this is where tier logic lives — and nowhere else.

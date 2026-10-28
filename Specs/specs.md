@@ -124,10 +124,10 @@ Good fit for Plex/Jellyfin HW transcoding up to 4K HEVC/H.264 10-bit incl. HDR t
 |---|---|---|---|---|---|---|
 | `nvme0n1` | Samsung SSD 970 EVO 1TB | NVMe M.2 (PCIe) | 1 TB | 2B2QEXE7 | vfat + ext4 | `/boot/efi` (1 GB) + `/` (930 GB) — **OS / boot** |
 | `sda` | Samsung SSD 870 QVO 8TB | SATA III 2.5" SSD (QLC) | 8 TB | — | ext4 | `/srv/.disks/ssd-hot` — **SSD hot tier** |
-| `sdb` | Samsung SSD 870 QVO 8TB | SATA III 2.5" SSD (QLC) | 8 TB | — | ext4 (label `audio`) | **Unused spare** — former `/srv/audio` tier, retired 2026-07-03. Not mounted, not in fstab, not in the mergerfs pool; SMART-monitored, data left intact |
+| `sdb` | Samsung SSD 870 QVO 8TB | SATA III 2.5" SSD (QLC) | 8 TB | — | ext4 (label `ssd-hot2`) | `/srv/.disks/ssd-hot2` — **second SSD hot tier** (former `/srv/audio`, added to the pool 2026-10-28) |
 | `sdc` | Seagate Exos M ST30000NM004K | SATA III 3.5" HDD, 7200 RPM | 30 TB | — | xfs | `/srv/.disks/hdd-cold` — **cold tier** |
 
-- **mergerfs pool:** `/srv/video` (`fuse.mergerfs`) — unifies the hot-SSD + cold-HDD tiers for the video library.
+- **mergerfs pool:** `/srv/video` (`fuse.mergerfs`) — unifies the two hot SSDs (`ssd-hot`, `ssd-hot2`) + the cold HDD for the video library.
 - **SATA controller:** Intel Comet Lake SATA AHCI (`00:17.0`, `8086:06d2`).
 - **NVMe controller:** Samsung SM981/PM981/PM983-class (`05:00.0`, `144d:a808`).
 - **NVMe cooling:** be quiet! MC1 M.2 SSD heatsink mounted on the `nvme0n1` 970 EVO.
