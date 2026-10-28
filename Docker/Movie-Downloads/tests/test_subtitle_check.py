@@ -251,6 +251,16 @@ class Scan(unittest.TestCase):
         self.assertIn("♪", merged.read_text())
         self.assertNotIn("♪", branch.read_text())
 
+    def test_second_branch_is_scanned_with_the_same_state(self):
+        branch2 = self.tmp / "ssd2" / "media"
+        (branch2 / "movies" / "Film (2020)").mkdir(parents=True)
+        (self.merged / "movies" / "Film (2020)" / "Two.en.srt").write_bytes(fixture("hunt.en.srt"))
+        (branch2 / "movies" / "Film (2020)" / "Two.en.srt").write_bytes(fixture("hunt.en.srt"))
+        self.put("movies/Film (2020)/One.de.srt", fixture("clean.de.srt"))
+        res = sc.scan([(self.branch, self.merged), (branch2, self.merged)], self.cfg, now=time.time())
+        self.assertEqual(res, {"checked": 2, "repaired": 1, "suspect": 0})
+        self.assertIn("♪", (self.merged / "movies" / "Film (2020)" / "Two.en.srt").read_text())
+
     def test_last_run_is_saved(self):
         self.scan(1_800_000_000)
         self.assertEqual(json.loads((self.state / "scan-state.json").read_text())["last_run"], 1_800_000_000)

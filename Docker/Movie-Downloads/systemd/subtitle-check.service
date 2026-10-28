@@ -1,15 +1,15 @@
 [Unit]
-Description=Subtitle check: mojibake / encoding of subtitles changed since the last run (SSD branch only), unambiguous repairs, findings to the digest
+Description=Subtitle check: mojibake / encoding of subtitles changed since the last run (both SSD branches), unambiguous repairs, findings to the digest
 Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
-RequiresMountsFor=/srv/video /srv/.disks/ssd-hot
+RequiresMountsFor=/srv/video /srv/.disks/ssd-hot /srv/.disks/ssd-hot2
 
 [Service]
 Type=oneshot
 User=buntu
 UMask=0002
 Environment=SC_STATE=/srv/appdata/bazarr/subtitle-check
-# New files land on the SSD (mergerfs category.create=ff) and the mover leaves sidecars hot, so the cold HDD is never read; repairs go through the mergerfs path.
-ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/subtitle-check.py --scan /srv/.disks/ssd-hot/media=/srv/video/media
+# New files land on the SSDs (mergerfs category.create=ff, ssd-hot then ssd-hot2) and the mover leaves sidecars hot, so the cold HDD is never read; repairs go through the mergerfs path.
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/subtitle-check.py --scan /srv/.disks/ssd-hot/media=/srv/video/media /srv/.disks/ssd-hot2/media=/srv/video/media
 NoNewPrivileges=true
 PrivateTmp=true
 # Parses subtitle files from releases (untrusted): buntu, but sandboxed, no network; writes only its state dir and repaired subtitles.

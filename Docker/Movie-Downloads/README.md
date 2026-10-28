@@ -170,8 +170,8 @@ Two behaviours to set deliberately, both from §14.2:
 
 ### The mergerfs catch, and why it matters here
 
-`/srv/video` is a mergerfs union of `ssd-hot` (7.3T ext4) and `hdd-cold` (27.3T
-xfs) with `category.create=ff`, so new files land on the SSD and downloads and
+`/srv/video` is a mergerfs union of `ssd-hot` and `ssd-hot2` (7.3T ext4 each) and `hdd-cold` (27.3T
+xfs) with `category.create=ff`, so new files land on the SSDs (ssd-hot first, ssd-hot2 once it is below its minfreespace) and downloads and
 library start life on the same filesystem. Hardlinks work.
 
 **A hardlink cannot span the two branches** — they are separate filesystems on
@@ -244,14 +244,14 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
   mapping in the Jellyfin Connect entry.
 - mergerfs (`category.create=ff`, non-path-preserving): `link()`/`rename()` are
   done on the branch the *source* file is on and the target directory is cloned
-  there if missing. Downloads land on `ssd-hot`, so the library copy is created on
-  `ssd-hot` too — even for a movie whose older version was demoted to `hdd-cold`.
+  there if missing. Downloads land on `ssd-hot` (or `ssd-hot2` after an overflow), so the library copy is created on
+  that branch too — even for a movie whose older version was demoted to `hdd-cold`.
   A hardlink can therefore only fail if the download itself spilled to the HDD
-  (`minfreespace=50G`); Radarr then falls back to a copy, which is correct.
+  (per-branch `minfreespace`: 1479G on the SSDs, 2800G on the HDD); Radarr then falls back to a copy, which is correct.
 - Verified 2026-10-19 through the Radarr container: `ln /data/torrents/movies/x
   /data/media/movies/x` → same inode, link count 2, both on `ssd-hot`.
   (`stat` *through mergerfs* can show a stale link count for ~1 s; check the
-  branch, `/srv/.disks/ssd-hot/...`, when in doubt.)
+  branch, `/srv/.disks/ssd-hot/...` or `ssd-hot2`, when in doubt.)
 - Usenet is always moved (nothing seeds). Torrents are hardlinked; qBit stops
   them at ratio 2 or 30 days, then Radarr's "Remove Completed" deletes the torrent
   and its download-side link — the library link is untouched.
@@ -1037,7 +1037,7 @@ Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scor
 | Log | `/srv/appdata/bazarr/subtitle-check/hook.log` (every hook run), `scan.log` (nightly: findings + one summary line) |
 | Digest | every repair and finding: `…/subtitle-check/events/*.json` → [Queue watchdog](#queue-watchdog) → fastpi 06:30 digest (`subtitle_repaired`, `subtitle_suspect`) |
 | Hook | Bazarr post-processing, no score threshold: `/scripts/subtitle-check.py "{{subtitles}}" "{{provider}}" "{{subtitle_id}}"`; runs after ffsubsync for every downloaded, upgraded and uploaded subtitle; mount `./scripts:/scripts:ro` |
-| Nightly | `systemd/subtitle-check.timer` 04:21 in the maintenance window (`Persistent=false`, no boot trigger), runs as buntu: `--scan /srv/.disks/ssd-hot/media=/srv/video/media` = every subtitle whose mtime or ctime is newer than the last run (`scan-state.json`; first run: all). Reads the SSD branch only (new files land there, `category.create=ff`, and the mover leaves sidecars hot), so the cold HDD never spins up; repairs are written through mergerfs. Catches what the hook does not see: subtitles Radarr/Sonarr import from a release, a hook that failed |
+| Nightly | `systemd/subtitle-check.timer` 04:21 in the maintenance window (`Persistent=false`, no boot trigger), runs as buntu: `--scan /srv/.disks/ssd-hot/media=/srv/video/media /srv/.disks/ssd-hot2/media=/srv/video/media` = every subtitle whose mtime or ctime is newer than the last run (`scan-state.json`; first run: all). Reads both SSD branches only (new files land there, `category.create=ff`, and the mover leaves sidecars hot), so the cold HDD never spins up; repairs are written through mergerfs. Catches what the hook does not see: subtitles Radarr/Sonarr import from a release, a hook that failed |
 | Bazarr mod | **common** only (Settings → Subtitles → Modifications, "Common Fixes": music symbols, double apostrophes, spacing). Off on purpose: `remove_HI` (would drop HI lines), `OCR_fixes` (only for OCR'd subtitles). Cannot read mojibake, hence the hook |
 | Sandbox | subtitle files are untrusted: nightly unit `User=buntu` but `ProtectSystem=strict`, `ProtectHome=read-only`, `PrivateNetwork=yes`, writes only `/srv/appdata/bazarr/subtitle-check` and `/srv/video/media`, no capabilities, `@system-service` syscalls; `systemd-analyze security subtitle-check` 0.5 (was 8.7) |
 | Setup | `scripts/subtitle-check-setup.sh` (idempotent: state dirs owned by Bazarr's uid 65104, group buntu; Bazarr settings through `/api/system/settings`; installs and enables the timer) |
@@ -1259,7 +1259,7 @@ Every finished download is scanned by ClamAV: SABnzbd post-processing script and
 |---|---|
 | Setup | `scripts/clamav-hooks.sh` (SABnzbd + qBittorrent APIs, idempotent); compose mounts `../Antivirus/hook` → `/clamav-hook:ro` and `/var/lib/clamav-scan/textfile` → `/clamav` in `sabnzbd` and `qbittorrent` |
 | Failed SABnzbd job | not scanned, PP ends at once, Sonarr/Radarr see the failure and search again |
-| Hit | file → `/data/quarantine` (`/srv/.disks/ssd-hot/quarantine`), SABnzbd job failed (no import), torrent stopped + tagged `infected` |
+| Hit | file → `/data/quarantine` (`/srv/.disks/ssd-hot*/quarantine`, the branch holding the file), SABnzbd job failed (no import), torrent stopped + tagged `infected` |
 | Background hit | already imported: library file and seeding copy removed, file quarantined, torrent stopped + tagged; `sudo docker logs clamav-queue` |
 | clamd down | job passes, the nightly scan covers it |
 | Test | `docker exec -u abc movie-sabnzbd /clamav-hook/clamav-hook.py /data/usenet/complete/movies/<job>` |

@@ -21,7 +21,7 @@ Both stacks are **deployed, live and verified in production**.
 - VPN verified: exit IP differs from WAN, port forwarding live, and `qbit-port.sh`
   applies new ports automatically (observed across both a reconnect and a reboot).
 - **Hardlinks proven**: a file linked `torrents/`→`media/` shares one inode,
-  link count 2, both on `ssd-hot`.
+  link count 2, both on the same SSD branch (`ssd-hot`, or `ssd-hot2` after an overflow).
 
 **SSO** — all six hostnames behind Traefik. Five arr UIs gated by Authentik forward
 auth (single-application proxy providers → `streaming-admins`); Jellyfin
