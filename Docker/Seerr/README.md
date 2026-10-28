@@ -247,13 +247,24 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 
 A download held by the night queue ([Can wait](#can-wait)) shows **Waiting for the night 🌙** (German UI: **Wartet auf die Nacht 🌙**) instead of "Processing" at 0 %, with the hint "starts automatically at 22:05 or on Sunday; untick 'Can wait' next time for an immediate download". Real downloads, items paused by hand outside the night categories and failed ones look as before. In the low tariff nothing is labelled (queued night items show Seerr's normal status).
 
+Status icons, for every open request (pending or approved, not available):
+
+| Icon | When | Hint (EN / DE) |
+|---|---|---|
+| 🌙 | request is **Can wait** (title without `download-now` in Radarr/Sonarr; not yet there: no `download-now` in the Seerr request), from the request until downloaded; not while Seerr shows a running download | Waiting for the night — downloads at night (cheaper power) / Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom) |
+| 🧭 | searched (Radarr `lastSearchTime`; Sonarr: missing aired episodes of the requested seasons), nothing queued, no search running, released | No release found yet — searched again in tonight's scheduled search (04:17) / Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter |
+| 📅 | not released: Radarr `isAvailable` false (date: `inCinemas` for minimum availability In Cinemas, else `releaseDate`); Sonarr: none of the missing episodes of the requested seasons has aired (date: next air date), or no episodes yet and status `upcoming` (`nextAiring`) | Not released yet — expected 2 Feb 2027 / Noch nicht erschienen — erwartet 2. Feb. 2027 |
+
+Order 🌙🧭📅, combined. Placements: status badges (title page, request cards, Requests list; after "Requested"/"Pending"), Discover cards (in Seerr's status circle: one icon = the 26px circle, two = a pill). Hover = `title`; touch: a tap on an icon shows the hint and does not open the card or the badge link.
+
 | Part | What |
 |---|---|
 | Data | `/_indexer-bar/night-waiting.json` (`waiting`: download ids), written every 2 min by `../Movie-Downloads/scripts/night-downloads.py` to `/srv/appdata/indexer-bar/`; empty in the low tariff |
+| Icon data | `/_indexer-bar/request-state.json` (`canWait`: `movie\|tv/<tmdb id>` list, `unreleased`: id → date or null, `noRelease`: id → last search), same script; reads Seerr `/api/v1/request` with `secrets/api-key` and Radarr/Sonarr; ids only, no user data. Seerr or Radarr/Sonarr not readable: file kept; older than 10 min = no icons |
 | Match | Seerr's `downloadStatus` item: `status` `paused` **and** `downloadId` in `waiting`; a badge only when every download behind it waits |
-| Script | `indexer-bar/www/night-label.js`: status badge (title page, request cards, Requests list), Discover card spinner → 🌙, download blocks (Manage panel, badge tooltip: label, bar grey). Titles from Seerr's own API responses (read-only) or `GET /api/v1/movie|tv/<id>` |
+| Script | `indexer-bar/www/night-label.js`: status badge (title page, request cards, Requests list), Discover card status circle → 🌙/🧭/📅, download blocks (Manage panel, badge tooltip: label, bar grey). Titles from Seerr's own API responses (read-only) or `GET /api/v1/movie|tv/<id>` |
 | Fallback | file missing or older than 10 min, API error, Seerr changed its markup: Seerr's normal display |
-| Check | `curl -s localhost:5055/_indexer-bar/night-waiting.json \| head -c 200`; tests in [Menu links](#menu-links) (`node --test`) |
+| Check | `curl -s localhost:5055/_indexer-bar/night-waiting.json \| head -c 200`, `curl -s localhost:5055/_indexer-bar/request-state.json`; tests in [Menu links](#menu-links) (`node --test`) |
 
 ## Download now
 
@@ -270,16 +281,19 @@ Why not in the Manage panel any more: requesters have no Manage button. One plac
 |---|---|
 | downloads wait in a night category | the button; note "Waiting for the night 🌙. Starts at once instead, at the higher daytime power price." |
 | nothing grabbed yet, file missing | the button; note "Nothing grabbed yet. Searches now …" |
+| search queued / running (Radarr runs searches one after the other, minutes each) | chip "🔍 Waiting for other searches (n ahead)" / "🔍 Searching… (started HH:MM)", no button; asks the backend every 15 s until done or the page is left |
+| searched, nothing found | chip "🧭 No release found yet (searched HH:MM) — searched again in tonight's scheduled search (04:17); downloads at night when found" + secondary **⚡ Search again now — at daytime power price** |
+| grabbed, title tagged `download-now` | chip "✅ Downloading" |
 | already downloading, downloaded, not in Radarr/Sonarr, not allowed | nothing (Seerr's status badge says the rest) |
 
-A press: tag `download-now` on the title (Radarr/Sonarr) → the title's unfinished night downloads move to the normal category (qBittorrent `radarr-night`→`radarr`, `sonarr-night`→`sonarr`; SABnzbd `movies-night`→`movies`, `tv-night`→`tv`), paused ones resume → nothing grabbed: `MoviesSearch` / `SeriesSearch`, the grab goes to the tagged normal clients. Out of the night categories `night-downloads.py` never pauses or queues them again. Feedback in place of the button: ✅ Started / ✅ Searching / Already downloading / ❌ Failed; the 🌙 label goes at once (`night-label.js` `release`). Items paused by hand in a normal category stay paused.
+A press: tag `download-now` on the title (Radarr/Sonarr) → the title's unfinished night downloads move to the normal category (qBittorrent `radarr-night`→`radarr`, `sonarr-night`→`sonarr`; SABnzbd `movies-night`→`movies`, `tv-night`→`tv`), paused ones resume → nothing grabbed: `MoviesSearch` / `SeriesSearch`, the grab goes to the tagged normal clients. Out of the night categories `night-downloads.py` never pauses or queues them again. **Search finds nothing:** `night-downloads.py` (every 2 min) removes `download-now` again (searched, nothing queued, no search running, no file), so a later find (tonight's 04:17 search, RSS) downloads at night; the title shows 🌙🧭. Feedback in place of the button: ✅ Started / ✅ Searching / Already downloading / ❌ Failed; the 🌙 label goes at once (`night-label.js` `release`). Items paused by hand in a normal category stay paused.
 
 | Part | What |
 |---|---|
 | Button | `indexer-bar/www/download-now.js` (injected by `seerr-proxy`): title page (`/movie/<id>`, `/tv/<id>`) → `.media-header .media-actions`; logged in → asks the backend (GET); 403 or any error = no button. Follows Seerr's in-app navigation (old button goes, new title asked) |
 | Backend | `download-now` container (`seerr-download-now`, `download-now/download_now.py`, python alpine, uid 65127, read-only, no caps, no port). `seerr-proxy` routes `/_download-now/` to it |
 | Who may | every call (GET and POST): Seerr `/api/v1/auth/me` with the caller's `connect.sid` cookie (or Seerr's API key), then `GET /api/v1/movie\|tv/<id>` as the caller: permission ADMIN (2) or MANAGE_REQUESTS (16), **or** a request in `mediaInfo.requests` with `requestedBy.id` = the caller and status ≠ declined (3), else 403. Series: one own request (any season) allows the press for the whole series. POST only with `Origin: https://requests.holy-grail.ch` and JSON; searches at most every 2 min per title |
-| API | `GET /_download-now/api?type=movie\|tv&tmdb=<id>`: what a press would do (no change). `POST /_download-now/api` `{"type","tmdbId"}`: do it. Answer: `state`, `released` (download ids), `moved` |
+| API | `GET /_download-now/api?type=movie\|tv&tmdb=<id>`: what a press would do (no change). `POST /_download-now/api` `{"type","tmdbId"}`: do it. Answer: `state`, `released` (download ids), `moved`, `now` (tagged `download-now`), `search` (`status` queued/started/null, `started`, `ahead` = searches queued before it, `last` = last search; null when `/command` is not readable) |
 | Keys | `secrets/download-now/{radarr,sonarr,sabnzbd}.apikey` (buntu:65127 0640), never sent to the browser. qBittorrent: no-password bypass for 172.28.10.205 |
 | Setup | `scripts/download-now-setup.sh` (keys + qBittorrent bypass; idempotent), then `sudo docker compose up -d download-now`; after a Radarr/Sonarr/SAB key change re-run it and `sudo docker restart seerr-download-now` |
 | Log | `sudo docker logs seerr-download-now`: one line per press (user id, `manager` or `own request`, title, state) |
