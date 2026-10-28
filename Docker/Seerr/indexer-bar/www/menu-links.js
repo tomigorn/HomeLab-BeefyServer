@@ -61,7 +61,8 @@
     var tvs = doc.querySelectorAll(ANCHOR);
     for (var i = 0; i < tvs.length; i++) {
       var tv = tvs[i];
-      if (!tv.parentElement || skip(tv)) continue;
+      // main holds page content: Discover's "Popular Series" slider title links to /discover/tv as well
+      if (!tv.parentElement || tv.closest("main") || skip(tv)) continue;
       var after = tv;
       for (var j = 0; j < LINKS.length; j++) {
         var next = after.nextElementSibling;

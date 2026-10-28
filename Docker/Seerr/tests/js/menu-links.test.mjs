@@ -68,3 +68,11 @@ test("Seerr without the Series link: nothing is added, nothing breaks", () => {
   const w = load("menu-links.js", SIDEBAR.replaceAll("/discover/tv", "/discover/shows"));
   assert.equal(links(w).length, 0);
 });
+
+test("Discover: the Popular Series slider title (also a /discover/tv link, inside main) gets no entry", () => {
+  const slider = `<main class="relative top-16 z-0"><div class="slider-header"><a class="slider-title min-w-0 pr-16" href="/discover/tv"><span class="truncate">Popular Series</span><svg></svg></a></div></main>`;
+  const w = load("menu-links.js", SIDEBAR + slider + MOBILE);
+  assert.equal(w.document.querySelector(".slider-header").children.length, 1);
+  assert.equal(links(w).filter((a) => a.closest("main")).length, 0);
+  assert.equal(links(w).length, 2);
+});
