@@ -176,10 +176,15 @@ def mkvmerge_info(path):
 
 
 def restore_mtime(path, ns):
+    """Files of the apps' uids need CAP_FOWNER (unit), which mergerfs drops, so those go to the file's branch path."""
     try:
         os.utime(path, ns=(ns, ns))
-    except PermissionError:
-        subprocess.run(["sudo", "-n", "touch", "-m", "-d", f"@{ns // 10**9}.{ns % 10**9:09d}", path], check=True)
+    except PermissionError as denied:
+        try:
+            branch = os.getxattr(path, "user.mergerfs.fullpath").decode()
+        except OSError:
+            raise denied from None
+        os.utime(branch, ns=(ns, ns))
 
 
 def apply(path, plan):

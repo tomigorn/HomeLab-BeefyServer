@@ -185,5 +185,41 @@ class Queue(unittest.TestCase):
             self.assertEqual(oa.claim_queue(str(q)), [("3", "/data/c.mkv"), ("4", "/data/d.mkv")])
 
 
+class RestoreMtime(unittest.TestCase):
+    def setUp(self):
+        self.calls, self.real_utime, self.real_getxattr, self.real_run = [], oa.os.utime, oa.os.getxattr, oa.subprocess.run
+        oa.subprocess.run = lambda *a, **k: self.fail("no subprocess (sudo) for the mtime")
+
+    def tearDown(self):
+        oa.os.utime, oa.os.getxattr, oa.subprocess.run = self.real_utime, self.real_getxattr, self.real_run
+
+    def test_own_file_set_directly(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "a.mkv"
+            f.write_text("x")
+            oa.restore_mtime(str(f), 1_700_000_000_123_456_789)
+            self.assertEqual(f.stat().st_mtime_ns, 1_700_000_000_123_456_789)
+
+    def utime(self, path, ns):
+        self.calls.append((path, ns))
+        if path.startswith("/srv/video/"):
+            raise PermissionError(1, "Operation not permitted", path)
+
+    def test_mergerfs_file_of_another_uid_set_on_its_branch(self):
+        oa.os.utime = self.utime
+        oa.os.getxattr = lambda p, n: b"/srv/.disks/ssd-hot/media/a.mkv" if n == "user.mergerfs.fullpath" else self.fail(n)
+        oa.restore_mtime("/srv/video/media/a.mkv", 5)
+        self.assertEqual(self.calls[-1], ("/srv/.disks/ssd-hot/media/a.mkv", (5, 5)))
+
+    def test_no_branch_path_keeps_the_permission_error(self):
+        oa.os.utime = self.utime
+
+        def no_xattr(p, n):
+            raise OSError(61, "No data available")
+        oa.os.getxattr = no_xattr
+        with self.assertRaises(PermissionError):
+            oa.restore_mtime("/srv/video/media/a.mkv", 5)
+
+
 if __name__ == "__main__":
     unittest.main()
