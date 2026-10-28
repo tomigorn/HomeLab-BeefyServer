@@ -43,6 +43,7 @@ class Deps:
     qbit: object
     sab: object
     origins: set = field(default_factory=set)
+    seerr_admin: object = None
 
 
 def redact(text):
@@ -209,6 +210,9 @@ def handle(method, path, headers, body, deps):
     url = urllib.parse.urlsplit(path)
     if url.path == "/_download-now/health" and method == "GET":
         return 200, {"ok": True}
+    if url.path == "/_download-now/request":
+        import my_request
+        return my_request.handle(sys.modules[__name__], method, path, headers, body, deps)
     if url.path != "/_download-now/api" or method not in ("GET", "POST"):
         return 404, {"error": "not found"}
     h = {k.lower(): v for k, v in headers.items()}
@@ -317,6 +321,13 @@ def sab_client(base, key):
     return call
 
 
+def seerr_admin_client(base, key):
+    def call(path, method="GET", body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        return _open(urllib.request.Request(f"{base}/api/v1{path}", data=data, method=method, headers={"X-Api-Key": key, "Content-Type": "application/json", "Accept": "application/json"}))
+    return call
+
+
 def secret(name):
     return pathlib.Path(os.environ.get("DN_SECRETS", "/run/secrets/download-now"), name).read_text().strip()
 
@@ -329,6 +340,7 @@ def deps_from_env(env):
         qbit=qbit_client(env.get("DN_QBIT", "http://gluetun:8080") + "/api/v2"),
         sab=sab_client(env.get("DN_SAB", "http://gluetun:8081"), secret("sabnzbd.apikey")),
         origins={o.strip() for o in env.get("DN_ORIGINS", "https://requests.holy-grail.ch").split(",") if o.strip()},
+        seerr_admin=seerr_admin_client(env.get("DN_SEERR", "http://seerr:5055"), secret("seerr.apikey")) if pathlib.Path(env.get("DN_SECRETS", "/run/secrets/download-now"), "seerr.apikey").is_file() else None,
     )
 
 

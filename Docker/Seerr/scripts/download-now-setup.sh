@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download now (README "Download now"): API keys for the download-now container (secrets/download-now, group 65127) and its qBittorrent no-password entry 172.28.10.205. Idempotent, prints no key.
+# Download now and My request (README "Download now", "My request"): API keys for the download-now container (secrets/download-now, group 65127; Seerr's own key for request changes) and its qBittorrent no-password entry 172.28.10.205. Idempotent, prints no key.
 #   ~/Projects/Docker/Seerr/scripts/download-now-setup.sh
 set -euo pipefail
 
@@ -14,7 +14,8 @@ for app in radarr sonarr; do
   sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' "/srv/appdata/$app/config.xml" > "$T/$app.apikey"
 done
 tr -d '[:space:]' < "$HERE/../../Movie-Downloads/secrets/hook/sabnzbd.apikey" > "$T/sabnzbd.apikey"
-for f in radarr sonarr sabnzbd; do
+tr -d '[:space:]' < "$HERE/../secrets/api-key" > "$T/seerr.apikey"
+for f in radarr sonarr sabnzbd seerr; do
   [ -s "$T/$f.apikey" ] || { echo "no $f key" >&2; exit 1; }
   sudo install -o buntu -g "$GID" -m 0640 "$T/$f.apikey" "$D/$f.apikey"
 done
