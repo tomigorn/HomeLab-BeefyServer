@@ -50,7 +50,7 @@ services:
       ALLOWED_HOSTS: tracker.holy-grail.ch,192.168.1.102
       SESSION_COOKIE_SECURE: "True"
       CSRF_COOKIE_SECURE: "True"
-      # Safe only because the port answers fastpi's Traefik alone (DOCKER-USER), which sets the header itself.
+      # Trusted from fastpi's Traefik (sets the header itself) and the jellyfin subnet (DOCKER-USER, webhooks since 7c34909): those containers can set it and skip the edge controls, but still need a Floppy login.
       USE_X_FORWARDED_PROTO: "True"
       USE_X_FORWARDED_HOST: "False"
       USE_X_FORWARDED_PORT: "False"
