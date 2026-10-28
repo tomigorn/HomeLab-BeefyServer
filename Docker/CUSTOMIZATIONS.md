@@ -124,9 +124,10 @@ Hooks in SABnzbd / qBittorrent: Movie-Downloads `md.sab-clamav-script`, `md.qbit
 
 | Customization | Where | Reapply | Verify | Update can break |
 |---|---|---|---|---|
-| OIDC login (Authentik app dt-login) | `.env` ALPINE_OIDC_* | compose | `dt.oidc-available`: → true; `dt.frontend-oidc`: config.json → issuer dt-login + client id | env renamed |
-| Team mapping homelab-admins → Administrators | DT DB | `Dependency-Track/scripts/oidc-team-mapping.sh` | `dt.team-mapping`: psql in dt-db → homelab-admins pipe Administrators | schema migration |
+| OIDC login (Authentik app dt-login) | `docker-compose.v5.yaml` DT_OIDC_* (issuer + client id from `.env`) | compose | `dt.oidc-available`: → true; `dt.frontend-oidc`: config.json → issuer dt-login + client id | env renamed |
+| Team mapping homelab-admins → Administrators | DT DB | `Dependency-Track/scripts/oidc-team-mapping.sh` | `dt.team-mapping`: psql in dt5-db → homelab-admins pipe Administrators | schema migration |
 | Reaches sso (extra_hosts + DOCKER-USER rule) | compose, docker-user-guard.sh | both | `dt.sso-reach`: → 192.168.1.2 200 | |
+| `/tmp` tmpfs with `exec` (zstd native lib) | `docker-compose.v5.yaml` | compose | `dt.tmp-exec`: mount options of /tmp → no noexec | apiserver dies at start without it |
 
 ## Cup-Agent
 
