@@ -1,0 +1,148 @@
+# =========================================================
+# Dependency-Track 5 ======================================
+# =========================================================
+# DT 5.x (docs/v5-cutover.md): same role, port and URL as the v4 file next to it, which stays for the rollback.
+# Own project (name below, -p in every command): dt5-db alone for the migration, --profile app adds apiserver + frontend.
+name: dependency-track-v5
+
+services:
+# #########################################################
+# POSTGRES ################################################
+# #########################################################
+  dt5-db:
+    image: docker.io/library/postgres:18.6-alpine
+    container_name: dt5-db
+    restart: unless-stopped
+    user: "70:70"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 4g
+    command: postgres -c max_wal_size=8GB -c max_locks_per_transaction=256 -c maintenance_work_mem=1GB -c checkpoint_timeout=30min -c checkpoint_completion_target=0.9 -c shared_buffers=1GB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      start_period: 20s
+      interval: 30s
+      retries: 5
+      timeout: 5s
+    environment:
+      TZ: Etc/UTC
+      POSTGRES_USER: dtrack
+      POSTGRES_DB: dtrack
+      POSTGRES_PASSWORD_FILE: /run/secrets/dt5_db_password
+    secrets:
+      - dt5_db_password
+    volumes:
+      - ${APPDATA_ROOT}/dt5-db:/var/lib/postgresql
+    networks:
+      - dependency-track
+
+# #########################################################
+# APISERVER ###############################################
+# #########################################################
+  dt5-apiserver:
+    image: ghcr.io/dependencytrack/apiserver:5.2.1@sha256:a7ce7a42928c6c03e94e8255e2ee871f5268f55b638a69729cae7afc47ef43b8
+    container_name: dt5-apiserver
+    profiles: [app]
+    restart: unless-stopped
+    user: "65122:65122"   # the image user is 1000 = buntu (sudo) on this host
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 3g
+    # No TZ: v5 runs in UTC
+    environment:
+      DT_DATASOURCE_URL: jdbc:postgresql://dt5-db:5432/dtrack
+      DT_DATASOURCE_USERNAME: dtrack
+      DT_DATASOURCE_PASSWORD: $${file::/run/secrets/dt5_db_password}
+      DT_DATASOURCE_POOL_MAX_SIZE: 10
+      # Holy Grail login (Authentik app dt-login, public client): the apiserver validates the ID token; groups -> teams via DT's OIDC group mapping
+      DT_OIDC_ENABLED: "true"
+      DT_OIDC_ISSUER: ${DT_OIDC_ISSUER}
+      DT_OIDC_CLIENT_ID: ${DT_OIDC_CLIENT_ID}
+      DT_OIDC_USERNAME_CLAIM: preferred_username
+      DT_OIDC_USER_PROVISIONING: "true"
+      DT_OIDC_TEAMS_CLAIM: groups
+      DT_OIDC_TEAM_SYNCHRONIZATION: "true"
+    # OIDC discovery + JWKS straight to fastpi's Traefik, not via Cloudflare (DOCKER-USER allows this subnet -> fastpi :443)
+    extra_hosts:
+      - "sso.holy-grail.ch:192.168.1.2"
+    secrets:
+      - dt5_db_password
+    volumes:
+      - ${APPDATA_ROOT}/dt5:/data
+    # exec: the zstd native library is loaded from /tmp, without it the apiserver dies at start
+    tmpfs:
+      - /tmp:uid=65122,gid=65122,mode=0700,size=512m,exec
+    # /health/ready stays green while the app is dead: check the management port and the API
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -Y off -T 3 -O /dev/null http://127.0.0.1:9000/health && wget -q -Y off -T 3 -O /dev/null http://127.0.0.1:8080/api/version"]
+      start_period: 120s
+      interval: 30s
+      retries: 5
+      timeout: 10s
+    depends_on:
+      dt5-db:
+        condition: service_healthy
+    networks:
+      - dependency-track
+
+# #########################################################
+# FRONTEND ################################################
+# #########################################################
+  dt5-frontend:
+    image: ghcr.io/dependencytrack/frontend:5.2.1@sha256:1c0f63b083af8e89ff4ede5e7ed5cfc4e23ab871fa140ed101e8dc56f53eb51c
+    container_name: dt5-frontend
+    profiles: [app]
+    restart: unless-stopped
+    user: "65123:65123"   # image user nginx (101); files are world-readable
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 128m
+    # Read by the nginx template, which serves /static/config.json (API on the same origin, OIDC)
+    environment:
+      TZ: ${TZ}
+      OIDC_ISSUER: ${DT_OIDC_ISSUER}
+      OIDC_CLIENT_ID: ${DT_OIDC_CLIENT_ID}
+    volumes:
+      - ./config/v5-frontend.conf.template:/etc/nginx/templates/default.conf.template:ro
+    tmpfs:
+      - /tmp:uid=65123,gid=65123,mode=0700,size=16m
+      - /etc/nginx/conf.d:uid=65123,gid=65123,mode=0755,size=1m
+    ports:
+      - "${DT_PORT}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      start_period: 10s
+      interval: 30s
+      retries: 3
+      timeout: 5s
+    depends_on:
+      - dt5-apiserver
+    networks:
+      - dependency-track
+
+# =========================================================
+# Networks ================================================
+# =========================================================
+networks:
+  # Pinned: the DOCKER-USER exception (-> fastpi :443 for sso) matches this subnet; free only once the v4 network is down
+  dependency-track:
+    name: dependency-track-v5
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.14.0/24
+
+# =========================================================
+# Secrets =================================================
+# =========================================================
+secrets:
+  dt5_db_password:
+    file: ./secrets/dt5_db_password
