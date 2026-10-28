@@ -1,0 +1,9 @@
+[Unit]
+Description=Studio and network logos in the maintenance window (after the library scan)
+
+[Timer]
+OnCalendar=*-*-* 04:38:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target
