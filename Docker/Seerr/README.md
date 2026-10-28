@@ -317,10 +317,10 @@ Title page → card **My request** under the title header (German **Meine Anfrag
 
 | Shows | Change |
 |---|---|
-| Quality profile | any profile of the Radarr/Sonarr server (as the request dialog's Advanced) |
+| Quality profile | any profile of the Radarr/Sonarr server (as the request dialog's Advanced); a picked profile stays when tags change later (tag `profile-pinned`, shown "Quality kept (your pick)"), picking the default again or adding `audio-swiss-german` ends that; picking Swiss German = adding that tag |
 | Audio & subtitles (`audio-*`, `subs-*` as "Audio: French", "Subtitles: Spanish") | remove (×), add from the existing `audio-*`/`subs-*` tags only; other tags never |
 | Can wait | on/off: off = [Download now](#download-now) (tag, night downloads move, search); on = `download-now` removed |
-| Requested date, status, seasons, 4K, `old-rare` "(automatic)", folder only when there is more than one | read-only |
+| Requested date, status, seasons, 4K, `old-rare` "(automatic)", `profile-pinned` "Quality kept (your pick)", folder only when there is more than one | read-only |
 | **Delete request** | confirm dialog says what goes (below) |
 
 | Delete when | What goes |
@@ -331,13 +331,13 @@ Title page → card **My request** under the title header (German **Meine Anfrag
 | Part | What |
 |---|---|
 | Who | same check as Download now (Seerr `auth/me` + `mediaInfo.requests`): own non-declined request, or ADMIN / MANAGE_REQUESTS. A requester cannot change a title someone else requested too (read-only, "ask an admin"); delete of their own request still works |
-| Approved request | Seerr edits only pending requests (409), so the backend changes the Radarr/Sonarr title (`/movie\|series/editor`: profile, tags add/remove); `../Movie-Downloads/scripts/request-tags.sh` sees the change within 2 min and runs the language hook (Swiss German profile, Bazarr subtitles) + one search |
-| Pending request | `PUT /api/v1/request/<id>` (profile, tags incl. `download-now`, seasons kept); Seerr hands it to Radarr/Sonarr on approval |
+| Approved request | Seerr edits only pending requests (409), so the backend changes the Radarr/Sonarr title (`/movie\|series/editor`: profile, tags add/remove); `../Movie-Downloads/scripts/request-tags.sh` sees the change within 2 min and recomputes the title: default rules + every remaining tag, a removed tag goes back to the default, a picked profile is pinned (`../Movie-Downloads/README.md` "Tag changes"); one search if profile or audio changed |
+| Pending request | `PUT /api/v1/request/<id>` (profile, tags incl. `download-now` and `profile-pinned` for a picked non-Swiss profile, seasons kept); Seerr hands it to Radarr/Sonarr on approval |
 | Delete | `DELETE /api/v1/media/<id>` (Clear Data) or `DELETE /api/v1/request/<id>`, with Seerr's API key (`secrets/download-now/seerr.apikey`; a requester's own approved request cannot be deleted with their session) |
 | API | `GET /_download-now/request?type=movie\|tv&tmdb=<id>` → `requests` (`id`, `status`, `profile`, `tags`, `auto`, `canWait`, `seasons`, `editable`, `deleteEffect` clear/request-only, `by` for managers), `profiles`, `tags`. `POST /_download-now/request` `{"type","tmdbId","action":"update","requestId",["profileId"],["tags"],["canWait"]}` or `{"…","action":"delete","requestId"}`; Origin + JSON only like Download now |
 | Script | `indexer-bar/www/my-request.js` (injected by `seerr-proxy`), `<details>` card after `.media-header`; 403 or error = no card |
 | Log | `sudo docker logs seerr-download-now`: one line per change (user, role, request, title, what changed / deleted how) |
-| Known gap | a title requested and deleted within the same 2 minutes is not wiped by `clear-data-wipe.sh` (never in its snapshot): `../Movie-Downloads/scripts/title-wipe-hook.sh wipe radarr <tmdb> "<title>" <year>` by hand |
+| Deleted right after the request | wiped too: the Radarr/Sonarr add triggers a `clear-data-wipe.sh` snapshot within seconds (`../Movie-Downloads/README.md` "Delete a title") |
 | Tests | `python3 tests/test_my_request.py`; JS `node --test` in `tests/js` (`my-request.test.mjs`) |
 
 ## Delete a title
