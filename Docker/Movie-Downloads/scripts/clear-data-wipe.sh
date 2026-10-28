@@ -85,6 +85,7 @@ while IFS=$'\t' read -r k tvdb tries; do
   IFS=$'\x1f' read -r title year <<<"${ty:-}"
   if [ "$app" = radarr ]; then config=${CW_RADARR_CONFIG:-/srv/appdata/radarr/config.xml}; else config=${CW_SONARR_CONFIG:-/srv/appdata/sonarr/config.xml}; fi
   if env TW_CONFIG="$config" TW_STATE="$(dirname "$config")/title-wipe.tsv" TW_QBIT_URL="${TW_QBIT_URL:-http://127.0.0.1:8080}" \
+      TW_QBIT_PASS="${TW_QBIT_PASS:-$HERE/../secrets/qbit-webui.password}" \
       TW_SAB_URL="${TW_SAB_URL:-http://127.0.0.1:8081}" TW_SAB_KEY="${TW_SAB_KEY:-$HERE/../secrets/hook/sabnzbd.apikey}" \
       TW_JF_URL="${TW_JF_URL:-http://127.0.0.1:8096}" TW_JF_KEY="${TW_JF_KEY:-$HERE/../../Jellyfin/secrets/api-key}" \
       bash "$HOOK" wipe "$app" "$id" "${title:-}" "${year:-0}" </dev/null 2>&1 | log; then

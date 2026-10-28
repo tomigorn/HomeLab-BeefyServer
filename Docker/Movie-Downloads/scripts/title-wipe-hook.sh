@@ -7,6 +7,7 @@ set -euo pipefail
 CONFIG=${TW_CONFIG:-/config/config.xml}
 STATE=${TW_STATE:-/config/title-wipe.tsv}
 QBIT=${TW_QBIT_URL:-http://gluetun:8080}
+QBIT_PASS=${TW_QBIT_PASS:-}
 SAB=${TW_SAB_URL:-http://gluetun:8081}
 SAB_KEY=${TW_SAB_KEY:-/secrets/sabnzbd.apikey}
 JF=${TW_JF_URL:-http://127.0.0.1:8096}
@@ -110,7 +111,10 @@ recorded=$(cut -f1 "$STATE" 2>/dev/null | grep -cx "$key" || true)
 
 # qBittorrent: recorded hashes (or the name match) in the app's own category only, torrent + its files.
 qcats=$(cats QBittorrent)
-if torrents=$(curl -sf -m 10 "$QBIT/api/v2/torrents/info"); then
+QBIT_PASS_FILE=$QBIT_PASS QBIT_JAR=
+# shellcheck source=qbit-api.sh
+. "$(dirname "$0")/qbit-api.sh"
+if torrents=$(qbit_api "$QBIT" /torrents/info); then
   torrents=$(jq -c --argjson c "$qcats" '[.[] | select(.category as $x | $c | index($x))]' <<<"$torrents")
   if [ "$recorded" -gt 0 ]; then
     hashes=$(mine qbit | jq -R . | jq -sc .)
@@ -120,7 +124,7 @@ if torrents=$(curl -sf -m 10 "$QBIT/api/v2/torrents/info"); then
     fallback_ok torrents "$hit" || hit='[]'
   fi
   if [ "$(jq length <<<"$hit")" -gt 0 ]; then
-    if curl -sf -m 10 -d "hashes=$(jq -r 'map(.hash) | join("|")' <<<"$hit")&deleteFiles=true" "$QBIT/api/v2/torrents/delete" >/dev/null; then
+    if qbit_api "$QBIT" /torrents/delete -d "hashes=$(jq -r 'map(.hash) | join("|")' <<<"$hit")&deleteFiles=true" >/dev/null; then
       jq -r --arg p "$kind $key" '.[] | "\($p): torrent removed with files: \(.name)"' <<<"$hit"
     else
       echo "$kind $key: qBittorrent delete failed" >&2; failed=1
@@ -129,6 +133,7 @@ if torrents=$(curl -sf -m 10 "$QBIT/api/v2/torrents/info"); then
 else
   echo "$kind $key: qBittorrent not reachable at $QBIT" >&2; failed=1
 fi
+qbit_logout
 
 # SABnzbd: the title's jobs from the queue and the history (del_files=1 also drops leftovers of failed jobs).
 scats=$(cats Sabnzbd)

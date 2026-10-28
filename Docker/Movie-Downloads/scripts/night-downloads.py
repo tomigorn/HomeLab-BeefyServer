@@ -295,12 +295,30 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None):
     return rc
 
 
-def _open(req, timeout=30):
+class Forbidden(ApiError):
+    pass
+
+
+class LoginError(ApiError):
+    pass
+
+
+def _fetch(req, timeout=30, opener=None):
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read()
-            return json.loads(body) if body.strip() else None
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+        with (opener.open if opener else urllib.request.urlopen)(req, timeout=timeout) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        e.close()
+        raise (Forbidden if e.code == 403 else ApiError)(f"{req.full_url.split('?')[0]}: {e}") from None
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise ApiError(f"{req.full_url.split('?')[0]}: {e}") from None
+
+
+def _open(req, timeout=30, opener=None):
+    body = _fetch(req, timeout, opener)
+    try:
+        return json.loads(body) if body.strip() else None
+    except ValueError as e:
         raise ApiError(f"{req.full_url.split('?')[0]}: {e}") from None
 
 
@@ -311,17 +329,40 @@ def now_from(env):
     return datetime.datetime.fromisoformat(env["ND_NOW"]) if env.get("ND_NOW") else datetime.datetime.now()
 
 
-def qbit_client(base):
+def qbit_client(base, user="admin", password_file=None):
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor())
+
+    def login():
+        pw = pathlib.Path(password_file) if password_file else None
+        if not pw or not pw.is_file():
+            raise LoginError(f"{base}: 403 and no qBittorrent password file")
+        form = urllib.parse.urlencode({"username": user, "password": pw.read_text().strip()}).encode()
+        try:
+            refused = _fetch(urllib.request.Request(base + "/auth/login", form), opener=opener).strip() == b"Fails."
+        except ApiError:
+            refused = True
+        if refused:
+            raise LoginError(f"{base}/auth/login: login refused")
+
+    def send(path, body):
+        try:
+            return _open(urllib.request.Request(base + path, body), opener=opener)
+        except Forbidden:
+            login()
+            return _open(urllib.request.Request(base + path, body), opener=opener)
+
     def call(path, data=None):
         if data is None:
-            return _open(urllib.request.Request(base + path))
+            return send(path, None)
         body = urllib.parse.urlencode(data).encode()
         try:
-            return _open(urllib.request.Request(base + path, body))
+            return send(path, body)
+        except LoginError:
+            raise
         except ApiError:
             if path not in LEGACY:
                 raise
-            return _open(urllib.request.Request(base + LEGACY[path], body))
+            return send(LEGACY[path], body)
     return call
 
 
@@ -349,7 +390,8 @@ def main():
     dry = "--dry-run" in sys.argv[1:]
     if os.environ.get("ND_NOW") and not dry:
         sys.exit("ND_NOW only with --dry-run")
-    qbit = qbit_client(os.environ.get("ND_QBIT_URL", "http://127.0.0.1:8080") + "/api/v2")
+    qbit = qbit_client(os.environ.get("ND_QBIT_URL", "http://127.0.0.1:8080") + "/api/v2", os.environ.get("ND_QBIT_USER", "admin"),
+                       os.environ.get("ND_QBIT_PASS", HERE.parent / "secrets" / "qbit-webui.password"))
     sab = sab_client(os.environ.get("ND_SAB_URL", "http://127.0.0.1:8081"), os.environ.get("ND_SAB_KEY", HERE.parent / "secrets" / "hook" / "sabnzbd.apikey"))
     apps = {app: arr_client(app, os.environ.get(f"ND_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml")) for app in APPS}
     return run(now_from(os.environ), qbit, sab, apps, os.environ.get("ND_STATE", STATE), dry_run=dry, public_path=os.environ.get("ND_PUBLIC", PUBLIC))

@@ -57,6 +57,7 @@ echo seerrkey > "$T/seerr.key"
 cat > "$T/hook.sh" <<'SH'
 d=$(dirname "$0")
 printf '%s|%s\n' "$*" "$(basename "$TW_CONFIG")" >> "$d/hooks"
+printf '%s\n' "${TW_QBIT_PASS:-}" > "$d/qbpass"
 echo "stub wiped $*"
 exit "$(cat "$d/hook.rc" 2>/dev/null || echo 0)"
 SH
@@ -91,6 +92,7 @@ assert_eq "Remove from Radarr only (row still there, status deleted): no wipe" "
 run "{\"media\": [$BAD], $TMDB}"
 assert_eq "row gone: full wipe of that movie with title + year from Seerr" "wipe radarr 10331 Night of the Living Dead 1968|radarr.xml" "$(cat "$T/hooks")"
 assert_eq "  exit 0" 0 "$RC"
+assert_eq "  hook gets the qBittorrent password file (path only)" "$(cd "$HERE/.." && pwd)/scripts/../secrets/qbit-webui.password" "$(cat "$T/qbpass")"
 grep -q 'stub wiped wipe radarr 10331' "$T/log" && ok "  hook output in the log" || bad "  hook output in the log" "$(cat "$T/log")"
 run "{\"media\": [$BAD], $TMDB}"
 assert_eq "next run: not wiped twice" "" "$(cat "$T/hooks")"

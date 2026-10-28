@@ -2,11 +2,16 @@
 """scripts/night-downloads.py: low tariff, night movies in parallel, one TV series at a time in episode order, the 06:00 pause with its 15-min grace, download-now titles, the state file for fastpi, against fake clients.
 Usage: python3 tests/test_night_downloads.py"""
 import datetime
+import email.utils
+import http.server
 import importlib.util
 import json
 import pathlib
 import tempfile
+import threading
+import time
 import unittest
+import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location("nd", ROOT / "scripts" / "night-downloads.py")
@@ -409,6 +414,117 @@ class Run(unittest.TestCase):
         self.assertEqual(self.go(f, MON_2205), 1)
         self.assertIn(("qbit", "/torrents/start", {"hashes": "AAA"}), f.calls)
         self.assertEqual(json.loads(self.state.read_text())["pending"], 0)
+
+
+class FakeQbit(http.server.BaseHTTPRequestHandler):
+    sid = "s1"
+    log = []
+    legacy = False
+
+    def log_message(self, *a):
+        pass
+
+    def reply(self, code, body=b"", cookie=None):
+        self.send_response(code)
+        if cookie:
+            self.send_header("Set-Cookie", f"QBT_SID_8080={cookie}; HttpOnly; SameSite=Lax; expires={email.utils.formatdate(time.time() + 3600, usegmt=True)}; path=/")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        self.handle_any()
+
+    def do_POST(self):
+        self.handle_any()
+
+    def handle_any(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n).decode() if n else ""
+        FakeQbit.log.append((self.command, self.path, body))
+        if self.path == "/api/v2/auth/login":
+            form = urllib.parse.parse_qs(body)
+            if form.get("username") == ["admin"] and form.get("password") == ["s3cret pw&="]:
+                return self.reply(200, b"Ok.", cookie=FakeQbit.sid) if FakeQbit.legacy else self.reply(204, cookie=FakeQbit.sid)
+            return self.reply(200, b"Fails.") if FakeQbit.legacy else self.reply(401, b"Fails.")
+        if f"QBT_SID_8080={FakeQbit.sid}" not in (self.headers.get("Cookie") or ""):
+            return self.reply(403, b"Forbidden")
+        if self.path == "/api/v2/torrents/info":
+            return self.reply(200, b'[{"hash": "aaa"}]')
+        if self.path == "/api/v2/torrents/start":
+            return self.reply(200)
+        return self.reply(404)
+
+
+class QbitLogin(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), FakeQbit)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.base = f"http://127.0.0.1:{cls.srv.server_port}/api/v2"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.pw = pathlib.Path(self.tmp.name) / "qbit-webui.password"
+        self.pw.write_text("s3cret pw&=\n")
+        FakeQbit.sid, FakeQbit.log[:], FakeQbit.legacy = "s1", [], False
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def logins(self):
+        return [e for e in FakeQbit.log if e[1] == "/api/v2/auth/login"]
+
+    def test_logs_in_on_403_and_retries(self):
+        qbit = nd.qbit_client(self.base, "admin", self.pw)
+        self.assertEqual(qbit("/torrents/info"), [{"hash": "aaa"}])
+        self.assertEqual(len(self.logins()), 1)
+        self.assertNotIn("s3cret", "".join(e[1] for e in FakeQbit.log))
+
+    def test_session_is_kept_between_calls(self):
+        qbit = nd.qbit_client(self.base, "admin", self.pw)
+        qbit("/torrents/info")
+        qbit("/torrents/start", {"hashes": "aaa"})
+        self.assertEqual(len(self.logins()), 1)
+
+    def test_expired_session_logs_in_again(self):
+        qbit = nd.qbit_client(self.base, "admin", self.pw)
+        qbit("/torrents/info")
+        FakeQbit.sid = "s2"
+        self.assertEqual(qbit("/torrents/info"), [{"hash": "aaa"}])
+        self.assertEqual(len(self.logins()), 2)
+
+    def test_wrong_password_fails_after_one_login(self):
+        self.pw.write_text("wrong")
+        qbit = nd.qbit_client(self.base, "admin", self.pw)
+        with self.assertRaisesRegex(nd.ApiError, "login refused"):
+            qbit("/torrents/info")
+        self.assertEqual(len(self.logins()), 1)
+
+    def test_qbit_4_login_ok_and_fails_bodies(self):
+        FakeQbit.legacy = True
+        self.assertEqual(nd.qbit_client(self.base, "admin", self.pw)("/torrents/info"), [{"hash": "aaa"}])
+        self.pw.write_text("wrong")
+        with self.assertRaisesRegex(nd.ApiError, "login refused"):
+            nd.qbit_client(self.base, "admin", self.pw)("/torrents/info")
+
+    def test_wrong_password_no_second_login_through_the_legacy_path(self):
+        self.pw.write_text("wrong")
+        qbit = nd.qbit_client(self.base, "admin", self.pw)
+        with self.assertRaisesRegex(nd.ApiError, "login refused"):
+            qbit("/torrents/start", {"hashes": "aaa"})
+        self.assertEqual(len(self.logins()), 1)
+
+    def test_no_password_file_fails_on_403(self):
+        qbit = nd.qbit_client(self.base, "admin", pathlib.Path(self.tmp.name) / "missing")
+        with self.assertRaisesRegex(nd.ApiError, "no qBittorrent password"):
+            qbit("/torrents/info")
+        self.assertEqual(self.logins(), [])
 
 
 class Clock(unittest.TestCase):

@@ -98,6 +98,7 @@ Files under `secrets/` (gitignored), never in `.env`: `docker inspect` stays cle
 | `secrets/recyclarr.yml` (`radarr_api_key: '…'`, `sonarr_api_key: '…'`) | recyclarr | `65107:65107 0400` | mounted as `/config/secrets.yml`, `!secret` in `recyclarr/recyclarr.yml` |
 | `secrets/vpn-status.apikey` | vpn-status, gluetun healthcheck | `65111 0400` | bind `:ro` |
 | `secrets/hook/*.apikey` | Radarr/Sonarr hooks | `buntu:hook-secret 0640` | bind `:ro` |
+| `secrets/qbit-webui.password` (qBittorrent WebUI user `admin`) | host scripts: night-downloads, clear-data-wipe → title-wipe-hook, night-downloads-setup, post-update check | `buntu:buntu 0600` | read from the file, sent only as POST body (`scripts/qbit-api.sh`, `night-downloads.py` `qbit_client`): login on 403, `QBT_SID_8080` cookie |
 
 Check: `sudo docker inspect movie-gluetun movie-recyclarr --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1` (`WIREGUARD_PRIVATE_KEY` is the image's empty default).
 
@@ -107,7 +108,7 @@ Check: `sudo docker inspect movie-gluetun movie-recyclarr --format '{{range .Con
 cd ~/Projects/Docker/Movie-Downloads
 docker compose up -d
 docker compose logs -f gluetun        # wait for the tunnel + a forwarded port
-curl -s http://192.168.1.102:8080     # qBittorrent should answer
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/api/v2/app/version   # 403: qBittorrent answers, wants the login
 ```
 
 Confirm the tunnel is actually carrying traffic before adding a single torrent:
@@ -146,7 +147,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 |---|---|---|
 | qBittorrent | category `radarr` save path | `/data/torrents/movies` |
 | qBittorrent | seed limits | **ratio 2.0 OR 30 days, then stop** (§14.0) |
-| qBittorrent | no-password bypass | only Radarr 172.28.10.201, Sonarr .202, vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), Seerr download-now .205 (moves/starts night torrents; added by `../Seerr/scripts/download-now-setup.sh`), the gateway .1 (host scripts), localhost (qbit-port.sh) and 192.168.1.2 (Traefik); the clamd container and the rest need the password (review M5, 2026-10-25). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist` |
+| qBittorrent | no-password bypass | only Radarr 172.28.10.201, Sonarr .202, vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), Seerr download-now .205 (moves/starts night torrents; added by `../Seerr/scripts/download-now-setup.sh`), localhost (qbit-port.sh, ClamAV autorun) and 192.168.1.2 (Traefik); everything else needs the password, including the host scripts and every other bridge (they arrive as the gateway .1, removed 2026-10-28, review S-01). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist`; rollback: `backups/pre-qbit-password-2026-10-28/rollback.sh` (not in git, puts .1 back) |
 | SABnzbd | incomplete / complete | `/data/usenet/incomplete` / `/data/usenet/complete/movies` |
 | Radarr | root folder | `/data/media/movies` |
 | Radarr | **Use Hardlinks instead of Copy** | **on** (§13.6) |
@@ -1291,7 +1292,7 @@ ssh beefy curl -s localhost:8087/api/status   # vpn_ip, real_ip, forwarded_port,
 
 Every UI in this stack sits behind Authentik forward auth on fastpi's Traefik, and the
 apps' own logins are turned off — Radarr/Sonarr/Prowlarr auth = `External`, Bazarr = `None`,
-SABnzbd username/password empty, qBittorrent bypassed for the proxy subnet. Full
+SABnzbd username/password empty, qBittorrent bypassed for its pinned callers (password in `secrets/qbit-webui.password` for the rest). Full
 setup, including the Authentik objects that must be created by hand, is in
 `HomeLab-FastPi` → `Docker/Traefik/docs/2026-10-06-authentik-sso.md`.
 

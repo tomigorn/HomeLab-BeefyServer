@@ -7,16 +7,20 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 SK=$(tr -d '[:space:]' < "$HERE/../secrets/hook/sabnzbd.apikey")
 sab() { curl -sf -G "http://127.0.0.1:8081/api" --data-urlencode "apikey=$SK" -d output=json "$@"; }
-QB=http://127.0.0.1:8080/api/v2
+QB=http://127.0.0.1:8080
+QBIT_PASS_FILE=${QBIT_PASS_FILE:-$HERE/../secrets/qbit-webui.password}
+# shellcheck source=qbit-api.sh
+. "$HERE/qbit-api.sh"
+trap qbit_logout EXIT
 
 # qBittorrent categories: create, or fix the save path of an existing one.
-cats=$(curl -sf "$QB/torrents/categories")
+cats=$(qbit_api "$QB" /torrents/categories)
 for c in radarr-night:/data/torrents/movies sonarr-night:/data/torrents/tv; do
   name=${c%%:*}; path=${c#*:}
   if jq -e --arg n "$name" 'has($n)' <<<"$cats" >/dev/null; then ep=editCategory; else ep=createCategory; fi
-  curl -sf "$QB/torrents/$ep" --data-urlencode "category=$name" --data-urlencode "savePath=$path" >/dev/null
+  qbit_api "$QB" "/torrents/$ep" --data-urlencode "category=$name" --data-urlencode "savePath=$path" >/dev/null
 done
-curl -sf "$QB/torrents/categories" | jq -r 'to_entries[] | select(.key | endswith("-night")) | "qbit category \(.key) -> \(.value.savePath)"'
+qbit_api "$QB" /torrents/categories | jq -r 'to_entries[] | select(.key | endswith("-night")) | "qbit category \(.key) -> \(.value.savePath)"'
 
 # SABnzbd categories: same folder as movies / tv, script and post-processing inherited from "*" (ClamAV hook).
 for c in movies-night:movies tv-night:tv; do

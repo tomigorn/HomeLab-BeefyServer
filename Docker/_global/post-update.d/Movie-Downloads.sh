@@ -5,7 +5,7 @@ md_has() { jq -r --argjson want "$1" '[.[].name] as $n | ($want - $n) | if lengt
 md_auth() { grep -oP '(?<=<AuthenticationMethod>)[^<]+' "/srv/appdata/$1/config.xml" 2>&1; }
 md_sab() { curl -s -m 8 "http://127.0.0.1:8081/api?output=json&apikey=$(cat "$MD_DIR/secrets/hook/sabnzbd.apikey")&$1"; }
 md_bz() { curl -s -m 8 -H "X-API-KEY: $(cat "$MD_DIR/secrets/hook/bazarr.apikey")" "http://127.0.0.1:6767/api$1"; }
-md_qb() { curl -s -m 8 "http://127.0.0.1:8080/api/v2$1"; }
+md_qb() { QBIT_TIMEOUT=8 qbit_api http://127.0.0.1:8080 "$1"; }
 if want radarr; then
   check md.radarr-auth '^External$' "$(md_auth radarr)"
   check md.radarr-profiles '^ok$' "$(md_arr radarr 7878 /api/v3/qualityprofile | md_has '["4K HDR - UHD Bluray + WEB (1080p fallback)","4K HDR - UHD Bluray + WEB (1080p fallback) - English original","4K preferred · older versions allowed","4K preferred · older versions allowed - English original","Swiss German (Mundart) only - any quality","HD Bluray + WEB","Anime - Remux + WEB 1080p"]')"
@@ -58,11 +58,16 @@ if want prowlarr; then
   check md.prowlarr-apps '^Radarr:fullSync Sonarr:fullSync$' "$(md_arr prowlarr 9696 /api/v1/applications | jq -r '[.[] | "\(.name):\(.syncLevel)"] | sort | join(" ")' 2>&1)"
 fi
 if want qbittorrent; then
-  check md.qbit-auth-bypass '^true 7 192\.168\.1\.2/32 172\.28\.10\.204/32 172\.28\.10\.205/32$' "$(md_qb /app/preferences | jq -r '(.bypass_auth_subnet_whitelist | split("\n")) as $w | "\(.bypass_auth_subnet_whitelist_enabled) \($w | length) \($w | map(select(. == "192.168.1.2/32" or . == "172.28.10.204/32" or . == "172.28.10.205/32")) | join(" "))"' 2>&1)"
+  QBIT_PASS_FILE=$MD_DIR/secrets/qbit-webui.password QBIT_JAR=
+  # shellcheck source=../../Movie-Downloads/scripts/qbit-api.sh
+  . "$MD_DIR/scripts/qbit-api.sh"
+  check md.qbit-auth-bypass '^true 6 no-gateway 192\.168\.1\.2/32 172\.28\.10\.204/32 172\.28\.10\.205/32$' "$(md_qb /app/preferences | jq -r '(.bypass_auth_subnet_whitelist | split("\n")) as $w | "\(.bypass_auth_subnet_whitelist_enabled) \($w | length) \(if $w | index("172.28.10.1/32") then "gateway" else "no-gateway" end) \($w | map(select(. == "192.168.1.2/32" or . == "172.28.10.204/32" or . == "172.28.10.205/32")) | join(" "))"' 2>&1)"
+  check md.qbit-webui-login '^403 ok$' "$(curl -s -o /dev/null -m 8 -w '%{http_code}' http://127.0.0.1:8080/api/v2/app/version) $(md_qb /app/version >/dev/null && echo ok || echo 'login failed')"
   check md.qbit-categories '^radarr=/data/torrents/movies radarr-night=/data/torrents/movies sonarr=/data/torrents/tv sonarr-night=/data/torrents/tv$' "$(md_qb /torrents/categories | jq -r '[to_entries | sort_by(.key)[] | "\(.key)=\(.value.savePath)"] | join(" ")' 2>&1)"
   check md.qbit-clamav-autorun '^true /clamav-hook/clamav-hook\.py --qbit "%I" "%F" ok$' "$(md_qb /app/preferences | jq -r '"\(.autorun_enabled) \(.autorun_program)"' 2>&1) $(docker exec movie-qbittorrent sh -c 'test -x /clamav-hook/clamav-hook.py && echo ok' 2>&1)"
   check md.qbit-tun0-seeding '^tun0 2 43200$' "$(md_qb /app/preferences | jq -r '"\(.current_network_interface) \(.max_ratio) \(.max_seeding_time)"' 2>&1)"
   check md.qbit-queueing '^true [1-9][0-9]*$' "$(md_qb /app/preferences | jq -r '"\(.queueing_enabled) \(.max_active_downloads)"' 2>&1)"
+  qbit_logout
 fi
 if want sabnzbd; then
   check md.sab-host-whitelist '^sabnzbd,gluetun,sabnzbd\.holy-grail\.ch,192\.168\.1\.102$' "$(md_sab mode=get_config | jq -r '.config.misc.host_whitelist | join(",")' 2>&1)"

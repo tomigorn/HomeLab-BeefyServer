@@ -12,7 +12,7 @@ bad() { FAIL=$((FAIL+1)); printf '  FAIL %s\n' "$1"; [ -n "$2" ] && printf '    
 assert_eq() { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "expected [$2] got [$3]"; fi; }
 
 cat > "$T/fake.py" <<'PY'
-import http.server, json, os, sys, urllib.parse
+import email.utils, http.server, json, os, sys, time, urllib.parse
 T = sys.argv[1]
 CLIENTS = {"radarr": [{"name": "qBittorrent", "implementation": "QBittorrent", "fields": [{"name": "movieCategory", "value": "radarr"}]},
                       {"name": "SABnzbd", "implementation": "Sabnzbd", "fields": [{"name": "movieCategory", "value": "movies"}]}],
@@ -35,6 +35,16 @@ class H(http.server.BaseHTTPRequestHandler):
         state = json.load(open(sf))
         if u.path.startswith("/qbit/api/v2/"):
             p = u.path.removeprefix("/qbit/api/v2")
+            if p == "/auth/login":
+                ok = state.get("qbit_pw") and dict(urllib.parse.parse_qsl(body)) == {"username": "admin", "password": state["qbit_pw"]}
+                data = b"" if ok else b"Fails."
+                self.send_response(204 if ok else 401)
+                if ok:
+                    self.send_header("Set-Cookie", "QBT_SID_8080=sid1; HttpOnly; SameSite=Lax; expires=" + email.utils.formatdate(time.time() + 3600, usegmt=True) + "; path=/")
+                self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+                return
+            if state.get("qbit_pw") and "QBT_SID_8080=sid1" not in (self.headers.get("Cookie") or ""):
+                return self.reply(403)
             if self.command == "GET" and p == "/torrents/info":
                 return self.reply(200, state.get("torrents", []))
             if self.command == "POST" and p == "/torrents/delete":
@@ -94,7 +104,7 @@ python3 "$T/fake.py" "$T" & SRV=$!
 for _ in $(seq 50); do [ -s "$T/port" ] && break; sleep 0.1; done
 PORT=$(cat "$T/port")
 printf '<Config>\n  <Port>%s</Port>\n  <UrlBase>/base</UrlBase>\n  <ApiKey>testkey</ApiKey>\n</Config>\n' "$PORT" > "$T/config.xml"
-echo sabkey > "$T/sab.apikey"; echo jfkey > "$T/jf.apikey"
+echo sabkey > "$T/sab.apikey"; echo jfkey > "$T/jf.apikey"; echo 'pw &=x' > "$T/qb.password"
 
 # run <fake state json> <env...>: runs the hook (arguments from the array A) against $T/wipe.tsv; deletes land in $T/qdel (qBittorrent), $T/sdel (SABnzbd), $T/adel (Radarr/Sonarr), $T/jdel (Jellyfin), exit code in $RC
 A=()
@@ -103,7 +113,7 @@ run() {
   : > "$T/requests"
   env -i PATH="$PATH" TW_CONFIG="$T/config.xml" TW_STATE="$T/wipe.tsv" TW_QBIT_URL="http://127.0.0.1:$PORT/qbit" \
     TW_SAB_URL="http://127.0.0.1:$PORT/sab" TW_SAB_KEY="${SABKEY-$T/sab.apikey}" TW_JF_URL="http://127.0.0.1:$PORT/jf" \
-    TW_JF_KEY="${JFKEY-$T/jf.apikey}" TW_JF_WAIT=0 "$@" bash "$HOOK" "${A[@]}" > "$T/out" 2>&1; RC=$?
+    TW_JF_KEY="${JFKEY-$T/jf.apikey}" TW_QBIT_PASS="${QBPASS-$T/qb.password}" TW_JF_WAIT=0 "$@" bash "$HOOK" "${A[@]}" > "$T/out" 2>&1; RC=$?
   grep '^POST /qbit/api/v2/torrents/delete' "$T/requests" | cut -d' ' -f4- > "$T/qdel"
   grep '"name": "delete"' "$T/requests" | sed 's/^GET \/sab\/api //; s/"apikey": "[^"]*", //' > "$T/sdel"
   grep '^DELETE /base/' "$T/requests" | cut -d' ' -f2- | sed 's/ $//' > "$T/adel"
@@ -221,6 +231,24 @@ assert_eq "Jellyfin not reachable: torrent still removed, state kept for the ret
 A=(wipe radarr)
 run '{}'
 assert_eq "wipe without an id: refused, nothing called" "|1" "$(cat "$T/requests")|$(nonzero)"
+
+echo "qBittorrent login (no whitelist)"
+A=("${WIPE[@]}")
+QB_AUTH='"qbit_pw": "pw &=x", "torrents": ['"$(tor "$H1" radarr N)"']'
+logins() { grep -c '^POST /qbit/api/v2/auth/login' "$T/requests"; }
+printf '10331\tqbit\t%s\n' "$H1" > "$T/wipe.tsv"
+run "{$QB_AUTH}"
+assert_eq "403: logs in once with the password file, torrent removed, exit 0" "1|hashes=$H1&deleteFiles=true|0" "$(logins)|$(cat "$T/qdel")|$RC"
+assert_eq "  password never in a URL" "0" "$(cut -d' ' -f1-3 "$T/requests" | grep -c 'pw')"
+printf '10331\tqbit\t%s\n' "$H1" > "$T/wipe.tsv"
+run "{$QB_AUTH, \"qbit_pw\": \"other\"}"
+assert_eq "wrong password: one login, nothing removed in qBittorrent, exit non-zero" "1||1" "$(logins)|$(cat "$T/qdel")|$(nonzero)"
+printf '10331\tqbit\t%s\n' "$H1" > "$T/wipe.tsv"
+QBPASS="$T/none" run "{$QB_AUTH}"
+assert_eq "no password file: no login, nothing removed in qBittorrent, exit non-zero" "0||1" "$(logins)|$(cat "$T/qdel")|$(nonzero)"
+printf '10331\tqbit\t%s\n' "$H1" > "$T/wipe.tsv"
+run "{\"torrents\": [$(tor "$H1" radarr N)]}"
+assert_eq "whitelisted (no 403): no login" "0|hashes=$H1&deleteFiles=true" "$(logins)|$(cat "$T/qdel")"
 
 echo "Seed from history (titles grabbed before the hook)"
 rm -f "$T/wipe.tsv"
