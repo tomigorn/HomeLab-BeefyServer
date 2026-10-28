@@ -184,15 +184,39 @@ def build_payload(member, user_id, abs_, state, now):
     return payload, {"progress": progress, "covers": {b: t for b, t in covers_at.items() if b in books}}
 
 
+# Root runs targets and apply inside the DynamicUser's state dir: never follow a link it planted there.
+def open_dir(path):
+    return os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+
+
 def write_json(path, data, mode=0o600):
     path = pathlib.Path(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    with os.fdopen(fd, "w") as f:
-        json.dump(data, f)
-    os.chmod(tmp, mode)
-    os.replace(tmp, path)
+    dfd = open_dir(path.parent)
+    try:
+        tmp = f".{path.name}.{os.urandom(8).hex()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=dfd)
+        try:
+            os.fchmod(fd, mode)
+            with os.fdopen(fd, "w") as f:
+                json.dump(data, f)
+            os.replace(tmp, path.name, src_dir_fd=dfd, dst_dir_fd=dfd)
+        except BaseException:
+            os.unlink(tmp, dir_fd=dfd)
+            raise
+    finally:
+        os.close(dfd)
+
+
+def read_json(path):
+    path = pathlib.Path(path)
+    dfd = open_dir(path.parent)
+    try:
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+    finally:
+        os.close(dfd)
+    with os.fdopen(fd) as f:
+        return json.load(f)
 
 
 def load_state(state_dir, member):
@@ -205,9 +229,13 @@ def load_state(state_dir, member):
 
 
 def mark_applied(state_dir, member):
-    dst = pathlib.Path(state_dir, "applied", f"{member}.json")
-    dst.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.replace(pathlib.Path(state_dir, "pending", f"{member}.json"), dst)
+    pathlib.Path(state_dir, "applied").mkdir(mode=0o700, exist_ok=True)
+    src, dst = open_dir(pathlib.Path(state_dir, "pending")), open_dir(pathlib.Path(state_dir, "applied"))
+    try:
+        os.replace(f"{member}.json", f"{member}.json", src_dir_fd=src, dst_dir_fd=dst)
+    finally:
+        os.close(src)
+        os.close(dst)
 
 
 def write_targets(state_dir):
@@ -258,7 +286,13 @@ def apply_all(state_dir, runner=run_floppy):
     ok = True
     for pending in sorted(pathlib.Path(state_dir, "pending").glob("*.json")):
         member = pending.stem
-        code, out = runner(json.dumps(json.loads(pending.read_text())["payload"]))
+        try:
+            payload = read_json(pending)["payload"]
+        except OSError as e:
+            ok = False
+            print(f"{member}: pending file refused ({e.strerror})")
+            continue
+        code, out = runner(json.dumps(payload))
         results = [line[7:] for line in out.splitlines() if line.startswith("RESULT ")]
         if code == 0 and results and results[-1].startswith("ok"):
             mark_applied(state_dir, member)
@@ -305,7 +339,7 @@ def selftest(runner=run_floppy):
 
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else ""
-    state_dir = os.environ.get("STATE_DIRECTORY", STATE_DIR)
+    state_dir = os.path.realpath(os.environ.get("STATE_DIRECTORY", STATE_DIR))
     if cmd == "targets":
         write_targets(state_dir)
         return 0
@@ -314,7 +348,10 @@ def main(argv):
         return 0
     if cmd == "apply":
         failed_path = pathlib.Path(state_dir, "fetch-failed.json")
-        failed = json.loads(failed_path.read_text()) if failed_path.exists() else []
+        try:
+            failed = read_json(failed_path)
+        except FileNotFoundError:
+            failed = []
         return 0 if apply_all(state_dir) and not failed else 1
     if cmd == "selftest":
         return 0 if selftest() else 1

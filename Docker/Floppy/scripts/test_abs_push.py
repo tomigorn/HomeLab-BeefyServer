@@ -240,6 +240,47 @@ class SpoolTest(unittest.TestCase):
             self.assertEqual(p.stat().st_mode & 0o777, 0o600)
 
 
+class SymlinkTest(unittest.TestCase):
+    def test_write_json_does_not_follow_a_planted_tmp_link(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as outside:
+            victim = pathlib.Path(outside, "victim")
+            victim.write_text("keep")
+            victim.chmod(0o600)
+            pathlib.Path(d, "pending").mkdir()
+            for name in ("alice.tmp", "alice.json.tmp"):
+                pathlib.Path(d, "pending", name).symlink_to(victim)
+            p = pathlib.Path(d, "pending", "alice.json")
+            ap.write_json(p, {"a": 1}, mode=0o644)
+            self.assertEqual((victim.read_text(), victim.stat().st_mode & 0o777), ("keep", 0o600))
+            self.assertFalse(p.is_symlink())
+            self.assertEqual((json.loads(p.read_text()), p.stat().st_mode & 0o777), ({"a": 1}, 0o644))
+
+    def test_write_json_refuses_a_linked_directory(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as outside:
+            pathlib.Path(d, "pending").symlink_to(outside)
+            with self.assertRaises(OSError):
+                ap.write_json(pathlib.Path(d, "pending", "alice.json"), {})
+            self.assertEqual(list(pathlib.Path(outside).iterdir()), [])
+
+    def test_mark_applied_refuses_a_linked_directory(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as outside:
+            ap.write_json(pathlib.Path(d, "pending", "alice.json"), {"payload": {}, "next_state": {}})
+            pathlib.Path(d, "applied").symlink_to(outside)
+            with self.assertRaises(OSError):
+                ap.mark_applied(d, "alice")
+            self.assertEqual(list(pathlib.Path(outside).iterdir()), [])
+
+    def test_apply_skips_a_linked_pending_file(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as outside:
+            secret = pathlib.Path(outside, "secret.json")
+            secret.write_text(json.dumps({"payload": {"user": "root-only"}}))
+            pathlib.Path(d, "pending").mkdir()
+            pathlib.Path(d, "pending", "alice.json").symlink_to(secret)
+            seen = []
+            ok = ap.apply_all(d, lambda stdin: (seen.append(stdin), (0, "RESULT ok\n"))[1])
+            self.assertEqual((ok, seen), (False, []))
+
+
 class FetchTest(unittest.TestCase):
     def run_fetch(self, fake, targets, prepare=None):
         with tempfile.TemporaryDirectory() as creds, tempfile.TemporaryDirectory() as d:
