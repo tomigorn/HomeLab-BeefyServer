@@ -158,6 +158,12 @@ test("manager: every request with its requester; seasons and automatic tags show
   assert.match(items[1].textContent, /Old & rare \(automatic\)/);
 });
 
+test("a picked profile shows as kept", async () => {
+  const w = page(STATE([R({ auto: ["profile-pinned"] })]), {}, [], "/movie/1480613");
+  await settle();
+  assert.match(panel(w).querySelector("[data-request]").textContent, /Quality kept \(your pick\)/);
+});
+
 test("German UI", async () => {
   const w = page(STATE(), {}, [], "/movie/1480613", titlePage("Angefragt"));
   await settle();

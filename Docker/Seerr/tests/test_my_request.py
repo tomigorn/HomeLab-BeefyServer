@@ -17,7 +17,7 @@ import my_request as mr  # noqa: E402
 
 ORIGIN = "https://requests.example.com"
 TAGS = [{"id": 13, "label": "audio-swiss-german"}, {"id": 14, "label": "audio-german"}, {"id": 21, "label": "audio-spanish"}, {"id": 20, "label": "subs-spanish"},
-        {"id": 1, "label": "lang-es"}, {"id": 63, "label": "old-rare"}, {"id": 64, "label": "download-now"}]
+        {"id": 1, "label": "lang-es"}, {"id": 63, "label": "old-rare"}, {"id": 64, "label": "download-now"}, {"id": 66, "label": "profile-pinned"}]
 PROFILES = [{"id": 7, "name": "4K HDR"}, {"id": 11, "name": "4K preferred · older versions allowed"}, {"id": 13, "name": "Swiss German (Mundart) only - any quality"}]
 ME, FRIEND, ADMIN = {"id": 7, "permissions": 8352}, {"id": 5, "permissions": 8352}, {"id": 1, "permissions": 2}
 
@@ -32,8 +32,8 @@ def title(tags=(1,), profile=7, added="2026-10-28T08:41:21Z", has_file=False):
 
 
 class World:
-    def __init__(self, me=ME, requests=None, t=None, kind="movie"):
-        self.me, self.kind = me, kind
+    def __init__(self, me=ME, requests=None, t=None, kind="movie", tags=None):
+        self.me, self.kind, self.tag_list = me, kind, tags if tags is not None else TAGS
         self.requests = requests if requests is not None else [req()]
         self.title = t if t is not None else title()
         self.writes, self.admin_calls = [], []
@@ -51,9 +51,9 @@ class World:
         def call(path, method="GET", body=None):
             if method != "GET":
                 self.writes.append((app, method, path, body))
-                return {}
+                return {"id": 99, "label": body["label"]} if path == "/tag" else {}
             if path == "/tag":
-                return TAGS
+                return self.tag_list
             if path == "/qualityprofile":
                 return PROFILES
             if path == "/rootfolder":
@@ -105,6 +105,10 @@ class Read(unittest.TestCase):
     def test_old_rare_is_shown_as_automatic_download_now_as_can_wait_off(self):
         r = get(World(t=title(tags=(63, 64))))[1]["requests"][0]
         self.assertEqual((r["auto"], r["canWait"]), (["old-rare"], False))
+
+    def test_pinned_profile_is_shown_as_automatic(self):
+        r = get(World(t=title(tags=(66,))))[1]["requests"][0]
+        self.assertEqual(r["auto"], ["profile-pinned"])
 
     def test_pending_request_reads_the_seerr_request(self):
         r = get(World(requests=[req(status=1, tags=[21, 64], profile=11)], t=title(tags=())))[1]["requests"][0]
@@ -173,6 +177,32 @@ class Change(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(w.writes, [])
         self.assertEqual(w.admin_calls, [("PUT", "/request/57", {"mediaType": "movie", "serverId": 0, "profileId": 13, "rootFolder": "/data/media/movies", "languageProfileId": None, "tags": [13, 64], "is4k": False})])
+
+    def test_pending_request_profile_pick_is_pinned(self):
+        w = World(requests=[req(status=1, tags=[21])], t=title(tags=()))
+        post(w, {"action": "update", "requestId": 57, "profileId": 11})
+        self.assertEqual(w.admin_calls[0][2]["tags"], [21, 66])
+
+    def test_pending_pick_of_the_swiss_german_profile_is_not_pinned(self):
+        w = World(requests=[req(status=1, tags=[66], profile=11)], t=title(tags=()))
+        post(w, {"action": "update", "requestId": 57, "profileId": 13})
+        self.assertEqual(w.admin_calls[0][2]["tags"], [])
+
+    def test_pending_tag_change_keeps_the_pin(self):
+        w = World(requests=[req(status=1, tags=[66], profile=11)], t=title(tags=()))
+        post(w, {"action": "update", "requestId": 57, "tags": ["audio-german"]})
+        self.assertEqual(w.admin_calls[0][2]["tags"], [14, 66])
+
+    def test_pending_pin_tag_is_created_when_missing(self):
+        w = World(requests=[req(status=1)], t=title(tags=()), tags=[t for t in TAGS if t["label"] != "profile-pinned"])
+        post(w, {"action": "update", "requestId": 57, "profileId": 11})
+        self.assertEqual(w.writes, [("radarr", "POST", "/tag", {"label": "profile-pinned"})])
+        self.assertEqual(w.admin_calls[0][2]["tags"], [99])
+
+    def test_approved_profile_change_leaves_the_pin_to_the_language_hook(self):
+        w = World(t=title(tags=()))
+        post(w, {"action": "update", "requestId": 57, "profileId": 11})
+        self.assertEqual(w.writes, [("radarr", "PUT", "/movie/editor", {"movieIds": [54], "qualityProfileId": 11})])
 
     def test_pending_series_keeps_its_seasons(self):
         w = World(requests=[req(status=1, seasons=[1, 2])], kind="tv")

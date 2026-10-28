@@ -8,7 +8,7 @@
     en: {
       mine: "My request", all: "Requests", requested: "Requested", by: "by", pending: "Pending approval", approved: "Approved",
       profile: "Quality", tags: "Audio & subtitles", add: "Add…", audio: "Audio", subs: "Subtitles", remove: "Remove",
-      canWait: "Can wait — download at night (cheaper power)", seasons: "Seasons", root: "Folder", auto: { "old-rare": "Old & rare (automatic)" },
+      canWait: "Can wait — download at night (cheaper power)", seasons: "Seasons", root: "Folder", auto: { "old-rare": "Old & rare (automatic)", "profile-pinned": "Quality kept (your pick)" },
       save: "Save", saving: "Saving …", saved: "✅ Saved — Radarr/Sonarr search again within 2 minutes", nochange: "Nothing changed",
       del: "Delete request", deleted: "🗑️ Request deleted", error: "❌ Failed — try again, or ask an admin",
       shared: "Others requested this title too: ask an admin to change it.",
@@ -20,7 +20,7 @@
     de: {
       mine: "Meine Anfrage", all: "Anfragen", requested: "Angefragt", by: "von", pending: "Wartet auf Freigabe", approved: "Freigegeben",
       profile: "Qualität", tags: "Ton & Untertitel", add: "Hinzufügen…", audio: "Ton", subs: "Untertitel", remove: "Entfernen",
-      canWait: "Kann warten — nachts herunterladen (günstigerer Strom)", seasons: "Staffeln", root: "Ordner", auto: { "old-rare": "Alt & selten (automatisch)" },
+      canWait: "Kann warten — nachts herunterladen (günstigerer Strom)", seasons: "Staffeln", root: "Ordner", auto: { "old-rare": "Alt & selten (automatisch)", "profile-pinned": "Qualität bleibt (deine Wahl)" },
       save: "Speichern", saving: "Speichert …", saved: "✅ Gespeichert — Radarr/Sonarr suchen innert 2 Minuten neu", nochange: "Nichts geändert",
       del: "Anfrage löschen", deleted: "🗑️ Anfrage gelöscht", error: "❌ Fehlgeschlagen — nochmals versuchen oder einen Admin fragen",
       shared: "Andere haben diesen Titel auch angefragt: für Änderungen einen Admin fragen.",

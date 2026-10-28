@@ -1,12 +1,15 @@
 """My request (README "My request"): the panel on Seerr's title page. Shows what a request set (profile, audio/subtitle tags, Can wait, seasons) and lets its requester (or a manager) change it or delete it.
-Approved requests change the Radarr/Sonarr title (Seerr edits only pending requests); pending ones change in Seerr, which hands them to Radarr/Sonarr on approval. Only audio-*/subs-* tags, only existing profiles."""
+Approved requests change the Radarr/Sonarr title (Seerr edits only pending requests); pending ones change in Seerr, which hands them to Radarr/Sonarr on approval. Only audio-*/subs-* tags, only existing profiles.
+A profile picked on a pending request gets the profile-pinned tag (kept on later tag changes); on an approved one Movie-Downloads' request-tags.sh pins it."""
 import datetime
 import json
 import re
 import urllib.parse
 
 ALLOWED = re.compile(r"^(audio|subs)-[a-z]+(?:-[a-z]+)*$")
-AUTO = ("old-rare",)
+PIN = "profile-pinned"
+SWISS = "Swiss German (Mundart) only - any quality"
+AUTO = ("old-rare", PIN)
 PENDING, APPROVED, DECLINED = 1, 2, 3
 ADDED_GRACE = 600
 
@@ -119,7 +122,12 @@ def update(c, r, want):
     if r.get("status") == PENDING or c.title is None:
         if c.deps.seerr_admin is None:
             raise c.dn.ApiError("no Seerr admin key")
-        ids = [c.ids[l] for l in sorted(new)] + [i for i in r.get("tags") or [] if c.tags.get(i) and not ALLOWED.match(c.tags[i]) and c.tags[i] != c.dn.TAG]
+        ids = [c.ids[l] for l in sorted(new)] + [i for i in r.get("tags") or [] if c.tags.get(i) and not ALLOWED.match(c.tags[i]) and c.tags[i] not in (c.dn.TAG, PIN)]
+        pinned = c.ids.get(PIN) in (r.get("tags") or [])
+        if pid != pid0:
+            pinned = next((p["name"] for p in c.profiles if p["id"] == pid), None) != SWISS
+        if pinned:
+            ids.append(c.ids[PIN] if PIN in c.ids else c.arr("/tag", "POST", {"label": PIN})["id"])
         if not can_wait and c.dn_id is not None:
             ids.append(c.dn_id)
         body = {"mediaType": c.kind, "serverId": r.get("serverId"), "profileId": pid, "rootFolder": r.get("rootFolder"), "languageProfileId": r.get("languageProfileId"), "tags": ids, "is4k": bool(r.get("is4k"))}
