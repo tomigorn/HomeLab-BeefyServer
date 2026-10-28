@@ -1,6 +1,17 @@
 # Seerr customizations (Docker/CUSTOMIZATIONS.md "Seerr"). Sourced by post-update-check.sh.
 SEERR_DIR=/srv/appdata/seerr
 seerr_api() { curl -s -m 8 "http://127.0.0.1:5055/api/v1$1"; }
+# Download now as a plain requester: "<own request title> <title only others requested>" → HTTP codes
+seerr_dn_requester() {
+  local k reqs uid q
+  k=$(cat "$1")
+  reqs=$(curl -s -m 8 -H "X-Api-Key: $k" "http://127.0.0.1:5055/api/v1/request?take=100&filter=all")
+  uid=$(jq -r '[.results[] | select((.requestedBy.permissions / 2 | floor) % 2 == 0 and (.requestedBy.permissions / 16 | floor) % 2 == 0 and .status != 3)][0].requestedBy.id' <<<"$reqs")
+  for q in "$(jq -r --argjson u "$uid" '[.results[] | select(.requestedBy.id == $u and .status != 3) | "type=\(.type)&tmdb=\(.media.tmdbId)"][0]' <<<"$reqs")" \
+           "$(jq -r --argjson u "$uid" '.results as $all | [$all[] | .media.tmdbId as $t | select([$all[] | select(.media.tmdbId == $t and .requestedBy.id == $u)] == []) | "type=\(.type)&tmdb=\($t)"][0]' <<<"$reqs")"; do
+    curl -s -m 20 -o /dev/null -w '%{http_code} ' -H "X-Api-Key: $k" -H "X-Api-User: $uid" "http://127.0.0.1:5055/_download-now/api?$q"
+  done
+}
 if want seerr; then
   check seerr.image-pin '@sha256:28744b1ced522beb' "$(docker inspect -f '{{.Config.Image}}' seerr 2>&1)"
   check seerr.oidc-build '^develop-2d1a2ed' "$(seerr_api /status | jq -r .version 2>&1)"
@@ -23,4 +34,6 @@ if want download-now seerr-proxy; then
   check seerr.download-now-health '^\{"ok": true\}$' "$(curl -s -m 5 http://127.0.0.1:5055/_download-now/health 2>&1)"
   check seerr.download-now-auth '^403$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5055/_download-now/api?type=movie&tmdb=603' 2>&1)"
   check seerr.download-now-backend '^(started|downloading|searching|available)$' "$(t=$(curl -s -m 8 -H "X-Api-Key: $(grep -oP '(?<=<ApiKey>)[^<]+' /srv/appdata/radarr/config.xml)" http://127.0.0.1:7878/api/v3/movie | jq -r '.[0].tmdbId' 2>&1); curl -s -m 20 -H "X-Api-Key: $(cat "$DIR/../../Seerr/secrets/api-key")" "http://127.0.0.1:5055/_download-now/api?type=movie&tmdb=$t" | jq -r .state 2>&1)"
+  check seerr.download-now-requester '^200 403 $' "$(seerr_dn_requester "$DIR/../../Seerr/secrets/api-key" 2>&1)"
+  check seerr.download-now-script '^media-actions closest\("main"\)$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/download-now.js | grep -o 'media-actions' | head -1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/menu-links.js | grep -o 'closest("main")' | head -1)"
 fi
