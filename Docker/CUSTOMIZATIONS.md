@@ -152,6 +152,7 @@ Only in `post-update-check.sh all` (no compose project).
 | DOCKER-USER: containers cannot reach the LAN | `_global/scripts/docker-user-guard.sh` | `sudo docker-user-guard.sh --persist` | `host.docker-user-lan`: sonarr → fastpi:22 blocked | docker restart with stale rules |
 | BEEFY-INPUT: containers cannot reach the host | docker-user-guard.sh | same | `host.beefy-input`: sonarr → bridge gateway :22 blocked | |
 | Allowed egress jellyfin subnet → sso | docker-user-guard.sh | same | `host.sso-egress`: jellyfin → sso discovery 200 | |
+| movie-downloads ingress: other bridges only logged (`MOVIE_INGRESS=log`, `MOVIE-INGRESS seen`, 2026-10-28), then own members + fastpi only (`=drop`, S-01) | docker-user-guard.sh | same | `host.movie-ingress`: → script=log live=log persisted=log (or all drop) | docker restart with stale rules |
 | Idle watcher running, metrics fresh | `Server/8-Idle-Watcher` | its install.sh | `host.idle-watcher`: → active fresh probe_error=0 | |
 | Maintenance window, auto-update, image cleanup timers | `Server/9-Night-Schedule`, `_global/systemd` | install scripts | `host.timers`: → enabled enabled enabled | |
 

@@ -77,6 +77,7 @@ Script: `_global/scripts/docker-user-guard.sh` (idempotent; `--persist` writes `
 | LAN → published container ports | allowlist: only `192.168.1.2` (fastpi: Traefik, Prometheus, Portainer, Cup). A newly published port is closed by default |
 | containers → LAN | dropped, except `jellyfin` net (Jellyfin, Seerr) and `dependency-track` net → `192.168.1.2:443` (sso via `extra_hosts`). Container → beefy's own published ports is unaffected (DNAT, bridge to bridge) |
 | `floppy` net `172.28.16.0/24` | internet only, tcp 80/443 (rest dropped + logged `FLOPPY-EGRESS drop`): 10/8, 172.16/12 (other Docker networks, also via published ports), 192.168/16, 100.64/10, 169.254/16 dropped (user-supplied integration URLs = SSRF) |
+| `movie-downloads` net `172.28.10.0/24` inbound | only its own members and fastpi (S-01). `MOVIE_INGRESS=log` (since 2026-10-28): other bridges are only logged `MOVIE-INGRESS seen`; `=drop`: logged `MOVIE-INGRESS drop` and dropped |
 | gluetun namespace (qBit, SAB, Prowlarr) | same DOCKER-USER drop, and `FIREWALL_OUTBOUND_SUBNETS` = bridge only; replies to fastpi still leave via eth0 |
 | IPv6 | chain `BEEFY-INPUT6` on `enp6s0`: only tcp/22 accepts new connections (docker-proxy listens on `[::]` for every published port) |
 | DNS | not needed: containers resolve through dockerd in the host namespace (`127.0.0.53`) |
