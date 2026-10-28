@@ -15,8 +15,6 @@
       MyList: "Nothing here yet — mark films or series with ♥ to see them here.",
       CollectionsSection: "No film collections yet.",
       Studio: "Nothing here yet.",
-      Starring: "Nothing here yet — watch a few titles to get actor picks.",
-      DirectedBy: "Nothing here yet — watch a few films to get director picks.",
       UpcomingShows: "No episodes airing in the next month.",
       UpcomingMovies: "No films releasing in the next months.",
       DiscoverStudios: "No studios yet — they show up once films are in the library.",
@@ -36,8 +34,6 @@
       MyList: "Noch nichts hier – markiere Filme oder Serien mit ♥, dann erscheinen sie hier.",
       CollectionsSection: "Noch keine Filmreihen.",
       Studio: "Noch nichts hier.",
-      Starring: "Noch nichts hier – schau ein paar Titel, dann gibt es Tipps nach Schauspielern.",
-      DirectedBy: "Noch nichts hier – schau ein paar Filme, dann gibt es Tipps nach Regie.",
       UpcomingShows: "Im nächsten Monat laufen keine neuen Folgen.",
       UpcomingMovies: "In den nächsten Monaten erscheinen keine Filme.",
       DiscoverStudios: "Noch keine Studios – sie erscheinen, sobald Filme in der Bibliothek sind.",
@@ -199,7 +195,7 @@
   var MOVIE_GENRES = "DiscoverMovieGenres";
   var SERIES_GENRES = "DiscoverSeriesGenres";
   var DISCOVER_ROWS = [STUDIOS, NETWORKS, MOVIE_GENRES, SERIES_GENRES];
-  var DISCOVER_AFTER = "DirectedBy";
+  var DISCOVER_AFTER = "Studio";
   var DISCOVER_LIMIT = 20;
   var DISCOVER_NAMES = {
     en: { DiscoverStudios: "Studios", DiscoverNetworks: "Networks", DiscoverMovieGenres: "Movie Genres", DiscoverSeriesGenres: "Series Genres" },

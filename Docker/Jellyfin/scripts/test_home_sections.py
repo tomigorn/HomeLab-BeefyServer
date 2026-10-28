@@ -66,9 +66,15 @@ class Apply(unittest.TestCase):
         self.assertFalse(sections["MyMedia"]["Enabled"])
         self.assertFalse(sections["MyMedia"]["AllowUserOverride"])
 
+    def test_starring_and_directed_by_are_off_and_locked(self):
+        sections = by_id(hs.apply(fresh(), TYPES, LIBS, ARR))
+        for sid in ("Starring", "DirectedBy"):
+            self.assertFalse(sections[sid]["Enabled"])
+            self.assertFalse(sections[sid]["AllowUserOverride"])
+
     def test_owner_order(self):
         self.assertEqual(hs.ORDER, ["ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows", "BecauseYouWatched",
-                                    "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection", "Studio", "Starring", "DirectedBy",
+                                    "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection", "Studio",
                                     "UpcomingShows", "UpcomingMovies"])
 
     def test_settings_are_stored_in_display_order(self):

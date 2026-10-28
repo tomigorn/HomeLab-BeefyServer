@@ -97,7 +97,7 @@ test("german hints", () => {
 });
 
 test("every hint has english and german, others generic", () => {
-  for (const id of ["ContinueWatching", "NextUp", "BecauseYouWatched", "HiddenGems", "FinishTheseCollections", "RecentlyWatchedMovies", "RecentlyWatchedSeries", "UpcomingShows", "UpcomingMovies", "MyList", "CollectionsSection", "Studio", "Starring", "DirectedBy"]) {
+  for (const id of ["ContinueWatching", "NextUp", "BecauseYouWatched", "HiddenGems", "FinishTheseCollections", "RecentlyWatchedMovies", "RecentlyWatchedSeries", "UpcomingShows", "UpcomingMovies", "MyList", "CollectionsSection", "Studio"]) {
     assert.ok(es.hintFor(id, "en"), id);
     assert.ok(es.hintFor(id, "de"), id);
     assert.notEqual(es.hintFor(id, "en"), es.hintFor(id, "de"), id);
@@ -524,10 +524,10 @@ const film = (id, studios, genres, rating, backdrop = true) => ({ Id: id, Name: 
 const series = (id, studios, genres, rating) => ({ ...film(id, studios, genres, rating), Name: "Show " + id, Type: "Series" });
 const VIEWS = [{ Id: "lib-m", CollectionType: "movies" }, { Id: "lib-s", CollectionType: "tvshows" }, { Id: "lib-c", CollectionType: "boxsets" }];
 
-test("discover: the four rows sit after Directed by, else at the end", () => {
-  assert.deepEqual(es.withDiscover(["Starring", "DirectedBy", "UpcomingShows"]), ["Starring", "DirectedBy", STU, NET, MGEN, SGEN, "UpcomingShows"]);
+test("discover: the four rows sit after By Studio, else at the end", () => {
+  assert.deepEqual(es.withDiscover(["CollectionsSection", "Studio", "UpcomingShows"]), ["CollectionsSection", "Studio", STU, NET, MGEN, SGEN, "UpcomingShows"]);
   assert.deepEqual(es.withDiscover(["NextUp"]), ["NextUp", STU, NET, MGEN, SGEN]);
-  assert.deepEqual(es.withDiscover(["DirectedBy", STU, NET, MGEN, SGEN]), ["DirectedBy", STU, NET, MGEN, SGEN]);
+  assert.deepEqual(es.withDiscover(["Studio", STU, NET, MGEN, SGEN]), ["Studio", STU, NET, MGEN, SGEN]);
 });
 
 test("discover: german and english names and hints", () => {
@@ -637,7 +637,7 @@ test("discover: no networks list = empty Networks row, two movie libraries = no 
 });
 
 test("discover: studio cards show the logo on a dark card, else the name, and the title count; they open their own list, not Jellyfin's studio page", () => {
-  const c = home(section("DirectedBy", 15, 1));
+  const c = home(section("Studio", 15, 1));
   const cards = [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: "lib-m", logo: "L1", items: ["m1", "m2"] }, { Id: "st2", Name: "<b>Pixar</b>", Type: "Studio", ServerId: "s1", ParentId: null, logo: null, items: ["m3"] }];
   es.syncDiscover(c, STU, cards, "Studios", fakeApi);
   const sec = c.querySelector(".verticalSection.DiscoverStudios[data-hss-client]");

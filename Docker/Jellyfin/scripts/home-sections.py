@@ -14,7 +14,7 @@ PLUGIN_ID = "b8298e012697407ab44daa8dc795e850"
 ORDER = [
     "ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows",
     "BecauseYouWatched", "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection",
-    "Studio", "Starring", "DirectedBy", "UpcomingShows", "UpcomingMovies",
+    "Studio", "UpcomingShows", "UpcomingMovies",
 ]
 LIMITS = {"BecauseYouWatched": (1, 3)}
 # Pagination makes the web client send a fresh page hash per home load; without it the plugin reuses one section list per user for as long as it is opened within the hour.
