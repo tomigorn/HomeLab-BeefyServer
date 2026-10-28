@@ -23,11 +23,16 @@
 #   tier-move demote  media/movies/Dune --apply
 #   tier-move promote media/movies/Dune --apply
 #
+# HOT may list several hot branches (space-separated): demote drains the title from
+# all of them, promote lands on the first one with room.
+#
 # PATH is relative to the pool root. Needs root: the branch roots are root-owned.
 set -uo pipefail
 
 POOL=${POOL:-/srv/video}
-HOT=${HOT:-/srv/.disks/ssd-hot}
+# Space-separated hot branches, in mergerfs create order; promote lands on the first with room.
+HOT=${HOT:-"/srv/.disks/ssd-hot /srv/.disks/ssd-hot2"}
+HOT_MINFREE_GIB=${HOT_MINFREE_GIB:-1479}
 COLD=${COLD:-/srv/.disks/hdd-cold}
 WINDOW_START=${WINDOW_START:-4}      # the decided mover window, 04:00-06:00
 WINDOW_END=${WINDOW_END:-6}
@@ -60,7 +65,7 @@ while [ $# -gt 0 ]; do
         --all)          ALL_FILES=1; shift ;;
         --any-time)     QUIET_WINDOW=1; shift ;;
         --skip-open-check) SKIP_OPEN=1; shift ;;
-        -h|--help)      sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help)      sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*)             die "unknown option '$1' (try --help)" ;;
         *)              [ -z "$REL" ] || die "unexpected extra argument '$1'"
                         REL=$1; shift ;;
@@ -75,18 +80,22 @@ case "$REL" in
     ""|.|..|*/../*|../*|*/..) die "refusing suspicious path '$REL'" ;;
 esac
 
-if [ "$ACTION" = demote ]; then SRCB=$HOT; DSTB=$COLD; else SRCB=$COLD; DSTB=$HOT; fi
-SRC="$SRCB/$REL"; DST="$DSTB/$REL"
+read -ra HOTS <<< "$HOT"
+SRCS=()
+if [ "$ACTION" = demote ]; then
+    for b in "${HOTS[@]}"; do [ -e "$b/$REL" ] && SRCS+=("$b"); done
+    DSTB=$COLD
+else
+    [ -e "$COLD/$REL" ] && SRCS=("$COLD")
+    DSTB=""
+fi
 
-[ -e "$SRC" ] || die "$REL is not on the $( [ "$ACTION" = demote ] && echo hot || echo cold ) branch ($SRC)"
+[ "${#SRCS[@]}" -gt 0 ] || die "$REL is not on the $( [ "$ACTION" = demote ] && echo hot || echo cold ) branch"
 
-# Writability, not uid: that IS the real requirement, and checking it directly
-# means the script is testable against scratch branches without root.
-[ -w "$DSTB" ] || die "cannot write to $DSTB - the branch roots are root-owned, so use sudo"
+branch_of() { local b; for b in "${SRCS[@]}"; do case $1 in "$b"/*) printf %s "$b"; return ;; esac; done; }
 
 echo "tier-move $ACTION  $REL"
-echo "  from : $SRC"
-echo "  to   : $DST"
+for b in "${SRCS[@]}"; do echo "  from : $b/$REL"; done
 [ "$APPLY" -eq 1 ] && echo "  mode : APPLY (will delete the source after verifying)" \
                    || echo "  mode : DRY RUN (nothing will be changed; pass --apply to act)"
 
@@ -102,11 +111,11 @@ fi
 # ----------------------------------------------------------- select files -----
 # -x keeps the walk on this one branch's filesystem; it can never wander across.
 if [ "$ALL_FILES" -eq 1 ]; then
-    mapfile -d '' FILES < <(find "$SRC" -xdev -type f -print0 2>/dev/null)
+    mapfile -d '' FILES < <(for b in "${SRCS[@]}"; do find "$b/$REL" -xdev -type f -print0 2>/dev/null; done)
     echo; echo "  selecting ALL regular files (--all)"
 else
-    mapfile -d '' FILES < <(find "$SRC" -xdev -type f -regextype posix-extended \
-                                 -iregex ".*\.($MEDIA_EXT)$" -print0 2>/dev/null)
+    mapfile -d '' FILES < <(for b in "${SRCS[@]}"; do find "$b/$REL" -xdev -type f -regextype posix-extended \
+                                 -iregex ".*\.($MEDIA_EXT)$" -print0 2>/dev/null; done)
     echo; echo "  selecting media files only; sidecars stay on the SSD (storage doc §5)"
 fi
 
@@ -118,6 +127,21 @@ for f in "${FILES[@]}"; do
 done
 printf '  %d file(s), %s\n' "${#FILES[@]}" \
     "$(awk -v b="$total" 'BEGIN{printf "%.2f GiB", b/1073741824}')"
+
+# Writability, not uid: that IS the real requirement, and checking it directly
+# means the script is testable against scratch branches without root.
+if [ "$ACTION" = demote ]; then
+    [ -w "$DSTB" ] || die "cannot write to $DSTB - the branch roots are root-owned, so use sudo"
+else
+    need_kib=$(( (total + 1023) / 1024 + HOT_MINFREE_GIB * 1048576 ))
+    for b in "${HOTS[@]}"; do
+        [ -w "$b" ] || continue
+        avail_kib=$(df -Pk "$b" | awk 'NR==2{print $4}')
+        if [ "${avail_kib:-0}" -ge "$need_kib" ]; then DSTB=$b; break; fi
+    done
+    [ -n "$DSTB" ] || die "no hot branch is writable with room for this plus ${HOT_MINFREE_GIB}G free (branches: $HOT) - the branch roots are root-owned, so use sudo"
+fi
+echo "  to   : $DSTB/$REL"
 
 # ---------------------------------------------------------------- guards ------
 echo
@@ -175,7 +199,7 @@ if [ "$APPLY" -eq 0 ]; then
     echo
     echo "  would copy, verify, then delete:"
     for f in "${FILES[@]}"; do
-        printf '    %s\n' "${f#"$SRCB"/}"
+        sb=$(branch_of "$f"); printf '    %s\n' "${f#"$sb"/}"
     done
     echo
     echo "  dry run complete - nothing changed. Re-run with --apply to do it."
@@ -193,6 +217,7 @@ echo
 echo "  copying:"
 moved=0
 for f in "${FILES[@]}"; do
+    SRCB=$(branch_of "$f")
     rel=${f#"$SRCB"/}
     # copy into .tier-staging, verify read back from disk, check the source is unchanged, rename into place, then delete the source
     "$TIER_HELPER" move "$SRCB" "$DSTB" "$rel" ${TIER_BWLIMIT:+--bwlimit "$TIER_BWLIMIT"} | sed 's/^/    /'
@@ -204,7 +229,7 @@ rm -rf -- "$DSTB/.tier-staging"
 
 # Prune directories that are now empty on the source branch. Directories holding
 # sidecars are left alone on purpose - that skeleton is what keeps browsing hot.
-find "$SRC" -xdev -depth -type d -empty -delete 2>/dev/null || true
+for b in "${SRCS[@]}"; do find "$b/$REL" -xdev -depth -type d -empty -delete 2>/dev/null || true; done
 
 echo
 echo "  moved $moved file(s)."

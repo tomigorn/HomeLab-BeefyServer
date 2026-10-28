@@ -21,7 +21,7 @@ check(){ if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (expected '$2', got '$1'
 
 setup() {
     TMP=$(mktemp -d)
-    export POOL="$TMP/pool" HOT="$TMP/hot" COLD="$TMP/cold" TIER_LOCK="$TMP/media.lock" TIER_HELPER="$HERE/tier_helper.py"
+    export POOL="$TMP/pool" HOT="$TMP/hot" COLD="$TMP/cold" TIER_LOCK="$TMP/media.lock" TIER_HELPER="$HERE/tier_helper.py" HOT_MINFREE_GIB=0
     mkdir -p "$POOL" "$HOT/media/movies/Dune" "$COLD"
     # a movie plus the sidecars that must stay hot
     head -c 300000 /dev/urandom > "$HOT/media/movies/Dune/Dune.mkv"
@@ -164,6 +164,45 @@ case "$out" in *"media lock"*) ok "says why" ;; *) bad "no explanation given" ;;
 [ -f "$HOT/media/movies/Dune/Dune.mkv" ] && ok "source untouched" || bad "moved despite the lock"
 out=$(run demote media/movies/Dune --apply); rc=$?
 check "$rc" "0" "moves once the lock is free"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "12. two hot branches: demote drains a title from the second one"
+setup
+HOT2="$TMP/hot2"; mkdir -p "$HOT2/media/movies/Tenet"
+head -c 200000 /dev/urandom > "$HOT2/media/movies/Tenet/Tenet.mkv"
+head -c 1000 /dev/urandom > "$HOT2/media/movies/Tenet/Tenet.nfo"
+sum2=$(md5sum < "$HOT2/media/movies/Tenet/Tenet.mkv")
+out=$(HOT="$HOT $HOT2" run demote media/movies/Tenet --apply); rc=$?
+check "$rc" "0" "demote of a title on hot2 exits 0"
+check "$(md5sum < "$COLD/media/movies/Tenet/Tenet.mkv" 2>/dev/null)" "$sum2" "movie from hot2 reached the cold branch intact"
+[ ! -e "$HOT2/media/movies/Tenet/Tenet.mkv" ] && ok "movie removed from hot2" || bad "movie still on hot2"
+[ -f "$HOT2/media/movies/Tenet/Tenet.nfo" ] && ok "sidecar stayed on hot2" || bad "sidecar moved off hot2"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "13. two hot branches: a title split over both is drained from both"
+setup
+HOT2="$TMP/hot2"; mkdir -p "$HOT2/media/movies/Dune"
+head -c 150000 /dev/urandom > "$HOT2/media/movies/Dune/Dune.extra.mkv"
+out=$(HOT="$HOT $HOT2" run demote media/movies/Dune --apply); rc=$?
+check "$rc" "0" "exits 0"
+[ -f "$COLD/media/movies/Dune/Dune.mkv" ] && [ -f "$COLD/media/movies/Dune/Dune.extra.mkv" ] && ok "files from both hot branches are cold" || bad "a branch was missed"
+[ ! -e "$HOT/media/movies/Dune/Dune.mkv" ] && [ ! -e "$HOT2/media/movies/Dune/Dune.extra.mkv" ] && ok "both hot branches drained" || bad "something left hot"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "14. two hot branches: promote lands on the first, and refuses when none has room"
+setup
+HOT2="$TMP/hot2"; mkdir -p "$HOT2"
+HOT="$HOT $HOT2" run demote media/movies/Dune --apply >/dev/null
+out=$(HOT="$HOT $HOT2" run promote media/movies/Dune --apply); rc=$?
+check "$rc" "0" "promote exits 0"
+[ -f "$HOT/media/movies/Dune/Dune.mkv" ] && [ ! -e "$HOT2/media/movies/Dune/Dune.mkv" ] && ok "landed on the first hot branch" || bad "wrong hot branch"
+HOT="$HOT $HOT2" run demote media/movies/Dune --apply >/dev/null
+out=$(HOT="$HOT $HOT2" HOT_MINFREE_GIB=999999999 run promote media/movies/Dune --apply); rc=$?
+check "$rc" "1" "refuses when no hot branch has room"
+[ -f "$COLD/media/movies/Dune/Dune.mkv" ] && ok "cold copy untouched" || bad "cold copy lost"
 teardown
 
 echo

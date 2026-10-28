@@ -72,6 +72,14 @@ class TestTierDetection(Base):
         self.assertEqual(self.m.tier_of("media/movies/ColdFilm"), "cold")
         self.assertIsNone(self.m.tier_of("media/movies/Nonexistent"))
 
+    def test_second_hot_branch_counts_as_hot(self):
+        hot2 = os.path.join(self.tmp, "hot2")
+        os.makedirs(os.path.join(hot2, "media/movies/Hot2Film"))
+        m = load(self.hot + " " + hot2, self.cold)
+        self.assertEqual(m.tier_of("media/movies/Hot2Film"), "hot")
+        self.assertEqual(m.tier_of("media/movies/HotFilm"), "hot")
+        self.assertIsNone(m.tier_of("media/movies/Nonexistent"))
+
     def test_both_branches(self):
         os.makedirs(os.path.join(self.hot, "media/movies/ColdFilm"))
         self.assertEqual(self.m.tier_of("media/movies/ColdFilm"), "both")

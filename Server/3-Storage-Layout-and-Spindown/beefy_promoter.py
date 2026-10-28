@@ -40,7 +40,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 VERSION = "1.0.0"
 
 POOL = os.environ.get("POOL", "/srv/video")
-HOT = os.environ.get("HOT", "/srv/.disks/ssd-hot")
+HOT = os.environ.get("HOT", "/srv/.disks/ssd-hot /srv/.disks/ssd-hot2")  # space-separated hot branches
 COLD = os.environ.get("COLD", "/srv/.disks/hdd-cold")
 TIER_MOVE = os.environ.get("TIER_MOVE", "/usr/local/sbin/tier-move")
 MEDIA_SUBDIR = os.environ.get("MEDIA_SUBDIR", "media")
@@ -92,7 +92,7 @@ def safe_relpath(raw):
 
 def tier_of(rel):
     """'hot', 'cold', 'both' or None - which branch actually holds this path."""
-    on_hot = os.path.exists(os.path.join(HOT, rel))
+    on_hot = any(os.path.exists(os.path.join(h, rel)) for h in HOT.split())
     on_cold = os.path.exists(os.path.join(COLD, rel))
     if on_hot and on_cold:
         return "both"

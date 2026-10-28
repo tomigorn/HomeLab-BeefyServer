@@ -19,12 +19,13 @@
 set -uo pipefail
 
 POOL=${POOL:-/srv/video}
-HOT=${HOT:-/srv/.disks/ssd-hot}
+# Space-separated hot branches, in mergerfs create order.
+HOT=${HOT:-"/srv/.disks/ssd-hot /srv/.disks/ssd-hot2"}
 COLD=${COLD:-/srv/.disks/hdd-cold}
 SPINLOG=${SPINLOG:-/var/log/hdd-spinstate.log}
-# Must match `minfreespace` in the fstab mergerfs line. Below this, mergerfs
+# Must match the per-branch minfreespace of the hot branches in the fstab mergerfs line (=RW,1479G). Below this, mergerfs
 # moveonenospc=true starts writing NEW files straight onto the cold HDD.
-MINFREE_GIB=${MINFREE_GIB:-50}
+MINFREE_GIB=${MINFREE_GIB:-1479}
 
 TOP=0; SHOW_COLD=0; LOCATE=""
 
@@ -40,7 +41,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-for d in "$POOL" "$HOT" "$COLD"; do
+read -ra HOTS <<< "$HOT"
+HOT_PAIRS=(); for h in "${HOTS[@]}"; do HOT_PAIRS+=("$(basename "$h"):$h"); done
+for d in "$POOL" "${HOTS[@]}" "$COLD"; do
     [ -d "$d" ] || die "$d does not exist - is the pool mounted?"
 done
 
@@ -50,8 +53,8 @@ gib() { awk -v b="$1" 'BEGIN{printf "%.1f", b/1048576}'; }   # KiB blocks -> GiB
 # ---------------------------------------------------------------- capacity ----
 echo "POOL $POOL"
 hr
-printf '%-10s %8s %8s %8s %6s\n' TIER SIZE USED AVAIL USE%
-for pair in "hot:$HOT" "cold:$COLD" "union:$POOL"; do
+printf '%-10s %8s %8s %8s %6s\n' BRANCH SIZE USED AVAIL USE%
+for pair in "${HOT_PAIRS[@]}" "cold:$COLD" "union:$POOL"; do
     name=${pair%%:*}; path=${pair#*:}
     # -P for POSIX single-line output; -k for consistent KiB blocks
     read -r _ size used avail pct _ < <(df -Pk "$path" | tail -1)
@@ -60,7 +63,12 @@ for pair in "hot:$HOT" "cold:$COLD" "union:$POOL"; do
 done
 
 # ------------------------------------------------------------- spill risk ----
-read -r _ _ _ hot_avail _ _ < <(df -Pk "$HOT" | tail -1)
+# a new file spills to the cold HDD only when every hot branch is below minfreespace, so the best branch counts
+hot_avail=0
+for h in "${HOTS[@]}"; do
+    a=$(df -Pk "$h" | awk 'NR==2{print $4}')
+    [ "${a:-0}" -gt "$hot_avail" ] && hot_avail=$a
+done
 hot_avail_gib=$(gib "$hot_avail")
 headroom=$(awk -v a="$hot_avail_gib" -v m="$MINFREE_GIB" 'BEGIN{printf "%.1f", a-m}')
 hr
@@ -93,7 +101,7 @@ if [ -n "$LOCATE" ]; then
     echo "LOCATE $rel"
     echo "  (a lookup on the cold branch can spin the HDD up)"
     found=0
-    for pair in "hot:$HOT" "cold:$COLD"; do
+    for pair in "${HOT_PAIRS[@]}" "cold:$COLD"; do
         name=${pair%%:*}; path=${pair#*:}
         if [ -e "$path/$rel" ]; then
             found=1
@@ -110,15 +118,15 @@ if [ -n "$LOCATE" ]; then
             printf '  %-6s -\n' "$name"
         fi
     done
-    [ "$found" -eq 1 ] || echo "  NOT FOUND on either branch"
+    [ "$found" -eq 1 ] || echo "  NOT FOUND on any branch"
 fi
 
 # ----------------------------------------------------------------- top -------
 if [ "$TOP" -gt 0 ]; then
     hr
-    echo "LARGEST ON HOT SSD (top $TOP)"
+    echo "LARGEST ON THE HOT SSDS (top $TOP)"
     # -x stays on this one filesystem, so it cannot wander into the other branch
-    du -xh --max-depth=3 "$HOT" 2>/dev/null \
+    for h in "${HOTS[@]}"; do du -xh --max-depth=3 "$h" 2>/dev/null; done \
         | grep -v '/lost+found$' | sort -rh | head -n "$TOP" | sed 's/^/  /'
 fi
 
