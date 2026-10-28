@@ -19,7 +19,7 @@ JELLYFIN_NET=172.28.11.0/24   # jellyfin, seerr (the only containers that reach 
 DT_NET=172.28.14.0/24         # dependency-track (apiserver: OIDC JWKS from sso)
 FLOPPY_NET=172.28.16.0/24     # floppy (pinned in Floppy compose; its redis net is internal)
 MOVIE_NET=172.28.10.0/24      # movie-downloads: qBit/SAB/Prowlarr (gluetun), Radarr, Sonarr
-MOVIE_INGRESS=log             # log | drop
+MOVIE_INGRESS=drop            # log | drop
 
 iptables -N DOCKER-USER 2>/dev/null || true
 iptables -C FORWARD -j DOCKER-USER 2>/dev/null || iptables -I FORWARD -j DOCKER-USER
@@ -31,6 +31,9 @@ iptables -A DOCKER-USER -s "$JELLYFIN_NET" -d "$FLOPPY_NET" -p tcp --dport 8000 
 iptables -A DOCKER-USER ! -i "$IFACE" ! -s "$FLOPPY_NET" -d "$FLOPPY_NET" -m limit --limit 6/min -j LOG --log-prefix "FLOPPY-INGRESS drop " --log-level 6
 iptables -A DOCKER-USER ! -i "$IFACE" ! -s "$FLOPPY_NET" -d "$FLOPPY_NET" -j DROP
 iptables -A DOCKER-USER -s "$FLOPPY_NET" -d "$FLOPPY_NET" -j RETURN
+# Jellyfin (Home Screen Sections Upcoming rows) and Seerr reach Radarr/Sonarr via 192.168.1.102 (DNAT), seen in the 2026-10-28 log review
+iptables -A DOCKER-USER -s "$JELLYFIN_NET" -d 172.28.10.201 -p tcp --dport 7878 -j RETURN
+iptables -A DOCKER-USER -s "$JELLYFIN_NET" -d 172.28.10.202 -p tcp --dport 8989 -j RETURN
 if [[ $MOVIE_INGRESS == drop ]]; then
   iptables -A DOCKER-USER ! -i "$IFACE" ! -s "$MOVIE_NET" -d "$MOVIE_NET" -m limit --limit 6/min -j LOG --log-prefix "MOVIE-INGRESS drop " --log-level 6
   iptables -A DOCKER-USER ! -i "$IFACE" ! -s "$MOVIE_NET" -d "$MOVIE_NET" -j DROP
