@@ -65,9 +65,18 @@ class Pure(unittest.TestCase):
         movies = [movie("1", ["Warner Bros. Pictures", "Heyday Films", "1492 Pictures"]), movie("2", ["Warner Bros. Entertainment"]), movie("3", ["Pixar", "Walt Disney Pictures"])]
         self.assertEqual(sl.card_groups(sl.MAJOR_STUDIOS, movies, cache, "companies"), [
             {"name": "Warner Bros.", "ids": ["id-Warner Bros. Entertainment", "id-Warner Bros. Pictures"]},
-            {"name": "Walt Disney", "ids": ["id-Walt Disney Pictures"]},
             {"name": "Pixar", "ids": ["id-Pixar"]},
+            {"name": "Walt Disney", "ids": ["id-Walt Disney Pictures"]},
         ])
+
+    def test_disney_brands_win_over_walt_disney(self):
+        cache = {
+            "movie:1": {"companies": [{"id": 2, "name": "Walt Disney Pictures", "logo": None}, {"id": 420, "name": "Marvel Studios", "logo": None}], "networks": []},
+            "movie:2": {"companies": [{"id": 2, "name": "Walt Disney Pictures", "logo": None}, {"id": 1, "name": "Lucasfilm Ltd.", "logo": None}], "networks": []},
+        }
+        movies = [movie("1", ["Walt Disney Pictures", "Marvel Studios"]), movie("2", ["Walt Disney Pictures", "Lucasfilm Ltd."])]
+        names = [g["name"] for g in sl.card_groups(sl.MAJOR_STUDIOS, movies, cache, "companies")]
+        self.assertEqual(names, ["Marvel Studios", "Lucasfilm", "Walt Disney"])
 
     def test_a_studio_without_a_checked_id_matches_by_its_alias_name(self):
         cache = {"movie:1": {"companies": [{"id": 999999, "name": "Apple Original Films", "logo": None}], "networks": []}}
@@ -86,7 +95,8 @@ class Pure(unittest.TestCase):
         for n in ["Warner Bros.", "Walt Disney", "Universal", "Paramount", "Sony Pictures", "20th Century", "Netflix", "Amazon MGM", "Apple", "Lionsgate", "Marvel Studios", "Lucasfilm", "Pixar", "DreamWorks", "Legendary", "New Line Cinema", "Focus Features", "Searchlight", "A24", "Neon", "Studio Ghibli", "Toho"]:
             self.assertIn(n, studios)
         self.assertLess(studios.index("Warner Bros."), studios.index("New Line Cinema"))
-        self.assertLess(studios.index("Walt Disney"), studios.index("Pixar"))
+        for n in ["Pixar", "Marvel Studios", "Lucasfilm"]:
+            self.assertLess(studios.index(n), studios.index("Walt Disney"))
         networks = [g[0] for g in sl.NETWORKS]
         for n in ["Netflix", "Prime Video", "Disney+", "Apple TV+", "HBO", "HBO Max", "Hulu", "Paramount+", "Peacock", "Crunchyroll", "AMC", "FX", "BBC One", "Channel 4", "Sky Atlantic", "ZDF", "Das Erste", "ProSieben", "RTL", "SRF 1", "ARTE"]:
             self.assertIn(n, networks)

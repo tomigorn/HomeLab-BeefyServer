@@ -21,10 +21,13 @@ SEERR_KEY = HERE.parent.parent / "Seerr" / "secrets" / "api-key"
 CACHE_FILE = pathlib.Path.home() / ".cache" / "jellyfin-studio-logos.json"
 TMDB_LOGO = "https://image.tmdb.org/t/p/w500_filter(duotone,ffffff,bababa)"
 # The home rows Studios / Networks show only these cards (owner 2026-10-28: major studios, well-known networks). One card = one entry, aliases grouped.
-# Order = precedence, bigger first: a title with several of them counts only for the first (Harry Potter: Warner Bros., not 1492 Pictures; a Pixar film made with Walt Disney Pictures: Walt Disney).
+# Order = precedence, bigger first: a title with several of them counts only for the first (Harry Potter: Warner Bros., not 1492 Pictures; a Pixar film made with Walt Disney Pictures: Pixar; Marvel Studios and Lucasfilm likewise come before Walt Disney).
 # Each entry: (card name, {TMDB id checked through Seerr 2026-10-28: its TMDB name}, exact names of aliases without a checked id). The TMDB name only counts for a title whose lookup failed (e.g. the Harry Potter Collection item, TMDB collection 1241). An id from themoviedb.org/search/company (or /network), then rerun this script.
 MAJOR_STUDIOS = [
     ("Warner Bros.", {174: "Warner Bros. Pictures", 17: "Warner Bros. Entertainment", 2785: "Warner Bros. Animation"}, []),
+    ("Pixar", {3: "Pixar"}, []),
+    ("Marvel Studios", {420: "Marvel Studios"}, []),
+    ("Lucasfilm", {1: "Lucasfilm Ltd."}, []),
     ("Walt Disney", {2: "Walt Disney Pictures", 6125: "Walt Disney Animation Studios", 3166: "Walt Disney Productions"}, []),
     ("Universal", {33: "Universal Pictures"}, []),
     ("Paramount", {4: "Paramount Pictures", 24955: "Paramount Animation"}, []),
@@ -34,9 +37,6 @@ MAJOR_STUDIOS = [
     ("Amazon MGM", {210099: "Amazon MGM Studios", 20580: "Amazon Studios", 21: "Metro-Goldwyn-Mayer", 60: "United Artists"}, []),
     ("Apple", {194232: "Apple Studios"}, ["Apple Original Films"]),
     ("Lionsgate", {1632: "Lionsgate", 491: "Summit Entertainment"}, []),
-    ("Marvel Studios", {420: "Marvel Studios"}, []),
-    ("Lucasfilm", {1: "Lucasfilm Ltd."}, []),
-    ("Pixar", {3: "Pixar"}, []),
     ("DreamWorks", {521: "DreamWorks Animation", 7: "DreamWorks Pictures"}, []),
     ("New Line Cinema", {12: "New Line Cinema"}, []),
     ("Legendary", {923: "Legendary Pictures"}, []),
