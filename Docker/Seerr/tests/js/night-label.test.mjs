@@ -242,7 +242,7 @@ const rsPage = (body, path, rs = RS, waiting = fresh([]), calls) => night(body, 
 // StatusBadge without a download: "Requested" (Processing status), Pending as plain text
 const plainBadge = (key, text = "Requested") => `<a href="/${key}?manage=1" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap transition cursor-pointer !no-underline bg-indigo-500/80 border border-indigo-500 !text-indigo-100 hover:bg-indigo-500 false overflow-hidden"><div class="relative z-20 flex items-center false"><span>${text}</span></div></a>`;
 const pendingBadge = (key, text = "Pending") => `<a href="/${key}?manage=1" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap transition cursor-pointer !no-underline bg-yellow-500/80 border-yellow-500 border !text-yellow-100 hover:bg-yellow-500">${text}</a>`;
-const flagTip = (b) => b.getAttribute("title");
+const flagTip = (b) => b.getAttribute("data-hg-hint");
 const clockCard = (poster, colour = "indigo") => titleCard(poster).replace(/<svg[\s\S]*?<\/svg>/, '<svg viewBox="0 0 24 24" class="clock"><path d="M12 2"></path></svg>').replace(/indigo/g, colour);
 
 test("Can wait title with nothing grabbed: the Requested badge gets a 🌙 with the night hint", async () => {
@@ -308,6 +308,7 @@ test("the request is downloaded or switched to Download now while the page is op
   assert.equal(visibleText(w, b), "Requested");
   assert.equal(b.querySelectorAll("[data-hg-flag-own]").length, 0);
   assert.equal(b.hasAttribute("title"), false);
+  assert.equal(b.hasAttribute("data-hg-hint"), false);
 });
 
 test("Discover cards: 🌙 in the 26px circle, 🌙📅 side by side in a pill, 📅 alone, nothing for others; re-renders add nothing twice", async () => {
@@ -326,7 +327,7 @@ test("Discover cards: 🌙 in the 26px circle, 🌙📅 side by side in a pill, 
   assert.equal(visibleText(w, cat), "🌙📅");
   assert.ok(cat.querySelector("[data-hg-night-pill]"));
   assert.equal(cat.querySelector("[data-hg-night-moon]"), null);
-  assert.match(cat.querySelector("[data-hg-night]").getAttribute("title"), /^Waiting for the night · Not released yet — expected 2 Feb 2027$/);
+  assert.match(cat.querySelector("[data-hg-night]").getAttribute("data-hg-hint"), /^Waiting for the night · Not released yet — expected 2 Feb 2027$/);
   assert.equal(visibleText(w, now), "📅");
   assert.equal(fight.querySelectorAll("[data-hg-night-own]").length, 1);
   assert.ok(fight.querySelector("[data-hg-spin]"));
@@ -369,9 +370,9 @@ test("one merged hint on the whole badge and card pill; a tap shows it, a second
   badgeEl.addEventListener("click", (e) => { if (!e.defaultPrevented) link++; });
   const chip = w.document.querySelector('[role="link"] [data-hg-night]');
   assert.equal(chip.textContent, "🌙🧭");
-  assert.equal(chip.getAttribute("title"), MERGED);
+  assert.equal(chip.getAttribute("data-hg-hint"), MERGED);
   assert.equal(chip.getAttribute("aria-label"), MERGED);
-  assert.equal(badgeEl.getAttribute("title"), MERGED);
+  assert.equal(badgeEl.getAttribute("data-hg-hint"), MERGED);
   assert.equal(badgeEl.querySelector("[data-hg-flag-own]").hasAttribute("title"), false);
   chip.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true }));
   const tip = w.document.getElementById("hg-flag-tip");
@@ -416,7 +417,7 @@ test("Discover cards: native downloading / available / partly available badges b
   w.document.body.insertAdjacentHTML("beforeend", "<p>re-render</p>");
   await settle();
   const [fight, avail, part, tied] = [...w.document.querySelectorAll('[role="link"]')].map((c) => c.querySelector(".pointer-events-none.z-40.flex"));
-  const hint = (b) => b.querySelector("[data-hg-night]").getAttribute("title");
+  const hint = (b) => b.querySelector("[data-hg-night]").getAttribute("data-hg-hint");
   assert.ok(fight.querySelector("[data-hg-night-moon]"));
   assert.ok(fight.querySelector("[data-hg-spin] svg"));
   assert.equal(visibleText(w, fight), "");
@@ -450,7 +451,7 @@ test("native available badge: German hint", async () => {
   w.document.body.appendChild(tv);
   w.hgNightLabel.apply(w.document, w.location);
   const b = w.document.querySelector(".pointer-events-none.z-40.flex");
-  assert.equal(b.querySelector("[data-hg-night]").getAttribute("title"), "In Jellyfin verfügbar");
+  assert.equal(b.querySelector("[data-hg-night]").getAttribute("data-hg-hint"), "In Jellyfin verfügbar");
   assert.ok(b.querySelector("svg"));
 });
 
@@ -471,7 +472,7 @@ const BADGE_ROWS = [
   { id: 913, name: "partly + downloading", card: "partial", status: 4, dl: true, icons: "◐◌", en: "Partly available · Downloading now — 40 %", de: "Teilweise verfügbar · Lädt gerade herunter — 40 %" },
 ];
 const badgeCard = (r) => (r.card === "clock" ? clockCard(`/b${r.id}.jpg`) : nativeCard(`/b${r.id}.jpg`, r.card === "partial" ? "partial" : r.card));
-const badgeIcons = (b) => [...b.querySelector("[data-hg-night-own]").children].map((c) => c.hasAttribute("data-hg-half") ? "◐" : c.hasAttribute("data-hg-spin") ? "◌" : c.textContent).join("") || b.querySelector("[data-hg-night-own]").textContent;
+const badgeIcons = (b) => [...b.querySelector("[data-hg-night-own]").children].map((c) => c.hasAttribute("data-hg-half") ? "◐" : c.hasAttribute("data-hg-spin") ? "◌" : c.hasAttribute("data-hg-search") ? (c.getAttribute("data-hg-search") === "live" ? "🔍" : "🔎") : c.textContent).join("") || b.querySelector("[data-hg-night-own]").textContent;
 
 for (const lang of ["en", "de"]) {
   test(`all badges (${lang}): every approved single and combination renders its icons and hint`, async () => {
@@ -497,7 +498,7 @@ for (const lang of ["en", "de"]) {
       const own = cards[i].querySelector("[data-hg-night]");
       const date = lang === "de" ? new Date(Date.UTC(...(r.cal || "2000-01-01").split("-").map((v, k) => k === 1 ? +v - 1 : +v))).toLocaleDateString("de-CH", { day: "numeric", month: "short", ...(r.cal && r.cal.startsWith("2026-07") ? { year: "numeric" } : {}), timeZone: "UTC" }) : "";
       assert.equal(badgeIcons(cards[i]), r.icons, r.name);
-      assert.equal(own.getAttribute("title"), r[lang].replace("DATE_DE", date), r.name);
+      assert.equal(own.getAttribute("data-hg-hint"), r[lang].replace("DATE_DE", date), r.name);
       assert.equal(!!cards[i].querySelector("[data-hg-spin]"), r.icons.includes("◌"), r.name);
       assert.equal(!!cards[i].querySelector("[data-hg-half]"), r.icons.includes("◐"), r.name);
     });
@@ -516,4 +517,230 @@ test("a download paused for the night shows 🌙, not the spinner, also next to 
   const b = w.document.querySelector(".pointer-events-none.z-40.flex");
   assert.equal(badgeIcons(b), "◐🌙");
   assert.ok(!b.querySelector("[data-hg-spin]"));
+});
+
+// live request state: running search 🔍 (pulsing), just requested 🔎, waiting for approval ⏳, problem ⚠️, importing, imported
+const hhmm = (iso, locale = "en-GB") => new Date(iso).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+const STARTED = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+const live = (extra = {}) => ({ ...reqState([]), noRelease: {}, searching: {}, fresh: {}, pending: [], queue: {}, imported: [], ...extra });
+const searchIcon = (b) => b.querySelector("[data-hg-search]");
+const cardOf = (w, i = 0) => [...w.document.querySelectorAll('[role="link"]')].map((c) => c.querySelector(".pointer-events-none.z-40.flex"))[i];
+const discover = (cards, results, rs, waiting = fresh([])) => {
+  const routes = { ...RS_ROUTES, "/api/v1/discover/movies": { results } };
+  Object.defineProperty(routes, RS_URL, { get: () => rs.value, enumerable: true });
+  const w = night(cards, fakeXHR(routes, { value: waiting }), "/discover/movies");
+  const x = new w.XMLHttpRequest();
+  x.open("GET", "/api/v1/discover/movies");
+  x.send();
+  return w;
+};
+const listed = (id, status = 3, items = [], requests) => ({ id, mediaType: "movie", title: String(id), posterPath: `/l${id}.jpg`, mediaInfo: { tmdbId: id, mediaType: "movie", status, downloadStatus: items, downloadStatus4k: [], ...(requests && { requests }) } });
+
+test("search running: the Requested badge gets the pulsing magnifier with its start time; with Can wait 🔍🌙", async () => {
+  const w = rsPage(header(plainBadge("movie/700")) + requestCard("movie/702", "Now").replace(badge("movie/702"), plainBadge("movie/702")), "/movie/700", live({ canWait: ["movie/700"], searching: { "movie/700": { status: "started", started: STARTED }, "movie/702": { status: "queued", ahead: 2 } } }));
+  await settle();
+  const [tied, now] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  assert.equal(searchIcon(tied).getAttribute("data-hg-search"), "live");
+  assert.ok(searchIcon(tied).querySelector("svg"));
+  assert.equal(visibleText(w, tied), "Requested|🌙");
+  assert.equal(flagTip(tied), `Searching indexers now (started ${hhmm(STARTED)}) — usually a few minutes · Waiting for the night`);
+  assert.equal(flagTip(now), "Waiting for other searches (2 ahead)");
+  const css = w.document.getElementById("hg-night-style").textContent;
+  assert.match(css, /@keyframes hg-pulse/);
+  assert.match(css, /prefers-reduced-motion[^{]*\{[^}]*\[data-hg-search="live"\][^}]*animation:\s*none/);
+});
+
+test("German search hints", async () => {
+  const w = rsPage(header(plainBadge("movie/700", "Angefragt")) + requestCard("movie/702", "Now").replace(badge("movie/702"), plainBadge("movie/702", "Angefragt")), "/movie/700", live({ searching: { "movie/700": { status: "started", started: STARTED }, "movie/702": { status: "queued", ahead: 1 } } }));
+  await settle();
+  const [tied, now] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  assert.equal(flagTip(tied), `Sucht gerade in den Indexern (seit ${hhmm(STARTED, "de-CH")}) — dauert meist ein paar Minuten`);
+  assert.equal(flagTip(now), "Wartet auf andere Suchen (1 davor)");
+});
+
+test("just requested: a still magnifier 'search starts shortly', also from Seerr's own request before the file knows it", async () => {
+  const created = new Date(Date.now() - 20 * 1000).toISOString();
+  const old = { value: { ...live({ fresh: { "movie/700": created, "movie/701": null } }), updated: new Date(Date.now() - 60 * 1000).toISOString() } };
+  const routes = { ...RS_ROUTES, "/api/v1/movie/702": { ...details("movie", 702, "Unreleased Now", "/now.jpg", []), mediaInfo: { ...details("movie", 702, "x", "/now.jpg", []).mediaInfo, requests: [{ id: 5, status: 2, createdAt: created }] } } };
+  Object.defineProperty(routes, RS_URL, { get: () => old.value, enumerable: true });
+  const w = night(header(plainBadge("movie/700")) + requestCard("movie/701", "Cat").replace(badge("movie/701"), plainBadge("movie/701")) + requestCard("movie/702", "Now").replace(badge("movie/702"), plainBadge("movie/702")), fakeXHR(routes, { value: fresh([]) }), "/movie/700");
+  const x = new w.XMLHttpRequest();
+  x.open("GET", "/api/v1/movie/702");
+  x.send();
+  await settle();
+  const [tied, cat, now] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  assert.equal(searchIcon(tied).getAttribute("data-hg-search"), "wait");
+  assert.equal(flagTip(tied), "Requested — search starts shortly");
+  assert.equal(flagTip(cat), "Requested — not searched yet; tonight's scheduled search (04:17) tries");
+  assert.equal(flagTip(now), "Requested — search starts shortly");
+});
+
+test("waiting for approval ⏳, problem ⚠️ with the Radarr message, Seerr could not send it", async () => {
+  const w = rsPage(header(pendingBadge("movie/700")) + requestCard("movie/702", "Now").replace(badge("movie/702"), plainBadge("movie/702")) + requestCard("movie/701", "Cat").replace(badge("movie/701"), plainBadge("movie/701", "Failed")), "/movie/700",
+    live({ pending: ["movie/700"], queue: { "movie/702": { state: "problem", message: "No files found are eligible for import in …" }, "movie/701": { state: "problem", message: "", code: "seerr" } } }));
+  await settle();
+  const [tied, now, cat] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  assert.equal(tied.textContent, "Pending⏳");
+  assert.equal(flagTip(tied), "Waiting for approval");
+  assert.equal(visibleText(w, now), "Requested|⚠️");
+  assert.equal(flagTip(now), "Problem — see Requests/Activity: No files found are eligible for import in …");
+  assert.equal(flagTip(cat), "Problem — Seerr could not hand the request to Radarr/Sonarr");
+});
+
+test("cards: importing keeps the spinner with 'Importing…', a download Seerr does not show yet spins, a file already there is ✅", async () => {
+  const rs = { value: live({ queue: { "movie/700": { state: "importing" }, "movie/701": { state: "downloading" } }, imported: ["movie/702"] }) };
+  const w = discover(clockCard("/l700.jpg") + clockCard("/l701.jpg") + clockCard("/l702.jpg"), [listed(700), listed(701), listed(702)], rs);
+  await settle();
+  const [imp, dl, done] = [0, 1, 2].map((i) => cardOf(w, i));
+  assert.ok(imp.querySelector("[data-hg-spin]"));
+  assert.equal(imp.querySelector("[data-hg-night]").getAttribute("data-hg-hint"), "Importing…");
+  assert.ok(dl.querySelector("[data-hg-spin]"));
+  assert.equal(dl.querySelector("[data-hg-night]").getAttribute("data-hg-hint"), "Downloading now");
+  assert.equal(badgeIcons(done), "✅");
+  assert.equal(done.querySelector("[data-hg-night]").getAttribute("data-hg-hint"), "Downloaded — in Jellyfin shortly");
+});
+
+test("polls every 15 s only while a search badge shows, re-renders in place, then moves on to the next state", async () => {
+  const rs = { value: live({ canWait: ["movie/700"], searching: { "movie/700": { status: "started", started: STARTED } } }) };
+  const calls = [];
+  const routes = { ...RS_ROUTES, "/api/v1/discover/movies": { results: [listed(700)] } };
+  Object.defineProperty(routes, RS_URL, { get: () => rs.value, enumerable: true });
+  const w = night(clockCard("/l700.jpg"), fakeXHR(routes, { value: fresh([]) }, calls), "/discover/movies");
+  w.hgNightLabel.state.poll = 300;
+  const x = new w.XMLHttpRequest();
+  x.open("GET", "/api/v1/discover/movies");
+  x.send();
+  await settle();
+  const card = cardOf(w);
+  assert.equal(badgeIcons(card), "🔍🌙");
+  assert.equal(searchIcon(card).getAttribute("data-hg-search"), "live");
+  const el = card.querySelector("[data-hg-night-own]");
+  rs.value = { ...rs.value, updated: new Date().toISOString() };
+  await settle();
+  assert.equal(card.querySelector("[data-hg-night-own]"), el, "unchanged state: no re-render");
+  rs.value = live({ canWait: ["movie/700"], noRelease: { "movie/700": new Date().toISOString() } });
+  await settle();
+  assert.equal(badgeIcons(card), "🌙🧭");
+  const n = calls.filter((u) => u === RS_URL).length;
+  await settle();
+  assert.equal(calls.filter((u) => u === RS_URL).length, n, "no search badge: back to the slow refresh");
+});
+
+// every reachable state of a requested title that is not available has a badge (owner rule: no gaps)
+const STATES = [
+  ["just requested", { fresh: { k: "NOW" } }, "🔎"],
+  ["requested, not searched", { fresh: { k: null } }, "🔎"],
+  ["waiting for approval", { pending: ["k"] }, "⏳"],
+  ["search queued", { searching: { k: { status: "queued", ahead: 1 } } }, "🔍"],
+  ["search running", { searching: { k: { status: "started", started: "NOW" } } }, "🔍"],
+  ["search running, Can wait", { canWait: ["k"], searching: { k: { status: "started", started: "NOW" } } }, "🔍🌙"],
+  ["found, paused for the night", { canWait: ["k"], queue: { k: { state: "paused" } } }, "🌙"],
+  ["downloading", { queue: { k: { state: "downloading" } } }, "◌"],
+  ["importing", { queue: { k: { state: "importing" } } }, "◌"],
+  ["imported", { imported: ["k"] }, "✅"],
+  ["nothing found", { noRelease: { k: "NOW" } }, "🧭"],
+  ["nothing found, Can wait", { canWait: ["k"], noRelease: { k: "NOW" } }, "🌙🧭"],
+  ["not released", { unreleased: { k: "2027-02-02" } }, "📅"],
+  ["not released, Can wait", { canWait: ["k"], unreleased: { k: "2027-02-02" } }, "🌙📅"],
+  ["problem", { queue: { k: { state: "problem", message: "Import blocked" } } }, "⚠️"],
+  ["Seerr failed", { queue: { k: { state: "problem", message: "", code: "seerr" } } }, "⚠️"],
+  ["complete so far", { soFar: ["k"], unreleased: { k: "2027-02-02" } }, "✅📅"],
+];
+const forKey = (o, key) => JSON.parse(JSON.stringify(o).replace(/"k"/g, JSON.stringify(key)).replace(/"NOW"/g, JSON.stringify(new Date().toISOString())));
+
+test("every reachable state maps to a badge, on cards and on the Requested pill", async () => {
+  const ids = STATES.map((_, i) => 950 + i);
+  const merged = STATES.reduce((acc, [, s], i) => {
+    const o = forKey(s, `movie/${ids[i]}`);
+    for (const [k, v] of Object.entries(o)) acc[k] = Array.isArray(v) ? [...(acc[k] || []), ...v] : { ...(acc[k] || {}), ...v };
+    return acc;
+  }, live());
+  const rs = { value: merged };
+  const w = discover(ids.map((id) => clockCard(`/l${id}.jpg`)).join("") + ids.map((id) => requestCard(`movie/${id}`, String(id)).replace(badge(`movie/${id}`), plainBadge(`movie/${id}`))).join(""), ids.map((id) => listed(id)), rs);
+  await settle();
+  const pills = [...w.document.querySelectorAll('a[href$="?manage=1"]')];
+  STATES.forEach(([name, , icons], i) => {
+    const card = cardOf(w, i);
+    assert.equal(badgeIcons(card), icons, name);
+    assert.ok(card.querySelector("[data-hg-night]").getAttribute("data-hg-hint"), name);
+    assert.ok(pills[i].querySelector("[data-hg-flag-own]"), `pill: ${name}`);
+    assert.ok(pills[i].getAttribute("data-hg-hint"), `pill hint: ${name}`);
+  });
+});
+
+
+// pills: Seerr's own spinner/progress = nothing of ours (its popup says it); Partially Available = not green, ◐ first, never ✅
+const partPill = (key, text = "Partially Available") => `<a href="/${key}?manage=1" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap transition cursor-pointer !no-underline bg-green-500/80 border border-green-500 !text-green-100 hover:bg-green-500 false overflow-hidden"><div class="relative z-20 flex items-center false"><span>${text}</span></div></a>`;
+const pillIcons = (b) => [...b.querySelectorAll("[data-hg-flag-own]")].map((e) => e.querySelector("[data-hg-half]") ? "◐" : e.querySelector("[data-hg-spin]") ? "◌" : e.querySelector("[data-hg-search]") ? "🔍" : e.textContent).join("");
+
+test("a pill with Seerr's own download spinner gets no second spinner and no hint of ours", async () => {
+  const w = rsPage(header(badge("movie/550", "Processing", "")) + requestCard("movie/550", "Fight"), "/movie/550", live({ queue: { "movie/550": { state: "downloading" } } }));
+  await settle();
+  for (const b of w.document.querySelectorAll('a[href$="?manage=1"]')) {
+    assert.equal(b.querySelector("[data-hg-flag-own]"), null);
+    assert.equal(b.hasAttribute("data-hg-hint"), false);
+    assert.equal(b.querySelectorAll("svg").length, 1);
+  }
+});
+
+test("Partially Available pill: restyled away from green, ◐ first with the missing part's state, never ✅", async () => {
+  const w = rsPage(requestCard("tv/76479", "Boys").replace(badge("tv/76479"), partPill("tv/76479")) + requestCard("tv/2", "Mixed").replace(badge("tv/2"), partPill("tv/2")) + requestCard("tv/3", "Solo").replace(badge("tv/3"), partPill("tv/3", "Teilweise verfügbar")), "/requests",
+    live({ canWait: ["tv/76479"], unreleased: { "tv/76479": "2026-11-11" }, searching: { "tv/2": { status: "queued", ahead: 0 } }, imported: ["tv/3"] }));
+  await settle();
+  const [boys, mixed, solo] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  for (const b of [boys, mixed, solo]) assert.ok(b.hasAttribute("data-hg-part"));
+  assert.match(w.document.getElementById("hg-night-style").textContent, /a\[data-hg-part\][^{]*\{[^}]*background-color:[^}]*!important/);
+  assert.equal(pillIcons(boys), "◐🌙📅");
+  assert.equal(boys.getAttribute("data-hg-hint"), "Partly available · Waiting for the night · Not released yet — next episode 11 Nov");
+  assert.equal(pillIcons(mixed), "◐🔍");
+  assert.equal(mixed.getAttribute("data-hg-hint"), "Partly available · Waiting for other searches (0 ahead)");
+  assert.equal(pillIcons(solo), "◐");
+  assert.equal(solo.getAttribute("data-hg-hint"), "Teilweise verfügbar");
+});
+
+test("hints are static: shown on mouse hover below the badge, placed once, no move handlers", async () => {
+  const types = [];
+  const w = night(header(plainBadge("movie/700")), (win) => {
+    fakeXHR({ ...RS_ROUTES, [RS_URL]: RS }, { value: fresh([]) })(win);
+    const add = win.EventTarget.prototype.addEventListener;
+    win.EventTarget.prototype.addEventListener = function (t, ...rest) { types.push(t); return add.call(this, t, ...rest); };
+  }, "/movie/700");
+  await settle();
+  const b = w.document.querySelector(".media-status a");
+  assert.equal(b.hasAttribute("title"), false);
+  const ev = (t) => { const e = new w.MouseEvent(t, { bubbles: false }); Object.defineProperty(e, "pointerType", { value: "mouse" }); return e; };
+  b.dispatchEvent(ev("pointerenter"));
+  const tip = w.document.getElementById("hg-flag-tip");
+  assert.ok(tip && shown(w, tip));
+  assert.equal(tip.textContent, "Waiting for the night — downloads at night (cheaper power)");
+  const top = tip.style.top;
+  assert.ok(top);
+  b.dispatchEvent(ev("pointerleave"));
+  assert.equal(shown(w, tip), false);
+  assert.ok(!types.some((t) => /move/.test(t)), types.join(","));
+});
+
+// series complete so far (every aired requested episode here, only unaired left): ✅ + 📅 + 🌙, the pill reads "Available so far", stays green
+test("complete so far: the Partially Available pill becomes 'Available so far' (green) with ✅📅🌙; ended series ✅ alone", async () => {
+  const w = rsPage(requestCard("tv/76479", "Dungeon").replace(badge("tv/76479"), partPill("tv/76479")) + requestCard("tv/2", "Ended").replace(badge("tv/2"), partPill("tv/2")), "/requests",
+    live({ canWait: ["tv/76479"], unreleased: { "tv/76479": "2026-11-11" }, soFar: ["tv/76479", "tv/2"] }));
+  await settle();
+  const [dungeon, ended] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  assert.equal(dungeon.querySelector("span").textContent, "Available so far");
+  assert.equal(dungeon.hasAttribute("data-hg-part"), false);
+  assert.equal(pillIcons(dungeon), "✅📅🌙");
+  assert.equal(dungeon.getAttribute("data-hg-hint"), "Everything released so far is in Jellyfin · Next episode expected 11 Nov · downloads at night");
+  assert.equal(pillIcons(ended), "✅");
+  assert.equal(ended.getAttribute("data-hg-hint"), "Everything released so far is in Jellyfin");
+});
+
+test("complete so far: German pill and card ✅📅🌙 instead of ◐", async () => {
+  const rs = { value: live({ canWait: ["movie/702"], unreleased: { "movie/702": "2026-11-11" }, soFar: ["movie/702"] }) };
+  const w = discover(nativeCard("/l702.jpg", "partial") + header(partPill("movie/702", "Teilweise verfügbar")), [listed(702, 4)], rs);
+  w.document.body.insertAdjacentHTML("beforeend", '<a href="/discover/tv">Serien</a>');
+  await settle();
+  const card = cardOf(w);
+  assert.equal(badgeIcons(card), "✅📅🌙");
+  assert.ok(card.querySelector("[data-hg-night-solid]"));
+  assert.equal(card.querySelector("[data-hg-night]").getAttribute("data-hg-hint"), `Alles bisher Erschienene ist in Jellyfin · Nächste Folge erwartet ${new Date(Date.UTC(2026, 10, 11)).toLocaleDateString("de-CH", { day: "numeric", month: "short", timeZone: "UTC" })} · lädt nachts`);
 });

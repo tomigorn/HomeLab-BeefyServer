@@ -247,25 +247,47 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 
 A download held by the night queue ([Can wait](#can-wait)) shows **Waiting for the night 🌙** (German UI: **Wartet auf die Nacht 🌙**) instead of "Processing" at 0 %, with the hint "starts automatically at 22:05 or on Sunday; untick 'Can wait' next time for an immediate download". Real downloads, items paused by hand outside the night categories and failed ones look as before. In the low tariff nothing is labelled (queued night items show Seerr's normal status).
 
-Status icons, for every open request (pending or approved, not available):
+Status icons, for every open request (pending or approved, not available). Every requested title that is not available always has one (state table below):
 
 | Icon | When | Hint (EN / DE) |
 |---|---|---|
+| 🔍 (drawn magnifier, pulsing; static with reduced motion) | Radarr/Sonarr has a queued or started search for the title (`MoviesSearch` `movieIds`, `SeriesSearch`/`SeasonSearch` `seriesId`; a search over all missing titles counts for every released title without a download) | Searching indexers now (started 13:24) — usually a few minutes / Sucht gerade in den Indexern (seit 13:24) — dauert meist ein paar Minuten; queued: Waiting for other searches (2 ahead) / Wartet auf andere Suchen (2 davor) |
+| 🔎 (drawn magnifier, still) | approved, no search since the request yet (also from Seerr's own request data in the first minutes, before the file knows it) | Requested — search starts shortly / Angefragt — die Suche startet gleich; after 5 min: Requested — not searched yet; tonight's scheduled search (04:17) tries |
+| ⏳ | request waits for approval | Waiting for approval / Wartet auf Freigabe |
+| ⚠️ | Radarr/Sonarr queue: import blocked, failed (`trackedDownloadState` importBlocked/failedPending/failed, status error); Seerr request failed | Problem — see Requests/Activity: <Radarr/Sonarr message, paths and URLs cut> / Problem — siehe Anfragen/Aktivität: …; Seerr: Problem — Seerr could not hand the request to Radarr/Sonarr |
 | 🌙 | request is **Can wait** (title without `download-now` in Radarr/Sonarr; not yet there: no `download-now` in the Seerr request), from the request until downloaded; not while Seerr shows a running download | Waiting for the night — downloads at night (cheaper power) / Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom) |
 | 🧭 | searched (Radarr `lastSearchTime`; Sonarr: missing aired episodes of the requested seasons), nothing queued, no search running, released | No release found yet — searched again in tonight's scheduled search (04:17) / Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter |
 | 📅 | not released: Radarr `isAvailable` false (date: `inCinemas` for minimum availability In Cinemas, else `releaseDate`); Sonarr: none of the missing episodes of the requested seasons has aired (date: next air date), or no episodes yet and status `upcoming` (`nextAiring`) | Not released yet — expected 2 Feb 2027 / Noch nicht erschienen — erwartet 2. Feb. 2027 |
 | ◌ (spinning ring) | download in progress (Seerr's own spinner badge replaced; ring is static with reduced motion) | Downloading now — 40 % / Lädt gerade herunter — 40 % |
 | ✅ | available (Seerr's green check) | Available in Jellyfin / In Jellyfin verfügbar |
-| ◐ (half-filled circle, drawn) | partly available (Seerr's green minus replaced) | Partly available / Teilweise verfügbar |
+| ◐ (half-filled circle, drawn) | partly available: aired requested episodes still missing (Seerr's green minus replaced) | Partly available / Teilweise verfügbar |
+| ◌ from the queue | Radarr/Sonarr downloads or imports while Seerr shows no download yet | Downloading now / Importing… (Wird importiert…) |
+| ✅ (downloaded) | file on disk, Seerr not yet available | Downloaded — in Jellyfin shortly / Heruntergeladen — gleich in Jellyfin |
+| ✅📅🌙 complete so far | series: every aired requested episode here, only unaired left (or the requested seasons done while Seerr says partly); 📅 next air date, 🌙 if Can wait; ended series: ✅ alone | Everything released so far is in Jellyfin · Next episode expected 11 Nov · downloads at night |
+
+| State of a requested title | Badge |
+|---|---|
+| waiting for approval | ⏳ (+🌙) |
+| requested, no search yet (first minutes) | 🔎 Requested — search starts shortly |
+| search queued / running | 🔍 pulsing (+🌙) |
+| found, Can wait (paused for the night) | 🌙 |
+| found, downloading / importing | ◌ (Seerr's own spinner on pills; cards ours, "Importing…") |
+| imported, Seerr not yet available | ✅ Downloaded — in Jellyfin shortly |
+| available | ✅ (Seerr's green pill) |
+| series: aired episodes missing | ◐ + state of the missing part (🌙 🧭 📅 🔍 ◌) |
+| series: complete so far | ✅📅🌙 ("Available so far" pill, green) |
+| searched, nothing found | 🧭 (+🌙) |
+| not released | 📅 (+🌙) |
+| download/import problem, Seerr failed | ⚠️ |
 
 Status icons (◌ ✅ ◐) come first, in the same purple circle/pill. ✅ never combines; ◐ combines with 🌙🧭📅 and with ◌ (series: some episodes here, more downloading now); a download paused for the night shows 🌙 instead of ◌. ◐ hints: 🌙 alone adds "the rest downloads at night", 🧭 reads "searched again tonight (04:17)", 📅 reads "next episode 11 Nov". Overview of all rows: Claude-Mockups `seerr-all-badges`; percent from Seerr's `downloadStatus` sizes, left out when unknown. Same on every card: Discover, search, collections, person pages. Title-page pills stay Seerr's.
 
-Order 🌙🧭📅, combined. Placements: status badges (title page, request cards, Requests list; after "Requested"/"Pending"), Discover cards (in Seerr's status circle: one icon = the 26px circle, two = a pill). One merged hint on the whole badge / pill (`title`), e.g. 🌙🧭 "Waiting for the night · No release found yet — searched again in tonight's scheduled search (04:17), downloads at night when found"; touch: the first tap shows it, a second tap opens the link or card as usual.
+Order ⚠️⏳🔍🌙🧭📅, combined. Placements: status badges (title page, request cards, Requests list; after "Requested"/"Pending"), Discover cards (in Seerr's status circle: one icon = the 26px circle, two = a pill). Pills with Seerr's own spinner/progress get nothing of ours (its popup shows the download). **Partially Available** pills are sky blue (`#0284c7`, not Seerr's green) and start with ◐; never ✅ inside. One merged hint on the whole badge / pill, e.g. 🌙🧭 "Waiting for the night · No release found yet — searched again in tonight's scheduled search (04:17), downloads at night when found": a static box below the badge on mouse hover (placed once, no move handlers, no `title` tooltip); touch: the first tap shows it, a second tap opens the link or card as usual. While a 🔍/🔎 shows, the page reads `request-state.json` every 15 s and swaps the icon in place (spinner, 🧭, 🌙 when the search ends).
 
 | Part | What |
 |---|---|
 | Data | `/_indexer-bar/night-waiting.json` (`waiting`: download ids), written every 2 min by `../Movie-Downloads/scripts/night-downloads.py` to `/srv/appdata/indexer-bar/`; empty in the low tariff |
-| Icon data | `/_indexer-bar/request-state.json` (`canWait`: `movie\|tv/<tmdb id>` list, `unreleased`: id → date or null, `noRelease`: id → last search), same script; reads Seerr `/api/v1/request` with `secrets/api-key` and Radarr/Sonarr; ids only, no user data. Seerr or Radarr/Sonarr not readable: file kept; older than 10 min = no icons |
+| Icon data | `/_indexer-bar/request-state.json` (`canWait`: `movie\|tv/<tmdb id>` list, `unreleased`: id → date or null, `noRelease`: id → last search, `searching`: id → `{status: started, started}` / `{status: queued, ahead}`, `fresh`: id → request time or null, `pending`, `imported`, `soFar`: lists, `queue`: id → `{state: paused\|downloading\|importing\|problem, message}`), same script; reads Seerr `/api/v1/request` with `secrets/api-key` and Radarr/Sonarr; ids and short Radarr/Sonarr status messages (paths and URLs cut), no user data. Every 2 min with the night run; `--request-state` (`../Movie-Downloads/systemd/request-state.timer`, every 15 s) rewrites it only while a search runs or a request is from the last 5 min (2 commands + 1 Seerr call otherwise). Seerr or Radarr/Sonarr not readable: file kept; older than 10 min = no icons |
 | Match | Seerr's `downloadStatus` item: `status` `paused` **and** `downloadId` in `waiting`; a badge only when every download behind it waits |
 | Script | `indexer-bar/www/night-label.js`: status badge (title page, request cards, Requests list), Discover card status circle → 🌙/🧭/📅 and ◌/✅/◐ (downloading/available/partly), download blocks (Manage panel, badge tooltip: label, bar grey). Titles from Seerr's own API responses (read-only) or `GET /api/v1/movie|tv/<id>` |
 | Fallback | file missing or older than 10 min, API error, Seerr changed its markup: Seerr's normal display |

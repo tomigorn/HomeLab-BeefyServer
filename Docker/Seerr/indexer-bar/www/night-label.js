@@ -1,4 +1,4 @@
-// "Waiting for the night" label (README "Night label"): a download paused by the "Can wait" night queue shows the night label instead of Seerr's "Processing" at 0 %; a "Can wait" request not downloading gets a 🌙, a title not released yet a 📅. Both lists come from night-downloads.py; missing, stale or unexpected = Seerr unchanged.
+// "Waiting for the night" label (README "Night label"): a download paused by the "Can wait" night queue shows the night label instead of Seerr's "Processing" at 0 %; a "Can wait" request not downloading gets a 🌙, a title not released yet a 📅, a running search a pulsing 🔍, a request without a search yet 🔎, waiting for approval ⏳, a download or import problem ⚠️. All lists come from night-downloads.py; missing, stale or unexpected = Seerr unchanged.
 (function () {
   "use strict";
   var WAITING_URL = "/_indexer-bar/night-waiting.json";
@@ -10,22 +10,30 @@
     de: { label: "Wartet auf die Nacht 🌙", tip: "Startet automatisch um 22:05 oder am Sonntag; nächstes Mal „Can wait“ abwählen für einen sofortigen Download" },
   };
   var FLAGS = {
-    en: { moon: "Waiting for the night — downloads at night (cheaper power)", compass: "No release found yet — searched again in tonight's scheduled search (04:17)", cal: "Not released yet", expected: "expected", moonShort: "Waiting for the night", compassNight: ", downloads at night when found", restNight: "the rest downloads at night", compassShort: "No release found yet — searched again tonight (04:17)", nextEp: "next episode", locale: "en-GB" },
-    de: { moon: "Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom)", compass: "Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter", cal: "Noch nicht erschienen", expected: "erwartet", moonShort: "Wartet auf die Nacht", compassNight: ", lädt nachts, sobald gefunden", restNight: "der Rest lädt nachts herunter", compassShort: "Noch kein Release gefunden — die Suche heute Nacht (04:17) sucht weiter", nextEp: "nächste Folge", locale: "de-CH" },
+    en: { moon: "Waiting for the night — downloads at night (cheaper power)", compass: "No release found yet — searched again in tonight's scheduled search (04:17)", cal: "Not released yet", expected: "expected", moonShort: "Waiting for the night", compassNight: ", downloads at night when found", restNight: "the rest downloads at night", compassShort: "No release found yet — searched again tonight (04:17)", nextEp: "next episode", soFar: "Everything released so far is in Jellyfin", nextExp: "Next episode expected", nightShort: "downloads at night", soFarLabel: "Available so far", locale: "en-GB" },
+    de: { moon: "Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom)", compass: "Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter", cal: "Noch nicht erschienen", expected: "erwartet", moonShort: "Wartet auf die Nacht", compassNight: ", lädt nachts, sobald gefunden", restNight: "der Rest lädt nachts herunter", compassShort: "Noch kein Release gefunden — die Suche heute Nacht (04:17) sucht weiter", nextEp: "nächste Folge", soFar: "Alles bisher Erschienene ist in Jellyfin", nextExp: "Nächste Folge erwartet", nightShort: "lädt nachts", soFarLabel: "Bisher verfügbar", locale: "de-CH" },
   };
   var STATUS = {
     en: { spin: "Downloading now", avail: "Available in Jellyfin", part: "Partly available" },
     de: { spin: "Lädt gerade herunter", avail: "In Jellyfin verfügbar", part: "Teilweise verfügbar" },
   };
+  var LIVE = {
+    en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", locale: "en-GB" },
+    de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", locale: "de-CH" },
+  };
+  var FRESH = 5 * 60 * 1000;
+  var SEARCH = "🔍";
+  var WAIT = "🔎";
   var SPIN = "◌";
   var HALF = "◐";
   var PENDING = /^(4K )?(Pending|Ausstehend)$/;
+  var PART = /^(4K\s)?(Partially Available|Teilweise verfügbar)$/i;
   var MEDIA_LINK = /^\/(movie|tv)\/(\d+)$/;
   var EPISODE = /^(.*): (?:Season|Staffel) (\d+) (?:Episode|Folge) (\d+)$/;
   var GERMAN = /^(Verarbeiten|Verfügbar|Teilweise verfügbar|Angefragt|Gelöscht)$/;
 
   var RELEASED_FOR = 10 * 60 * 1000;
-  var state = { waiting: null, requests: null, waitingAt: 0, waitingLoading: null, media: {}, posters: {}, loading: {}, released: {} };
+  var state = { waiting: null, requests: null, waitingAt: 0, waitingLoading: null, media: {}, posters: {}, loading: {}, released: {}, requested: {}, poll: 15 * 1000 };
 
   function waitingSet(data, now) {
     if (!data || !Array.isArray(data.waiting)) return null;
@@ -42,9 +50,9 @@
   function requestSets(data, now) {
     if (!data || !Array.isArray(data.canWait) || !data.unreleased || typeof data.unreleased !== "object") return null;
     if (!(now - Date.parse(data.updated) <= MAX_AGE)) return null;
-    var can = {};
-    for (var i = 0; i < data.canWait.length; i++) can[String(data.canWait[i])] = true;
-    return { canWait: can, unreleased: data.unreleased, noRelease: data.noRelease && typeof data.noRelease === "object" ? data.noRelease : {} };
+    var obj = function (v) { return v && typeof v === "object" && !Array.isArray(v) ? v : {}; };
+    var set = function (v) { var o = {}; (Array.isArray(v) ? v : []).forEach(function (k) { o[String(k)] = true; }); return o; };
+    return { canWait: set(data.canWait), unreleased: data.unreleased, noRelease: obj(data.noRelease), searching: obj(data.searching), fresh: obj(data.fresh), pending: set(data.pending), queue: obj(data.queue), imported: set(data.imported), soFar: set(data.soFar), updated: Date.parse(data.updated) };
   }
 
   function busy(m) {
@@ -54,14 +62,45 @@
     return false;
   }
 
-  // which icons a title gets: 🌙 Can wait (not downloading, not available), 📅 not released yet
+  // which icons a title gets: ⚠️ problem, ⏳ approval, 🔍 search running / 🔎 none yet, 🌙 Can wait (not downloading, not available), 🧭 nothing found, 📅 not released yet; queue state for the status icon
   function flags(key, rs, m) {
     if (!rs || !key) return { moon: false, compass: false, cal: false, date: null };
-    var has = Object.prototype.hasOwnProperty, done = !!(m && m.status === 5);
-    var moon = rs.canWait[key] === true && !busy(m) && !done;
+    var has = Object.prototype.hasOwnProperty, done = !!(m && m.status === 5), now = Date.now();
+    var q = !done && has.call(rs.queue, key) && rs.queue[key] && typeof rs.queue[key] === "object" ? rs.queue[key] : {};
+    var loading = q.state === "downloading" || q.state === "importing";
+    var search = !done && has.call(rs.searching, key) && rs.searching[key] && typeof rs.searching[key] === "object" ? rs.searching[key] : null;
+    var fresh = null, at = state.requested[key];
+    if (!search && !done && has.call(rs.fresh, key)) fresh = { at: rs.fresh[key] };
+    else if (!search && !done && at && now - Date.parse(at) < FRESH && !(rs.updated >= Date.parse(at)) && !busy(m)) fresh = { at: at };
+    var moon = rs.canWait[key] === true && !busy(m) && !done && !loading;
     var compass = has.call(rs.noRelease, key) && !busy(m) && !done;
     var cal = has.call(rs.unreleased, key) && !done;
-    return { moon: moon, compass: compass, cal: cal, date: cal ? rs.unreleased[key] : null };
+    return { moon: moon, compass: compass, cal: cal, date: cal ? rs.unreleased[key] : null, search: search, fresh: fresh, pending: !done && rs.pending[key] === true,
+      problem: q.state === "problem" ? q : null, importing: q.state === "importing", downloading: q.state === "downloading", imported: !done && rs.imported[key] === true, soFar: !done && rs.soFar[key] === true };
+  }
+
+  function clock(iso, l) {
+    var d = new Date(iso || "");
+    if (!iso || isNaN(d.getTime())) return "";
+    try { return d.toLocaleTimeString(LIVE[l].locale, { hour: "2-digit", minute: "2-digit" }); } catch (e) { return ""; }
+  }
+
+  function liveList(f, l) {
+    var L = LIVE[l], out = [];
+    if (f.problem) out.push(["⚠️", f.problem.code === "seerr" ? L.seerr : L.problem + (f.problem.message ? ": " + f.problem.message : "")]);
+    if (f.pending) out.push(["⏳", L.pending]);
+    if (f.search) {
+      var t = clock(f.search.started, l);
+      out.push([SEARCH, f.search.status === "queued" ? L.queued.replace("{n}", String(+f.search.ahead || 0)) : t ? L.started.replace("{t}", t) : L.started.replace(/ \([^)]*\{t\}\)/, "")]);
+    } else if (f.fresh) out.push([WAIT, f.fresh.at && Date.now() - Date.parse(f.fresh.at) < FRESH ? L.fresh : L.unsearched]);
+    return out;
+  }
+
+  // status icon from Radarr/Sonarr's queue while Seerr shows none: importing / downloading spinner, file there ✅
+  function queueStatus(f, l) {
+    if (f.importing) return [SPIN, LIVE[l].importing];
+    if (f.downloading) return [SPIN, STATUS[l].spin];
+    return f.imported ? ["✅", LIVE[l].imported] : null;
   }
 
   function dateText(iso, l, short) {
@@ -70,9 +109,19 @@
     try { return new Date(Date.UTC(+d[1], +d[2] - 1, +d[3])).toLocaleDateString(FLAGS[l].locale, short ? { day: "numeric", month: "short", timeZone: "UTC" } : { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }); } catch (e) { return iso; }
   }
 
-  // [icon, hint] in display order 🌙🧭📅
-  function flagList(f, l, part) {
-    var out = [];
+  // [icon, hint] in display order ⚠️⏳🔍🌙🧭📅 (badges: with the queue status after 🔍)
+  // series complete so far: ✅ + next air date + 🌙 (the unaired rest downloads at night)
+  function soFarList(f, l) {
+    var out = [["✅", FLAGS[l].soFar]];
+    if (f.cal) out.push(["📅", FLAGS[l].nextExp + (f.date ? " " + dateText(f.date, l, true) : "")]);
+    if (f.moon) out.push(["🌙", FLAGS[l].nightShort]);
+    return out;
+  }
+
+  function flagList(f, l, part, card) {
+    if (f.soFar) return soFarList(f, l);
+    var out = liveList(f, l), st = !card && queueStatus(f, l);
+    if (st) out.push(st);
     if (f.moon) out.push(["🌙", FLAGS[l].moon]);
     if (f.compass) out.push(["🧭", FLAGS[l].compass]);
     if (f.cal) out.push(["📅", FLAGS[l].cal + (f.date ? " — " + (part ? FLAGS[l].nextEp + " " + dateText(f.date, l, true) : FLAGS[l].expected + " " + dateText(f.date, l)) : "")]);
@@ -81,7 +130,7 @@
 
   // one hint for a badge's icons together: 🌙 shortened when combined, 🧭 with the night when 🌙 is there
   function merged(list, l) {
-    if (list.length === 1) return list[0][1];
+    if (list.length === 1 || list[0][0] === "✅") return list.map(function (x) { return x[1]; }).join(" · ");
     if (list[0][0] === HALF) {
       var rest = list.slice(1), only = rest.length === 1 && rest[0][0] === "🌙";
       return [list[0][1]].concat(rest.map(function (x) { return x[0] === "🌙" ? FLAGS[l].moonShort + (only ? " — " + FLAGS[l].restNight : "") : x[0] === "🧭" ? FLAGS[l].compassShort : x[1]; })).join(" · ");
@@ -90,31 +139,44 @@
     return list.map(function (x) { return x[0] === "🌙" ? FLAGS[l].moonShort : x[0] === "🧭" && moon ? x[1] + FLAGS[l].compassNight : x[1]; }).join(" · ");
   }
 
-  // touch has no hover: the first tap on a badge with icons shows its hint, a second tap goes through (link, card)
+  // one static hint box, placed once below the badge (no title tooltip, no move handlers)
+  function showTip(doc, el) {
+    var tip = doc.getElementById("hg-flag-tip");
+    if (!tip) {
+      tip = doc.createElement("div");
+      tip.id = "hg-flag-tip";
+      tip.setAttribute("role", "tooltip");
+      doc.body.appendChild(tip);
+      doc.addEventListener("click", function (e) { if (e.target !== tip) tip.style.display = "none"; });
+      (doc.defaultView || window).addEventListener("scroll", function () { tip.style.display = "none"; }, true);
+    }
+    tip.textContent = el.__hgHint;
+    tip.__for = el;
+    var r = el.getBoundingClientRect(), vw = (doc.defaultView && doc.defaultView.innerWidth) || 360;
+    tip.style.display = "block";
+    tip.style.top = Math.round(r.bottom + 6) + "px";
+    tip.style.left = Math.max(8, Math.min(Math.round(r.left), vw - 264)) + "px";
+    return tip;
+  }
+
+  // mouse: the hint shows while hovering; touch has no hover: the first tap shows it, a second tap goes through (link, card)
   function tapHint(doc, el, text) {
     el.__hgHint = text;
+    if (text) el.setAttribute("data-hg-hint", text); else el.removeAttribute("data-hg-hint");
     if (el.__hgTap) return;
     el.__hgTap = true;
+    el.addEventListener("pointerenter", function (ev) { if (ev.pointerType === "mouse" && el.__hgHint) { showTip(doc, el).__hover = true; } });
+    el.addEventListener("pointerleave", function (ev) {
+      var tip = doc.getElementById("hg-flag-tip");
+      if (ev.pointerType === "mouse" && tip && tip.__for === el) tip.style.display = "none";
+    });
     el.addEventListener("click", function (ev) {
       if (!el.__hgHint) return;
       var tip = doc.getElementById("hg-flag-tip");
       if (tip && tip.__for === el && tip.style.display !== "none") { tip.style.display = "none"; return; }
       ev.preventDefault();
       ev.stopPropagation();
-      if (!tip) {
-        tip = doc.createElement("div");
-        tip.id = "hg-flag-tip";
-        tip.setAttribute("role", "tooltip");
-        doc.body.appendChild(tip);
-        doc.addEventListener("click", function (e) { if (e.target !== tip) tip.style.display = "none"; });
-        (doc.defaultView || window).addEventListener("scroll", function () { tip.style.display = "none"; }, true);
-      }
-      tip.textContent = el.__hgHint;
-      tip.__for = el;
-      var r = el.getBoundingClientRect(), vw = (doc.defaultView && doc.defaultView.innerWidth) || 360;
-      tip.style.display = "block";
-      tip.style.top = Math.round(r.bottom + 6) + "px";
-      tip.style.left = Math.max(8, Math.min(Math.round(r.left), vw - 264)) + "px";
+      showTip(doc, el).__hover = false;
     });
   }
 
@@ -173,13 +235,19 @@
     return true;
   }
 
+  function requested(key, at) {
+    if (!(Date.parse(state.requested[key]) >= Date.parse(at))) state.requested[key] = at;
+  }
+
   // Collects what Seerr's API returned: download lists per title, poster -> title, title names.
   function remember(json) {
     var now = Date.now();
     (function walk(o, depth) {
       if (!o || typeof o !== "object" || depth > 6) return;
       if (Array.isArray(o)) { for (var i = 0; i < o.length && i < 500; i++) walk(o[i], depth + 1); return; }
+      if (o.createdAt && o.status === 2 && o.media && o.media.tmdbId && (o.type === "movie" || o.type === "tv")) requested(o.type + "/" + o.media.tmdbId, o.createdAt);
       var info = o.mediaInfo && typeof o.mediaInfo === "object" ? o.mediaInfo : (Array.isArray(o.downloadStatus) ? o : null);
+      if (info && info.tmdbId && Array.isArray(info.requests)) info.requests.forEach(function (r) { if (r && r.status === 2 && r.createdAt) requested(info.mediaType + "/" + info.tmdbId, r.createdAt); });
       if (info && info.tmdbId && (info.mediaType === "movie" || info.mediaType === "tv") && (info !== o || Array.isArray(info.downloadStatus))) {
         var key = info.mediaType + "/" + info.tmdbId, prev = state.media[key] || {};
         var names = info === o ? prev.names || [] : [o.title, o.name, o.originalTitle, o.originalName].filter(Boolean);
@@ -207,7 +275,12 @@
   function loadWaiting(force) {
     if (!force && state.waitingAt && Date.now() - state.waitingAt < TTL) return Promise.resolve();
     if (state.waitingLoading) return state.waitingLoading;
-    var requests = getJSON(REQUESTS_URL).then(function (d) { state.requests = d; }, function () { state.requests = null; });
+    var requests = getJSON(REQUESTS_URL).then(function (d) {
+      var before = state.requests && state.requests.searching, after = d && d.searching;
+      // a search just ended: Seerr's download state for that title is fetched again (spinner, ✅)
+      if (before && typeof before === "object") for (var k in before) if (!(after && after[k]) && state.media[k]) state.media[k].at = 0;
+      state.requests = d;
+    }, function () { state.requests = null; });
     state.waitingLoading = Promise.all([requests, getJSON(WAITING_URL).then(function (d) { state.waiting = d; }, function () { state.waiting = null; })]).then(function () {
       state.waitingAt = Date.now();
       state.waitingLoading = null;
@@ -282,20 +355,44 @@
     root.removeAttribute("data-hg-night-solid");
     if (root.getAttribute("role") === "img") root.removeAttribute("role");
     root.__hgHint = null;
+    root.removeAttribute("data-hg-hint");
     root.removeAttribute("data-hg-night");
   }
 
-  function setFlags(doc, b, place, f, l) {
-    var list = flagList(f, l), want = list.map(function (x) { return x[0]; }).join("");
-    if ((b.getAttribute("data-hg-flags") || "") === want) return;
+  function magnifier(doc, live) {
+    var ns = "http://www.w3.org/2000/svg", span = doc.createElement("span"), svg = doc.createElementNS(ns, "svg");
+    span.setAttribute("data-hg-search", live ? "live" : "wait");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    var c = doc.createElementNS(ns, "circle"), ln = doc.createElementNS(ns, "line");
+    c.setAttribute("cx", "10"); c.setAttribute("cy", "10"); c.setAttribute("r", "6.2"); c.setAttribute("fill", "none"); c.setAttribute("stroke", "currentColor"); c.setAttribute("stroke-width", "2.8");
+    ln.setAttribute("x1", "14.6"); ln.setAttribute("y1", "14.6"); ln.setAttribute("x2", "20.5"); ln.setAttribute("y2", "20.5"); ln.setAttribute("stroke", "currentColor"); ln.setAttribute("stroke-width", "3.2"); ln.setAttribute("stroke-linecap", "round");
+    svg.appendChild(c);
+    svg.appendChild(ln);
+    span.appendChild(svg);
+    return span;
+  }
+
+  var DRAWN = {};
+  DRAWN[SPIN] = true; DRAWN[HALF] = true; DRAWN[SEARCH] = true; DRAWN[WAIT] = true;
+
+  function iconEl(doc, tok) {
+    if (tok === SPIN) return spinner(doc);
+    if (tok === HALF) return half(doc);
+    if (tok === SEARCH || tok === WAIT) return magnifier(doc, tok === SEARCH);
+    var t = doc.createElement("span");
+    t.textContent = tok;
+    return t;
+  }
+
+  function setFlags(doc, b, place, f, l, part) {
+    var list = part ? [[HALF, STATUS[l].part]].concat(flagList(f, l, true, true)) : flagList(f, l), want = list.map(function (x) { return x[0]; }).join(""), same = want + "|" + (list.length ? merged(list, l) : "");
+    if ((b.getAttribute("data-hg-flags") || "") === want && (!want || b.__hgFlagsKey === same)) return;
+    b.__hgFlagsKey = same;
     var old = b.querySelectorAll("[data-hg-flag-own]");
     for (var i = 0; i < old.length; i++) old[i].parentNode.removeChild(old[i]);
-    if (b.hasAttribute("data-hg-flags-title")) {
-      var prev = b.getAttribute("data-hg-flags-title");
-      if (prev) b.setAttribute("title", prev); else b.removeAttribute("title");
-      b.removeAttribute("data-hg-flags-title");
-    }
     b.__hgHint = null;
+    b.removeAttribute("data-hg-hint");
     if (!want) { b.removeAttribute("data-hg-flags"); return; }
     for (var j = 0; j < list.length; j++) {
       var e = doc.createElement("span");
@@ -303,15 +400,30 @@
       e.setAttribute("role", "img");
       e.setAttribute("aria-label", list[j][1]);
       e.style.cssText = "margin-left:.25rem";
-      e.textContent = list[j][0];
+      if (DRAWN[list[j][0]]) e.appendChild(iconEl(doc, list[j][0])); else e.textContent = list[j][0];
       place.appendChild(e);
     }
-    var hint = merged(list, l), before = b.getAttribute("title") || "";
-    b.setAttribute("data-hg-flags-title", before);
-    b.setAttribute("title", before ? before + " · " + hint : hint);
     b.style.cursor = "help";
-    tapHint(doc, b, b.getAttribute("title"));
+    tapHint(doc, b, merged(list, l));
     b.setAttribute("data-hg-flags", want);
+  }
+
+  function listed(rs, key) {
+    var has = Object.prototype.hasOwnProperty;
+    return rs.canWait[key] || rs.pending[key] || rs.imported[key] || has.call(rs.unreleased, key) || has.call(rs.noRelease, key) || has.call(rs.searching, key) || has.call(rs.fresh, key) || has.call(rs.queue, key);
+  }
+
+  // Seerr's "Partially Available" on a series complete so far reads "Available so far" (Seerr's text back when that ends)
+  function relabel(b, row, label) {
+    var span = row.querySelector(":scope > span");
+    if (!span) return;
+    if (label) {
+      if (!b.hasAttribute("data-hg-orig")) b.setAttribute("data-hg-orig", span.textContent.trim());
+      if (span.textContent !== label) span.textContent = label;
+    } else if (b.hasAttribute("data-hg-orig")) {
+      span.textContent = b.getAttribute("data-hg-orig");
+      b.removeAttribute("data-hg-orig");
+    }
   }
 
   // StatusBadge without a download in progress ("Requested", "Pending"): 🌙/📅 after the text
@@ -330,11 +442,18 @@
     }
     for (var k = 0; k < seen.length; k++) {
       var badge = seen[k][0], text = seen[k][2], key = badgeKey(badge, loc), m = key && state.media[key];
-      if (key && rs && (rs.canWait[key] || Object.prototype.hasOwnProperty.call(rs.unreleased, key) || Object.prototype.hasOwnProperty.call(rs.noRelease, key))) loadMedia(key);
-      var f = flags(key, rs, m);
+      if (key && rs && listed(rs, key)) loadMedia(key);
+      text = badge.getAttribute("data-hg-orig") || text;
+      var f = flags(key, rs, m), part = PART.test(text);
+      relabel(badge, seen[k][1], f.soFar && part ? FLAGS[lang(doc, text.replace(/^4K\s/, ""))].soFarLabel : null);
+      if (f.soFar) part = false;
+      if (part) badge.setAttribute("data-hg-part", ""); else badge.removeAttribute("data-hg-part");
       if (badge.getAttribute("data-hg-night") !== null) f.moon = false;
+      // Seerr's own spinner / progress bar is there (its popup tells the download): nothing of ours
+      if (badge.querySelector("svg animateTransform") || badge.querySelector(":scope > div.absolute.left-0.top-0.z-10")) f = { moon: false, compass: false, cal: false };
+      if (part || (m && m.status === 4)) f.imported = false;
       if (/^(4K\s)?(Available|Verfügbar)$/.test(text)) f = { moon: false, compass: false, cal: false };
-      setFlags(doc, badge, seen[k][1], f, lang(doc, text.replace(/^4K\s/, "")));
+      setFlags(doc, badge, seen[k][1], f, lang(doc, text.replace(/^4K\s/, "")), part);
     }
   }
 
@@ -371,30 +490,28 @@
       var key = null;
       for (var p in state.posters) if (src.indexOf(p) >= 0) { key = state.posters[p]; break; }
       var m = key && state.media[key], f = flags(key, rs, m), l = lang(doc);
-      var kind = nativeKind(holder), list = flagList(f, l, kind === "part");
+      if (m && m.at === 0) loadMedia(key);
+      var kind = nativeKind(holder), list = flagList(f, l, kind === "part", true), qs = queueStatus(f, l);
       if (m && allWaiting(m.items, set) && !f.moon) list.unshift(["🌙", TEXT[l].label.replace(/\s*🌙$/, "") + " — " + TEXT[l].tip]);
       var status = kind && (kind !== "spin" || !(m && allWaiting(m.items, set)));
-      if (kind && status) list.unshift(statusEntry(kind, m, l));
-      if (kind === "part" && m && busy(m) && !allWaiting(m.items, set)) list.splice(1, 0, statusEntry("spin", m, l));
+      if (f.soFar) { status = true; kind = kind || "queue"; }
+      else if (kind && status) list.unshift(kind === "spin" && f.importing ? [SPIN, LIVE[l].importing] : statusEntry(kind, m, l));
+      else if (!kind && qs && !(m && allWaiting(m.items, set))) { list.unshift(qs); status = true; kind = "queue"; }
+      if (!f.soFar && kind === "part" && m && busy(m) && !allWaiting(m.items, set)) list.splice(1, 0, statusEntry("spin", m, l));
       var want = list.map(function (x) { return x[0]; }).join("");
       if (!want) { restore(holder); continue; }
-      if (holder.getAttribute("data-hg-night-icons") === want) continue;
+      var tips = merged(list, l);
+      if (holder.getAttribute("data-hg-night-icons") === want && holder.getAttribute("data-hg-hint") === tips) continue;
       restore(holder);
       for (var c = 0; c < holder.children.length; c++) hide(holder.children[c]);
-      var tips = merged(list, l);
       var icon = own(doc, "span", want, "");
-      if (want.indexOf(SPIN) >= 0 || want.indexOf(HALF) >= 0) {
+      if (list.some(function (x) { return DRAWN[x[0]]; })) {
         icon.textContent = "";
-        list.forEach(function (x) {
-          if (x[0] === SPIN) icon.appendChild(spinner(doc));
-          else if (x[0] === HALF) icon.appendChild(half(doc));
-          else { var t = doc.createElement("span"); t.textContent = x[0]; icon.appendChild(t); }
-        });
+        list.forEach(function (x) { icon.appendChild(iconEl(doc, x[0])); });
       }
       holder.appendChild(icon);
       if (kind && status) holder.setAttribute("data-hg-night-solid", "");
       holder.setAttribute(list.length > 1 ? "data-hg-night-pill" : "data-hg-night-moon", "");
-      holder.setAttribute("title", tips);
       holder.setAttribute("aria-label", tips);
       holder.setAttribute("role", "img");
       tapHint(doc, holder, tips);
@@ -449,7 +566,7 @@
     if (doc.getElementById("hg-night-style")) return;
     var s = doc.createElement("style");
     s.id = "hg-night-style";
-    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{width:100% !important;background:#4b5563 !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night-solid]{background-color:rgba(99,102,241,.8) !important;border-color:#818cf8 !important;--tw-ring-color:#818cf8 !important;color:#eef2ff !important}[data-hg-half]{display:inline-block;width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:2px solid #fff;background:linear-gradient(90deg,#fff 50%,transparent 50%);vertical-align:middle}[data-hg-night-own] > [data-hg-half] + *{margin-left:.2rem}[data-hg-spin]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-spin] svg{display:block;width:100%;height:100%;animation:hg-spin .8s steps(8) infinite}@keyframes hg-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){[data-hg-spin] svg{animation:none}}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}#hg-flag-tip{position:fixed;z-index:10000;max-width:16rem;padding:.4rem .6rem;border-radius:.5rem;background:#111827;color:#f3f4f6;border:1px solid #4b5563;font-size:.75rem;line-height:1.1rem;white-space:pre-line;box-shadow:0 4px 12px rgba(0,0,0,.4)}";
+    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{width:100% !important;background:#4b5563 !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night-solid]{background-color:rgba(99,102,241,.8) !important;border-color:#818cf8 !important;--tw-ring-color:#818cf8 !important;color:#eef2ff !important}[data-hg-half]{display:inline-block;width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:2px solid #fff;background:linear-gradient(90deg,#fff 50%,transparent 50%);vertical-align:middle}[data-hg-night-own] > [data-hg-half] + *{margin-left:.2rem}[data-hg-spin]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-spin] svg{display:block;width:100%;height:100%;animation:hg-spin .8s steps(8) infinite}@keyframes hg-spin{to{transform:rotate(360deg)}}a[data-hg-part],span[data-hg-part]{background-color:rgba(2,132,199,.8) !important;border-color:#0ea5e9 !important;color:#e0f2fe !important}a[data-hg-part]:hover{background-color:#0284c7 !important}[data-hg-flag-own] > [data-hg-half]{width:.75rem;height:.75rem}[data-hg-flag-own] > [data-hg-spin],[data-hg-flag-own] > [data-hg-search]{width:.85rem;height:.85rem}[data-hg-search]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-search] svg{display:block;width:100%;height:100%}[data-hg-search=\"wait\"] svg{opacity:.8}[data-hg-search=\"live\"] svg{animation:hg-pulse 1.4s ease-in-out infinite}@keyframes hg-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.84)}}[data-hg-night-own] > [data-hg-search] + *,[data-hg-night-own] > * + [data-hg-search]{margin-left:.15rem}@media (prefers-reduced-motion:reduce){[data-hg-spin] svg,[data-hg-search=\"live\"] svg{animation:none}}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}#hg-flag-tip{position:fixed;z-index:10000;max-width:16rem;padding:.4rem .6rem;border-radius:.5rem;background:#111827;color:#f3f4f6;border:1px solid #4b5563;font-size:.75rem;line-height:1.1rem;white-space:pre-line;box-shadow:0 4px 12px rgba(0,0,0,.4)}";
     (doc.head || doc.documentElement).appendChild(s);
   }
 
@@ -462,7 +579,11 @@
     flagBadges(doc, rs, loc);
     titleCards(doc, set, rs);
     downloadBlocks(doc, set, loc);
+    if (typeof window !== "undefined" && doc.querySelector("[data-hg-search]") && !pollTimer) pollTimer = setTimeout(function () { pollTimer = null; refresh(); }, state.poll);
   }
+
+  // a 🔍/🔎 on the page: request-state.json again every 15 s (rewritten every 15 s while a search runs)
+  var pollTimer = null;
 
   // Download now (download-now.js) started these: no label even while night-waiting.json still lists them (rewritten every 2 min)
   function release(ids) {
