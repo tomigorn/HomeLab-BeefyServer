@@ -44,35 +44,61 @@ class Pure(unittest.TestCase):
         self.assertEqual(sl.details(raw), {"companies": [{"id": 3, "name": "Pixar", "logo": "/p.png"}], "networks": [{"id": 49, "name": "HBO", "logo": None}]})
         self.assertEqual(sl.details({}), {"companies": [], "networks": []})
 
-    def test_networks_are_the_series_studios_tmdb_lists_as_networks(self):
+    def test_networks_are_the_series_studios_tmdb_lists_as_well_known_networks(self):
         series = [show("76479", ["Prime Video", "Amazon Studios"]), show("4546", ["HBO", "Production Partners"]), show("999", ["Unknown TV"])]
-        self.assertEqual(sl.network_ids(series, CACHE), ["id-HBO", "id-Prime Video"])
+        self.assertEqual(sl.card_groups(sl.NETWORKS, series, CACHE, "networks"), [{"name": "Prime Video", "ids": ["id-Prime Video"]}, {"name": "HBO", "ids": ["id-HBO"]}])
 
-    def test_networks_row_keeps_only_well_known_networks_by_tmdb_id(self):
-        cache = {**CACHE, "tv:1": {"companies": [], "networks": [{"id": 614, "name": "TOKYO MX", "logo": "/mx.png"}, {"id": 1112, "name": "Crunchyroll", "logo": "/cr.png"}]}}
-        series = [show("1", ["TOKYO MX", "Crunchyroll"]), show("4546", ["HBO"])]
-        self.assertEqual(sl.network_ids(series, cache), ["id-Crunchyroll", "id-HBO"])
+    def test_small_networks_are_left_out(self):
+        cache = {"tv:1": {"companies": [], "networks": [{"id": 614, "name": "TOKYO MX", "logo": "/mx.png"}, {"id": 1112, "name": "Crunchyroll", "logo": "/cr.png"}]}}
+        self.assertEqual(sl.card_groups(sl.NETWORKS, [show("1", ["TOKYO MX", "Crunchyroll"])], cache, "networks"), [{"name": "Crunchyroll", "ids": ["id-Crunchyroll"]}])
 
-    def test_well_known_networks_match_by_id_not_by_a_shared_name(self):
-        self.assertTrue(sl.well_known({"id": 213, "name": "Netflix"}))
-        self.assertTrue(sl.well_known({"id": 6783, "name": "Max"}))
-        self.assertFalse(sl.well_known({"id": 505, "name": "max"}))
-        self.assertFalse(sl.well_known({"id": 833, "name": "RTL"}))
-        self.assertFalse(sl.well_known({"id": 57, "name": "Nippon TV"}))
+    def test_matched_by_tmdb_id_not_by_a_shared_name(self):
+        cache = {"tv:1": {"companies": [], "networks": [{"id": 505, "name": "Max", "logo": None}, {"id": 833, "name": "RTL", "logo": None}]}}
+        self.assertEqual(sl.card_groups(sl.NETWORKS, [show("1", ["Max", "RTL"])], cache, "networks"), [])
 
-    def test_a_network_without_id_falls_back_to_its_name(self):
-        self.assertTrue(sl.well_known({"id": None, "name": "Netflix"}))
-        self.assertFalse(sl.well_known({"name": "TOKYO MX"}))
+    def test_aliases_share_one_card_in_precedence_order(self):
+        cache = {
+            "movie:1": {"companies": [{"id": 174, "name": "Warner Bros. Pictures", "logo": None}, {"id": 437, "name": "Heyday Films", "logo": None}, {"id": 436, "name": "1492 Pictures", "logo": None}], "networks": []},
+            "movie:2": {"companies": [{"id": 17, "name": "Warner Bros. Entertainment", "logo": None}], "networks": []},
+            "movie:3": {"companies": [{"id": 2, "name": "Walt Disney Pictures", "logo": None}, {"id": 3, "name": "Pixar", "logo": None}], "networks": []},
+        }
+        movies = [movie("1", ["Warner Bros. Pictures", "Heyday Films", "1492 Pictures"]), movie("2", ["Warner Bros. Entertainment"]), movie("3", ["Pixar", "Walt Disney Pictures"])]
+        self.assertEqual(sl.card_groups(sl.MAJOR_STUDIOS, movies, cache, "companies"), [
+            {"name": "Warner Bros.", "ids": ["id-Warner Bros. Entertainment", "id-Warner Bros. Pictures"]},
+            {"name": "Walt Disney", "ids": ["id-Walt Disney Pictures"]},
+            {"name": "Pixar", "ids": ["id-Pixar"]},
+        ])
 
-    def test_well_known_list_covers_streamers_and_major_us_uk_de_ch_broadcasters(self):
-        names = set(sl.WELL_KNOWN.values())
-        for n in ["Netflix", "Prime Video", "Disney+", "Apple TV+", "HBO", "Max", "Hulu", "Paramount+", "Peacock", "Crunchyroll", "AMC", "FX", "BBC One", "Channel 4", "Sky Atlantic", "ZDF", "Das Erste", "ProSieben", "RTL", "SRF 1", "ARTE"]:
-            self.assertIn(n, names)
+    def test_a_studio_without_a_checked_id_matches_by_its_alias_name(self):
+        cache = {"movie:1": {"companies": [{"id": 999999, "name": "Apple Original Films", "logo": None}], "networks": []}}
+        self.assertEqual(sl.card_groups(sl.MAJOR_STUDIOS, [movie("1", ["Apple Original Films"])], cache, "companies"), [{"name": "Apple", "ids": ["id-Apple Original Films"]}])
 
-    def test_small_networks_get_no_logo_job(self):
-        cache = {"tv:1": {"companies": [], "networks": [{"id": 614, "name": "TOKYO MX", "logo": "/mx.png"}]}}
-        items = [show("1", ["TOKYO MX"])]
-        self.assertEqual(sl.logo_jobs([studio("TOKYO MX")], items, cache, sl.network_ids(items, cache)), [])
+    def test_a_title_tmdb_does_not_know_falls_back_to_the_tmdb_names(self):
+        hp = movie("1241", ["Warner Bros. Pictures", "Heyday Films", "1492 Pictures"])
+        self.assertEqual(sl.card_groups(sl.MAJOR_STUDIOS, [hp], {}, "companies"), [{"name": "Warner Bros.", "ids": ["id-Warner Bros. Pictures"]}])
+
+    def test_the_name_fallback_is_only_for_titles_tmdb_does_not_know(self):
+        cache = {"tv:1": {"companies": [{"id": 1, "name": "Crunchyroll", "logo": None}], "networks": [{"id": 614, "name": "TOKYO MX", "logo": None}]}}
+        self.assertEqual(sl.card_groups(sl.NETWORKS, [show("1", ["TOKYO MX", "Crunchyroll"])], cache, "networks"), [])
+
+    def test_lists_cover_the_majors_bigger_first(self):
+        studios = [g[0] for g in sl.MAJOR_STUDIOS]
+        for n in ["Warner Bros.", "Walt Disney", "Universal", "Paramount", "Sony Pictures", "20th Century", "Netflix", "Amazon MGM", "Apple", "Lionsgate", "Marvel Studios", "Lucasfilm", "Pixar", "DreamWorks", "Legendary", "New Line Cinema", "Focus Features", "Searchlight", "A24", "Neon", "Studio Ghibli", "Toho"]:
+            self.assertIn(n, studios)
+        self.assertLess(studios.index("Warner Bros."), studios.index("New Line Cinema"))
+        self.assertLess(studios.index("Walt Disney"), studios.index("Pixar"))
+        networks = [g[0] for g in sl.NETWORKS]
+        for n in ["Netflix", "Prime Video", "Disney+", "Apple TV+", "HBO", "HBO Max", "Hulu", "Paramount+", "Peacock", "Crunchyroll", "AMC", "FX", "BBC One", "Channel 4", "Sky Atlantic", "ZDF", "Das Erste", "ProSieben", "RTL", "SRF 1", "ARTE"]:
+            self.assertIn(n, networks)
+        ids = [i for g in sl.MAJOR_STUDIOS for i in g[1]] + [i for g in sl.NETWORKS for i in g[1]]
+        self.assertEqual(len([i for g in sl.MAJOR_STUDIOS for i in g[1]]), len({i for g in sl.MAJOR_STUDIOS for i in g[1]}))
+        self.assertTrue(all(isinstance(i, int) for i in ids))
+
+    def test_small_studios_and_networks_get_no_logo_job(self):
+        cache = {"tv:1": {"companies": [], "networks": [{"id": 614, "name": "TOKYO MX", "logo": "/mx.png"}]},
+                 "movie:2": {"companies": [{"id": 437, "name": "Heyday Films", "logo": "/hd.png"}], "networks": []}}
+        items = [show("1", ["TOKYO MX"]), movie("2", ["Heyday Films"])]
+        self.assertEqual(sl.logo_jobs([studio("TOKYO MX"), studio("Heyday Films")], items, cache, []), [])
 
     def test_names_match_loosely(self):
         self.assertEqual(sl.norm("Apple TV+"), sl.norm("apple tv +"))
@@ -81,7 +107,7 @@ class Pure(unittest.TestCase):
     def test_logo_jobs_movie_studios_and_networks_without_a_logo(self):
         items = [movie("862", ["Pixar", "Walt Disney Pictures"]), show("76479", ["Prime Video", "Amazon Studios"]), show("4546", ["HBO"])]
         studios = [studio("Pixar"), studio("Walt Disney Pictures"), studio("Prime Video"), studio("Amazon Studios"), studio("HBO", logo="t")]
-        jobs = sl.logo_jobs(studios, items, CACHE, ["id-Prime Video", "id-HBO"])
+        jobs = sl.logo_jobs(studios, items, CACHE, ["id-Prime Video", "id-HBO", "id-Pixar", "id-Walt Disney Pictures"])
         self.assertEqual(jobs, [("id-Pixar", "Pixar", "/pixar.png"), ("id-Prime Video", "Prime Video", "/prime.png")])
 
     def test_network_logo_comes_from_the_network_not_the_company(self):
@@ -101,15 +127,15 @@ class Pure(unittest.TestCase):
         self.assertFalse(sl.see_through(b"not an image"))
 
     def test_logo_jobs_skip_paths_known_to_be_boxes(self):
-        jobs = sl.logo_jobs([studio("Pixar")], [movie("862", ["Pixar"])], {**CACHE, "opaque": ["/pixar.png"]}, [])
+        jobs = sl.logo_jobs([studio("Pixar")], [movie("862", ["Pixar"])], {**CACHE, "opaque": ["/pixar.png"]}, ["id-Pixar"])
         self.assertEqual(jobs, [])
 
     def test_white_logo_url(self):
         self.assertEqual(sl.logo_url("/pixar.png"), "https://image.tmdb.org/t/p/w500_filter(duotone,ffffff,bababa)/pixar.png")
 
-    def test_networks_script_is_plain_data(self):
-        js = sl.networks_script(["b", "a"])
-        self.assertEqual(js, 'window.HssNetworks = ["a", "b"];\n')
+    def test_cards_script_is_plain_data(self):
+        js = sl.cards_script([{"name": "Pixar", "ids": ["p"]}], [{"name": "HBO", "ids": ["h"]}])
+        self.assertEqual(js, 'window.HssStudios = [{"name": "Pixar", "ids": ["p"]}];\nwindow.HssNetworks = [{"name": "HBO", "ids": ["h"]}];\n')
 
 
 class FakeJellyfin:
@@ -162,9 +188,9 @@ class Main(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual([u[0] for u in jf.uploads], ["id-HBO", "id-Pixar"])
         self.assertEqual(jf.uploads[0][1], b"PNG:" + sl.logo_url("/hbo.png").encode())
-        self.assertEqual(text.splitlines()[-1], "2 logos added, networks changed")
+        self.assertEqual(text.splitlines()[-1], "2 logos added, cards changed")
         entry = next(s for s in jf.config["CustomJavaScripts"] if s["Name"] == sl.NAME)
-        self.assertEqual(entry["Script"], 'window.HssNetworks = ["id-HBO"];\n')
+        self.assertEqual(entry["Script"], 'window.HssStudios = [{"name": "Pixar", "ids": ["id-Pixar"]}];\nwindow.HssNetworks = [{"name": "HBO", "ids": ["id-HBO"]}];\n')
         self.assertTrue(entry["RequiresAuthentication"])
         self.assertEqual(sorted(json.loads(self.cache.read_text())), ["movie:862", "opaque", "tv:4546"])
         jf.studios = [studio("Pixar", "t1"), studio("HBO", "t2")]
@@ -172,7 +198,7 @@ class Main(unittest.TestCase):
         code, text = self.run_main(jf, [], self.seerr, self.cache)
         self.assertEqual(self.calls, [])
         self.assertEqual(len(jf.posts), 1)
-        self.assertEqual(text.splitlines()[-1], "0 logos added, networks unchanged")
+        self.assertEqual(text.splitlines()[-1], "0 logos added, cards unchanged")
 
     def test_dry_run_changes_nothing(self):
         jf = FakeJellyfin([movie("862", ["Pixar"])], [studio("Pixar")])
@@ -180,7 +206,7 @@ class Main(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(jf.uploads, [])
         self.assertEqual(jf.posts, [])
-        self.assertEqual(text.splitlines()[-1], "1 logos to add, networks would change")
+        self.assertEqual(text.splitlines()[-1], "1 logos to add, cards would change")
 
     def test_a_failed_lookup_or_download_is_skipped_and_retried_next_run(self):
         jf = FakeJellyfin([movie("862", ["Pixar"]), movie("1", ["Other"])], [studio("Pixar"), studio("Other")])

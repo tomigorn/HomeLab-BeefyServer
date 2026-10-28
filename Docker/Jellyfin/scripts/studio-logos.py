@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Studio and network logos for the home rows Studios / Networks (home-placeholders/empty-sections.js).
-Finds each title's TMDB companies and networks through Seerr (its TMDB access, no own key), uploads the white TMDB logo as the Jellyfin studio's Logo image once, and writes the JavaScript Injector entry "Home networks" (window.HssNetworks: the studio ids that are well-known TMDB networks, WELL_KNOWN).
+Finds each title's TMDB companies and networks through Seerr (its TMDB access, no own key), uploads the white TMDB logo as the Jellyfin studio's Logo image once, and writes the JavaScript Injector entry "Home networks" (window.HssStudios / window.HssNetworks: the cards of MAJOR_STUDIOS / NETWORKS with their Jellyfin studio ids, in precedence order).
 Lookups are cached in ~/.cache/jellyfin-studio-logos.json, so a run only asks about new titles. Never prints API keys.
 Usage: studio-logos.py [--dry-run]"""
 import base64
@@ -20,30 +20,65 @@ SEERR = "http://127.0.0.1:5055"
 SEERR_KEY = HERE.parent.parent / "Seerr" / "secrets" / "api-key"
 CACHE_FILE = pathlib.Path.home() / ".cache" / "jellyfin-studio-logos.json"
 TMDB_LOGO = "https://image.tmdb.org/t/p/w500_filter(duotone,ffffff,bababa)"
-# The only networks the Networks row shows (owner 2026-10-28: well-known ones): global streamers, major US/UK/DE/CH broadcasters, Crunchyroll.
-# Matched by TMDB network id (ids checked through Seerr 2026-10-28), the name only for a network without an id; a shared name like "RTL" (HU) or "max" (AU) never matches.
-# Add one: find the id on themoviedb.org/search/network, then rerun studio-logos.py.
-WELL_KNOWN = {
-    213: "Netflix", 1024: "Prime Video", 2739: "Disney+", 2552: "Apple TV+", 453: "Hulu", 4330: "Paramount+", 3353: "Peacock",
-    6783: "Max", 3186: "HBO Max", 8304: "HBO Max", 7869: "HBO Max", 1112: "Crunchyroll", 4353: "discovery+", 4661: "AMC+",
-    49: "HBO", 6: "NBC", 16: "CBS", 2: "ABC", 19: "FOX", 71: "The CW", 174: "AMC", 88: "FX", 67: "Showtime", 318: "Starz",
-    359: "Cinemax", 41: "TNT", 30: "USA Network", 77: "Syfy", 47: "Comedy Central", 80: "Adult Swim", 56: "Cartoon Network",
-    13: "Nickelodeon", 54: "Disney Channel", 64: "Discovery", 43: "National Geographic",
-    4: "BBC One", 332: "BBC Two", 3: "BBC Three", 1155: "BBC iPlayer", 9: "ITV1", 26: "Channel 4", 99: "Channel 5", 136: "E4",
-    214: "Sky One", 1063: "Sky Atlantic",
-    31: "ZDF", 308: "Das Erste", 334: "ProSieben", 163: "SAT.1", 207: "RTL", 5428: "RTL+", 1628: "ARTE",
-    571: "SRF 1", 2563: "SRF zwei",
-}
+# The home rows Studios / Networks show only these cards (owner 2026-10-28: major studios, well-known networks). One card = one entry, aliases grouped.
+# Order = precedence, bigger first: a title with several of them counts only for the first (Harry Potter: Warner Bros., not 1492 Pictures; a Pixar film made with Walt Disney Pictures: Walt Disney).
+# Each entry: (card name, {TMDB id checked through Seerr 2026-10-28: its TMDB name}, exact names of aliases without a checked id). The TMDB name only counts for a title whose lookup failed (e.g. the Harry Potter Collection item, TMDB collection 1241). An id from themoviedb.org/search/company (or /network), then rerun this script.
+MAJOR_STUDIOS = [
+    ("Warner Bros.", {174: "Warner Bros. Pictures", 17: "Warner Bros. Entertainment", 2785: "Warner Bros. Animation"}, []),
+    ("Walt Disney", {2: "Walt Disney Pictures", 6125: "Walt Disney Animation Studios", 3166: "Walt Disney Productions"}, []),
+    ("Universal", {33: "Universal Pictures"}, []),
+    ("Paramount", {4: "Paramount Pictures", 24955: "Paramount Animation"}, []),
+    ("Sony Pictures", {5: "Columbia Pictures", 34: "Sony Pictures", 2251: "Sony Pictures Animation", 559: "TriStar Pictures", 3287: "Screen Gems"}, []),
+    ("20th Century", {25: "20th Century Fox", 127928: "20th Century Studios", 711: "Fox 2000 Pictures"}, []),
+    ("Netflix", {178464: "Netflix"}, []),
+    ("Amazon MGM", {210099: "Amazon MGM Studios", 20580: "Amazon Studios", 21: "Metro-Goldwyn-Mayer", 60: "United Artists"}, []),
+    ("Apple", {194232: "Apple Studios"}, ["Apple Original Films"]),
+    ("Lionsgate", {1632: "Lionsgate", 491: "Summit Entertainment"}, []),
+    ("Marvel Studios", {420: "Marvel Studios"}, []),
+    ("Lucasfilm", {1: "Lucasfilm Ltd."}, []),
+    ("Pixar", {3: "Pixar"}, []),
+    ("DreamWorks", {521: "DreamWorks Animation", 7: "DreamWorks Pictures"}, []),
+    ("New Line Cinema", {12: "New Line Cinema"}, []),
+    ("Legendary", {923: "Legendary Pictures"}, []),
+    ("Illumination", {6704: "Illumination"}, []),
+    ("Focus Features", {10146: "Focus Features"}, []),
+    ("Searchlight", {127929: "Searchlight Pictures", 43: "Fox Searchlight Pictures"}, []),
+    ("A24", {41077: "A24"}, []),
+    ("Neon", {90733: "NEON"}, []),
+    ("Miramax", {14: "Miramax"}, []),
+    ("Blumhouse", {3172: "Blumhouse Productions"}, []),
+    ("Annapurna", {13184: "Annapurna Pictures"}, []),
+    ("Amblin", {56: "Amblin Entertainment"}, []),
+    ("Studio Ghibli", {10342: "Studio Ghibli"}, []),
+    ("Toho", {882: "TOHO"}, []),
+    ("Toei Animation", {5542: "Toei Animation"}, []),
+    ("StudioCanal", {694: "StudioCanal"}, []),
+    ("Pathé", {7981: "Pathé"}, []),
+    ("Gaumont", {9: "Gaumont"}, []),
+    ("Constantin Film", {47: "Constantin Film"}, []),
+    ("Working Title", {10163: "Working Title"}, []),
+    ("BBC Film", {288: "BBC Film"}, []),
+    ("Film4", {6705: "Film4 Productions"}, []),
+    ("Aardman", {297: "Aardman"}, []),
+    ("Laika", {11537: "LAIKA"}, []),
+]
+# Global streamers, major US/UK/DE/CH broadcasters, Crunchyroll; matched by id, so a shared name like "RTL" (HU) or "max" (AU) never counts.
+NETWORKS = [
+    ("Netflix", {213: "Netflix"}, []), ("Prime Video", {1024: "Prime Video"}, []), ("Disney+", {2739: "Disney+"}, []), ("HBO", {49: "HBO"}, []), ("HBO Max", {3186: "HBO Max", 8304: "HBO Max", 7869: "HBO Max", 6783: "HBO Max"}, []),
+    ("Apple TV+", {2552: "Apple TV+"}, []), ("Hulu", {453: "Hulu"}, []), ("Paramount+", {4330: "Paramount+"}, []), ("Peacock", {3353: "Peacock"}, []), ("Crunchyroll", {1112: "Crunchyroll"}, []),
+    ("AMC", {174: "AMC"}, []), ("AMC+", {4661: "AMC+"}, []), ("FX", {88: "FX"}, []), ("Showtime", {67: "Showtime"}, []), ("Starz", {318: "Starz"}, []), ("Cinemax", {359: "Cinemax"}, []),
+    ("NBC", {6: "NBC"}, []), ("CBS", {16: "CBS"}, []), ("ABC", {2: "ABC"}, []), ("FOX", {19: "FOX"}, []), ("The CW", {71: "The CW"}, []), ("TNT", {41: "TNT"}, []), ("USA Network", {30: "USA Network"}, []),
+    ("Syfy", {77: "Syfy"}, []), ("Comedy Central", {47: "Comedy Central"}, []), ("Adult Swim", {80: "Adult Swim"}, []), ("Cartoon Network", {56: "Cartoon Network"}, []), ("Nickelodeon", {13: "Nickelodeon"}, []),
+    ("Disney Channel", {54: "Disney Channel"}, []), ("Discovery", {64: "Discovery"}, []), ("discovery+", {4353: "discovery+"}, []), ("National Geographic", {43: "National Geographic"}, []),
+    ("BBC One", {4: "BBC One"}, []), ("BBC Two", {332: "BBC Two"}, []), ("BBC Three", {3: "BBC Three"}, []), ("BBC iPlayer", {1155: "BBC iPlayer"}, []), ("ITV1", {9: "ITV1"}, []), ("Channel 4", {26: "Channel 4"}, []),
+    ("Channel 5", {99: "Channel 5"}, []), ("E4", {136: "E4"}, []), ("Sky Atlantic", {1063: "Sky Atlantic"}, []), ("Sky One", {214: "Sky One"}, []),
+    ("ZDF", {31: "ZDF"}, []), ("Das Erste", {308: "Das Erste"}, []), ("ARTE", {1628: "ARTE"}, []), ("ProSieben", {334: "ProSieben"}, []), ("SAT.1", {163: "SAT.1"}, []), ("RTL", {207: "RTL"}, []), ("RTL+", {5428: "RTL+"}, []),
+    ("SRF 1", {571: "SRF 1"}, []), ("SRF zwei", {2563: "SRF zwei"}, []),
+]
 
 
 def norm(name):
     return re.sub(r"[^0-9a-z+]", "", (name or "").casefold())
-
-
-def well_known(network):
-    if network.get("id") is not None:
-        return network["id"] in WELL_KNOWN
-    return norm(network.get("name")) in {norm(n) for n in WELL_KNOWN.values()}
 
 
 def tmdb_ref(item):
@@ -59,19 +94,31 @@ def details(raw):
     return {"companies": pick("productionCompanies"), "networks": pick("networks")}
 
 
-def network_ids(series, cache):
-    out = set()
-    for s in series:
-        d = cache.get(tmdb_ref(s) or "")
-        if not d:
-            continue
-        names = {norm(n["name"]) for n in d["networks"] if well_known(n)}
-        out |= {st["Id"] for st in s.get("Studios") or [] if norm(st["Name"]) in names}
-    return sorted(out)
+def card_groups(table, items, cache, key):
+    """[{name, ids: Jellyfin studio ids}] in the table's order, only cards with a studio in these items; key = "companies" (films) or "networks" (series)."""
+    tmdb = {}
+    for item in items:
+        d = cache.get(tmdb_ref(item) or "")
+        by_name = {norm(c["name"]): c.get("id") for c in d[key]} if d else {}
+        for st in item.get("Studios") or []:
+            n = norm(st["Name"])
+            entry = tmdb.setdefault(st["Id"], [set(), n, False])
+            entry[2] = entry[2] or bool(d)
+            if n in by_name:
+                entry[0].add(by_name[n])
+    out, taken = [], set()
+    for name, ids, aliases in table:
+        alias = {norm(a) for a in aliases}
+        tmdb_names = {norm(n) for n in ids.values()}
+        hit = sorted(sid for sid, (got, n, known) in tmdb.items() if sid not in taken and (got & set(ids) or n in alias or (not known and n in tmdb_names)))
+        if hit:
+            taken |= set(hit)
+            out.append({"name": name, "ids": hit})
+    return out
 
 
-def logo_jobs(studios, items, cache, networks):
-    """[(studio id, name, TMDB logo path)] for shown studios (film studios, networks) that have no Logo image yet."""
+def logo_jobs(studios, items, cache, shown):
+    """[(studio id, name, TMDB logo path)] for the studios on a card (shown) that have no Logo image yet."""
     found = {}
     opaque = set(cache.get("opaque") or [])
     for item in items:
@@ -81,7 +128,7 @@ def logo_jobs(studios, items, cache, networks):
         pool = d["networks"] if item.get("Type") == "Series" else d["companies"]
         logos = {norm(c["name"]): c["logo"] for c in pool if c.get("logo") and c["logo"] not in opaque}
         for st in item.get("Studios") or []:
-            if item.get("Type") == "Series" and st["Id"] not in networks:
+            if st["Id"] not in shown:
                 continue
             path = logos.get(norm(st["Name"]))
             if path:
@@ -108,8 +155,8 @@ def logo_url(path):
     return TMDB_LOGO + path
 
 
-def networks_script(ids):
-    return "window.HssNetworks = " + json.dumps(sorted(ids)) + ";\n"
+def cards_script(studios, networks):
+    return "window.HssStudios = " + json.dumps(studios, ensure_ascii=False) + ";\nwindow.HssNetworks = " + json.dumps(networks, ensure_ascii=False) + ";\n"
 
 
 def _seerr(ref):
@@ -158,9 +205,7 @@ def main(argv, api=None, seerr=_seerr, fetch=_fetch, upload=_upload, cache_file=
         cache = json.loads(cache_file.read_text())
     except (OSError, ValueError):
         cache = {}
-    has_logo = {s["Id"] for s in studios if (s.get("ImageTags") or {}).get("Logo")}
-    wanted = series + [m for m in movies if any(st["Id"] not in has_logo for st in m.get("Studios") or [])]
-    for item in wanted:
+    for item in movies + series:
         ref = tmdb_ref(item)
         if not ref or ref in cache:
             continue
@@ -168,16 +213,18 @@ def main(argv, api=None, seerr=_seerr, fetch=_fetch, upload=_upload, cache_file=
             cache[ref] = details(seerr(ref))
         except Exception as e:
             print(f"skipped {ref}: {type(e).__name__}", file=out)
-    nets = network_ids(series, cache)
-    jobs = logo_jobs(studios, movies + series, cache, nets)
+    majors = card_groups(MAJOR_STUDIOS, movies, cache, "companies")
+    nets = card_groups(NETWORKS, series, cache, "networks")
+    shown = {i for g in majors + nets for i in g["ids"]}
+    jobs = logo_jobs(studios, movies + series, cache, shown)
     plugin_id = next(p["Id"] for p in api("GET", "/Plugins") if p["Name"] == PLUGIN)
     path = f"/Plugins/{plugin_id}/Configuration"
     config = api("GET", path)
-    script = networks_script(nets)
+    script = cards_script(majors, nets)
     changed = next((s.get("Script") for s in config.get("CustomJavaScripts") or [] if s.get("Name") == NAME), None) != script
-    print(f"{len(nets)} networks", file=out)
+    print(f"{len(majors)} studios, {len(nets)} networks", file=out)
     if dry:
-        print(f"{len(jobs)} logos to add, networks {'would change' if changed else 'unchanged'}", file=out)
+        print(f"{len(jobs)} logos to add, cards {'would change' if changed else 'unchanged'}", file=out)
         return 0
     added = 0
     for sid, name, logo in jobs:
@@ -197,7 +244,7 @@ def main(argv, api=None, seerr=_seerr, fetch=_fetch, upload=_upload, cache_file=
     cache.setdefault("opaque", [])
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(cache, sort_keys=True))
-    print(f"{added} logos added, networks {'changed' if changed else 'unchanged'}", file=out)
+    print(f"{added} logos added, cards {'changed' if changed else 'unchanged'}", file=out)
     return 0
 
 
