@@ -158,11 +158,11 @@ test("Discover title cards: the spinner of a night-paused title becomes a moon (
   await settle();
   const [boys, fight] = w.document.querySelectorAll('[role="link"]');
   assert.equal(visibleText(w, boys.querySelector(".pointer-events-none.z-40.flex")), "🌙");
-  assert.ok(shown(w, fight.querySelector("svg")));
-  assert.equal(fight.querySelector("[data-hg-night-own]"), null);
+  assert.ok(fight.querySelector("[data-hg-spin]"));
+  assert.equal(fight.querySelectorAll("[data-hg-night-own]").length, 1);
   const css = w.document.getElementById("hg-night-style").textContent;
   assert.ok(boys.querySelector("[data-hg-night-moon]"));
-  assert.equal(fight.querySelector("[data-hg-night-moon]"), null);
+  assert.ok(fight.querySelector("[data-hg-night-moon]"));
   assert.match(css, /\[data-hg-night-moon\]\{[^}]*width:1\.625rem[^}]*!important/);
   assert.match(css, /\[data-hg-night-moon\]\{[^}]*height:1\.625rem[^}]*!important/);
   assert.match(css, /\[data-hg-night-moon\] > \[data-hg-night-own\]\{[^}]*font-size:\.95rem/);
@@ -328,8 +328,8 @@ test("Discover cards: 🌙 in the 26px circle, 🌙📅 side by side in a pill, 
   assert.equal(cat.querySelector("[data-hg-night-moon]"), null);
   assert.match(cat.querySelector("[data-hg-night]").getAttribute("title"), /^Waiting for the night · Not released yet — expected 2 Feb 2027$/);
   assert.equal(visibleText(w, now), "📅");
-  assert.equal(fight.querySelector("[data-hg-night-own]"), null);
-  assert.ok(shown(w, fight.querySelector("svg")));
+  assert.equal(fight.querySelectorAll("[data-hg-night-own]").length, 1);
+  assert.ok(fight.querySelector("[data-hg-spin]"));
   assert.equal(other.querySelector("[data-hg-night-own]"), null);
   assert.equal(tied.querySelectorAll("[data-hg-night-own]").length, 1);
   assert.match(w.document.getElementById("hg-night-style").textContent, /\[data-hg-night-pill\]\{[^}]*height:1\.625rem[^}]*!important/);
@@ -398,4 +398,53 @@ test("icons(key) for other scripts: the title's icons with their hints", async (
   await settle();
   assert.equal(JSON.stringify(w.hgNightLabel.icons("movie/704")), JSON.stringify([["🌙", "Waiting for the night — downloads at night (cheaper power)"], ["🧭", COMPASS_EN]]));
   assert.equal(JSON.stringify(w.hgNightLabel.icons("movie/9")), "[]");
+});
+
+const nativeCard = (poster, kind) => titleCard(poster)
+  .replace(/<svg[\s\S]*?<\/svg>/, kind === "partial" ? '<svg viewBox="0 0 24 24"><path d="M5.25 12a.75.75 0 0 1 .75-.75h12a.75.75 0 0 1 0 1.5H6a.75.75 0 0 1-.75-.75Z"></path></svg>' : kind === "available" ? '<svg viewBox="0 0 24 24"><path d="M19.916 4.626a.75.75 0 0 1 .208 1.04"></path></svg>' : "$&")
+  .replace(/bg-indigo-500\/80 border-indigo-400 ring-indigo-400 text-indigo-100/, kind === "downloading" ? "$&" : "bg-green-500/80 border-green-400 ring-green-400 text-green-100");
+
+test("Discover cards: native downloading / available / partly available badges become our purple circle (spinner ring, ✅, ☑️) with hints", async () => {
+  const dl = { ...FIGHT_ITEM, size: 1000, sizeLeft: 600 };
+  const mk = (id, poster, status, items = []) => ({ id, mediaType: "movie", title: String(id), posterPath: poster, mediaInfo: { tmdbId: id, mediaType: "movie", status, downloadStatus: items, downloadStatus4k: [] } });
+  const routes = { ...RS_ROUTES, [RS_URL]: RS, "/api/v1/discover/movies": { results: [mk(550, "/fight.jpg", 3, [dl]), mk(801, "/avail.jpg", 5), mk(802, "/part.jpg", 4), mk(700, "/tied.jpg", 4)] } };
+  const w = night(nativeCard("/fight.jpg", "downloading") + nativeCard("/avail.jpg", "available") + nativeCard("/part.jpg", "partial") + nativeCard("/tied.jpg", "partial"), fakeXHR(routes, { value: fresh([]) }), "/discover/movies");
+  const x = new w.XMLHttpRequest();
+  x.open("GET", "/api/v1/discover/movies");
+  x.send();
+  await settle();
+  w.document.body.insertAdjacentHTML("beforeend", "<p>re-render</p>");
+  await settle();
+  const [fight, avail, part, tied] = [...w.document.querySelectorAll('[role="link"]')].map((c) => c.querySelector(".pointer-events-none.z-40.flex"));
+  const hint = (b) => b.querySelector("[data-hg-night]").getAttribute("title");
+  assert.ok(fight.querySelector("[data-hg-night-moon]"));
+  assert.ok(fight.querySelector("[data-hg-spin] svg"));
+  assert.equal(visibleText(w, fight), "");
+  assert.equal(hint(fight), "Downloading now — 40 %");
+  assert.equal(fight.querySelectorAll("[data-hg-night-own]").length, 1);
+  assert.equal(visibleText(w, avail), "✅");
+  assert.equal(hint(avail), "Available in Jellyfin");
+  assert.ok(avail.querySelector("[data-hg-night-moon][data-hg-night-solid]"));
+  assert.equal(visibleText(w, part), "☑️");
+  assert.equal(hint(part), "Partly available");
+  assert.equal(visibleText(w, tied), "☑️🌙");
+  assert.ok(tied.querySelector("[data-hg-night-pill]"));
+  assert.equal(hint(tied), "Partly available · Waiting for the night");
+  const css = w.document.getElementById("hg-night-style").textContent;
+  assert.match(css, /@keyframes hg-spin/);
+  assert.match(css, /prefers-reduced-motion[^{]*\{[^}]*\[data-hg-spin\][^}]*animation:\s*none/);
+  assert.match(css, /\[data-hg-night-solid\]\{[^}]*background/);
+});
+
+test("native available badge: German hint", async () => {
+  const w = night(nativeCard("/avail.jpg", "available"), fakeXHR(RS_ROUTES, { value: fresh([]) }), "/discover/movies");
+  w.document.documentElement.lang = "de";
+  const tv = w.document.createElement("a");
+  tv.setAttribute("href", "/discover/tv");
+  tv.textContent = "Serien";
+  w.document.body.appendChild(tv);
+  w.hgNightLabel.apply(w.document, w.location);
+  const b = w.document.querySelector(".pointer-events-none.z-40.flex");
+  assert.equal(b.querySelector("[data-hg-night]").getAttribute("title"), "In Jellyfin verfügbar");
+  assert.ok(b.querySelector("svg"));
 });
