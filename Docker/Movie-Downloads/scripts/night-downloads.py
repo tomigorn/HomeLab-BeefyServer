@@ -2,8 +2,9 @@
 """Night downloads (README "Can wait: downloads at night"): resumes the downloads the untagged "night" clients added paused.
 Low tariff (22:00-06:00 and all Sunday): every night movie resumes (the clients' own limits apply); TV runs one download at a time across both clients: one series at a time, FIFO by its first grab, within it season then episode; a torrent stalled for STALL_MIN lets the next one start too.
 Outside the low tariff: night items still downloading are paused unless their ETA is under GRACE_MIN; they resume at the next low tariff where they stopped. Any time: the night items of titles tagged download-now resume and are never paused.
+Download now whose search found nothing (searched, nothing queued, no search running, no file): the download-now tag is removed again, so a later grab downloads at night.
 Writes ~/.local/state/movie-downloads/night-downloads.json ({"pending": n, "stalled": {hash: since}}), which fastpi reads to decide its 22:05 wake.
-Writes the download ids waiting for the night (outside the low tariff) to /srv/appdata/indexer-bar/night-waiting.json for Seerr's night label (../Seerr/README.md "Night label"; env ND_PUBLIC, empty = off).
+Writes the download ids waiting for the night (outside the low tariff) to /srv/appdata/indexer-bar/night-waiting.json for Seerr's night label (../Seerr/README.md "Night label"; env ND_PUBLIC, empty = off), and beside it request-state.json: the open Seerr requests that are "Can wait" and those not released yet (Seerr ids only).
 Run by systemd/night-downloads.timer (every 2 min while awake, and at boot). Usage: scripts/night-downloads.py [--dry-run]; ND_NOW=2026-10-27T22:10 simulates a clock (with --dry-run)."""
 import datetime
 import json
@@ -36,6 +37,10 @@ LAST = (float("inf"), float("inf"))
 
 
 class ApiError(Exception):
+    pass
+
+
+class NotFound(ApiError):
     pass
 
 
@@ -219,22 +224,186 @@ def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0, positi
 
 
 def write_public(path, p, now):
+    write_json(path, {"waiting": p.waiting, "low_tariff": low_tariff(now), "updated": now.astimezone().isoformat(timespec="seconds")})
+
+
+OPEN_REQUEST = {1, 2}
+AVAILABLE = 5
+ALL = frozenset({"*"})
+SEARCHES = {"MoviesSearch": "movieIds", "SeriesSearch": "seriesId", "MissingMoviesSearch": None, "CutoffUnmetMoviesSearch": None,
+            "EpisodeSearch": None, "SeasonSearch": "seriesId", "MissingEpisodeSearch": None, "CutoffUnmetEpisodeSearch": None}
+
+
+def running_searches(commands):
+    out = set()
+    for c in commands if isinstance(commands, list) else []:
+        if c.get("name") not in SEARCHES or c.get("status") not in ("queued", "started"):
+            continue
+        field_ = SEARCHES[c["name"]]
+        ids = (c.get("body") or {}).get(field_) if field_ else None
+        if ids is None:
+            return ALL
+        out |= set(ids if isinstance(ids, list) else [ids])
+    return out
+
+
+def _searching(searching, app, ext):
+    s = searching.get(app)
+    return s is None or s is ALL or ext in s
+
+
+def _last_search(title, eps, seasons, now):
+    if eps is None:
+        return title.get("lastSearchTime")
+    times = [e.get("lastSearchTime") for e in eps if (seasons is None or e.get("seasonNumber") in seasons) and not e.get("hasFile") and _aired(e, now)]
+    return max(filter(None, times), default=None)
+
+
+def _date(value, now):
+    if not value:
+        return None
+    d = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return d.astimezone().date().isoformat() if d.timestamp() > now.timestamp() else None
+
+
+def _aired(e, now):
+    air = e.get("airDateUtc")
+    return bool(air) and datetime.datetime.fromisoformat(air.replace("Z", "+00:00")).timestamp() <= now.timestamp()
+
+
+def _movie_release(m, now):
+    if m.get("isAvailable", True):
+        return False, None
+    if m.get("minimumAvailability") == "inCinemas":
+        return True, _date(m.get("inCinemas"), now)
+    return True, _date(m.get("releaseDate") or min(filter(None, (m.get("digitalRelease"), m.get("physicalRelease"))), default=None), now)
+
+
+def _series_release(s, eps, seasons, now):
+    wanted = [e for e in eps if e.get("seasonNumber") in seasons]
+    missing = [e for e in wanted if not e.get("hasFile")]
+    if not wanted:
+        return s.get("status") == "upcoming", False, _date(s.get("nextAiring"), now)
+    if not missing:
+        return False, True, None
+    if any(_aired(e, now) for e in missing):
+        return False, False, None
+    return True, False, min(filter(None, (_date(e.get("airDateUtc"), now) for e in missing)), default=None)
+
+
+def request_state(now, requests, dn_tags, movies, series, episodes, queued=frozenset(), searching=None):
+    can_wait, unreleased, no_release, searching = set(), {}, {}, searching or {}
+    for q in requests:
+        media, four_k = q.get("media") or {}, bool(q.get("is4k"))
+        if q.get("status") not in OPEN_REQUEST or media.get("status4k" if four_k else "status") == AVAILABLE or not media.get("tmdbId"):
+            continue
+        tv = q.get("type") == "tv"
+        key, dn = f"{'tv' if tv else 'movie'}/{media['tmdbId']}", dn_tags.get("sonarr" if tv else "radarr")
+        ext = media.get("externalServiceId4k" if four_k else "externalServiceId")
+        title = (series if tv else movies).get(ext) if ext else None
+        if title is None:
+            now_tag = dn is not None and dn in (q.get("tags") or [])
+            later, done, when = False, False, None
+        else:
+            now_tag = dn is not None and dn in (title.get("tags") or [])
+            if tv:
+                later, done, when = _series_release(title, episodes.get(ext) or [], {x["seasonNumber"] for x in q.get("seasons") or []}, now)
+            else:
+                done = bool(title.get("hasFile"))
+                later, when = _movie_release(title, now)
+        if done:
+            continue
+        if not now_tag:
+            can_wait.add(key)
+        app = "sonarr" if tv else "radarr"
+        if title is not None and not later and (app, ext) not in queued and not _searching(searching, app, ext):
+            seasons = {x["seasonNumber"] for x in q.get("seasons") or []} if tv else None
+            last = _last_search(title, episodes.get(ext) or [] if tv else None, seasons, now)
+            if last:
+                no_release[key] = max(no_release.get(key) or last, last)
+        if later:
+            unreleased[key] = when if unreleased.get(key) is None else min(unreleased[key], when or unreleased[key])
+    return {"canWait": sorted(can_wait), "unreleased": unreleased, "noRelease": no_release}
+
+
+def revert_unfound(apps, queued, searching, dry_run=False, now=None):
+    """Download now whose search found nothing: the download-now tag goes again, so a later grab (tonight's 04:17 search) downloads at night."""
+    now, out = now or datetime.datetime.now(), []
+    for app, api in apps.items():
+        tv = app == "sonarr"
+        dn = next((t["id"] for t in api("/tag") or [] if t.get("label") == TAG), None)
+        if dn is None or app not in searching or searching[app] is ALL:
+            continue
+        detail = api(f"/tag/detail/{dn}") or {}
+        drop = []
+        for ext in detail.get("seriesIds" if tv else "movieIds") or []:
+            if (app, ext) in queued or ext in searching[app]:
+                continue
+            title = api(f"/{'series' if tv else 'movie'}/{ext}")
+            if dn not in (title.get("tags") or []):
+                continue
+            if tv:
+                st = title.get("statistics") or {}
+                if (st.get("episodeFileCount") or 0) >= (st.get("episodeCount") or 0) > 0:
+                    continue
+                eps = api(f"/episode?seriesId={ext}") or []
+                last = max(filter(None, (e.get("lastSearchTime") for e in eps if not e.get("hasFile"))), default=None)
+            else:
+                if title.get("hasFile"):
+                    continue
+                last = title.get("lastSearchTime")
+            if last:
+                drop.append(ext)
+        if not drop:
+            continue
+        kind = "series" if tv else "movie"
+        if not dry_run:
+            api(f"/{kind}/editor", "PUT", {"seriesIds" if tv else "movieIds": drop, "tags": [dn], "applyTags": "remove"})
+        out += [f"{app}: {kind} {ext} download-now {'would be removed' if dry_run else 'removed'}: searched, nothing found" for ext in drop]
+    return out
+
+
+def collect_request_state(now, seerr, apps, queued=frozenset(), searching=None):
+    requests = [q for q in seerr("/request?take=1000&skip=0&filter=all&sort=added").get("results") or [] if q.get("status") in OPEN_REQUEST]
+    dn, titles, episodes = {}, {"radarr": {}, "sonarr": {}}, {}
+    for app, api in apps.items():
+        dn[app] = next((t["id"] for t in api("/tag") or [] if t.get("label") == TAG), None)
+    for q in requests:
+        media, four_k = q.get("media") or {}, bool(q.get("is4k"))
+        ext = media.get("externalServiceId4k" if four_k else "externalServiceId")
+        if not ext or media.get("status4k" if four_k else "status") == AVAILABLE:
+            continue
+        app = "sonarr" if q.get("type") == "tv" else "radarr"
+        if ext in titles[app]:
+            continue
+        try:
+            titles[app][ext] = apps[app](f"/{'series' if app == 'sonarr' else 'movie'}/{ext}")
+            if app == "sonarr":
+                episodes[ext] = apps[app](f"/episode?seriesId={ext}")
+        except NotFound:
+            titles[app][ext] = None
+    clean = lambda d: {k: v for k, v in d.items() if v is not None}
+    return request_state(now, requests, dn, clean(titles["radarr"]), clean(titles["sonarr"]), episodes, queued, searching)
+
+
+def write_json(path, data):
     path = pathlib.Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"waiting": p.waiting, "low_tariff": low_tariff(now), "updated": now.astimezone().isoformat(timespec="seconds")}) + "\n")
+    tmp.write_text(json.dumps(data) + "\n")
     tmp.chmod(0o644)
     tmp.replace(path)
 
 
-def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None):
-    rc, urgent, titles, positions = 0, set(), {}, {}
+def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr=None):
+    rc, urgent, titles, positions, searching = 0, set(), {}, {}, {}
     for app, api in apps.items():
         try:
             queue = api("/queue?page=1&pageSize=1000")
             urgent |= urgent_ids(api("/tag"), queue)
             titles |= title_ids(app, queue)
             positions |= episode_positions(queue)
+            searching[app] = running_searches(api("/command"))
         except ApiError as e:
             print(f"{app}: {e}", file=sys.stderr)
             rc = 1
@@ -286,12 +455,25 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None):
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps({"pending": p.pending, "low_tariff": low_tariff(now), "updated": now.isoformat(timespec="seconds"), "stalled": p.stalled}) + "\n")
     tmp.replace(state_path)
+    queued = set(titles.values())
+    try:
+        for line in revert_unfound(apps, queued, searching, now=now):
+            print(line)
+    except (ApiError, AttributeError, TypeError) as e:
+        print(f"download-now check failed: {e}", file=sys.stderr)
+        rc = 1
     if public_path:
         try:
             write_public(public_path, p, now)
         except OSError as e:
             print(f"Seerr night label not written: {e}", file=sys.stderr)
             rc = 1
+        if seerr:
+            try:
+                write_json(pathlib.Path(public_path).parent / "request-state.json", collect_request_state(now, seerr, apps, queued, searching) | {"updated": now.astimezone().isoformat(timespec="seconds")})
+            except (ApiError, OSError, KeyError, TypeError, ValueError) as e:
+                print(f"Seerr request state not written: {e}", file=sys.stderr)
+                rc = 1
     return rc
 
 
@@ -309,7 +491,7 @@ def _fetch(req, timeout=30, opener=None):
             return r.read()
     except urllib.error.HTTPError as e:
         e.close()
-        raise (Forbidden if e.code == 403 else ApiError)(f"{req.full_url.split('?')[0]}: {e}") from None
+        raise {403: Forbidden, 404: NotFound}.get(e.code, ApiError)(f"{req.full_url.split('?')[0]}: {e}") from None
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise ApiError(f"{req.full_url.split('?')[0]}: {e}") from None
 
@@ -379,10 +561,19 @@ def arr_client(app, config):
     get = lambda k: (re.search(f"<{k}>([^<]*)</{k}>", xml) or [None, ""])[1]
     base = f"http://localhost:{get('Port')}{get('UrlBase')}/api/v3"
 
-    def call(path):
+    def call(path, method="GET", body=None):
         sep = "&" if "?" in path else "?"
         extra = sep + APPS[app] if path.startswith("/queue") else ""
-        return _open(urllib.request.Request(base + path + extra, headers={"X-Api-Key": get("ApiKey")}))
+        data = json.dumps(body).encode() if body is not None else None
+        return _open(urllib.request.Request(base + path + extra, data=data, method=method, headers={"X-Api-Key": get("ApiKey"), "Content-Type": "application/json"}))
+    return call
+
+
+def seerr_client(base, keyfile):
+    key = pathlib.Path(keyfile).read_text().strip()
+
+    def call(path):
+        return _open(urllib.request.Request(base + "/api/v1" + path, headers={"X-Api-Key": key}))
     return call
 
 
@@ -394,7 +585,8 @@ def main():
                        os.environ.get("ND_QBIT_PASS", HERE.parent / "secrets" / "qbit-webui.password"))
     sab = sab_client(os.environ.get("ND_SAB_URL", "http://127.0.0.1:8081"), os.environ.get("ND_SAB_KEY", HERE.parent / "secrets" / "hook" / "sabnzbd.apikey"))
     apps = {app: arr_client(app, os.environ.get(f"ND_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml")) for app in APPS}
-    return run(now_from(os.environ), qbit, sab, apps, os.environ.get("ND_STATE", STATE), dry_run=dry, public_path=os.environ.get("ND_PUBLIC", PUBLIC))
+    seerr = seerr_client(os.environ.get("ND_SEERR_URL", "http://127.0.0.1:5055"), os.environ.get("ND_SEERR_KEY", HERE.parent.parent / "Seerr" / "secrets" / "api-key"))
+    return run(now_from(os.environ), qbit, sab, apps, os.environ.get("ND_STATE", STATE), dry_run=dry, public_path=os.environ.get("ND_PUBLIC", PUBLIC), seerr=seerr)
 
 
 if __name__ == "__main__":

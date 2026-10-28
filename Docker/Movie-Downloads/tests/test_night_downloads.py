@@ -285,6 +285,173 @@ class Arr(unittest.TestCase):
         self.assertEqual(nd.title_ids("sonarr", queue), {"aaa": ("sonarr", 7), "bbb": ("sonarr", 3)})
 
 
+def req(type_, tmdb, ext, status=2, mstatus=3, tags=(), seasons=(), is4k=False):
+    media = {"tmdbId": tmdb, "status": mstatus if not is4k else 1, "status4k": mstatus if is4k else 1, "externalServiceId": None if is4k else ext, "externalServiceId4k": ext if is4k else None}
+    return {"type": type_, "status": status, "is4k": is4k, "tags": list(tags), "seasons": [{"seasonNumber": n} for n in seasons], "media": media}
+
+
+def movie(i, tags=(), has_file=False, available=True, min_av="released", **dates):
+    return {"id": i, "tags": list(tags), "hasFile": has_file, "isAvailable": available, "minimumAvailability": min_av, **dates}
+
+
+def ep(season, number, air=None, has_file=False):
+    return {"seasonNumber": season, "episodeNumber": number, "airDateUtc": air, "hasFile": has_file, "monitored": True}
+
+
+DN = {"radarr": 64, "sonarr": 61}
+
+
+def rstate(requests, movies=(), series=(), episodes=None, now=MON_DAY, queued=(), searching=None):
+    return nd.request_state(now, requests, DN, {m["id"]: m for m in movies}, {s["id"]: s for s in series}, episodes or {}, set(queued), {"radarr": set(), "sonarr": set()} if searching is None else searching)
+
+
+class RequestState(unittest.TestCase):
+    def test_can_wait_movie_without_a_release_yet(self):
+        self.assertEqual(rstate([req("movie", 100, 54)], [movie(54)]), {"canWait": ["movie/100"], "unreleased": {}, "noRelease": {}})
+
+    def test_download_now_tag_on_the_radarr_title_is_not_can_wait(self):
+        self.assertEqual(rstate([req("movie", 100, 54)], [movie(54, tags=[1, 64])])["canWait"], [])
+
+    def test_seerr_tag_counts_until_radarr_has_the_title_then_radarr_decides(self):
+        self.assertEqual(rstate([req("movie", 100, None, status=1, tags=[64])])["canWait"], [])
+        self.assertEqual(rstate([req("movie", 100, 54, tags=[64])], [movie(54)])["canWait"], ["movie/100"])
+        self.assertEqual(rstate([req("movie", 100, None, status=1)])["canWait"], ["movie/100"])
+
+    def test_done_declined_failed_and_available_are_left_out(self):
+        rs = [req("movie", 1, 1, mstatus=5), req("movie", 2, 2, status=3), req("movie", 3, 3, status=4), req("movie", 4, 4, status=5), req("movie", 5, 5)]
+        self.assertEqual(rstate(rs, [movie(i) for i in (1, 2, 3, 4)] + [movie(5, has_file=True)]), {"canWait": [], "unreleased": {}, "noRelease": {}})
+
+    def test_4k_request_uses_the_4k_status_and_service_id(self):
+        self.assertEqual(rstate([req("movie", 100, 9, is4k=True)], [movie(9)])["canWait"], ["movie/100"])
+
+    def test_unreleased_movie_with_its_release_date(self):
+        rs = [req("movie", 53, 53), req("movie", 52, 52, tags=[64])]
+        ms = [movie(53, available=False, inCinemas="2026-11-04T00:00:00Z", releaseDate="2027-02-02T00:00:00Z"), movie(52, tags=[64], available=False, inCinemas="2027-02-10T00:00:00Z", digitalRelease="2027-04-01T00:00:00Z", releaseDate="2027-04-01T00:00:00Z")]
+        self.assertEqual(rstate(rs, ms), {"canWait": ["movie/53"], "unreleased": {"movie/53": "2027-02-02", "movie/52": "2027-04-01"}, "noRelease": {}})
+
+    def test_unreleased_movie_date_follows_minimum_availability_and_past_dates_are_dropped(self):
+        ms = [movie(1, available=False, min_av="inCinemas", inCinemas="2026-11-04T00:00:00Z", releaseDate="2027-02-02T00:00:00Z"), movie(2, available=False, releaseDate="2026-01-01T00:00:00Z"), movie(3, available=False)]
+        self.assertEqual(rstate([req("movie", i, i) for i in (1, 2, 3)], ms)["unreleased"], {"movie/1": "2026-11-04", "movie/2": None, "movie/3": None})
+
+    def test_series_whose_missing_episodes_have_not_aired(self):
+        eps = {19: [ep(0, 1), ep(1, 1, "2026-12-25T05:00:00Z"), ep(1, 2, "2027-01-01T05:00:00Z"), ep(1, 3)]}
+        self.assertEqual(rstate([req("tv", 300, 19, seasons=[1])], series=[{"id": 19, "tags": [], "status": "upcoming"}], episodes=eps), {"canWait": ["tv/300"], "unreleased": {"tv/300": "2026-12-25"}, "noRelease": {}})
+
+    def test_series_with_an_aired_missing_episode_is_released(self):
+        eps = {22: [ep(1, 1, "2026-10-14T01:00:00Z"), ep(1, 2, "2026-11-04T02:00:00Z")]}
+        self.assertEqual(rstate([req("tv", 301, 22, seasons=[1])], series=[{"id": 22, "tags": [], "status": "continuing"}], episodes=eps), {"canWait": ["tv/301"], "unreleased": {}, "noRelease": {}})
+
+    def test_series_only_the_unaired_new_season_is_missing(self):
+        eps = {11: [ep(1, 1, "2022-09-01T07:00:00Z", True), ep(2, 1, "2024-08-29T07:00:00Z", True), ep(3, 1, "2026-11-11T08:00:00Z")]}
+        out = rstate([req("tv", 84773, 11, mstatus=4, seasons=[1, 2, 3])], series=[{"id": 11, "tags": [], "status": "continuing"}], episodes=eps)
+        self.assertEqual(out, {"canWait": ["tv/84773"], "unreleased": {"tv/84773": "2026-11-11"}, "noRelease": {}})
+
+    def test_series_with_every_requested_episode_downloaded_is_left_out(self):
+        eps = {21: [ep(1, 1, "2024-01-06T15:00:00Z", True), ep(2, 1, "2025-01-04T15:00:00Z")]}
+        self.assertEqual(rstate([req("tv", 127532, 21, mstatus=4, seasons=[1])], series=[{"id": 21, "tags": [], "status": "continuing"}], episodes=eps), {"canWait": [], "unreleased": {}, "noRelease": {}})
+
+    def test_upcoming_series_without_episodes_uses_next_airing(self):
+        out = rstate([req("tv", 5, 5, seasons=[1])], series=[{"id": 5, "tags": [61], "status": "upcoming", "nextAiring": "2027-03-01T20:00:00Z"}], episodes={5: []})
+        self.assertEqual(out, {"canWait": [], "unreleased": {"tv/5": "2027-03-01"}, "noRelease": {}})
+
+    def test_searched_without_a_release_gets_the_compass(self):
+        searched = movie(54, lastSearchTime="2026-10-28T09:54:09Z")
+        self.assertEqual(rstate([req("movie", 100, 54)], [searched])["noRelease"], {"movie/100": "2026-10-28T09:54:09Z"})
+        self.assertEqual(rstate([req("movie", 100, 54)], [searched], queued={("radarr", 54)})["noRelease"], {})
+        self.assertEqual(rstate([req("movie", 100, 54)], [searched], searching={"radarr": {54}})["noRelease"], {})
+        self.assertEqual(rstate([req("movie", 100, 54)], [searched], searching={"radarr": nd.ALL})["noRelease"], {})
+        self.assertEqual(rstate([req("movie", 100, 54)], [searched], searching={})["noRelease"], {})
+        self.assertEqual(rstate([req("movie", 100, 54)], [movie(54)])["noRelease"], {})
+        self.assertEqual(rstate([req("movie", 100, 54)], [movie(54, available=False, lastSearchTime="2026-10-28T09:54:09Z")])["noRelease"], {})
+
+    def test_series_compass_from_the_missing_aired_episodes(self):
+        eps = {22: [ep(1, 1, "2026-10-14T01:00:00Z") | {"lastSearchTime": "2026-10-27T23:55:29Z"}, ep(1, 2, "2026-10-21T01:00:00Z") | {"lastSearchTime": "2026-10-28T01:00:00Z"}, ep(1, 3, "2026-11-04T02:00:00Z")]}
+        sr = [{"id": 22, "tags": [], "status": "continuing"}]
+        self.assertEqual(rstate([req("tv", 301, 22, seasons=[1])], series=sr, episodes=eps)["noRelease"], {"tv/301": "2026-10-28T01:00:00Z"})
+        self.assertEqual(rstate([req("tv", 301, 22, seasons=[1])], series=sr, episodes=eps, queued={("sonarr", 22)})["noRelease"], {})
+
+    def test_running_searches_by_app(self):
+        cmds = [{"name": "MoviesSearch", "status": "started", "body": {"movieIds": [53]}}, {"name": "MoviesSearch", "status": "queued", "body": {"movieIds": [55]}},
+                {"name": "MoviesSearch", "status": "completed", "body": {"movieIds": [51]}}, {"name": "RssSync", "status": "started", "body": {}}]
+        self.assertEqual(nd.running_searches(cmds), {53, 55})
+        self.assertIs(nd.running_searches(cmds + [{"name": "MissingMoviesSearch", "status": "started", "body": {}}]), nd.ALL)
+        self.assertEqual(nd.running_searches([{"name": "SeriesSearch", "status": "queued", "body": {"seriesId": 4}}]), {4})
+        self.assertIs(nd.running_searches([{"name": "EpisodeSearch", "status": "queued", "body": {"episodeIds": [9]}}]), nd.ALL)
+        self.assertEqual(nd.running_searches({"records": []}), set())
+
+    def test_collect_asks_only_for_titles_with_open_requests(self):
+        calls = []
+        def seerr(path):
+            calls.append(("seerr", path))
+            return {"results": [req("movie", 100, 54), req("tv", 300, 19, seasons=[1]), req("movie", 7, 7, mstatus=5)]}
+        def arr(app):
+            def call(path):
+                calls.append((app, path))
+                if path == "/tag":
+                    return [{"id": DN[app], "label": "download-now"}]
+                return {"/movie/54": movie(54), "/series/19": {"id": 19, "tags": [], "status": "upcoming"}, "/episode?seriesId=19": [ep(1, 1)]}[path]
+            return call
+        out = nd.collect_request_state(MON_DAY, seerr, {"radarr": arr("radarr"), "sonarr": arr("sonarr")})
+        self.assertEqual(out, {"canWait": ["movie/100", "tv/300"], "unreleased": {"tv/300": None}, "noRelease": {}})
+        self.assertNotIn(("radarr", "/movie/7"), calls)
+        self.assertEqual(calls[0], ("seerr", "/request?take=1000&skip=0&filter=all&sort=added"))
+
+    def test_collect_title_gone_from_radarr_counts_as_not_added(self):
+        def arr(path):
+            if path == "/tag":
+                return []
+            raise nd.NotFound(path)
+        out = nd.collect_request_state(MON_DAY, lambda p: {"results": [req("movie", 100, 54)]}, {"radarr": arr, "sonarr": arr})
+        self.assertEqual(out["canWait"], ["movie/100"])
+
+
+class Revert(unittest.TestCase):
+    def arr(self, titles, episodes=None, dn=64):
+        calls = []
+        def call(path, method="GET", body=None):
+            calls.append((path, method, body))
+            if path == "/tag":
+                return [{"id": dn, "label": "download-now"}]
+            if path == f"/tag/detail/{dn}":
+                return {"movieIds": [t["id"] for t in titles], "seriesIds": [t["id"] for t in titles]}
+            if path.startswith("/movie/") and method == "GET" or path.startswith("/series/") and method == "GET":
+                return next(t for t in titles if t["id"] == int(path.rsplit("/", 1)[1]))
+            if path.startswith("/episode?seriesId="):
+                return (episodes or {}).get(int(path.split("=")[1]), [])
+            return None
+        return call, calls
+
+    def edits(self, calls):
+        return [(p, b) for p, m, b in calls if m == "PUT"]
+
+    def test_download_now_searched_nothing_found_goes_back_to_the_night(self):
+        call, calls = self.arr([movie(54, tags=[1, 64], lastSearchTime="2026-10-28T09:54:09Z"), movie(53, tags=[64], available=False, lastSearchTime="2026-10-28T10:00:00Z")])
+        out = nd.revert_unfound({"radarr": call}, set(), {"radarr": set()})
+        self.assertEqual(self.edits(calls), [("/movie/editor", {"movieIds": [54, 53], "tags": [64], "applyTags": "remove"})])
+        self.assertEqual(out, ["radarr: movie 54 download-now removed: searched, nothing found", "radarr: movie 53 download-now removed: searched, nothing found"])
+
+    def test_kept_while_grabbed_searching_downloaded_or_never_searched(self):
+        titles = [movie(1, tags=[64], lastSearchTime="x"), movie(2, tags=[64], lastSearchTime="x"), movie(3, tags=[64], has_file=True, lastSearchTime="x"), movie(4, tags=[64])]
+        call, calls = self.arr(titles)
+        self.assertEqual(nd.revert_unfound({"radarr": call}, {("radarr", 1)}, {"radarr": {2}}), [])
+        self.assertEqual(self.edits(calls), [])
+        call, calls = self.arr([movie(5, tags=[64], lastSearchTime="x")])
+        self.assertEqual(nd.revert_unfound({"radarr": call}, set(), {"radarr": nd.ALL}), [])
+        self.assertEqual(nd.revert_unfound({"radarr": call}, set(), {}), [])
+
+    def test_series_searched_with_nothing_found(self):
+        sr = [{"id": 22, "tags": [61], "statistics": {"episodeFileCount": 0, "episodeCount": 8}}, {"id": 23, "tags": [61], "statistics": {"episodeFileCount": 0, "episodeCount": 8}}]
+        eps = {22: [ep(1, 1, "2026-10-14T01:00:00Z") | {"lastSearchTime": "2026-10-28T01:00:00Z"}], 23: [ep(1, 1, "2026-10-14T01:00:00Z")]}
+        call, calls = self.arr(sr, eps, dn=61)
+        self.assertEqual(nd.revert_unfound({"sonarr": call}, set(), {"sonarr": set()}), ["sonarr: series 22 download-now removed: searched, nothing found"])
+        self.assertEqual(self.edits(calls), [("/series/editor", {"seriesIds": [22], "tags": [61], "applyTags": "remove"})])
+
+    def test_dry_run_only_reports(self):
+        call, calls = self.arr([movie(54, tags=[64], lastSearchTime="x")])
+        self.assertEqual(nd.revert_unfound({"radarr": call}, set(), {"radarr": set()}, dry_run=True), ["radarr: movie 54 download-now would be removed: searched, nothing found"])
+        self.assertEqual(self.edits(calls), [])
+
+
 class Fake:
     def __init__(self, torrents=(), slots=(), fail=(), kbps="1000"):
         self.torrents, self.slots, self.fail, self.kbps, self.calls = list(torrents), list(slots), set(fail), kbps, []
@@ -330,8 +497,31 @@ class Run(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def go(self, f, now, dry=False):
-        return nd.run(now, f.qbit, f.sab, {"radarr": f.arr("radarr"), "sonarr": f.arr("sonarr")}, self.state, dry_run=dry, public_path=self.public)
+    def go(self, f, now, dry=False, seerr=None):
+        return nd.run(now, f.qbit, f.sab, {"radarr": f.arr("radarr"), "sonarr": f.arr("sonarr")}, self.state, dry_run=dry, public_path=self.public, seerr=seerr)
+
+    def test_request_state_written_beside_the_night_list(self):
+        f = Fake([T_NIGHT], [J_NIGHT])
+        self.assertEqual(self.go(f, MON_2205, seerr=lambda p: {"results": [req("movie", 100, None, status=1)]}), 0)
+        rs = self.public.parent / "request-state.json"
+        out = json.loads(rs.read_text())
+        self.assertEqual((out["canWait"], out["unreleased"]), (["movie/100"], {}))
+        self.assertIsNotNone(datetime.datetime.fromisoformat(out["updated"]).tzinfo)
+        self.assertEqual(rs.stat().st_mode & 0o777, 0o644)
+
+    def test_seerr_down_keeps_the_old_request_state_and_fails_but_the_night_list_is_written(self):
+        rs = self.public.parent / "request-state.json"
+        rs.parent.mkdir(parents=True)
+        rs.write_text('{"old": true}')
+        def down(path):
+            raise nd.ApiError("seerr down")
+        self.assertEqual(self.go(Fake([T_NIGHT], [J_NIGHT]), MON_DAY, seerr=down), 1)
+        self.assertEqual(json.loads(rs.read_text()), {"old": True})
+        self.assertTrue(self.public.exists())
+
+    def test_dry_run_writes_no_request_state(self):
+        self.go(Fake([]), MON_DAY, dry=True, seerr=lambda p: {"results": []})
+        self.assertFalse((self.public.parent / "request-state.json").exists())
 
     def test_low_tariff_resumes_the_head_and_writes_pending(self):
         f = Fake([T_NIGHT, tor("zzz", 300)], [J_NIGHT, job("SABnzbd_nzo_5", 1)])
