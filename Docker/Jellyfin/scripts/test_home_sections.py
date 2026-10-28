@@ -61,8 +61,13 @@ class Apply(unittest.TestCase):
         self.assertFalse(sections["WatchAgain"]["Enabled"])
         self.assertFalse(sections["WatchAgain"]["AllowUserOverride"])
 
+    def test_my_media_is_off_and_locked(self):
+        sections = by_id(hs.apply(fresh(), TYPES, LIBS, ARR))
+        self.assertFalse(sections["MyMedia"]["Enabled"])
+        self.assertFalse(sections["MyMedia"]["AllowUserOverride"])
+
     def test_owner_order(self):
-        self.assertEqual(hs.ORDER, ["MyMedia", "ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows", "BecauseYouWatched",
+        self.assertEqual(hs.ORDER, ["ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows", "BecauseYouWatched",
                                     "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection", "Studio", "Starring", "DirectedBy",
                                     "UpcomingShows", "UpcomingMovies"])
 
@@ -177,7 +182,7 @@ class Summary(unittest.TestCase):
         text = hs.summary(hs.apply(fresh(), TYPES, LIBS, ARR))
         self.assertNotIn("skey", text)
         self.assertNotIn("rkey", text)
-        self.assertIn("1. MyMedia", text)
+        self.assertIn("1. ContinueWatching", text)
 
 
 class ArrKey(unittest.TestCase):
