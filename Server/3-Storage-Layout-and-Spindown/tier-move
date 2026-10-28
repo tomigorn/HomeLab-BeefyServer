@@ -4,8 +4,11 @@
 # The manual stand-in for the nightly mover (storage doc §5), which is designed
 # but not built. It implements the same safety contract:
 #
-#   * copy -> fsync -> VERIFY BY CONTENT -> only then delete the source.
-#     beefy has no UPS, so a power cut mid-move must leave the original intact.
+#   * copy into <dst>/.tier-staging -> fsync -> VERIFY BY CONTENT read back from disk
+#     -> source unchanged? -> atomic rename into place -> only then delete the source
+#     (tier-helper). beefy has no UPS, so a power cut mid-move must leave the original intact.
+#   * one shared media lock (/run/lock/beefy-media.lock) with the mover, promoter and original-audio.
+#   * exit 3 = media lock busy, 4 = source changed/vanished during the copy (nothing lost).
 #   * never `rename` across branches - mergerfs returns EXDEV for that.
 #   * refuse to touch a file that is open (playing) or hardlinked (seeding).
 #   * leave sidecars on the SSD, so the directory skeleton stays hot and
@@ -28,6 +31,12 @@ HOT=${HOT:-/srv/.disks/ssd-hot}
 COLD=${COLD:-/srv/.disks/hdd-cold}
 WINDOW_START=${WINDOW_START:-4}      # the decided mover window, 04:00-06:00
 WINDOW_END=${WINDOW_END:-6}
+# One media job at a time on the branches (mover, promoter, manual moves): an apply waits this long for the shared lock.
+TIER_LOCK=${TIER_LOCK:-/run/lock/beefy-media.lock}
+TIER_LOCK_WAIT=${TIER_LOCK_WAIT:-600}
+TIER_HELPER=${TIER_HELPER:-/usr/local/sbin/tier-helper}
+# rsync --bwlimit in KiB/s for the copy (about 200 MB/s keeps a stream from the same HDD smooth); empty = no limit.
+TIER_BWLIMIT=${TIER_BWLIMIT-195000}
 
 # Only these get moved by default. An allowlist, not a sidecar denylist: a new
 # kind of small metadata file must never accidentally be demoted onto the HDD.
@@ -174,32 +183,24 @@ if [ "$APPLY" -eq 0 ]; then
 fi
 
 # ------------------------------------------------------------------ move ------
+# Opened read-only (flock needs no write access), so root and buntu share one lock file whoever created it.
+[ -e "$TIER_LOCK" ] || (umask 022; : >> "$TIER_LOCK") 2>/dev/null
+exec 8<"$TIER_LOCK" || die "cannot open the media lock $TIER_LOCK"
+flock -w "$TIER_LOCK_WAIT" 8 || { echo "tier-move: another media job still holds the media lock $TIER_LOCK after ${TIER_LOCK_WAIT}s - nothing moved" >&2; exit 3; }
+# Leftovers of a killed earlier run (we hold the media lock, so nothing else is writing there).
+rm -rf -- "$DSTB/.tier-staging"
 echo
 echo "  copying:"
 moved=0
 for f in "${FILES[@]}"; do
     rel=${f#"$SRCB"/}
-    out="$DSTB/$rel"
-    mkdir -p "$(dirname "$out")" || die "could not create $(dirname "$out")"
-
-    # -H preserves hardlinks within the transfer, -AX acls/xattrs, --inplace off
-    # so a crash leaves a partial temp rather than a corrupt destination.
-    if ! rsync -aHAX --partial --info=progress2 "$f" "$out"; then
-        die "copy FAILED for $rel - source left untouched"
-    fi
-    sync -f "$out" 2>/dev/null || sync
-
-    # VERIFY BY CONTENT before anything is deleted. cmp reads both sides and
-    # bails at the first difference; this is the step that makes the delete safe.
-    if ! cmp -s "$f" "$out"; then
-        rm -f "$out"
-        die "VERIFY FAILED for $rel - destination removed, source left untouched"
-    fi
-
-    rm -f "$f" || die "copy+verify succeeded but could not remove source $rel"
-    note "ok  $rel"
+    # copy into .tier-staging, verify read back from disk, check the source is unchanged, rename into place, then delete the source
+    "$TIER_HELPER" move "$SRCB" "$DSTB" "$rel" ${TIER_BWLIMIT:+--bwlimit "$TIER_BWLIMIT"} | sed 's/^/    /'
+    rc=${PIPESTATUS[0]}
+    [ "$rc" -eq 0 ] || { rm -rf -- "$DSTB/.tier-staging"; echo "tier-move: stopped at $rel, its source left untouched" >&2; exit "$rc"; }
     moved=$(( moved + 1 ))
 done
+rm -rf -- "$DSTB/.tier-staging"
 
 # Prune directories that are now empty on the source branch. Directories holding
 # sidecars are left alone on purpose - that skeleton is what keeps browsing hot.

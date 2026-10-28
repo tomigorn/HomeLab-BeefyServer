@@ -21,7 +21,7 @@ check(){ if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (expected '$2', got '$1'
 
 setup() {
     TMP=$(mktemp -d)
-    export POOL="$TMP/pool" HOT="$TMP/hot" COLD="$TMP/cold"
+    export POOL="$TMP/pool" HOT="$TMP/hot" COLD="$TMP/cold" TIER_LOCK="$TMP/media.lock" TIER_HELPER="$HERE/tier_helper.py"
     mkdir -p "$POOL" "$HOT/media/movies/Dune" "$COLD"
     # a movie plus the sidecars that must stay hot
     head -c 300000 /dev/urandom > "$HOT/media/movies/Dune/Dune.mkv"
@@ -151,6 +151,19 @@ case "$out" in *"fuser is not installed"*) ok "says why it refused" ;; *) bad "n
 out=$(FUSER_BIN=definitely-no-such-binary "$SUT" demote media/movies/Dune --apply --any-time --skip-open-check 2>&1); rc=$?
 check "$rc" "0" "--skip-open-check overrides it"
 [ -f "$COLD/media/movies/Dune/Dune.mkv" ] && ok "and then it moves" || bad "did not move with the override"
+teardown
+
+# ---------------------------------------------------------------------------
+echo "11. the shared media lock: a busy lock refuses, nothing moves"
+setup
+exec 7> "$TIER_LOCK"; flock 7
+out=$(TIER_LOCK_WAIT=1 run demote media/movies/Dune --apply); rc=$?
+exec 7>&-
+check "$rc" "3" "refuses while another media job holds the lock"
+case "$out" in *"media lock"*) ok "says why" ;; *) bad "no explanation given" ;; esac
+[ -f "$HOT/media/movies/Dune/Dune.mkv" ] && ok "source untouched" || bad "moved despite the lock"
+out=$(run demote media/movies/Dune --apply); rc=$?
+check "$rc" "0" "moves once the lock is free"
 teardown
 
 echo

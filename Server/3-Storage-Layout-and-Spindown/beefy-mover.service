@@ -11,24 +11,22 @@ Requires=srv-video.mount
 Type=oneshot
 EnvironmentFile=-/etc/beefy-mover.conf
 ExecStart=/usr/local/sbin/beefy-mover
-# The decided window is 04:00-06:00. Hard-stop at two hours so a pathological run
-# cannot hold the cold HDD awake into the morning. Being killed is SAFE: tier-move
-# only deletes a source after the copy has been verified, so a kill mid-move leaves
-# the original intact and wastes at most one file's worth of work.
+# The mover stops starting titles at DEADLINE (04:40, /etc/beefy-mover.conf); this hard stop at 60 min only catches a pathological run. Being killed is SAFE: tier-helper copies into .tier-staging and only deletes a source after the copy was verified and renamed into place.
 #
 # TimeoutStartSec, not RuntimeMaxSec: for Type=oneshot the whole ExecStart is the
 # "start" phase, and systemd-analyze verify flags RuntimeMaxSec as having no effect
 # here. It would have silently done nothing.
-TimeoutStartSec=7200
+TimeoutStartSec=3600
 Nice=10
 IOSchedulingClass=idle
 
 # Hardening. Needs real write access to /srv, so ProtectSystem=full rather than
-# strict, and ReadWritePaths for the pool.
+# strict, and ReadWritePaths for the pool and its metrics file.
 NoNewPrivileges=true
 ProtectSystem=full
-ProtectHome=true
-ReadWritePaths=/srv/video /srv/.disks /run
+# read-only: the Jellyfin API key lives in the Jellyfin project under /home/buntu
+ProtectHome=read-only
+ReadWritePaths=/srv/video /srv/.disks /run /var/lib/beefy-mover
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
