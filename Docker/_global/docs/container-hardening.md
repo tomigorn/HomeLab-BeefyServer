@@ -25,7 +25,7 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65108 | jellyfin (app; s6 PID1 root) | 44 video, 990 render | CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID |
 | 65109 | seerr | | |
 | 65111 | movie-vpn-status (read_only) | | |
-| 70 | dt-db | | |
+| 70 | dt5-db (v4 dt-db until the rollback window ends) | | |
 | 65112 | clamav | 1100, 65118 | none |
 | 65113 | cup-agent | | |
 | 65114 | cup-socket-proxy-ro | 973 docker | |
@@ -33,8 +33,8 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65119 | movie-flaresolverr (read_only) | | |
 | 65120 | movie-socket-proxy-heal (read_only) | 973 docker | |
 | 65121 | movie-autoheal (read_only) | | |
-| 65122 | dt-apiserver (read_only) | | |
-| 65123 | dt-frontend (read_only) | | |
+| 65122 | dt5-apiserver (read_only; v4 dt-apiserver) | | |
+| 65123 | dt5-frontend (read_only; v4 dt-frontend) | | |
 | 65124 | seerr-proxy (nginx, read_only) | | |
 | 65125 | floppy (app processes `abc` via PUID/PGID; supervisord + nginx master root) | | CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, KILL |
 | 65126 | floppy-redis (read_only) | | |

@@ -2,6 +2,8 @@
 
 Attended only (one-way DB change, SSO login). Rehearsed 2026-10-27 on a copy of the live DB: all checks below passed.
 
+**Done 2026-10-28** 00:49→01:07 (downtime 18 min): counts v4 = v5 (75 projects, 18184 components, 5343 findings, 1308 analyses), VEX 13/189, API key, break-glass login, post-update check green. Since then `.env` sets `COMPOSE_FILE=docker-compose.v5.yaml` + `COMPOSE_PROFILES=app` (and no `COMPOSE_PROJECT_NAME`, it overrode the v5 `name:`).
+
 ## Rehearsal results
 
 | Check | Result |
@@ -72,7 +74,7 @@ sudo cp -a .env docker-compose.yaml config $B/ && sudo cp -a secrets $B/secrets-
 sudo docker compose down          # frees subnet 172.28.14.0/24 and port 8090; bind-mounted data stays
 ```
 
-Rollback from here on, one command: `sudo docker compose -f docker-compose.v5.yaml --profile app down; sudo docker compose up -d`
+Rollback from here on, one command: `sudo docker compose -f docker-compose.v5.yaml --profile app down; sudo docker compose up -d` (after the cutover: section 5)
 
 ## 2. Migrate
 
@@ -132,7 +134,7 @@ Then `sudo systemctl start security-dt.timer` on fastpi.
 
 ```bash
 cd ~/Projects/Docker/Dependency-Track
-sudo docker compose -f docker-compose.v5.yaml --profile app down && sudo docker compose up -d
+sudo docker compose down && sudo docker compose -f docker-compose.yaml up -d    # .env makes plain compose = v5
 curl -s http://127.0.0.1:8090/api/version     # 4.14.6
 ```
 

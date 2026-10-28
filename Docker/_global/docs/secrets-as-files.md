@@ -44,7 +44,8 @@ secrets:
 
 | App | Option | Used in |
 |---|---|---|
-| postgres image | `POSTGRES_PASSWORD_FILE` | Dependency-Track (`dt-db`) |
+| postgres image | `POSTGRES_PASSWORD_FILE` | Dependency-Track (`dt5-db`) |
+| Dependency-Track 5 apiserver | `DT_DATASOURCE_PASSWORD: $${file::/run/secrets/<name>}` (`$$` = literal `$` for compose) | Dependency-Track (`dt5-apiserver`) |
 | libpq / psycopg | `passfile=/run/secrets/<name>` in the DSN, file `*:*:*:<user>:<password>`, mode `0400` | |
 | gluetun | `WIREGUARD_PRIVATE_KEY_SECRETFILE` (default `/run/secrets/wireguard_private_key`) | Movie-Downloads |
 | Recyclarr | `!secret <key>` in `recyclarr.yml`, values in `/config/secrets.yml` | Movie-Downloads |
