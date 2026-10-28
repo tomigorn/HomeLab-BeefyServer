@@ -332,6 +332,8 @@
   function loadWaiting(force) {
     if (!force && state.waitingAt && Date.now() - state.waitingAt < TTL) return Promise.resolve();
     if (state.waitingLoading) return state.waitingLoading;
+    // login / setup pages have no Seerr session: the data is refused there, fetched once the SPA moves on
+    if (typeof window !== "undefined" && /^\/(login|setup|resetpassword)(\/|$)/.test(window.location.pathname)) return Promise.resolve();
     var requests = getJSON(REQUESTS_URL).then(function (d) {
       var before = state.requests && state.requests.searching, after = d && d.searching;
       // a search just ended: Seerr's download state for that title is fetched again (spinner, ✅)

@@ -5,7 +5,8 @@
 
   var DATA = "/_indexer-bar/usage.json", REFRESH = 60000, STALE = 10 * 60000, KEY = "indexer-bar-mini";
   var RANK = { ok: 0, yellow: 1, warn: 2, orange: 3, full: 4 };
-  var bar, data = null, panelOpen = false, mini = false;
+  var bar, data = null, panelOpen = false, mini = false, authed = false, lastLoad = 0, RETRY = 4000;
+  var NO_BAR = /^\/(login|setup|resetpassword)(\/|$)/;
 
   try { mini = localStorage.getItem(KEY) === "1"; } catch (e) {}
 
@@ -231,33 +232,58 @@
     render();
   }
 
+  function visible() { return authed && !NO_BAR.test(location.pathname); }
+
+  function sync() {
+    if (visible()) { mount(); render(); return; }
+    if (bar && bar.isConnected) bar.parentNode.removeChild(bar);
+    document.documentElement.classList.remove("ib-on", "ib-mini");
+  }
+
+  // The data needs a Seerr session (401/403 without): the bar only exists once it was served.
   function load() {
+    lastLoad = Date.now();
     try {
       fetch(DATA, { cache: "no-store", credentials: "same-origin" })
-        .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (j) { data = j && Array.isArray(j.indexers) ? j : null; render(); })
-        .catch(function () { data = null; render(); });
+        .then(function (r) {
+          if (r.status === 401 || r.status === 403) { authed = false; data = null; return null; }
+          if (r.ok) authed = true;
+          return r.ok ? r.json() : null;
+        })
+        .then(function (j) { data = j && Array.isArray(j.indexers) ? j : null; sync(); })
+        .catch(function () { data = null; sync(); });
     } catch (e) {}
   }
 
+  function navigated() { if (!authed) load();
+    sync(); }
+
+  function hookHistory() {
+    ["pushState", "replaceState"].forEach(function (m) {
+      var orig = history[m];
+      if (typeof orig !== "function") return;
+      history[m] = function () { var r = orig.apply(this, arguments); setTimeout(navigated, 0); return r; };
+    });
+    window.addEventListener("popstate", navigated);
+  }
+
   function mount() {
-    if (!document.body) return;
+    if (!document.body || !visible()) return;
     if (!bar) {
       bar = el("div");
       bar.id = "indexer-bar";
       bar.setAttribute("role", "region");
       bar.setAttribute("aria-label", "Indexer usage");
-      render();
     }
     if (!bar.isConnected) document.body.appendChild(bar);
   }
 
   function start() {
     try {
-      mount();
       load();
-      setInterval(load, REFRESH);
-      new MutationObserver(function () { if (!bar.isConnected) mount(); }).observe(document.body, { childList: true });
+      hookHistory();
+      setInterval(function () { if (Date.now() - lastLoad >= (authed ? REFRESH : RETRY) - 500) load(); }, RETRY);
+      new MutationObserver(function () { if (authed && (!bar || !bar.isConnected)) sync(); }).observe(document.body, { childList: true });
       document.addEventListener("click", function () { if (panelOpen) { panelOpen = false; render(); } });
       document.addEventListener("keydown", function (e) { if (e.key === "Escape" && panelOpen) { panelOpen = false; render(); } });
       document.addEventListener("visibilitychange", function () { if (!document.hidden) load(); });

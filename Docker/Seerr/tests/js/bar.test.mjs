@@ -73,3 +73,49 @@ test("no storage data: no disk chips, indexers unchanged", async () => {
   assert.equal(chip(w, "SSD"), undefined);
   assert.ok(w.document.querySelector("#indexer-bar .ib-title"));
 });
+
+function gated(status, path) {
+  const calls = { n: 0, status };
+  const w = load("bar.js", "", (win) => {
+    win.fetch = () => { calls.n++; return Promise.resolve({ ok: calls.status === 200, status: calls.status, json: () => Promise.resolve(usage([SSD, HDD])) }); };
+  }, "https://requests.example.com" + path);
+  open.push(w);
+  return { w, calls };
+}
+
+test("401 from the data: no bar, no ib-on", async () => {
+  const { w } = gated(401, "/");
+  await tick(); await tick(); await tick();
+  assert.equal(w.document.getElementById("indexer-bar"), null);
+  assert.equal(w.document.documentElement.classList.contains("ib-on"), false);
+});
+
+test("403 from the data: no bar", async () => {
+  const { w } = gated(403, "/");
+  await tick(); await tick(); await tick();
+  assert.equal(w.document.getElementById("indexer-bar"), null);
+});
+
+test("served data on /login and /setup: still no bar", async () => {
+  for (const path of ["/login", "/setup", "/login/x"]) {
+    const { w } = gated(200, path);
+    await tick(); await tick(); await tick();
+    assert.equal(w.document.getElementById("indexer-bar"), null, path);
+  }
+});
+
+test("login by client-side navigation: the bar appears without a reload", async () => {
+  const { w, calls } = gated(401, "/login");
+  await tick(); await tick(); await tick();
+  assert.equal(w.document.getElementById("indexer-bar"), null);
+  calls.status = 200;
+  w.history.pushState({}, "", "/");
+  await new Promise((r) => setTimeout(r, 20));
+  await tick(); await tick(); await tick();
+  assert.ok(w.document.getElementById("indexer-bar"));
+  assert.ok(w.document.documentElement.classList.contains("ib-on"));
+  w.history.pushState({}, "", "/login");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(w.document.getElementById("indexer-bar"), null);
+  assert.equal(w.document.documentElement.classList.contains("ib-on"), false);
+});

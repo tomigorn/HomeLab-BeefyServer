@@ -853,3 +853,10 @@ test("downloaded while Seerr still says Requested: ✅ 'in Jellyfin shortly', go
   assert.equal(visibleText(w, pill()), "Available");
   assert.equal(pill().hasAttribute("data-hg-hint"), false);
 });
+
+test("login page: no data is fetched (the JSON needs a Seerr session)", async () => {
+  const calls = [];
+  night("", fakeXHR({}, { value: fresh([]) }, calls), "/login");
+  await settle();
+  assert.deepEqual(calls.filter((u) => u.startsWith("/_indexer-bar/")), []);
+});
