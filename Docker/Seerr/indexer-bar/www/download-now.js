@@ -12,6 +12,12 @@
       busy: "Starting …",
       done: { started: "✅ Started — downloading now at daytime power price", searching: "✅ Searching now — what it grabs downloads at once", downloading: "Already downloading — nothing to do", available: "Already downloaded — nothing to do", "not-found": "Not in Radarr/Sonarr yet: request it first" },
       error: "❌ Failed — try again, or ask an admin",
+      running: "🔍 Searching… (started {t})",
+      queued: "🔍 Waiting for other searches ({n} ahead)",
+      none: "🧭 No release found yet (searched {t}) — searched again in tonight's scheduled search (04:17); downloads at night when found",
+      again: "⚡ Search again now — at daytime power price",
+      grabbed: "✅ Downloading",
+      locale: "en-GB",
     },
     de: {
       button: "⚡ Jetzt herunterladen — zum Tagstrompreis",
@@ -20,8 +26,16 @@
       busy: "Startet …",
       done: { started: "✅ Gestartet — lädt jetzt zum Tagstrompreis", searching: "✅ Suche läuft — was sie findet, lädt sofort", downloading: "Lädt bereits — nichts zu tun", available: "Bereits heruntergeladen — nichts zu tun", "not-found": "Noch nicht in Radarr/Sonarr: zuerst anfragen" },
       error: "❌ Fehlgeschlagen — nochmals versuchen oder einen Admin fragen",
+      running: "🔍 Suche läuft … (gestartet {t})",
+      queued: "🔍 Wartet auf andere Suchen ({n} davor)",
+      none: "🧭 Noch kein Release gefunden (gesucht {t}) — die geplante Suche heute Nacht (04:17) sucht weiter; lädt nachts, sobald gefunden",
+      again: "⚡ Nochmals suchen — zum Tagstrompreis",
+      grabbed: "✅ Lädt herunter",
+      locale: "de-CH",
     },
   };
+  var CHIP = "inline-flex items-center rounded-md border px-4 py-2 text-sm font-semibold text-white mr-2";
+  var SECONDARY = "border-color:#f59e0b;background:transparent;color:#fcd34d;white-space:normal;text-align:left;";
   // Seerr's Button (src/components/Common/Button), amber so it never reads as the request button
   var LOOK = "inline-flex items-center justify-center border font-medium rounded-md focus:outline-none transition ease-in-out duration-150 cursor-pointer disabled:opacity-50 text-white px-4 py-2 text-sm button-md mr-2";
   var COLOURS = "border-color:#f59e0b;background:#b45309;font-weight:700;white-space:normal;text-align:left;";
@@ -55,13 +69,83 @@
     return badge && GERMAN.test(badge.textContent.trim()) ? "de" : "en";
   }
 
-  function button(doc, t, title, state, note) {
+  function clock(iso, t) {
+    var d = new Date(iso || "");
+    if (isNaN(d.getTime())) return "?";
+    try { return d.toLocaleTimeString(t.locale, { hour: "2-digit", minute: "2-digit" }); } catch (e) { return iso; }
+  }
+
+  function chip(doc, text, id) {
+    var c = doc.createElement("span");
+    if (id) c.id = BOX;
+    c.className = CHIP;
+    c.style.cssText = "border-color:#4b5563;white-space:normal;";
+    c.setAttribute("role", "status");
+    c.textContent = text;
+    return c;
+  }
+
+  function running(st) {
+    return !!(st && st.state === "searching" && st.search && (st.search.status === "queued" || st.search.status === "started"));
+  }
+
+  // what the title's button area shows for a backend answer; null = nothing
+  function view(doc, t, title, st) {
+    var s = st && st.search;
+    if (st && st.state === "downloading" && st.now) return chip(doc, t.grabbed, true);
+    if (running(st)) return chip(doc, s.status === "started" ? t.running.replace("{t}", clock(s.started, t)) : t.queued.replace("{n}", String(s.ahead || 0)), true);
+    if (st && st.state === "searching" && s && s.last) {
+      var box = doc.createElement("div");
+      box.id = BOX;
+      box.className = "mr-2";
+      box.style.cssText = "display:inline-flex;flex-wrap:wrap;gap:.5rem;align-items:center;max-width:100%;";
+      var c = chip(doc, t.none.replace("{t}", clock(s.last, t)), false);
+      c.className = c.className.replace(/\s?mr-2\b/, "");
+      box.appendChild(c);
+      var again = button(doc, t, title, "searching", null, t.again);
+      again.removeAttribute("id");
+      again.className = LOOK.replace(/\s?mr-2\b/, "");
+      again.style.cssText = SECONDARY;
+      box.appendChild(again);
+      return box;
+    }
+    if (st && ["started", "searching"].indexOf(st.state) >= 0) return button(doc, t, title, st.state);
+    return null;
+  }
+
+  var POLL = 15000;
+  function poll(doc, t, title, mine) {
+    var ms = (typeof window !== "undefined" && window.hgDownloadNowPoll) || POLL;
+    setTimeout(function () {
+      if (current !== mine) return;
+      request("GET", API + "?type=" + title.type + "&tmdb=" + title.tmdbId).then(function (st) {
+        if (current !== mine) return;
+        show(doc, t, title, mine, st);
+      }, function () { if (current === mine) poll(doc, t, title, mine); });
+    }, ms);
+  }
+
+  function show(doc, t, title, mine, st) {
+    var el = view(doc, t, title, st);
+    if (mine.el && mine.el.parentNode) {
+      if (el) mine.el.parentNode.replaceChild(el, mine.el);
+      else mine.el.parentNode.removeChild(mine.el);
+    } else if (el) {
+      var row = doc.querySelector(".media-header .media-actions");
+      if (!row) return;
+      row.insertBefore(el, row.firstChild);
+    }
+    mine.el = el;
+    if (running(st)) poll(doc, t, title, mine);
+  }
+
+  function button(doc, t, title, state, note, label) {
     var b = doc.createElement("button");
     b.type = "button";
     b.id = BOX;
     b.className = LOOK;
     b.style.cssText = COLOURS;
-    b.textContent = note ? t.button + " · " + note : t.button;
+    b.textContent = label || (note ? t.button + " · " + note : t.button);
     b.title = note || t[state];
     b.setAttribute("aria-label", t.button + ". " + (note || t[state]));
     b.addEventListener("click", function () { press(doc, b, t, title, state); });
@@ -78,17 +162,27 @@
     b.disabled = true;
     b.textContent = t.busy;
     request("POST", API, { type: title.type, tmdbId: title.tmdbId }).then(function (r) {
+      var nl0 = typeof window !== "undefined" && window.hgNightLabel;
+      if (current && (running(r) || (r.state === "downloading" && r.now))) {
+        var host = b.id === BOX ? b : b.parentNode;
+        var el = view(doc, t, title, r);
+        if (host && host.parentNode) host.parentNode.replaceChild(el, host);
+        current.el = el;
+        if (running(r)) poll(doc, t, title, current);
+        if (nl0 && nl0.release && r.released && r.released.length) nl0.release(r.released);
+        return;
+      }
       var s = doc.createElement("span");
       s.id = BOX;
       s.className = "inline-flex items-center rounded-md border px-4 py-2 text-sm font-semibold text-white mr-2";
       s.style.cssText = "border-color:#4b5563;white-space:normal;";
       s.setAttribute("role", "status");
       s.textContent = t.done[r.state] || t.error;
-      swap(b, s);
+      swap(b.id === BOX ? b : b.parentNode, s);
       var nl = typeof window !== "undefined" && window.hgNightLabel;
       if (nl && nl.release && r.released && r.released.length) nl.release(r.released);
     }, function () {
-      swap(b, button(doc, t, title, state, t.error));
+      swap(b.id === BOX ? b : b.parentNode, button(doc, t, title, state, t.error));
     });
   }
 
@@ -111,11 +205,8 @@
       if (!user || typeof user.id !== "number") return null;
       return request("GET", API + "?type=" + title.type + "&tmdb=" + title.tmdbId).then(function (st) { return { st: st, user: user }; });
     }).then(function (r) {
-      if (!r || current !== mine || ["started", "searching"].indexOf(r.st.state) < 0) return;
-      var row = doc.querySelector(".media-header .media-actions");
-      if (!row || doc.getElementById(BOX)) return;
-      mine.el = button(doc, TEXT[langOf(doc, r.user)], title, r.st.state);
-      row.insertBefore(mine.el, row.firstChild);
+      if (!r || current !== mine || doc.getElementById(BOX)) return;
+      show(doc, TEXT[langOf(doc, r.user)], title, mine, r.st);
     }).catch(function () { /* no button */ });
   }
 

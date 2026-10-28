@@ -121,11 +121,38 @@ class Allowed(unittest.TestCase):
             self.assertFalse(dn.allowed(me), me)
 
 
+def cmd(name, status, queued, started=None, **body):
+    return {"name": name, "status": status, "queued": queued, "started": started, "ended": None, "body": body}
+
+
+class Search(unittest.TestCase):
+    def test_running_search_for_the_title(self):
+        cmds = [cmd("MoviesSearch", "started", "2026-10-28T09:55:12Z", "2026-10-28T09:55:12Z", movieIds=[43])]
+        self.assertEqual(dn.search_info("movie", 43, cmds, None), {"status": "started", "started": "2026-10-28T09:55:12Z", "ahead": 0, "last": None})
+
+    def test_queued_search_counts_the_searches_before_it(self):
+        cmds = [cmd("MoviesSearch", "started", "2026-10-28T09:55:12Z", "2026-10-28T09:55:12Z", movieIds=[53]), cmd("RssSync", "started", "2026-10-28T09:55:00Z"),
+                cmd("MissingMoviesSearch", "queued", "2026-10-28T09:56:00Z"), cmd("MoviesSearch", "queued", "2026-10-28T09:57:00Z", movieIds=[43]),
+                cmd("MoviesSearch", "queued", "2026-10-28T09:58:00Z", movieIds=[55]), cmd("MoviesSearch", "completed", "2026-10-28T09:50:00Z", movieIds=[51])]
+        self.assertEqual(dn.search_info("movie", 43, cmds, "2026-10-27T10:00:00Z"), {"status": "queued", "started": None, "ahead": 2, "last": "2026-10-27T10:00:00Z"})
+
+    def test_finished_searches_leave_the_last_search_time(self):
+        cmds = [cmd("MoviesSearch", "completed", "2026-10-28T09:50:00Z", movieIds=[43])]
+        self.assertEqual(dn.search_info("movie", 43, cmds, "2026-10-28T09:54:09Z"), {"status": None, "started": None, "ahead": 0, "last": "2026-10-28T09:54:09Z"})
+
+    def test_series_search_by_series_id(self):
+        cmds = [cmd("SeriesSearch", "started", "2026-10-28T09:55:12Z", "2026-10-28T09:55:13Z", seriesId=17), cmd("SeriesSearch", "started", "2026-10-28T09:55:12Z", seriesId=18)]
+        self.assertEqual(dn.search_info("tv", 17, cmds, None)["status"], "started")
+
+    def test_odd_command_list_is_no_search(self):
+        self.assertEqual(dn.search_info("movie", 43, {"records": []}, None), {"status": None, "started": None, "ahead": 0, "last": None})
+
+
 class FakeWorld:
     """Seerr, Radarr/Sonarr, qBittorrent and SABnzbd as the handler sees them; records every write."""
 
-    def __init__(self, perms=2, title=None, queue=(), torrents=(), slots=(), media=None, kind="movie"):
-        self.perms, self.kind = perms, kind
+    def __init__(self, perms=2, title=None, queue=(), torrents=(), slots=(), media=None, kind="movie", commands=None, episodes=None):
+        self.perms, self.kind, self.commands, self.episodes = perms, kind, commands, episodes
         self.title = title if title is not None else (movie() if kind == "movie" else series())
         self.queue, self.torrents, self.slots = list(queue), list(torrents), list(slots)
         self.media = media if media is not None else {"mediaInfo": {"externalServiceId": self.title["id"], "tvdbId": 999}}
@@ -148,6 +175,10 @@ class FakeWorld:
                 return [{"id": 63, "label": "lang-en"}, {"id": TAG, "label": "download-now"}]
             if path.startswith("/queue"):
                 return {"records": self.queue}
+            if path == "/command" and self.commands is not None:
+                return self.commands
+            if path.startswith("/episode?seriesId=") and self.episodes is not None:
+                return self.episodes
             if path in ("/movie/43", "/series/17"):
                 return self.title
             if path.startswith("/movie?tmdbId=") or path.startswith("/series?tvdbId="):
@@ -224,6 +255,36 @@ class Handler(unittest.TestCase):
         w = FakeWorld(queue=[rec("abc")], torrents=[tor("abc", cat="radarr", state="downloading")])
         status, out = post(w, {"type": "movie", "tmdbId": 673})
         self.assertEqual((status, out["state"], w.writes), (200, "downloading", []))
+
+    def test_get_reports_the_search_and_the_download_now_tag(self):
+        w = FakeWorld(title=movie(tags=(TAG,)) | {"lastSearchTime": "2026-10-28T09:54:09Z"}, commands=[cmd("MoviesSearch", "completed", "2026-10-28T09:50:00Z", movieIds=[43])])
+        status, out = get(w)
+        self.assertEqual((status, out["state"], out["now"]), (200, "searching", True))
+        self.assertEqual(out["search"], {"status": None, "started": None, "ahead": 0, "last": "2026-10-28T09:54:09Z"})
+
+    def test_series_last_search_is_the_latest_missing_episode_search(self):
+        eps = [{"hasFile": True, "lastSearchTime": "2026-10-28T11:00:00Z"}, {"hasFile": False, "lastSearchTime": "2026-10-28T10:00:00Z"}, {"hasFile": False, "lastSearchTime": None}]
+        status, out = get(FakeWorld(kind="tv", commands=[], episodes=eps), "type=tv&tmdb=1399")
+        self.assertEqual((out["search"]["last"], out["now"]), ("2026-10-28T10:00:00Z", False))
+
+    def test_command_list_not_readable_is_no_search_info_not_an_error(self):
+        status, out = get(FakeWorld())
+        self.assertEqual((status, out["search"]), (200, None))
+
+    def test_press_answers_with_the_search_it_queued(self):
+        dn.SEARCHED.clear()
+        w = FakeWorld(commands=[])
+        orig = w.arr
+        def arr(app):
+            call = orig(app)
+            def wrapped(path, method="GET", body=None):
+                if path == "/command" and method == "POST":
+                    w.commands.append(cmd("MoviesSearch", "queued", "2026-10-28T10:12:00Z", movieIds=[43]))
+                return call(path, method, body)
+            return wrapped
+        w.arr = arr
+        status, out = post(w, {"type": "movie", "tmdbId": 673})
+        self.assertEqual((out["state"], out["search"]["status"], out["now"]), ("searching", "queued", True))
 
     def test_get_is_a_dry_run(self):
         w = FakeWorld(queue=[rec("abc")], torrents=[tor("abc")])
@@ -324,7 +385,7 @@ class Handler(unittest.TestCase):
             return seerr(path, auth)
         w.seerr = unknown
         w.arr = lambda app: (lambda path, method="GET", body=None: [] if path.startswith("/movie?") else {"records": []} if path.startswith("/queue") else [{"id": TAG, "label": "download-now"}])
-        self.assertEqual(get(w, "type=movie&tmdb=999999999"), (200, {"state": "not-found", "app": "radarr", "released": [], "tagged": False, "moved": 0}))
+        self.assertEqual(get(w, "type=movie&tmdb=999999999"), (200, {"state": "not-found", "app": "radarr", "released": [], "tagged": False, "moved": 0, "now": False, "search": None}))
 
     def test_falls_back_to_lookup_without_seerr_service_id(self):
         w = FakeWorld(media={"mediaInfo": {"externalServiceId": None}}, queue=[rec("abc")], torrents=[tor("abc")])

@@ -180,3 +180,107 @@ test("moving to another title in the app: the old button goes, the new title is 
   assert.equal(box(w), null);
   assert.ok(calls.some((c) => c.url === "/_download-now/api?type=movie&tmdb=99"));
 });
+
+// Search status chip: the backend reports the title's Radarr/Sonarr search; running = poll, done without a grab = 🧭
+const hhmm = (iso, l = "en-GB") => new Date(iso).toLocaleTimeString(l, { hour: "2-digit", minute: "2-digit" });
+const fast = (r, posts = {}, calls = []) => (w) => { fakeXHR(r, posts, calls)(w); w.hgDownloadNowPoll = 40; };
+const search = (status, extra = {}) => ({ status, started: null, ahead: 0, last: null, ...extra });
+const st = (state, s, now = true) => ({ state, released: [], app: "radarr", now, search: s });
+function pageFast(body, r, posts, calls, path = "/movie/673") {
+  const w = load("download-now.js", body, fast(r, posts, calls), "https://requests.example.com" + path);
+  opened.push(w);
+  return w;
+}
+const NO_RELEASE = "No release found yet (searched ";
+
+test("search running: 🔍 Searching… with its start time, no button", async () => {
+  const w = pageFast(titlePage(), routes(ME.requester, null, { [API]: st("searching", search("started", { started: "2026-10-28T09:55:12Z" })) }));
+  await settle();
+  assert.equal(box(w).getAttribute("role"), "status");
+  assert.equal(box(w).textContent, `🔍 Searching… (started ${hhmm("2026-10-28T09:55:12Z")})`);
+  assert.equal(w.document.querySelector("#hg-download-now button"), null);
+});
+
+test("search queued behind others: how many are ahead", async () => {
+  const w = pageFast(titlePage(), routes(ME.requester, null, { [API]: st("searching", search("queued", { ahead: 2 })) }));
+  await settle();
+  assert.equal(box(w).textContent, "🔍 Waiting for other searches (2 ahead)");
+});
+
+test("searched, nothing found: 🧭 chip with the time and tonight's search, ⚡ Search again stays as a secondary button", async () => {
+  const calls = [];
+  const r = routes(ME.requester, null, { [API]: st("searching", search(null, { last: "2026-10-28T09:12:00Z" }), false) });
+  const w = pageFast(titlePage(), r, { "/_download-now/api": st("searching", search("queued", { ahead: 0 })) }, calls);
+  await settle();
+  const chip = w.document.querySelector("#hg-download-now [role=status]");
+  assert.equal(chip.textContent, `🧭 ${NO_RELEASE}${hhmm("2026-10-28T09:12:00Z")}) — searched again in tonight's scheduled search (04:17); downloads at night when found`);
+  const again = w.document.querySelector("#hg-download-now button");
+  assert.equal(again.textContent, "⚡ Search again now — at daytime power price");
+  assert.doesNotMatch(again.getAttribute("style"), /#b45309/);
+  again.click();
+  r[API] = st("searching", search("queued", { ahead: 0 }));
+  await settle();
+  assert.ok(calls.some((c) => c.method === "POST"));
+  assert.match(box(w).textContent, /^🔍 (Waiting for other searches \(0 ahead\)|Searching…)/);
+});
+
+test("polls every few seconds while the search runs, shows the result, then stops", async () => {
+  const calls = [];
+  const r = routes(ME.requester, null, { [API]: st("searching", search("started", { started: "2026-10-28T09:55:12Z" })) });
+  const w = pageFast(titlePage(), r, {}, calls);
+  await settle();
+  r[API] = st("searching", search(null, { last: "2026-10-28T10:00:23Z" }));
+  await settle();
+  await settle();
+  assert.match(w.document.querySelector("#hg-download-now [role=status]").textContent, /^🧭 No release found yet/);
+  const n = calls.filter((c) => c.url === API).length;
+  await settle();
+  await settle();
+  assert.equal(calls.filter((c) => c.url === API).length, n);
+});
+
+test("a grab during the search: ✅ Downloading", async () => {
+  const r = routes(ME.requester, null, { [API]: st("searching", search("started", { started: "2026-10-28T09:55:12Z" })) });
+  const w = pageFast(titlePage(), r);
+  await settle();
+  r[API] = st("downloading", search(null, { last: "2026-10-28T10:00:23Z" }));
+  await settle();
+  await settle();
+  assert.equal(box(w).textContent, "✅ Downloading");
+});
+
+test("leaving the title stops the polling", async () => {
+  const calls = [];
+  const w = pageFast(titlePage(), routes(ME.requester, null, { [API]: st("searching", search("started", { started: "2026-10-28T09:55:12Z" })), "/_download-now/api?type=movie&tmdb=99": { status: 403, body: {} } }), {}, calls);
+  await settle();
+  w.history.pushState({}, "", "/movie/99");
+  w.document.body.insertAdjacentHTML("beforeend", "<p>route change</p>");
+  await settle();
+  const n = calls.filter((c) => c.url === API).length;
+  await settle();
+  await settle();
+  assert.equal(calls.filter((c) => c.url === API).length, n);
+  assert.equal(box(w), null);
+});
+
+test("press answers with the queued search: chip in place of the button, polling starts", async () => {
+  const calls = [];
+  const r = routes(ME.requester, "searching");
+  const w = pageFast(titlePage(), r, { "/_download-now/api": st("searching", search("queued", { ahead: 1 })) }, calls);
+  await settle();
+  box(w).click();
+  r[API] = st("searching", search("queued", { ahead: 1 }));
+  await settle();
+  assert.ok(calls.filter((c) => c.url === API).length >= 2);
+  assert.equal(box(w).textContent, "🔍 Waiting for other searches (1 ahead)");
+});
+
+test("German chips", async () => {
+  const w = pageFast(titlePage("Angefragt"), routes(ME.admin, null, { [API]: st("searching", search(null, { last: "2026-10-28T09:12:00Z" })) }));
+  await settle();
+  assert.equal(w.document.querySelector("#hg-download-now [role=status]").textContent, `🧭 Noch kein Release gefunden (gesucht ${hhmm("2026-10-28T09:12:00Z", "de-CH")}) — die geplante Suche heute Nacht (04:17) sucht weiter; lädt nachts, sobald gefunden`);
+  assert.equal(w.document.querySelector("#hg-download-now button").textContent, "⚡ Nochmals suchen — zum Tagstrompreis");
+  const w2 = pageFast(titlePage("Angefragt"), routes(ME.admin, null, { [API]: st("searching", search("queued", { ahead: 3 })) }));
+  await settle();
+  assert.equal(box(w2).textContent, "🔍 Wartet auf andere Suchen (3 davor)");
+});

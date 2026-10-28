@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Download now (README "Download now"): the button on Seerr's title page. Seerr admins / manage-requests on any title, everyone else only on a title with their own (not declined) request; checked against Seerr itself on every call.
 A press tags the title download-now in Radarr/Sonarr, moves its downloads out of the night categories (qBittorrent radarr-night/sonarr-night, SABnzbd movies-night/tv-night) into the normal ones and resumes the paused ones; nothing grabbed yet = a search, which grabs through the tagged normal clients.
-GET /_download-now/api?type=movie|tv&tmdb=<id>: what a press would do (no change). POST /_download-now/api {"type","tmdbId"}: do it. The API keys stay here, the browser only sees the state."""
+GET /_download-now/api?type=movie|tv&tmdb=<id>: what a press would do (no change), with the title's search (queued/started, searches ahead, last search time). POST /_download-now/api {"type","tmdbId"}: do it. The API keys stay here, the browser only sees the state."""
 import http.client
 import http.server
 import json
@@ -28,6 +28,8 @@ TMDB = re.compile(r"^[1-9][0-9]{0,9}$")
 LOCK = threading.Lock()
 SEARCH_COOLDOWN = 120
 SEARCHED = {}
+SEARCHES = {"MoviesSearch", "SeriesSearch", "SeasonSearch", "EpisodeSearch", "MissingMoviesSearch", "MissingEpisodeSearch", "CutoffUnmetMoviesSearch", "CutoffUnmetEpisodeSearch"}
+RUNNING = ("queued", "started")
 
 
 class ApiError(Exception):
@@ -89,8 +91,34 @@ def plan(kind, title, tag_id, queue, torrents, slots):
         state = "searching"
     else:
         state = "available"
-    return {"state": state, "add_tag": state in ("started", "searching") and not has_tag, "qbit": qbit, "sab": sab,
+    return {"state": state, "now": has_tag, "add_tag": state in ("started", "searching") and not has_tag, "qbit": qbit, "sab": sab,
             "search": state == "searching", "released": [h.lower() for h, _, _ in qbit] + [n.lower() for n, _, _ in sab]}
+
+
+def search_info(kind, tid, commands, last):
+    """The title's Radarr/Sonarr search: queued (with the searches ahead of it, Radarr runs them one at a time) or started; else the last search time."""
+    cmds = [c for c in commands if isinstance(c, dict)] if isinstance(commands, list) else []
+    def mine(c):
+        b = c.get("body") or {}
+        return tid in (b.get("movieIds") or []) if kind == "movie" else b.get("seriesId") == tid
+    run = [c for c in cmds if c.get("name") in SEARCHES and c.get("status") in RUNNING]
+    own = next((c for c in run if mine(c) and c.get("status") == "started"), None) or next((c for c in run if mine(c)), None)
+    if not own:
+        return {"status": None, "started": None, "ahead": 0, "last": last}
+    ahead = 0 if own["status"] == "started" else sum(1 for c in run if c is not own and str(c.get("queued") or "") < str(own.get("queued") or ""))
+    return {"status": own["status"], "started": own.get("started") if own["status"] == "started" else None, "ahead": ahead, "last": last}
+
+
+def read_search(kind, title, arr):
+    try:
+        if kind == "movie":
+            last = title.get("lastSearchTime")
+        else:
+            eps = arr(f"/episode?seriesId={title['id']}")
+            last = max(filter(None, (e.get("lastSearchTime") for e in eps if isinstance(e, dict) and not e.get("hasFile"))), default=None) if isinstance(eps, list) else None
+        return search_info(kind, title["id"], arr("/command"), last)
+    except ApiError:
+        return None
 
 
 def find_title(kind, arr, media, tmdb):
@@ -130,7 +158,7 @@ def assess(kind, tmdb, media, deps):
     torrents = deps.qbit("/torrents/info")
     slots = deps.sab({"mode": "queue", "limit": "1000"})["queue"]["slots"]
     p = plan(kind, title, tag_id, queue.get("records") or [], torrents, slots)
-    p.update(app=app, title_id=title["id"], tag_id=tag_id)
+    p.update(app=app, title_id=title["id"], tag_id=tag_id, last_search=read_search(kind, title, arr))
     return title, p
 
 
@@ -162,7 +190,7 @@ def sab_ok(r, what):
 
 def public(p):
     return {"state": p["state"], "app": p.get("app"), "released": p.get("released", []), "tagged": bool(p.get("add_tag")),
-            "moved": len(p.get("qbit", [])) + len(p.get("sab", []))}
+            "moved": len(p.get("qbit", [])) + len(p.get("sab", [])), "now": bool(p.get("now")), "search": p.get("last_search")}
 
 
 def auth_of(headers):
@@ -221,6 +249,9 @@ def handle(method, path, headers, body, deps):
                 title, p = assess(kind, int(tmdb), media, deps)
                 if title:
                     apply(kind, p, deps)
+                    p["now"] = p["now"] or p["add_tag"]
+                    if p["state"] == "searching":
+                        p["last_search"] = read_search(kind, title, deps.arr(p["app"]))
                     print(f"user {me.get('id')} ({role}) {kind} {tmdb} ({title.get('title')}): {p['state']}, moved {len(p['qbit']) + len(p['sab'])}, tag {'added' if p['add_tag'] else 'kept'}", flush=True)
     except Exception as e:
         print(f"{kind} {tmdb}: {type(e).__name__} {redact(e)}", file=sys.stderr, flush=True)
