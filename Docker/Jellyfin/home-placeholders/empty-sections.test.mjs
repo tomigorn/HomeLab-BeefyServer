@@ -756,10 +756,10 @@ test("cache: per user, survives a round trip, broken or blocked storage reads as
 test("cache: watched rows and section settings refresh after a minute and show for 10 min, discover rows refresh after a day", () => {
   const now = 10 * 86400000;
   const entry = (age) => ({ at: now - age });
-  const c = { base: entry(30000), recent: entry(30000), discover: entry(3600000) };
+  const c = { base: entry(30000), recent: entry(30000), discover: { ...entry(3600000), nets: es.netsKey(undefined) } };
   assert.deepEqual(es.staleParts(c, now), []);
   assert.deepEqual(es.staleParts({ ...c, recent: entry(61000) }, now), ["recent"]);
-  assert.deepEqual(es.staleParts({ ...c, discover: entry(86400001) }, now), ["discover"]);
+  assert.deepEqual(es.staleParts({ ...c, discover: { ...entry(86400001), nets: es.netsKey(undefined) } }, now), ["discover"]);
   assert.deepEqual(es.staleParts(null, now), ["base", "recent", "discover"]);
   assert.equal(es.usable({ ...c, recent: entry(601000) }, now), false);
   assert.equal(es.usable({ ...c, discover: entry(30 * 86400000) }, now), true);
@@ -776,7 +776,7 @@ test("cache: a home load paints from the cache at once, then refreshes only the 
     lang: "en",
     base: { at: now - 120000, enabled: ["NextUp"], names: { NextUp: "Next Up" } },
     recent: { at: now - 120000, rows: { RecentlyWatchedMovies: [movie("m1", 0)], RecentlyWatchedSeries: [] } },
-    discover: { at: now - 1000, rows: { [STU]: [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: null, logo: null }], [NET]: [], [MGEN]: [], [SGEN]: [] } }
+    discover: { at: now - 1000, nets: es.netsKey(undefined), rows: { [STU]: [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: null, logo: null }], [NET]: [], [MGEN]: [], [SGEN]: [] } }
   };
   es.writeCache(win.localStorage, "u1", cached);
   const urls = [];
@@ -858,4 +858,74 @@ test("fixed slots: a cached home paints every slot on the first change, before t
   assert.ok(c.querySelector('[data-hss-placeholder="HiddenGems"][data-hss-loading]'));
   assert.ok(c.querySelector('[data-hss-placeholder="DiscoverStudios"]'));
   win.close();
+});
+
+function pagedHome(meta) {
+  const dom = new JSDOM('<html lang="en"><body><div class="homeSectionsContainer"></div></body></html>', { url: "https://jf.example.com/web/" });
+  const win = dom.window;
+  const now = Date.now();
+  es.writeCache(win.localStorage, "u1", {
+    lang: "en",
+    base: { at: now, enabled: ["NextUp", "HiddenGems"], names: { NextUp: "Next Up", HiddenGems: "Hidden Gems" }, modes: {} },
+    recent: { at: now, rows: { RecentlyWatchedMovies: [], RecentlyWatchedSeries: [] } },
+    discover: { at: now, nets: es.netsKey(undefined), rows: { [STU]: [], [NET]: [], [MGEN]: [], [SGEN]: [] } }
+  });
+  win.HssPageMeta = meta;
+  win.ApiClient = { getCurrentUserId: () => "u1", getScaledImageUrl: fakeApi.getScaledImageUrl, getUrl: (p, q) => p + "?" + new URLSearchParams(q), getJSON: () => new Promise(() => {}) };
+  es.start(win);
+  return win;
+}
+
+test("no bottom spinner: page 1 with fewer sections than a page holds tells the plugin there is no next page", async () => {
+  const win = pagedHome({ UsePagination: true, Page: 1, ResultsPerPage: 30 });
+  win.document.querySelector(".homeSectionsContainer").innerHTML = section("NextUp", 3, 1) + section("HiddenGems", 8, 0, true);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(win.HssPageMeta.Finished, true);
+  win.close();
+});
+
+test("no bottom spinner: a full first page, a later page or no sections yet leave the plugin's paging alone", async () => {
+  const full = pagedHome({ UsePagination: true, Page: 1, ResultsPerPage: 2 });
+  full.document.querySelector(".homeSectionsContainer").innerHTML = section("NextUp", 3, 1) + section("HiddenGems", 8, 1);
+  const later = pagedHome({ UsePagination: true, Page: 2, ResultsPerPage: 30 });
+  later.document.querySelector(".homeSectionsContainer").innerHTML = section("NextUp", 3, 1);
+  const empty = pagedHome({ UsePagination: true, Page: 1, ResultsPerPage: 30 });
+  empty.document.querySelector(".homeSectionsContainer").innerHTML = '<div id="hssLoadingIndicator" class="verticalSection"></div>';
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(full.HssPageMeta.Finished, undefined);
+  assert.equal(later.HssPageMeta.Finished, undefined);
+  assert.equal(empty.HssPageMeta.Finished, undefined);
+  for (const w of [full, later, empty]) w.close();
+});
+
+test("no bottom spinner: a new home load (fresh paging state) is finished again", async () => {
+  const win = pagedHome({ UsePagination: true, Page: 1, ResultsPerPage: 30 });
+  const c = win.document.querySelector(".homeSectionsContainer");
+  c.innerHTML = section("NextUp", 3, 1);
+  await new Promise((r) => setTimeout(r, 20));
+  win.HssPageMeta = { UsePagination: true, Page: 1, ResultsPerPage: 30 };
+  c.innerHTML = section("NextUp", 3, 1);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(win.HssPageMeta.Finished, true);
+  win.close();
+});
+
+test("no late jump: once the plugin listed all its sections, a slot it left out shows its hint at once, no skeleton", async () => {
+  const win = pagedHome({ UsePagination: true, Page: 1, ResultsPerPage: 30 });
+  const c = win.document.querySelector(".homeSectionsContainer");
+  c.innerHTML = section("NextUp", 3, 1);
+  await new Promise((r) => setTimeout(r, 50));
+  const gems = c.querySelector('[data-hss-placeholder="HiddenGems"]');
+  assert.ok(gems);
+  assert.equal(gems.hasAttribute("data-hss-loading"), false);
+  win.close();
+});
+
+test("cache: discover rows reload when the server's networks list changed", () => {
+  const now = 10 * 86400000;
+  const c = { base: { at: now }, recent: { at: now }, discover: { at: now, nets: es.netsKey(["a", "b"]) } };
+  assert.deepEqual(es.staleParts(c, now, ["b", "a"]), []);
+  assert.deepEqual(es.staleParts(c, now, ["a"]), ["discover"]);
+  assert.deepEqual(es.staleParts(c, now, undefined), ["discover"]);
+  assert.deepEqual(es.staleParts(c, now), ["discover"]);
 });

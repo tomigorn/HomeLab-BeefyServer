@@ -28,6 +28,7 @@ if want jellyfin; then
   check jf.home-sections-index '^plugin="Jellyfin\.Plugin\.HomeScreenSections"$' "$(curl -s -m 8 http://127.0.0.1:8096/web/index.html | grep -o 'plugin="Jellyfin\.Plugin\.HomeScreenSections"' | head -1)"
   check jf.empty-home-sections '^true$' "$(jf_api /Plugins/f5a34f7b2e8a4e6aa7223a216a81b374/Configuration | jq -c '[.CustomJavaScripts[] | select(.Name == "Empty home sections") | .Enabled] | first' 2>&1)"
   check jf.empty-home-sections-served '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'data-hss-placeholder' 2>&1)"
+  check jf.home-paging-end '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'endPaging' 2>&1)"
   check jf.upcoming-windows '^\[1,"Months",3,"Months","DD/MM/YYYY","\."\]$' "$(jf_api /Plugins/b8298e012697407ab44daa8dc795e850/Configuration | jq -c '[.Sonarr.UpcomingTimeframeValue,.Sonarr.UpcomingTimeframeUnit,.Radarr.UpcomingTimeframeValue,.Radarr.UpcomingTimeframeUnit,.DateFormat,.DateDelimiter]' 2>&1)"
   check jf.recently-watched-served '^3$' "$(jf_api /JavaScriptInjector/private.js | grep -o -E 'function (loadRecent|syncRecent|pickSeries)' | sort -u | wc -l)"
   check jf.recently-watched-api '^array$' "$(jf_api "/Items?userId=$(jf_api /Users | jq -r '.[0].Id')&Recursive=true&IsPlayed=true&SortBy=DatePlayed&SortOrder=Descending&IncludeItemTypes=Movie,Episode&Limit=1" | jq -r '.Items | type' 2>&1)"

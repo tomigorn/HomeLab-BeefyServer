@@ -751,8 +751,26 @@
     return part && typeof part.at === "number" ? now - part.at : Infinity;
   }
 
-  function staleParts(c, now) {
-    return PARTS.filter(function (p) { return ageOf(c && c[p], now) > (p === "discover" ? DISCOVER_TTL_MS : RECENT_FRESH_MS); });
+  function netsKey(nets) {
+    return Array.isArray(nets) ? nets.slice().sort().join(",") : "";
+  }
+
+  // nets: the server's networks list (window.HssNetworks); the discover rows reload when it changed.
+  function staleParts(c, now, nets) {
+    return PARTS.filter(function (p) {
+      if (p === "discover") return ageOf(c && c.discover, now) > DISCOVER_TTL_MS || c.discover.nets !== netsKey(nets);
+      return ageOf(c && c[p], now) > RECENT_FRESH_MS;
+    });
+  }
+
+  // The plugin's paging shows a spinner and pins the scroll at the bottom while it asks for a next page, even when page 1 held every section.
+  function endPaging(meta, container) {
+    if (!meta) return false;
+    if (!meta.Finished && meta.UsePagination && meta.Page === 1 && meta.ResultsPerPage > 0) {
+      var n = container.querySelectorAll('.verticalSection[data-page="1"]').length;
+      if (n && n < meta.ResultsPerPage) meta.Finished = true;
+    }
+    return meta.Finished === true;
   }
 
   function usable(c, now) {
@@ -806,7 +824,8 @@
           ]).then(function (r) { return { enabled: enabledOf(r[0]), names: namesOf(r[1]), modes: modesOf(r[1]) }; });
         }
         if (p === "recent") return loadRecent(api, userId).then(function (rows) { return { rows: slimRows(rows) }; });
-        return loadDiscover(api, userId, win.HssNetworks).then(function (rows) { return { rows: rows }; });
+        var nets = netsKey(win.HssNetworks);
+        return loadDiscover(api, userId, win.HssNetworks).then(function (rows) { return { rows: rows, nets: nets }; });
       });
       return Promise.all(jobs.map(function (j) { return j.then(null, function () { return null; }); })).then(function (vals) {
         var old = state(userId, lang) || {};
@@ -860,9 +879,11 @@
     function loadingFor(container, st) {
       var since = firstSeen(container);
       var now = win.performance && win.performance.now ? win.performance.now() : Date.now();
+      var listed = endPaging(win.HssPageMeta, container);
       return function (id) {
         if (RECENT_ROWS.indexOf(id) !== -1) return !st.recent;
         if (DISCOVER_ROWS.indexOf(id) !== -1) return !st.discover;
+        if (listed && !realOf(container, id).length) return false;
         if (now - since > SLOT_WAIT_MS) return false;
         return !(answered[id] >= since - SLOT_SLACK_MS);
       };
@@ -900,7 +921,10 @@
       var containers = doc.querySelectorAll(".homeSectionsContainer");
       observer.disconnect();
       try {
-        for (var i = 0; i < containers.length; i++) upcomingNow(containers[i], lang);
+        for (var i = 0; i < containers.length; i++) {
+          endPaging(win.HssPageMeta, containers[i]);
+          upcomingNow(containers[i], lang);
+        }
       } finally {
         watch();
       }
@@ -912,7 +936,7 @@
     }
 
     function refresh(api, st, lang) {
-      var parts = staleParts(st, Date.now());
+      var parts = staleParts(st, Date.now(), win.HssNetworks);
       if (!parts.length || inflight || !liveContainers().length) return;
       inflight = fetchParts(api, api.getCurrentUserId(), lang, parts).then(function (next) {
         inflight = null;
@@ -968,7 +992,7 @@
       hintFor: hintFor, namesOf: namesOf, modesOf: modesOf, enabledOf: enabledOf, start: start, pickMovies: pickMovies, seriesCandidates: seriesCandidates, pickSeries: pickSeries,
       completeCollection: completeCollection, loadRecent: loadRecent, withRecent: withRecent, recentName: recentName, syncRecent: syncRecent, RECENT_DAYS: RECENT_DAYS, RECENT_LIMIT: RECENT_LIMIT,
       withDiscover: withDiscover, discoverName: discoverName, countBy: countBy, pickBackdrops: pickBackdrops, genreColors: genreColors, loadDiscover: loadDiscover, syncDiscover: syncDiscover, DISCOVER_LIMIT: DISCOVER_LIMIT,
-      readCache: readCache, writeCache: writeCache, staleParts: staleParts, usable: usable, RECENT_TTL_MS: RECENT_TTL_MS, DISCOVER_TTL_MS: DISCOVER_TTL_MS
+      readCache: readCache, writeCache: writeCache, staleParts: staleParts, netsKey: netsKey, usable: usable, RECENT_TTL_MS: RECENT_TTL_MS, DISCOVER_TTL_MS: DISCOVER_TTL_MS
     };
   } else if (window.MutationObserver && document.body) {
     start(window);
