@@ -1,7 +1,7 @@
 // Extra entries in Seerr's sidebar and mobile menu (README "Menu links"), placed after "Series". If Seerr changes its menu, the entries just do not appear.
 (function () {
   "use strict";
-  var LINKS = [{ id: "audiobooks", label: "Audiobooks", href: "https://books.holy-grail.ch/" }];
+  var LINKS = [{ id: "audiobooks", label: "Audiobooks", de: "Hörbücher", href: "https://books.holy-grail.ch/" }];
   var ANCHOR = 'a[href="/discover/tv"]';
   var ACTIVE = ["bg-gradient-to-br", "from-indigo-600", "to-purple-600", "hover:from-indigo-500", "hover:to-purple-500", "text-indigo-500"];
   var BOOK = "M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25";
@@ -40,9 +40,10 @@
     while (walker.nextNode()) if (walker.currentNode.nodeValue.trim()) { text = walker.currentNode; break; }
     if (!old) return null;
     old.parentNode.replaceChild(icon(doc, cls), old);
-    if (text) text.nodeValue = link.label;
-    else a.setAttribute("aria-label", link.label);
-    a.setAttribute("title", link.label);
+    var tv = doc.querySelector('a[href="/discover/tv"]:not([data-hg-link])'), label = tv && /\bSerien\b/.test(tv.textContent) ? link.de : link.label;
+    if (text) text.nodeValue = label;
+    else a.setAttribute("aria-label", label);
+    a.setAttribute("title", label);
     a.querySelectorAll("div").forEach(function (d) { d.remove(); });
     return a;
   }

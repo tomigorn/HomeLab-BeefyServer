@@ -85,7 +85,9 @@
   function langOf(doc, user) {
     var locale = user && user.settings && user.settings.locale;
     if (typeof locale === "string" && /^de/.test(locale)) return "de";
-    var badge = doc.querySelector(".media-status");
+    var nl = typeof window !== "undefined" && window.hgNightLabel;
+    if (nl && nl.lang) { try { return nl.lang(); } catch (e) { /* own detection */ } }
+    var badge = doc.querySelector(".media-status span:not([data-hg-night-own]):not([data-hg-flag-own])");
     return badge && GERMAN.test(badge.textContent.trim()) ? "de" : "en";
   }
 

@@ -223,7 +223,7 @@ Remove the bar: delete the `seerr-proxy` service, put `ports: ["${SEERR_PORT}:50
 
 ## Can wait
 
-The request dialog has a checkbox, ticked by default: ☑ **Can wait — download tonight (cheaper power)**. Ticked: the download is added paused and starts in the low tariff (22:00-06:00, all Sunday). Unticked: the request carries the Radarr/Sonarr tag `download-now` and downloads at once (first download only). Everyone who may request may untick it. Mechanism: `../Movie-Downloads/README.md` "Can wait: downloads at night".
+The request dialog has a checkbox, ticked by default: ☑ **Can wait — download tonight (cheaper power)** (German UI: **Kann warten — heute Nacht herunterladen (günstigerer Strom)**). Ticked: the download is added paused and starts in the low tariff (22:00-06:00, all Sunday). Unticked: the request carries the Radarr/Sonarr tag `download-now` and downloads at once (first download only). Everyone who may request may untick it. Mechanism: `../Movie-Downloads/README.md` "Can wait: downloads at night".
 
 | Part | What |
 |---|---|
@@ -235,7 +235,7 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 
 ## Menu links
 
-`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds **Audiobooks** after Series in the desktop sidebar, the phone drawer and the phone bottom bar (5th item, while it has room and no "more" button; otherwise in the "more" list), opening `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, public via Cloudflare, Holy Grail login, group `streaming-requesters`) in the same tab. Links and URL: `LINKS` at the top of the file. Seerr without a `/discover/tv` link: no entry, nothing breaks. Only menu links count: `/discover/tv` links inside `<main>` (Discover's **Popular Series** row title) are skipped, otherwise an "Audiobooks" title lands squeezed beside it (fixed 2026-10-28; Discover gets no own Audiobooks row, the menu entry covers it).
+`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds **Audiobooks** (German UI: **Hörbücher**) after Series in the desktop sidebar, the phone drawer and the phone bottom bar (5th item, while it has room and no "more" button; otherwise in the "more" list), opening `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, public via Cloudflare, Holy Grail login, group `streaming-requesters`) in the same tab. Links and URL: `LINKS` at the top of the file. Seerr without a `/discover/tv` link: no entry, nothing breaks. Only menu links count: `/discover/tv` links inside `<main>` (Discover's **Popular Series** row title) are skipped, otherwise an "Audiobooks" title lands squeezed beside it (fixed 2026-10-28; Discover gets no own Audiobooks row, the menu entry covers it).
 
 | Check | Command |
 |---|---|

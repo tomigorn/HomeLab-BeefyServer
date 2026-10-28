@@ -284,3 +284,10 @@ test("German chips", async () => {
   await settle();
   assert.equal(box(w2).textContent, "🔍 Wartet auf andere Suchen (3 davor)");
 });
+
+test("language from night-label's shared detection (sidebar), not from the relabelled status text", async () => {
+  const w = page(titlePage(), routes(ME.admin, "started"));
+  w.hgNightLabel.lang = () => "de";
+  await settle();
+  assert.match(box(w).textContent, /Jetzt herunterladen/);
+});

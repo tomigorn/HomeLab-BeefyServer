@@ -126,3 +126,10 @@ test("other requests are never touched", async () => {
   await settle();
   assert.deepEqual(sent.map((s) => s.body), ["{}", '{"a":1}', '{"mediaType":"movie"}']);
 });
+
+test("German UI: German box text", () => {
+  const w = load("can-wait.js", '<a href="/discover/tv">Serien</a>' + modal("Request Movie"));
+  const box = w.document.querySelector("#hg-can-wait");
+  assert.match(box.textContent, /Kann warten — heute Nacht herunterladen \(günstigerer Strom\)/);
+  assert.match(box.textContent, /Abwählen, wenn du es jetzt brauchst/);
+});

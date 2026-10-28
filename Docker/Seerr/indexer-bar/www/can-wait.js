@@ -98,6 +98,13 @@
     };
   }
 
+  function germanUI(doc) {
+    var nl = typeof window !== "undefined" && window.hgNightLabel;
+    if (nl && nl.lang) { try { return nl.lang() === "de"; } catch (e) { /* own detection */ } }
+    var tv = doc.querySelector('a[href="/discover/tv"]');
+    return !!tv && /\bSerien\b/.test(tv.textContent);
+  }
+
   function makeBox(doc) {
     var wrap = doc.createElement("div");
     wrap.id = BOX;
@@ -112,10 +119,11 @@
     label.htmlFor = input.id;
     label.style.cssText = "cursor:pointer;";
     var strong = doc.createElement("strong");
-    strong.textContent = "Can wait — download tonight (cheaper power)";
+    var de = germanUI(doc);
+    strong.textContent = de ? "Kann warten — heute Nacht herunterladen (günstigerer Strom)" : "Can wait — download tonight (cheaper power)";
     var hint = doc.createElement("div");
     hint.style.cssText = "color:#9ca3af;font-size:.8rem;";
-    hint.textContent = "Untick if you need it now: the download starts at once.";
+    hint.textContent = de ? "Abwählen, wenn du es jetzt brauchst: der Download startet sofort." : "Untick if you need it now: the download starts at once.";
     label.appendChild(strong);
     label.appendChild(hint);
     wrap.appendChild(input);

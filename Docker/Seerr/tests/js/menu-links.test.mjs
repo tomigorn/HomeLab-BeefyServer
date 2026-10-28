@@ -76,3 +76,10 @@ test("Discover: the Popular Series slider title (also a /discover/tv link, insid
   assert.equal(links(w).filter((a) => a.closest("main")).length, 0);
   assert.equal(links(w).length, 2);
 });
+
+test("German UI: the entry reads Hörbücher", () => {
+  const w = load("menu-links.js", SIDEBAR.replace(">Series</a>", ">Serien</a>"));
+  const [a] = links(w);
+  assert.equal(a.textContent.trim(), "Hörbücher");
+  assert.equal(a.getAttribute("title"), "Hörbücher");
+});
