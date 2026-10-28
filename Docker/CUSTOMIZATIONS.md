@@ -129,7 +129,8 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 |---|---|---|---|---|
 | Local build, clamd on TCP 3310 | `Antivirus/clamav/` | `docker compose up -d --build` | `av.local-build`: → clamav-local; `av.clamd-tcp`: zPING → PONG | |
 | Queue worker heartbeat | compose clamav-queue | compose | `av.queue-worker`: heartbeat < 15 min → alive | |
-| Queue + quarantine dirs, group media 2770 | `Antivirus/install.sh` | install.sh | `av.queue-perms`: → 65112:1100 2770 n:1100 2770 | uid change |
+| Queue + quarantine dirs on both hot SSDs (`ssd-hot`, `ssd-hot2`), group media 2770 | `Antivirus/install.sh` | install.sh | `av.queue-perms`: → 65112:1100 2770 n:1100 2770, twice | uid change |
+| Scan both hot SSD branches (`/scan/ssd-hot`, `/scan/ssd-hot2`), hook `PATH_MAP` with several branches | compose clamav `SCAN_ROOTS` + mounts, `Antivirus/hook/clamav-hook.py` | compose up -d | `av.scan-branches`: → /scan/ssd-hot /scan/ssd-hot2 ok ok | a new pool branch needs a mount, `SCAN_ROOTS`, `PATH_MAP`, install.sh |
 | Scan timers | `Antivirus/systemd/` | install.sh | `av.timers`: → active active | |
 
 Hooks in SABnzbd / qBittorrent: Movie-Downloads `md.sab-clamav-script`, `md.qbit-clamav-autorun`.

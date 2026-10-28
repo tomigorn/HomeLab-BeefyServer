@@ -11,7 +11,7 @@ services:
     image: clamav-local:latest
     container_name: clamav
     # Non-root, also for the timer's `docker exec clamav /scan.sh`. 1100 = media (quarantine moves on
-    # the ssd-hot branch), 65118 = writers of the node-exporter textfile dir.
+    # the hot SSD branches), 65118 = writers of the node-exporter textfile dir.
     user: "65112:65112"
     group_add:
       - "1100"
@@ -26,16 +26,21 @@ services:
     environment:
       - HOST=beefy
       - SCAN_HOST=0   # the host root is scanned by clamav-hostscan, which has no network
-      - SCAN_ROOTS=/scan/ssd-hot
+      - SCAN_ROOTS=/scan/ssd-hot /scan/ssd-hot2
       - QUARANTINE=/scan/ssd-hot/quarantine
       - STATE=/state
       - TEXTFILE=/textfile
     volumes:
       - clamav-db:/var/lib/clamav
-      # The SSD branch, not the /srv/video union: every new file lands here and the cold HDD never spins up.
+      # The hot SSD branches, not the /srv/video union: every new file lands on one of them (ssd-hot first, ssd-hot2 once it is below minfreespace) and the cold HDD never spins up.
       - type: bind
         source: /srv/.disks/ssd-hot
         target: /scan/ssd-hot
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /srv/.disks/ssd-hot2
+        target: /scan/ssd-hot2
         bind:
           create_host_path: false
       - type: bind

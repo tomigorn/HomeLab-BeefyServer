@@ -21,11 +21,12 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 
 | Command on beefy | Scans | Infected files |
 |---|---|---|
-| `sudo docker exec clamav /scan.sh new` | files under `/scan/ssd-hot` changed since the last good run | moved to quarantine |
+| `sudo docker exec clamav /scan.sh new` | files under `/scan/ssd-hot` and `/scan/ssd-hot2` changed since the last good run | moved to quarantine |
 | `sudo docker compose run --rm clamav-hostscan` (weekly timer) | the host folders in `SCAN_ROOTS` of the compose service, as `/host/...` | report only |
-| `sudo docker exec clamav /scan.sh /scan/ssd-hot/<path>` | the given files/folders | moved under `/scan/...` |
+| `sudo docker exec clamav /scan.sh /scan/ssd-hot/<path>` (or `/scan/ssd-hot2/...`) | the given files/folders | moved under `/scan/...` |
 
-- `/scan/ssd-hot` = `/srv/.disks/ssd-hot` (the SSD branch, where every download and import lands). `/srv/appdata` (app configs, owner-only since 2026-10-22) is not scanned: no outside files land there. The `/srv/video` union and the cold HDD are never scanned, so it stays spun down.
+- `/scan/ssd-hot` = `/srv/.disks/ssd-hot`, `/scan/ssd-hot2` = `/srv/.disks/ssd-hot2`: the two hot SSD branches of the `/srv/video` union, where every download and import lands (`ssd-hot` first, `ssd-hot2` once `ssd-hot` has less than its `minfreespace` free). `/srv/appdata` (app configs, owner-only since 2026-10-22) is not scanned: no outside files land there. The `/srv/video` union and the cold HDD are never scanned by the nightly job, so it stays spun down: a file that only exists on `hdd-cold` (moved there by the mover) was scanned when it arrived and is not scanned again. The hook and queue stream any file to clamd from the union path, whatever branch it is on.
+- Quarantine: `scan.sh` has one `QUARANTINE` (`/scan/ssd-hot/quarantine`). A nightly hit on `ssd-hot2` is moved there by `clamscan --move`, which copies across filesystems when rename is not possible. Hook and queue hits are renamed inside the union into `/data/quarantine`, so the file stays on its own branch (`install.sh` makes `quarantine` and `.clamav-queue` on both SSDs, same owner and mode); `ls /srv/.disks/ssd-hot*/quarantine`. Restore a file in the `ssd-hot2` quarantine with the full path: `scan.sh restore /scan/ssd-hot2/quarantine/<name>` (`index.txt` lives in `ssd-hot/quarantine`).
 - Weekly host scan engine: `USE_CLAMD=1` in the compose service (`clamdscan --multiscan`, `mem_limit: 3g`); `USE_CLAMD=0` is the old single-thread `clamscan -r`. Details: fastpi repo `Docker/antivirus/README.md`.
 - Exit codes `0` clean, `1` infected, `2` errors (marker kept, next run retries). Files over 2 GiB are skipped by ClamAV (`clamav_files_skipped_large`). Details: fastpi repo `Docker/antivirus/README.md`.
 - Logs: `journalctl -u clamav-scan`, `/var/lib/clamav-scan/last-<mode>.log`.
@@ -70,7 +71,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 
 | | |
 |---|---|
-| Queue | `/srv/.disks/ssd-hot/.clamav-queue` (`/data/.clamav-queue` in the apps), 65112:media 2770, made by `install.sh`. One folder per job: hardlinks `0001…` + `job.json` (title, torrent hash, original paths); written as `<job>.tmp`, renamed when complete |
+| Queue | `/srv/.disks/ssd-hot/.clamav-queue` and `/srv/.disks/ssd-hot2/.clamav-queue` (`/data/.clamav-queue` in the apps), 65112:media 2770, made by `install.sh`. One folder per job: hardlinks `0001…` + `job.json` (title, torrent hash, original paths); written as `<job>.tmp`, renamed when complete |
 | Worker | container `clamav-queue`: `clamav-local` image, `/srv/video` union as `/data`, one file at a time, oldest job first, polls every 5 s |
 | Why hardlinks | Sonarr/Radarr import (move or hardlink) right after the hook returns. The queue link keeps the same inode, so the worker always scans the very file that was imported, wherever it went; nothing to look up by path |
 | Clean | link removed; empty job folder removed |
@@ -91,7 +92,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | Where (host) | What |
 |---|---|
 | `/srv/.disks/ssd-hot/quarantine/` (`/srv/video/quarantine` in the union, `/data/quarantine` in the apps) | quarantined files, group `media`, 2770; no library points at the union root |
-| `.../quarantine/index.txt` | date TAB original path as the `clamav` container sees it (`/scan/ssd-hot/...` = `/srv/.disks/ssd-hot/...`; the hook maps `/data` to it) TAB signature |
+| `.../quarantine/index.txt` | date TAB original path as the `clamav` container sees it (`/scan/ssd-hot/...` = `/srv/.disks/ssd-hot/...`, `/scan/ssd-hot2/...` likewise; the hook maps `/data` to the branch that holds the file: mergerfs xattr `user.mergerfs.basepath`, else the `PATH_MAP` target where it exists, else the first; `PATH_MAP=/data=/scan/ssd-hot:/scan/ssd-hot2`) TAB signature |
 | `/var/lib/clamav-scan/textfile/clamav-hits.tsv` | hook and queue hits only: date TAB mode (`hook`/`queue`) TAB job title TAB the same path TAB signature (same date as the index line); fastpi reads it for the `MalwareQuarantined` mode/title. `index.txt` keeps 3 fields: `scan.sh restore` matches `NF == 3` |
 
 False positive: `sudo docker exec clamav /scan.sh restore '<file name in quarantine>'` moves it back to its original path from `index.txt`, marks the line `restored <date>` and adds the path to `/var/lib/clamav-scan/allow.txt`, which every scan.sh mode skips.
