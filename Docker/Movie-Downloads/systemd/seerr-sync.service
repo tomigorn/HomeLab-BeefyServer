@@ -1,0 +1,13 @@
+[Unit]
+Description=Seerr availability after a Radarr/Sonarr import: debounce, Jellyfin scan if needed, Seerr full scan (README Seerr availability after an import)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=buntu
+TimeoutStartSec=1800
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/seerr-sync.sh
+NoNewPrivileges=true
+PrivateTmp=true

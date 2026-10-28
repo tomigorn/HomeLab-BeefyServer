@@ -1,0 +1,11 @@
+[Unit]
+Description=Seerr availability: a Radarr/Sonarr import, upgrade or rename queued a file
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Path]
+PathChanged=/srv/appdata/radarr/seerr-sync.queue
+PathChanged=/srv/appdata/sonarr/seerr-sync.queue
+Unit=seerr-sync.service
+
+[Install]
+WantedBy=multi-user.target

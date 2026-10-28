@@ -510,7 +510,7 @@ The records of a wiped title stay in `title-wipe.tsv`: the wipe runs as buntu an
 | Recycle Bin | `/data/.recyclebin`, 7 days | |
 | Metadata (Kodi/Emby NFO) | **all off** | Jellyfin fetches its own from TMDB; two writers = duplicate/conflicting artwork |
 | Connect | `Jellyfin` (Emby/Jellyfin) | see below |
-| Connect (Custom Script) | `Language policy`, `Wrong-film guard`, `Title wipe`, `Original audio`, `Download now: first download only` | [Languages](#languages), [Wrong-film guard](#wrong-film-guard), [Delete a title](#delete-a-title), [Can wait](#can-wait-downloads-at-night) |
+| Connect (Custom Script) | `Language policy`, `Wrong-film guard`, `Title wipe`, `Original audio`, `Download now: first download only`, `Seerr sync` | [Seerr availability](#seerr-availability-after-an-import), [Languages](#languages), [Wrong-film guard](#wrong-film-guard), [Delete a title](#delete-a-title), [Can wait](#can-wait-downloads-at-night) |
 
 ### Naming (TRaSH "Jellyfin", TMDB flavour)
 
@@ -1202,6 +1202,22 @@ sudo docker exec movie-qbittorrent curl -s localhost:8080/api/v2/app/preferences
 ```
 
 Same for Sonarr on `8989` with `/srv/appdata/sonarr/config.xml`.
+
+### Seerr availability after an import
+Seerr's 5-min "Recently Added Scan" only sees items by Jellyfin's `DateCreated`, which comes from the file date: a film with an old file date (Fellowship 2021, More Than Honey 2015) stayed "Processing" until the 04:22 full scan. Now every import refreshes Seerr within minutes.
+
+| Step | What |
+|---|---|
+| Queue | Connect script **Seerr sync** (`scripts/seerr-sync-hook.sh`, On Import/Upgrade/Rename, both apps, registered by `language-policy.sh`) appends the file paths to `/config/seerr-sync.queue` (host `/srv/appdata/<app>/seerr-sync.queue`). No network from the container |
+| Trigger | `systemd/seerr-sync.path` starts `seerr-sync.service` (`scripts/seerr-sync.sh`, as buntu) |
+| Debounce | waits until 120 s after the last import, at most 600 s after the first, at least 600 s after the previous run: one run per burst, at most one per 10 min (`SS_QUIET`, `SS_CAP`, `SS_MIN_GAP`) |
+| Jellyfin | only for files Jellyfin does not list yet (`/Items` by path): `POST /Library/Media/Updated`, waits up to 90 s |
+| Seerr | `POST /api/v1/settings/jobs/jellyfin-full-scan/run`, waits for it to finish (about 15 s for 3.5k films). Media Availability Sync alone does not flip these titles (tested 2026-10-28) |
+
+- Log: `~/.local/state/movie-downloads/seerr-sync.log`; keys from `Seerr/secrets/api-key` and `Jellyfin/secrets/api-key` (never printed).
+- Install: `cd systemd && sudo install -m 0644 seerr-sync.path seerr-sync.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now seerr-sync.path`; register the hook: `scripts/language-policy.sh`.
+- Tests: `tests/test_seerr_sync.sh`, `tests/test_seerr_sync_hook.sh`. Check: `md.seerr-sync`.
+- Verified 2026-10-28: a queued import line → the service ran 2 min later, full scan 16 s. More Than Honey and Fellowship flipped from Processing to Available.
 
 ### Verified 2026-10-20: Seerr request to Jellyfin
 
