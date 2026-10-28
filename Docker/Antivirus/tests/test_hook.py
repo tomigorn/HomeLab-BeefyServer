@@ -178,6 +178,59 @@ class HookTest(unittest.TestCase):
             path = f.read().split("\t")[1]
         self.assertEqual(path, "/scan/ssd-hot" + bad[len(self.t) + len("/data"):])
 
+    def test_index_path_names_the_branch_that_has_the_file(self):
+        bad = self.write("setup.exe", EICAR)
+        self.sab(PATH_MAP="%s/data=%s/hot1:%s/data" % (self.t, self.t, self.t))
+        self.assertEqual(self.index()[0][1], bad)
+
+    def test_index_path_prefers_the_first_branch_when_it_has_the_file(self):
+        bad = self.write("setup.exe", EICAR)
+        rel = bad[len(self.data):]
+        self.write(rel.lstrip("/"), b"x", where=os.path.join(self.t, "hot1"))
+        self.sab(PATH_MAP="%s/data=%s/hot1:%s/data" % (self.t, self.t, self.t))
+        self.assertEqual(self.index()[0][1], os.path.join(self.t, "hot1") + rel)
+
+    def test_index_path_falls_back_to_the_first_branch_when_none_has_the_file(self):
+        bad = self.write("setup.exe", EICAR)
+        self.sab(PATH_MAP="%s/data=/scan/ssd-hot:/scan/ssd-hot2" % self.t)
+        self.assertEqual(self.index()[0][1], "/scan/ssd-hot" + bad[len(self.data):])
+
+    def test_worker_hit_resolves_the_branch_before_the_links_are_removed(self):
+        mkv = self.write("movie.mkv", EICAR)
+        self.queued()
+        library = os.path.join(self.data, "media", "movies", "Some Movie (2026)", "Some Movie (2026).mkv")
+        os.makedirs(os.path.dirname(library))
+        os.rename(mkv, library)
+        r = self.worker(PATH_MAP="%s/data=%s/hot1:%s/data" % (self.t, self.t, self.t))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(library))
+        self.assertEqual(self.index()[0][1], library)
+        self.assertEqual(self.hits_log()[0][3], library)
+
+    def test_mergerfs_basepath_picks_the_branch_by_name(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("hook_under_test", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.PATH_MAP = "/data=/scan/ssd-hot:/scan/ssd-hot2"
+        seen = []
+
+        def getxattr(p, name):
+            seen.append((p, name))
+            return b"/srv/.disks/ssd-hot2"
+        orig = os.getxattr
+        os.getxattr = getxattr
+        try:
+            self.assertEqual(mod.container_path("/data/media/a.mkv", "/data/.clamav-queue/j/0001"), "/scan/ssd-hot2/media/a.mkv")
+            self.assertEqual(seen, [("/data/.clamav-queue/j/0001", "user.mergerfs.basepath")])
+            os.getxattr = lambda p, n: b"/srv/.disks/ssd-hot"
+            self.assertEqual(mod.container_path("/data/media/a.mkv"), "/scan/ssd-hot/media/a.mkv")
+            os.getxattr = lambda p, n: b"/srv/.disks/hdd-cold"
+            self.assertEqual(mod.container_path("/data/media/a.mkv"), "/scan/ssd-hot/media/a.mkv")
+            self.assertEqual(mod.container_path("/other/a.mkv"), "/other/a.mkv")
+        finally:
+            os.getxattr = orig
+
     def test_metrics_of_an_infected_run(self):
         self.write("setup.exe", EICAR)
         self.write("movie.mkv", b"clean")

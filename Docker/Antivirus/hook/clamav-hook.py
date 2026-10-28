@@ -26,8 +26,9 @@ QUARANTINE = os.environ.get("QUARANTINE", "/data/quarantine")
 TEXTFILE = os.environ.get("TEXTFILE", "/clamav")
 HOST = os.environ.get("HOST", "beefy")
 QBIT_API = os.environ.get("QBIT_API", "http://127.0.0.1:8080")
-# Paths in index.txt as the clamav container sees them, so "scan.sh restore" can move a file back.
-PATH_MAP = os.environ.get("PATH_MAP", "/data=/scan/ssd-hot")
+# Paths in index.txt as the clamav container sees them, so "scan.sh restore" can move a file back: <app path>=<scan path>[:<scan path>...].
+# Several scan paths = the branches of the union; the one holding the file wins (mergerfs basepath, else the one where the file exists, else the first).
+PATH_MAP = os.environ.get("PATH_MAP", "/data=/scan/ssd-hot:/scan/ssd-hot2")
 MAX_BYTES = int(os.environ.get("HOOK_MAX_BYTES", "2146435072"))
 # Media files are hardlinked here and scanned by the worker; missing directory = everything synchronous.
 QUEUE = os.environ.get("QUEUE", "/data/.clamav-queue")
@@ -149,6 +150,7 @@ def quarantine(path, sig, where=None, mode="hook", title=""):
     index.txt keeps exactly 3 fields (scan.sh restore); who quarantined it (mode, job title) goes to TEXTFILE/clamav-hits.tsv.
     """
     where = where or path
+    cpath = container_path(where, path)
     base = os.path.basename(where)
     dest = os.path.join(QUARANTINE, base)
     n = 0
@@ -157,7 +159,6 @@ def quarantine(path, sig, where=None, mode="hook", title=""):
         dest = "%s.%03d" % (os.path.join(QUARANTINE, base), n)
     shutil.move(path, dest)
     now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
-    cpath = container_path(where)
     try:
         append_line(os.path.join(QUARANTINE, "index.txt"), "%s\t%s\t%s\n" % (now, cpath, sig))
     except OSError as e:
@@ -170,11 +171,29 @@ def quarantine(path, sig, where=None, mode="hook", title=""):
     return dest
 
 
-def container_path(path):
-    src, _, dst = PATH_MAP.partition("=")
-    if src and (path == src or path.startswith(src + "/")):
-        return dst + path[len(src):]
-    return path
+def under(path, root):
+    return path == root or path.startswith(root + "/")
+
+
+def container_path(path, probe=None):
+    """path as the clamav container sees it; probe is a file on the same branch that still exists (path may be gone already)."""
+    src, _, dsts = PATH_MAP.partition("=")
+    targets = [t for t in dsts.split(":") if t]
+    if not src or not targets or not under(path, src):
+        return path
+    probe = probe or path
+    chosen = targets[0]
+    if len(targets) > 1 and under(probe, src):
+        try:
+            branch = os.path.basename(os.getxattr(probe, "user.mergerfs.basepath").decode().rstrip("/"))
+        except OSError:
+            branch = None
+        named = [t for t in targets if os.path.basename(t) == branch]
+        if named:
+            chosen = named[0]
+        elif branch is None:
+            chosen = next((t for t in targets if os.path.lexists(t + probe[len(src):])), targets[0])
+    return chosen + path[len(src):]
 
 
 def qbit(torrent_hash):
