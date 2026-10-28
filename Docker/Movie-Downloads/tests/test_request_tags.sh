@@ -33,11 +33,24 @@ class H(http.server.BaseHTTPRequestHandler):
             if self.path.startswith("/seerr/api/v1/request?"):
                 return self.reply(200, {"results": state["requests"]})
             return self.reply(404)
+        if self.path.startswith("/bazarr/"):
+            if self.headers.get("X-API-KEY") != "bzkey":
+                return self.reply(401)
+            if self.command == "GET" and self.path == "/bazarr/api/system/languages/profiles":
+                return self.reply(200, state.get("bazarr", []))
+            if self.command == "POST" and self.path == "/bazarr/api/system/settings":
+                return self.reply(204)
+            return self.reply(404)
         app, _, p = self.path.lstrip("/").partition("/api/v3")
         if self.headers.get("X-Api-Key") != app + "key":
             return self.reply(401)
         if self.command == "GET" and p == "/tag":
-            return self.reply(200, [{"id": 13, "label": "audio-swiss-german"}, {"id": 70, "label": "download-now"}])
+            return self.reply(200, [{"id": 13, "label": "audio-swiss-german"}, {"id": 16, "label": "subs-french"}, {"id": 70, "label": "download-now"}])
+        if self.command == "GET" and p == "/tag/detail":
+            d = state.get(app + "_tagdetail", [])
+            return self.reply(500) if d == "error" else self.reply(200, d)
+        if self.command == "DELETE" and p.startswith("/tag/"):
+            return self.reply(200, {})
         if self.command == "GET" and p == "/qualityprofile":
             return self.reply(200, state.get(app + "_profiles", []))
         if self.command == "PUT" and p.startswith("/qualityprofile/"):
@@ -51,7 +64,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.command == "POST" and p == "/command":
             return self.reply(201, {"id": 1})
         self.reply(404)
-    do_GET = do_PUT = do_POST = handle_any
+    do_GET = do_PUT = do_POST = do_DELETE = handle_any
 s = http.server.HTTPServer(("127.0.0.1", 0), H)
 open(os.path.join(T, "port"), "w").write(str(s.server_address[1]))
 s.serve_forever()
@@ -63,8 +76,9 @@ for app in radarr sonarr; do
   printf '<Config>\n  <Port>%s</Port>\n  <UrlBase>/%s</UrlBase>\n  <ApiKey>%skey</ApiKey>\n</Config>\n' "$PORT" "$app" "$app" > "$T/$app.xml"
 done
 echo seerrkey > "$T/seerr.key"
+echo bzkey > "$T/bazarr.key"
 cat > "$T/hook.sh" <<'SH'
-echo "${radarr_eventtype:-}${sonarr_eventtype:-} ${radarr_movie_id:-}${sonarr_series_id:-} LP_TAGS_ONLY=${LP_TAGS_ONLY:-} LP_CONFIG=$(basename "${LP_CONFIG:-}")" >> "$(dirname "$0")/hooks"
+echo "${radarr_eventtype:-}${sonarr_eventtype:-} ${radarr_movie_id:-}${sonarr_series_id:-} LP_RECOMPUTE=${LP_RECOMPUTE:-} prev=${LP_PREV_PROFILE-unset}/${LP_PREV_TAGS-unset} LP_CONFIG=$(basename "${LP_CONFIG:-}")" >> "$(dirname "$0")/hooks"
 SH
 
 # run <state json> [env...]: runs the script with a fresh hook log; the state file of handled ids persists until reset
@@ -72,7 +86,7 @@ run() {
   echo "$1" > "$T/state.json"; shift
   : > "$T/writes"; : > "$T/hooks"
   env -i PATH="$PATH" HOME="$T" RT_SEERR_URL="http://127.0.0.1:$PORT/seerr" RT_SEERR_KEY="$T/seerr.key" \
-    RT_RADARR_CONFIG="$T/radarr.xml" RT_SONARR_CONFIG="$T/sonarr.xml" RT_HOOK="$T/hook.sh" RT_STATE="$T/done" RT_DRIFT="$T/drift" "$@" \
+    RT_RADARR_CONFIG="$T/radarr.xml" RT_SONARR_CONFIG="$T/sonarr.xml" RT_HOOK="$T/hook.sh" RT_BAZARR_URL="http://127.0.0.1:$PORT/bazarr" RT_BAZARR_KEY="$T/bazarr.key" RT_STATE="$T/done" RT_DRIFT="$T/drift" "$@" \
     bash "$SCRIPT" > "$T/out" 2>&1; RC=$?
 }
 reset() { rm -f "$T/done" "$T/drift"; }
@@ -83,7 +97,7 @@ reset
 run "{\"requests\": [$(req 9 5 movie 13 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"The Ring Thing\", \"tags\": []}}}"
 assert_eq "existing film without the requested tag: tag added" 'PUT /radarr/api/v3/movie/editor {"movieIds":[8],"tags":[13],"applyTags":"add"}
 POST /radarr/api/v3/command {"name":"MoviesSearch","movieIds":[8]}' "$(cat "$T/writes")"
-assert_eq "  hook run for that film, tags only" "MovieAdded 8 LP_TAGS_ONLY=1 LP_CONFIG=radarr.xml" "$(cat "$T/hooks")"
+assert_eq "  hook run for that film, recompute without an earlier state" "MovieAdded 8 LP_RECOMPUTE=1 prev=unset/unset LP_CONFIG=radarr.xml" "$(cat "$T/hooks")"
 assert_eq "  log line" "radarr: request 9, The Ring Thing: tags 13 added, searched" "$(cat "$T/out")"
 assert_eq "  exit 0" 0 "$RC"
 run "{\"requests\": [$(req 9 5 movie 13 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"The Ring Thing\", \"tags\": []}}}"
@@ -106,7 +120,7 @@ run "{\"requests\": [$(req 14 2 movie 13 null)], \"radarr\": {}}"
 assert_eq "not in Radarr yet: skipped, retried next run" "|" "$(cat "$T/writes")|$(grep -x 14 "$T/done")"
 reset
 run "{\"requests\": [$(req 9 5 movie 13 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"T\", \"tags\": []}}}" RT_SEARCH=0
-assert_eq "RT_SEARCH=0: tags and hook, no search" 'PUT /radarr/api/v3/movie/editor {"movieIds":[8],"tags":[13],"applyTags":"add"}|MovieAdded 8 LP_TAGS_ONLY=1 LP_CONFIG=radarr.xml' "$(cat "$T/writes")|$(cat "$T/hooks")"
+assert_eq "RT_SEARCH=0: tags and hook, no search" 'PUT /radarr/api/v3/movie/editor {"movieIds":[8],"tags":[13],"applyTags":"add"}|MovieAdded 8 LP_RECOMPUTE=1 prev=unset/unset LP_CONFIG=radarr.xml' "$(cat "$T/writes")|$(cat "$T/hooks")"
 assert_eq "  log line" "radarr: request 9, T: tags 13 added, not searched (RT_SEARCH=0)" "$(cat "$T/out")"
 
 echo "download-now"
@@ -123,7 +137,7 @@ reset
 run "{\"requests\": [$(req 20 2 tv 31 5)], \"sonarr\": {\"5\": {\"id\": 5, \"title\": \"S\", \"tags\": []}}}"
 assert_eq "existing series: tag added, series searched" 'PUT /sonarr/api/v3/series/editor {"seriesIds":[5],"tags":[31],"applyTags":"add"}
 POST /sonarr/api/v3/command {"name":"SeriesSearch","seriesId":5}' "$(cat "$T/writes")"
-assert_eq "  hook run for that series" "SeriesAdd 5 LP_TAGS_ONLY=1 LP_CONFIG=sonarr.xml" "$(cat "$T/hooks")"
+assert_eq "  hook run for that series" "SeriesAdd 5 LP_RECOMPUTE=1 prev=unset/unset LP_CONFIG=sonarr.xml" "$(cat "$T/hooks")"
 
 echo "Changed later (My request panel, by hand)"
 film() { echo "{\"requests\": [$(req 40 2 movie "" 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"The Ring Thing\", \"qualityProfileId\": $1, \"tags\": [$2]}}}"; }
@@ -132,14 +146,14 @@ run "$(film 7 "")"
 assert_eq "first sight of an approved request's title: only remembered" "||" "$(cat "$T/writes")|$(cat "$T/hooks")|$(cat "$T/out")"
 run "$(film 11 "")"
 assert_eq "profile changed: searched" 'POST /radarr/api/v3/command {"name":"MoviesSearch","movieIds":[8]}' "$(cat "$T/writes")"
-assert_eq "  language hook run, tags only" "MovieAdded 8 LP_TAGS_ONLY=1 LP_CONFIG=radarr.xml" "$(cat "$T/hooks")"
+assert_eq "  language hook recomputes, told the earlier profile" "MovieAdded 8 LP_RECOMPUTE=1 prev=7/ LP_CONFIG=radarr.xml" "$(cat "$T/hooks")"
 assert_eq "  log line" "radarr: The Ring Thing: profile or audio/subtitle tags changed, language hook run, searched" "$(cat "$T/out")"
 run "$(film 11 "")"
 assert_eq "unchanged: nothing" "|" "$(cat "$T/writes")|$(cat "$T/hooks")"
 run "$(film 11 "2")"
 assert_eq "other tags (lang-*, download-now) do not count" "|" "$(cat "$T/writes")|$(cat "$T/hooks")"
 run "$(film 11 "2,13")"
-assert_eq "audio tag added: hook + search" 'POST /radarr/api/v3/command {"name":"MoviesSearch","movieIds":[8]}|MovieAdded 8 LP_TAGS_ONLY=1 LP_CONFIG=radarr.xml' "$(cat "$T/writes")|$(cat "$T/hooks")"
+assert_eq "audio tag added: hook + search" 'POST /radarr/api/v3/command {"name":"MoviesSearch","movieIds":[8]}|MovieAdded 8 LP_RECOMPUTE=1 prev=11/ LP_CONFIG=radarr.xml' "$(cat "$T/writes")|$(cat "$T/hooks")"
 reset
 run "{\"requests\": [$(req 41 2 movie 13 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"T\", \"qualityProfileId\": 7, \"tags\": []}}}"
 assert_eq "a title the request handling just changed is searched once" 'PUT /radarr/api/v3/movie/editor {"movieIds":[8],"tags":[13],"applyTags":"add"}
@@ -149,7 +163,7 @@ assert_eq "  and remembered as read after the change (no second search next run)
 reset
 run "{\"requests\": [$(req 42 2 tv "" 5)], \"sonarr\": {\"5\": {\"id\": 5, \"title\": \"S\", \"qualityProfileId\": 7, \"tags\": []}}}"
 run "{\"requests\": [$(req 42 2 tv "" 5)], \"sonarr\": {\"5\": {\"id\": 5, \"title\": \"S\", \"qualityProfileId\": 13, \"tags\": []}}}" RT_SEARCH=0
-assert_eq "series, RT_SEARCH=0: hook only" "|SeriesAdd 5 LP_TAGS_ONLY=1 LP_CONFIG=sonarr.xml" "$(cat "$T/writes")|$(cat "$T/hooks")"
+assert_eq "series, RT_SEARCH=0: hook only" "|SeriesAdd 5 LP_RECOMPUTE=1 prev=7/ LP_CONFIG=sonarr.xml" "$(cat "$T/writes")|$(cat "$T/hooks")"
 
 echo "Swiss German profile language"
 SWISS='{"id": 13, "name": "Swiss German (Mundart) only - any quality", "language": {"id": -2, "name": "Original"}}'
@@ -160,6 +174,37 @@ assert_eq "  log line" "radarr: profile 13 language Original -> Any" "$(cat "$T/
 run "{\"requests\": [], \"radarr_profiles\": [${SWISS/Original/Any}]}"
 assert_eq "language Any: nothing written" "" "$(cat "$T/writes")"
 
+echo "Tags changed later: what triggers a search"
+reset
+run "$(film 7 "")"
+run "$(film 7 "16")"
+assert_eq "only a subs-* tag changed: hook (Bazarr), no search" "|MovieAdded 8 LP_RECOMPUTE=1 prev=7/ LP_CONFIG=radarr.xml" "$(cat "$T/writes")|$(cat "$T/hooks")"
+grep -q "language hook run, not searched (only subtitles changed)" "$T/out" && ok "  log line" || bad "  log line" "$(cat "$T/out")"
+run "$(film 7 "16,13")"
+assert_eq "  audio-swiss-german added next: told the earlier tags, searched" 'POST /radarr/api/v3/command {"name":"MoviesSearch","movieIds":[8]}|MovieAdded 8 LP_RECOMPUTE=1 prev=7/16 LP_CONFIG=radarr.xml' "$(cat "$T/writes")|$(cat "$T/hooks")"
+film5() { echo "{\"requests\": [$(req 43 5 movie "" 8)], \"radarr\": {\"8\": {\"id\": 8, \"title\": \"T\", \"qualityProfileId\": $1, \"tags\": [$2]}}}"; }
+reset
+run "$(film5 7 "13")"
+run "$(film5 7 "")"
+assert_eq "completed request (status 5): a removed tag is noticed too" 'POST /radarr/api/v3/command {"name":"MoviesSearch","movieIds":[8]}|MovieAdded 8 LP_RECOMPUTE=1 prev=7/13 LP_CONFIG=radarr.xml' "$(cat "$T/writes")|$(cat "$T/hooks")"
+
+echo "Orphaned Bazarr profiles of removed subs-* tags"
+NOREQ='"requests": []'
+BZP='[{"profileId": 1, "name": "English + German + Spanish", "tag": "lang-es", "items": []}, {"profileId": 4, "name": "English + German + French + Spanish (requested)", "tag": "bz-fr-es", "items": []}, {"profileId": 5, "name": "English + German + Italian (requested)", "tag": "bz-it", "items": []}]'
+EMPTY='"delayProfileIds": [], "importListIds": [], "notificationIds": [], "restrictionIds": [], "indexerIds": [], "downloadClientIds": [], "autoTagIds": []'
+bzposted() { grep '^POST /bazarr' "$T/writes" | cut -d' ' -f3- | python3 -c 'import sys,urllib.parse,json; print(json.dumps([p["tag"] for p in json.loads(urllib.parse.parse_qs(sys.stdin.read().strip())["languages-profiles"][0])], separators=(",", ":")))' 2>/dev/null; }
+reset
+run "{$NOREQ, \"bazarr\": $BZP, \"radarr_tagdetail\": [{\"id\": 65, \"label\": \"bz-fr-es\", $EMPTY, \"movieIds\": []}, {\"id\": 66, \"label\": \"bz-it\", $EMPTY, \"movieIds\": [3]}, {\"id\": 1, \"label\": \"lang-es\", $EMPTY, \"movieIds\": []}], \"sonarr_tagdetail\": []}"
+assert_eq "profile of a bz tag no title carries: removed from Bazarr, the unused Radarr tag deleted" "DELETE /radarr/api/v3/tag/65 |POST /bazarr/api/system/settings" "$(grep -v '^POST /bazarr' "$T/writes")|$(grep -o '^POST /bazarr/api/system/settings' "$T/writes")"
+assert_eq "  Bazarr keeps lang-es and the used bz-it" '["lang-es","bz-it"]' "$(bzposted)"
+grep -q "Bazarr profile 'English + German + French + Spanish (requested)' (bz-fr-es) removed, no title uses it" "$T/out" && ok "  log line" || bad "  log line" "$(cat "$T/out")"
+run "{$NOREQ, \"bazarr\": $BZP, \"radarr_tagdetail\": [{\"id\": 65, \"label\": \"bz-fr-es\", $EMPTY, \"movieIds\": []}, {\"id\": 66, \"label\": \"bz-it\", $EMPTY, \"movieIds\": [3]}], \"sonarr_tagdetail\": [{\"id\": 80, \"label\": \"bz-fr-es\", $EMPTY, \"seriesIds\": [4]}]}"
+assert_eq "bz tag still on a series: Bazarr profile kept, Radarr tag kept" "" "$(cat "$T/writes")"
+run "{$NOREQ, \"bazarr\": $BZP, \"radarr_tagdetail\": [{\"id\": 65, \"label\": \"bz-fr-es\", $EMPTY, \"movieIds\": []}], \"sonarr_tagdetail\": \"error\"}"
+assert_eq "Sonarr tags unreadable: nothing removed" "" "$(cat "$T/writes")"
+run "{$NOREQ, \"bazarr\": $BZP, \"radarr_tagdetail\": [{\"id\": 65, \"label\": \"bz-fr-es\", \"delayProfileIds\": [], \"importListIds\": [], \"notificationIds\": [], \"restrictionIds\": [2], \"indexerIds\": [], \"downloadClientIds\": [], \"autoTagIds\": [], \"movieIds\": []}, {\"id\": 66, \"label\": \"bz-it\", $EMPTY, \"movieIds\": [3]}], \"sonarr_tagdetail\": []}"
+assert_eq "unused bz tag still bound to a release profile: Bazarr profile goes, the tag stays" "|POST /bazarr/api/system/settings" "$(grep -v '^POST /bazarr' "$T/writes")|$(grep -o '^POST /bazarr/api/system/settings' "$T/writes")"
+
 echo "Errors"
 reset
 echo wrong > "$T/seerr.key"
@@ -167,7 +212,7 @@ run "{\"requests\": [$(req 9 5 movie 13 8)], \"radarr\": {\"8\": {\"id\": 8, \"t
 assert_eq "Seerr unreachable or wrong key: exit non-zero, nothing written" "1|" "$([ "$RC" -ne 0 ] && echo 1 || echo 0)|$(cat "$T/writes")"
 echo seerrkey > "$T/seerr.key"
 run "{\"requests\": [$(req 9 5 movie 13 8), $(req 21 2 tv 31 5)], \"radarr\": {}, \"sonarr\": {\"5\": {\"id\": 5, \"title\": \"S\", \"tags\": []}}}"
-assert_eq "film deleted from Radarr: marked handled, the next request still runs" "9|SeriesAdd 5 LP_TAGS_ONLY=1 LP_CONFIG=sonarr.xml" "$(grep -x 9 "$T/done")|$(cat "$T/hooks")"
+assert_eq "film deleted from Radarr: marked handled, the next request still runs" "9|SeriesAdd 5 LP_RECOMPUTE=1 prev=unset/unset LP_CONFIG=sonarr.xml" "$(grep -x 9 "$T/done")|$(cat "$T/hooks")"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

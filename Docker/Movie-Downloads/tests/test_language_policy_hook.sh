@@ -24,7 +24,7 @@ PROFILES = [{"id": 3, "name": "Anime - Bluray + WEB 1080p"},
             {"id": 20, "name": "4K HDR - WEB-2160p (1080p fallback) - English original"}]
 TAGS = [{"id": 1, "label": "lang-es"}, {"id": 21, "label": "audio-english"}, {"id": 22, "label": "audio-german"},
         {"id": 23, "label": "audio-spanish"}, {"id": 24, "label": "audio-swiss-german"}, {"id": 31, "label": "subs-french"}, {"id": 32, "label": "subs-italian"},
-        {"id": 40, "label": "bz-es-it"}, {"id": 60, "label": "old-rare"}]
+        {"id": 40, "label": "bz-es-it"}, {"id": 60, "label": "old-rare"}, {"id": 61, "label": "profile-pinned"}]
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def reply(self, code, body=None):
@@ -304,6 +304,63 @@ run "$(tagged 8 17 "$ES" 2018 "60")" sonarr_eventtype=SeriesAdd sonarr_series_id
 assert_eq "Sonarr: tag on a series that stays on main is removed" "$(tagput series seriesIds 8 60 remove)" "$(cat "$T/puts")"
 run "$(tagged 8 11 "$ES" 1990 "")" sonarr_eventtype=SeriesAdd sonarr_series_id=8 LP_TAGS_ONLY=1
 assert_eq "Sonarr: LP_TAGS_ONLY=1 on Any quality: tag added" "$(tagput series seriesIds 8 60 add)" "$(cat "$T/puts")"
+
+echo "Recompute on a tag or profile change (LP_RECOMPUTE=1, request-tags.sh): defaults + every remaining tag"
+rc() { run "$1" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_RECOMPUTE=1 "${@:2}"; }
+rc "$(tagged 5 13 "$ES" 2020 "")" LP_PREV_PROFILE=13 LP_PREV_TAGS=24
+assert_eq "audio-swiss-german removed: back to the default profile, tag not re-added" "$(put movie movieIds 5 7)" "$(cat "$T/puts")"
+assert_eq "  log line" "movie 5: profile 13 -> 7 (default: not English original)" "$(cat "$T/out")"
+rc "$(tagged 5 13 "$EN" 1968 "")" LP_PREV_PROFILE=13 LP_PREV_TAGS=24
+assert_eq "  old English film: back to the Any twin with old-rare" "$(moved movie movieIds 5 12)" "$(cat "$T/puts")"
+rc "$(tagged 5 7 "$DE" 2020 "24")" LP_PREV_PROFILE=7 LP_PREV_TAGS=
+assert_eq "audio-swiss-german added: Swiss German profile" "$(put movie movieIds 5 13)" "$(cat "$T/puts")"
+rc "$(tagged 5 11 "$DE" 2020 "24,61")" LP_PREV_PROFILE=11 LP_PREV_TAGS=61
+assert_eq "  on a pinned title: Swiss German profile, pin dropped" "$(put movie movieIds 5 13)
+$(tagput movie movieIds 5 61 remove)" "$(cat "$T/puts")"
+rc "$(tagged 5 11 "$ES" 2020 "61")" LP_PREV_PROFILE=11 LP_PREV_TAGS=61,23
+assert_eq "tag change on a pinned title: the picked profile stays" "$(tagput movie movieIds 5 60 add)" "$(cat "$T/puts")"
+grep -q "profile 11 kept (profile-pinned)" "$T/out" && ok "  log line" || bad "  log line" "$(cat "$T/out")"
+rc "$(tagged 5 11 "$ES" 2020 "")" LP_PREV_PROFILE=7 LP_PREV_TAGS=
+assert_eq "profile picked that is not the default: kept and pinned" "$(tagput movie movieIds 5 61 add)
+$(tagput movie movieIds 5 60 add)" "$(cat "$T/puts")"
+rc "{\"tags\": [{\"id\": 60, \"label\": \"old-rare\"}], $(tagged 5 11 "$ES" 2020 "" | sed 's/^{//')" LP_PREV_PROFILE=7 LP_PREV_TAGS=
+assert_eq "  no profile-pinned tag in the app yet: created" '{"label":"profile-pinned"}' "$(cat "$T/newtags")"
+rc "$(tagged 5 7 "$ES" 2020 "61")" LP_PREV_PROFILE=11 LP_PREV_TAGS=61
+assert_eq "default profile picked again: pin dropped" "$(tagput movie movieIds 5 61 remove)" "$(cat "$T/puts")"
+rc "$(tagged 5 13 "$DE" 2020 "")" LP_PREV_PROFILE=7 LP_PREV_TAGS=
+assert_eq "Swiss German profile picked: tag added, no pin" "$(tagput movie movieIds 5 24 add)" "$(cat "$T/puts")"
+rc "$(tagged 5 7 "$DE" 2020 "24")" LP_PREV_PROFILE=13 LP_PREV_TAGS=24
+assert_eq "another profile picked while audio-swiss-german stayed: the pick wins, tag removed" "$(tagput movie movieIds 5 24 remove)" "$(cat "$T/puts")"
+rc "$(tagged 5 11 "$DE" 2020 "24")" LP_PREV_PROFILE=7 LP_PREV_TAGS=
+assert_eq "profile picked and audio-swiss-german added together: Swiss German wins" "$(put movie movieIds 5 13)" "$(cat "$T/puts")"
+rc "$(tagged 5 11 "$ES" 2020 "22")"
+assert_eq "no earlier state (request tags copied): not a pick, default profile" "$(put movie movieIds 5 7)" "$(cat "$T/puts")"
+rc "$(tagged 5 3 "$JA" 2020 "")" LP_PREV_PROFILE=3 LP_PREV_TAGS=24
+assert_eq "other profile (anime), not picked now: kept" "" "$(cat "$T/puts")"
+rc "{\"tags\": [{\"id\": 51, \"label\": \"bz-fr\"}], \"bazarr\": [], $(tagged 5 10 "$EN" 2020 "51" | sed 's/^{//')" LP_PREV_PROFILE=10 LP_PREV_TAGS=31,51
+assert_eq "last subs-* tag removed: its bz tag goes" "$(tagput movie movieIds 5 51 remove)" "$(cat "$T/puts")"
+rc "{\"tags\": [{\"id\": 31, \"label\": \"subs-french\"}, {\"id\": 32, \"label\": \"subs-italian\"}, {\"id\": 53, \"label\": \"bz-fr-it\"}, {\"id\": 51, \"label\": \"bz-fr\"}], \"bazarr\": [{\"profileId\": 3, \"name\": \"x\", \"tag\": \"bz-it\", \"items\": []}], $(tagged 5 10 "$EN" 2020 "32,53" | sed 's/^{//')" LP_PREV_PROFILE=10 LP_PREV_TAGS=31,32,53
+assert_eq "subs-french removed, subs-italian left: bz-fr-it replaced by bz-it" '{"label":"bz-it"}' "$(cat "$T/newtags")"
+assert_eq "  tags" "$(tagput movie movieIds 5 53 remove)
+$(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
+run "{$NOLANG, $(tagged 8 13 "$ES" 2020 "" | sed 's/^{//')" sonarr_eventtype=SeriesAdd sonarr_series_id=8 LP_RECOMPUTE=1 LP_PREV_PROFILE=13 LP_PREV_TAGS=24
+assert_eq "Sonarr: audio-swiss-german removed: back to the default profile" "$(put series seriesIds 8 17)" "$(cat "$T/puts")"
+
+echo "profile-pinned on add (picked in My request while the request was pending)"
+run "$(tagged 5 7 "$ES" 2014 "61")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "old film added pinned on main: stays on main" "" "$(cat "$T/puts")"
+
+echo "Added titles trigger the Clear Data snapshot"
+rm -f "$T/title-added.stamp"
+run "$(movie 5 7 "$ES")" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "Connect call (On Movie Added): stamp written next to the config" "movie 5" "$(cat "$T/title-added.stamp" 2>/dev/null)"
+rm -f "$T/title-added.stamp"
+run "$(movie 5 7 "$ES")" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_RECOMPUTE=1
+run "$(movie 5 7 "$ES")" radarr_eventtype=MovieAdded radarr_movie_id=5 LP_TAGS_ONLY=1
+assert_eq "  not from request-tags.sh or language-policy.sh" "missing" "$([ -e "$T/title-added.stamp" ] && echo written || echo missing)"
+run "$(movie 8 17 "$ES")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "  Sonarr too" "series 8" "$(cat "$T/title-added.stamp" 2>/dev/null)"
+grep -q "title-added.stamp" "$HERE/../systemd/clear-data-wipe-added.path" 2>/dev/null && ok "  the path unit watches that file" || bad "  the path unit watches that file"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
