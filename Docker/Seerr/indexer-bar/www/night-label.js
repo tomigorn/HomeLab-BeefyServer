@@ -10,14 +10,15 @@
     de: { label: "Wartet auf die Nacht 🌙", tip: "Startet automatisch um 22:05 oder am Sonntag; nächstes Mal „Can wait“ abwählen für einen sofortigen Download" },
   };
   var FLAGS = {
-    en: { moon: "Waiting for the night — downloads at night (cheaper power)", compass: "No release found yet — searched again in tonight's scheduled search (04:17)", cal: "Not released yet", expected: "expected", moonShort: "Waiting for the night", compassNight: ", downloads at night when found", locale: "en-GB" },
-    de: { moon: "Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom)", compass: "Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter", cal: "Noch nicht erschienen", expected: "erwartet", moonShort: "Wartet auf die Nacht", compassNight: ", lädt nachts, sobald gefunden", locale: "de-CH" },
+    en: { moon: "Waiting for the night — downloads at night (cheaper power)", compass: "No release found yet — searched again in tonight's scheduled search (04:17)", cal: "Not released yet", expected: "expected", moonShort: "Waiting for the night", compassNight: ", downloads at night when found", restNight: "the rest downloads at night", compassShort: "No release found yet — searched again tonight (04:17)", nextEp: "next episode", locale: "en-GB" },
+    de: { moon: "Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom)", compass: "Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter", cal: "Noch nicht erschienen", expected: "erwartet", moonShort: "Wartet auf die Nacht", compassNight: ", lädt nachts, sobald gefunden", restNight: "der Rest lädt nachts herunter", compassShort: "Noch kein Release gefunden — die Suche heute Nacht (04:17) sucht weiter", nextEp: "nächste Folge", locale: "de-CH" },
   };
   var STATUS = {
     en: { spin: "Downloading now", avail: "Available in Jellyfin", part: "Partly available" },
     de: { spin: "Lädt gerade herunter", avail: "In Jellyfin verfügbar", part: "Teilweise verfügbar" },
   };
   var SPIN = "◌";
+  var HALF = "◐";
   var PENDING = /^(4K )?(Pending|Ausstehend)$/;
   var MEDIA_LINK = /^\/(movie|tv)\/(\d+)$/;
   var EPISODE = /^(.*): (?:Season|Staffel) (\d+) (?:Episode|Folge) (\d+)$/;
@@ -63,24 +64,28 @@
     return { moon: moon, compass: compass, cal: cal, date: cal ? rs.unreleased[key] : null };
   }
 
-  function dateText(iso, l) {
+  function dateText(iso, l, short) {
     var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
     if (!d) return "";
-    try { return new Date(Date.UTC(+d[1], +d[2] - 1, +d[3])).toLocaleDateString(FLAGS[l].locale, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }); } catch (e) { return iso; }
+    try { return new Date(Date.UTC(+d[1], +d[2] - 1, +d[3])).toLocaleDateString(FLAGS[l].locale, short ? { day: "numeric", month: "short", timeZone: "UTC" } : { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }); } catch (e) { return iso; }
   }
 
   // [icon, hint] in display order 🌙🧭📅
-  function flagList(f, l) {
+  function flagList(f, l, part) {
     var out = [];
     if (f.moon) out.push(["🌙", FLAGS[l].moon]);
     if (f.compass) out.push(["🧭", FLAGS[l].compass]);
-    if (f.cal) out.push(["📅", FLAGS[l].cal + (f.date ? " — " + FLAGS[l].expected + " " + dateText(f.date, l) : "")]);
+    if (f.cal) out.push(["📅", FLAGS[l].cal + (f.date ? " — " + (part ? FLAGS[l].nextEp + " " + dateText(f.date, l, true) : FLAGS[l].expected + " " + dateText(f.date, l)) : "")]);
     return out;
   }
 
   // one hint for a badge's icons together: 🌙 shortened when combined, 🧭 with the night when 🌙 is there
   function merged(list, l) {
     if (list.length === 1) return list[0][1];
+    if (list[0][0] === HALF) {
+      var rest = list.slice(1), only = rest.length === 1 && rest[0][0] === "🌙";
+      return [list[0][1]].concat(rest.map(function (x) { return x[0] === "🌙" ? FLAGS[l].moonShort + (only ? " — " + FLAGS[l].restNight : "") : x[0] === "🧭" ? FLAGS[l].compassShort : x[1]; })).join(" · ");
+    }
     var moon = list.some(function (x) { return x[0] === "🌙"; });
     return list.map(function (x) { return x[0] === "🌙" ? FLAGS[l].moonShort : x[0] === "🧭" && moon ? x[1] + FLAGS[l].compassNight : x[1]; }).join(" · ");
   }
@@ -133,7 +138,13 @@
   function statusEntry(kind, m, l) {
     var T = STATUS[l];
     if (kind === "spin") { var pct = progress(m); return [SPIN, T.spin + (pct === null ? "" : " — " + pct + " %")]; }
-    return kind === "avail" ? ["✅", T.avail] : ["☑️", T.part];
+    return kind === "avail" ? ["✅", T.avail] : [HALF, T.part];
+  }
+
+  function half(doc) {
+    var span = doc.createElement("span");
+    span.setAttribute("data-hg-half", "");
+    return span;
   }
 
   function spinner(doc) {
@@ -360,10 +371,11 @@
       var key = null;
       for (var p in state.posters) if (src.indexOf(p) >= 0) { key = state.posters[p]; break; }
       var m = key && state.media[key], f = flags(key, rs, m), l = lang(doc);
-      var list = flagList(f, l);
+      var kind = nativeKind(holder), list = flagList(f, l, kind === "part");
       if (m && allWaiting(m.items, set) && !f.moon) list.unshift(["🌙", TEXT[l].label.replace(/\s*🌙$/, "") + " — " + TEXT[l].tip]);
-      var kind = nativeKind(holder), status = kind && (kind !== "spin" || !(m && allWaiting(m.items, set)));
+      var status = kind && (kind !== "spin" || !(m && allWaiting(m.items, set)));
       if (kind && status) list.unshift(statusEntry(kind, m, l));
+      if (kind === "part" && m && busy(m) && !allWaiting(m.items, set)) list.splice(1, 0, statusEntry("spin", m, l));
       var want = list.map(function (x) { return x[0]; }).join("");
       if (!want) { restore(holder); continue; }
       if (holder.getAttribute("data-hg-night-icons") === want) continue;
@@ -371,10 +383,11 @@
       for (var c = 0; c < holder.children.length; c++) hide(holder.children[c]);
       var tips = merged(list, l);
       var icon = own(doc, "span", want, "");
-      if (want.indexOf(SPIN) >= 0) {
+      if (want.indexOf(SPIN) >= 0 || want.indexOf(HALF) >= 0) {
         icon.textContent = "";
         list.forEach(function (x) {
           if (x[0] === SPIN) icon.appendChild(spinner(doc));
+          else if (x[0] === HALF) icon.appendChild(half(doc));
           else { var t = doc.createElement("span"); t.textContent = x[0]; icon.appendChild(t); }
         });
       }
@@ -436,7 +449,7 @@
     if (doc.getElementById("hg-night-style")) return;
     var s = doc.createElement("style");
     s.id = "hg-night-style";
-    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{width:100% !important;background:#4b5563 !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night-solid]{background-color:rgba(99,102,241,.8) !important;border-color:#818cf8 !important;--tw-ring-color:#818cf8 !important;color:#eef2ff !important}[data-hg-spin]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-spin] svg{display:block;width:100%;height:100%;animation:hg-spin .8s steps(8) infinite}@keyframes hg-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){[data-hg-spin] svg{animation:none}}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}#hg-flag-tip{position:fixed;z-index:10000;max-width:16rem;padding:.4rem .6rem;border-radius:.5rem;background:#111827;color:#f3f4f6;border:1px solid #4b5563;font-size:.75rem;line-height:1.1rem;white-space:pre-line;box-shadow:0 4px 12px rgba(0,0,0,.4)}";
+    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{width:100% !important;background:#4b5563 !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night-solid]{background-color:rgba(99,102,241,.8) !important;border-color:#818cf8 !important;--tw-ring-color:#818cf8 !important;color:#eef2ff !important}[data-hg-half]{display:inline-block;width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:2px solid #fff;background:linear-gradient(90deg,#fff 50%,transparent 50%);vertical-align:middle}[data-hg-night-own] > [data-hg-half] + *{margin-left:.2rem}[data-hg-spin]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-spin] svg{display:block;width:100%;height:100%;animation:hg-spin .8s steps(8) infinite}@keyframes hg-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){[data-hg-spin] svg{animation:none}}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}#hg-flag-tip{position:fixed;z-index:10000;max-width:16rem;padding:.4rem .6rem;border-radius:.5rem;background:#111827;color:#f3f4f6;border:1px solid #4b5563;font-size:.75rem;line-height:1.1rem;white-space:pre-line;box-shadow:0 4px 12px rgba(0,0,0,.4)}";
     (doc.head || doc.documentElement).appendChild(s);
   }
 

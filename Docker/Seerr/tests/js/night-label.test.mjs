@@ -404,7 +404,7 @@ const nativeCard = (poster, kind) => titleCard(poster)
   .replace(/<svg[\s\S]*?<\/svg>/, kind === "partial" ? '<svg viewBox="0 0 24 24"><path d="M5.25 12a.75.75 0 0 1 .75-.75h12a.75.75 0 0 1 0 1.5H6a.75.75 0 0 1-.75-.75Z"></path></svg>' : kind === "available" ? '<svg viewBox="0 0 24 24"><path d="M19.916 4.626a.75.75 0 0 1 .208 1.04"></path></svg>' : "$&")
   .replace(/bg-indigo-500\/80 border-indigo-400 ring-indigo-400 text-indigo-100/, kind === "downloading" ? "$&" : "bg-green-500/80 border-green-400 ring-green-400 text-green-100");
 
-test("Discover cards: native downloading / available / partly available badges become our purple circle (spinner ring, ✅, ☑️) with hints", async () => {
+test("Discover cards: native downloading / available / partly available badges become our purple circle (spinner ring, ✅, half-filled circle) with hints", async () => {
   const dl = { ...FIGHT_ITEM, size: 1000, sizeLeft: 600 };
   const mk = (id, poster, status, items = []) => ({ id, mediaType: "movie", title: String(id), posterPath: poster, mediaInfo: { tmdbId: id, mediaType: "movie", status, downloadStatus: items, downloadStatus4k: [] } });
   const routes = { ...RS_ROUTES, [RS_URL]: RS, "/api/v1/discover/movies": { results: [mk(550, "/fight.jpg", 3, [dl]), mk(801, "/avail.jpg", 5), mk(802, "/part.jpg", 4), mk(700, "/tied.jpg", 4)] } };
@@ -425,13 +425,18 @@ test("Discover cards: native downloading / available / partly available badges b
   assert.equal(visibleText(w, avail), "✅");
   assert.equal(hint(avail), "Available in Jellyfin");
   assert.ok(avail.querySelector("[data-hg-night-moon][data-hg-night-solid]"));
-  assert.equal(visibleText(w, part), "☑️");
+  assert.equal(visibleText(w, part), "");
+  assert.ok(part.querySelector("[data-hg-half]"));
+  assert.ok(part.querySelector("[data-hg-night-moon][data-hg-night-solid]"));
   assert.equal(hint(part), "Partly available");
-  assert.equal(visibleText(w, tied), "☑️🌙");
+  assert.equal(visibleText(w, tied), "🌙");
+  assert.ok(tied.querySelector("[data-hg-half]"));
+  assert.equal(tied.querySelector("[data-hg-night-own]").firstElementChild.hasAttribute("data-hg-half"), true);
   assert.ok(tied.querySelector("[data-hg-night-pill]"));
-  assert.equal(hint(tied), "Partly available · Waiting for the night");
+  assert.equal(hint(tied), "Partly available · Waiting for the night — the rest downloads at night");
   const css = w.document.getElementById("hg-night-style").textContent;
   assert.match(css, /@keyframes hg-spin/);
+  assert.match(css, /\[data-hg-half\]\{[^}]*border-radius:50%[^}]*linear-gradient\(90deg,#fff 50%,transparent 50%\)/);
   assert.match(css, /prefers-reduced-motion[^{]*\{[^}]*\[data-hg-spin\][^}]*animation:\s*none/);
   assert.match(css, /\[data-hg-night-solid\]\{[^}]*background/);
 });
@@ -447,4 +452,68 @@ test("native available badge: German hint", async () => {
   const b = w.document.querySelector(".pointer-events-none.z-40.flex");
   assert.equal(b.querySelector("[data-hg-night]").getAttribute("title"), "In Jellyfin verfügbar");
   assert.ok(b.querySelector("svg"));
+});
+
+// every badge the owner approved (Claude-Mockups seerr-all-badges): singles and combinations, EN and DE hints
+const BADGE_ROWS = [
+  { id: 901, name: "spinner", card: "downloading", status: 3, dl: true, icons: "◌", en: "Downloading now — 40 %", de: "Lädt gerade herunter — 40 %" },
+  { id: 902, name: "available", card: "available", status: 5, icons: "✅", en: "Available in Jellyfin", de: "In Jellyfin verfügbar" },
+  { id: 903, name: "partly", card: "partial", status: 4, icons: "◐", en: "Partly available", de: "Teilweise verfügbar" },
+  { id: 904, name: "can wait", card: "clock", status: 3, moon: true, icons: "🌙", en: "Waiting for the night — downloads at night (cheaper power)", de: "Wartet auf die Nacht — lädt nachts herunter (günstigerer Strom)" },
+  { id: 905, name: "nothing found", card: "clock", status: 3, compass: true, icons: "🧭", en: "No release found yet — searched again in tonight's scheduled search (04:17)", de: "Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter" },
+  { id: 906, name: "not released", card: "clock", status: 3, cal: "2026-07-17", icons: "📅", en: "Not released yet — expected 17 Jul 2026", de: "Noch nicht erschienen — erwartet DATE_DE" },
+  { id: 907, name: "can wait + nothing found", card: "clock", status: 3, moon: true, compass: true, icons: "🌙🧭", en: "Waiting for the night · No release found yet — searched again in tonight's scheduled search (04:17), downloads at night when found", de: "Wartet auf die Nacht · Noch kein Release gefunden — die geplante Suche heute Nacht (04:17) sucht weiter, lädt nachts, sobald gefunden" },
+  { id: 908, name: "can wait + not released", card: "clock", status: 3, moon: true, cal: "2026-07-17", icons: "🌙📅", en: "Waiting for the night · Not released yet — expected 17 Jul 2026", de: "Wartet auf die Nacht · Noch nicht erschienen — erwartet DATE_DE" },
+  { id: 909, name: "partly + can wait", card: "partial", status: 4, moon: true, icons: "◐🌙", en: "Partly available · Waiting for the night — the rest downloads at night", de: "Teilweise verfügbar · Wartet auf die Nacht — der Rest lädt nachts herunter" },
+  { id: 910, name: "partly + can wait + nothing found", card: "partial", status: 4, moon: true, compass: true, icons: "◐🌙🧭", en: "Partly available · Waiting for the night · No release found yet — searched again tonight (04:17)", de: "Teilweise verfügbar · Wartet auf die Nacht · Noch kein Release gefunden — die Suche heute Nacht (04:17) sucht weiter" },
+  { id: 911, name: "partly + not aired", card: "partial", status: 4, cal: "2026-11-11", icons: "◐📅", en: "Partly available · Not released yet — next episode 11 Nov", de: "Teilweise verfügbar · Noch nicht erschienen — nächste Folge DATE_DE" },
+  { id: 912, name: "partly + can wait + not aired", card: "partial", status: 4, moon: true, cal: "2026-11-11", icons: "◐🌙📅", en: "Partly available · Waiting for the night · Not released yet — next episode 11 Nov", de: "Teilweise verfügbar · Wartet auf die Nacht · Noch nicht erschienen — nächste Folge DATE_DE" },
+  { id: 913, name: "partly + downloading", card: "partial", status: 4, dl: true, icons: "◐◌", en: "Partly available · Downloading now — 40 %", de: "Teilweise verfügbar · Lädt gerade herunter — 40 %" },
+];
+const badgeCard = (r) => (r.card === "clock" ? clockCard(`/b${r.id}.jpg`) : nativeCard(`/b${r.id}.jpg`, r.card === "partial" ? "partial" : r.card));
+const badgeIcons = (b) => [...b.querySelector("[data-hg-night-own]").children].map((c) => c.hasAttribute("data-hg-half") ? "◐" : c.hasAttribute("data-hg-spin") ? "◌" : c.textContent).join("") || b.querySelector("[data-hg-night-own]").textContent;
+
+for (const lang of ["en", "de"]) {
+  test(`all badges (${lang}): every approved single and combination renders its icons and hint`, async () => {
+    const dl = { ...FIGHT_ITEM, size: 1000, sizeLeft: 600 };
+    const mk = (r) => ({ id: r.id, mediaType: "tv", name: String(r.id), posterPath: `/b${r.id}.jpg`, mediaInfo: { tmdbId: r.id, mediaType: "tv", status: r.status, downloadStatus: r.dl ? [dl] : [], downloadStatus4k: [] } });
+    const rs = {
+      canWait: BADGE_ROWS.filter((r) => r.moon).map((r) => `tv/${r.id}`),
+      unreleased: Object.fromEntries(BADGE_ROWS.filter((r) => r.cal).map((r) => [`tv/${r.id}`, r.cal])),
+      noRelease: Object.fromEntries(BADGE_ROWS.filter((r) => r.compass).map((r) => [`tv/${r.id}`, "2026-10-28T10:00:23Z"])),
+      updated: new Date().toISOString(),
+    };
+    const routes = { ...RS_ROUTES, [RS_URL]: rs, "/api/v1/discover/tv": { results: BADGE_ROWS.map(mk) } };
+    const w = night(BADGE_ROWS.map(badgeCard).join(""), fakeXHR(routes, { value: fresh([]) }), "/discover/tv");
+    w.document.body.insertAdjacentHTML("beforeend", `<a href="/discover/tv">${lang === "de" ? "Serien" : "Series"}</a>`);
+    const x = new w.XMLHttpRequest();
+    x.open("GET", "/api/v1/discover/tv");
+    x.send();
+    await settle();
+    w.document.body.insertAdjacentHTML("beforeend", "<p>re-render</p>");
+    await settle();
+    const cards = [...w.document.querySelectorAll('[role="link"]')].map((c) => c.querySelector(".pointer-events-none.z-40.flex"));
+    BADGE_ROWS.forEach((r, i) => {
+      const own = cards[i].querySelector("[data-hg-night]");
+      const date = lang === "de" ? new Date(Date.UTC(...(r.cal || "2000-01-01").split("-").map((v, k) => k === 1 ? +v - 1 : +v))).toLocaleDateString("de-CH", { day: "numeric", month: "short", ...(r.cal && r.cal.startsWith("2026-07") ? { year: "numeric" } : {}), timeZone: "UTC" }) : "";
+      assert.equal(badgeIcons(cards[i]), r.icons, r.name);
+      assert.equal(own.getAttribute("title"), r[lang].replace("DATE_DE", date), r.name);
+      assert.equal(!!cards[i].querySelector("[data-hg-spin]"), r.icons.includes("◌"), r.name);
+      assert.equal(!!cards[i].querySelector("[data-hg-half]"), r.icons.includes("◐"), r.name);
+    });
+  });
+}
+
+test("a download paused for the night shows 🌙, not the spinner, also next to ◐", async () => {
+  const paused = { ...FIGHT_ITEM, status: "paused", downloadId: "SABnzbd_nzo_night", size: 1000, sizeLeft: 1000 };
+  const m = { id: 920, mediaType: "tv", name: "920", posterPath: "/b920.jpg", mediaInfo: { tmdbId: 920, mediaType: "tv", status: 4, downloadStatus: [paused], downloadStatus4k: [] } };
+  const routes = { ...RS_ROUTES, [RS_URL]: { ...reqState([]), noRelease: {} }, "/api/v1/discover/tv": { results: [m] } };
+  const w = night(nativeCard("/b920.jpg", "partial"), fakeXHR(routes, { value: fresh(["SABnzbd_nzo_night"]) }), "/discover/tv");
+  const x = new w.XMLHttpRequest();
+  x.open("GET", "/api/v1/discover/tv");
+  x.send();
+  await settle();
+  const b = w.document.querySelector(".pointer-events-none.z-40.flex");
+  assert.equal(badgeIcons(b), "◐🌙");
+  assert.ok(!b.querySelector("[data-hg-spin]"));
 });
