@@ -285,9 +285,9 @@ class Arr(unittest.TestCase):
         self.assertEqual(nd.title_ids("sonarr", queue), {"aaa": ("sonarr", 7), "bbb": ("sonarr", 3)})
 
 
-def req(type_, tmdb, ext, status=2, mstatus=3, tags=(), seasons=(), is4k=False):
+def req(type_, tmdb, ext, status=2, mstatus=3, tags=(), seasons=(), is4k=False, created=None):
     media = {"tmdbId": tmdb, "status": mstatus if not is4k else 1, "status4k": mstatus if is4k else 1, "externalServiceId": None if is4k else ext, "externalServiceId4k": ext if is4k else None}
-    return {"type": type_, "status": status, "is4k": is4k, "tags": list(tags), "seasons": [{"seasonNumber": n} for n in seasons], "media": media}
+    return {"type": type_, "status": status, "is4k": is4k, "tags": list(tags), "seasons": [{"seasonNumber": n} for n in seasons], "media": media, **({"createdAt": created} if created else {})}
 
 
 def movie(i, tags=(), has_file=False, available=True, min_av="released", **dates):
@@ -301,13 +301,17 @@ def ep(season, number, air=None, has_file=False):
 DN = {"radarr": 64, "sonarr": 61}
 
 
-def rstate(requests, movies=(), series=(), episodes=None, now=MON_DAY, queued=(), searching=None):
-    return nd.request_state(now, requests, DN, {m["id"]: m for m in movies}, {s["id"]: s for s in series}, episodes or {}, set(queued), {"radarr": set(), "sonarr": set()} if searching is None else searching)
+NEW_KEYS = ("searching", "fresh", "pending", "queue", "imported", "soFar")
+
+
+def rstate(requests, movies=(), series=(), episodes=None, now=MON_DAY, queued=(), searching=None, commands=None, queue=None, full=False):
+    out = nd.request_state(now, requests, DN, {m["id"]: m for m in movies}, {s["id"]: s for s in series}, episodes or {}, set(queued), {"radarr": set(), "sonarr": set()} if searching is None else searching, commands, queue)
+    return out if full else {k: v for k, v in out.items() if k not in NEW_KEYS or v}
 
 
 class RequestState(unittest.TestCase):
     def test_can_wait_movie_without_a_release_yet(self):
-        self.assertEqual(rstate([req("movie", 100, 54)], [movie(54)]), {"canWait": ["movie/100"], "unreleased": {}, "noRelease": {}})
+        self.assertEqual(rstate([req("movie", 100, 54)], [movie(54)]), {"canWait": ["movie/100"], "unreleased": {}, "noRelease": {}, "fresh": {"movie/100": None}})
 
     def test_download_now_tag_on_the_radarr_title_is_not_can_wait(self):
         self.assertEqual(rstate([req("movie", 100, 54)], [movie(54, tags=[1, 64])])["canWait"], [])
@@ -317,9 +321,9 @@ class RequestState(unittest.TestCase):
         self.assertEqual(rstate([req("movie", 100, 54, tags=[64])], [movie(54)])["canWait"], ["movie/100"])
         self.assertEqual(rstate([req("movie", 100, None, status=1)])["canWait"], ["movie/100"])
 
-    def test_done_declined_failed_and_available_are_left_out(self):
+    def test_done_declined_and_available_are_left_out_failed_is_a_problem(self):
         rs = [req("movie", 1, 1, mstatus=5), req("movie", 2, 2, status=3), req("movie", 3, 3, status=4), req("movie", 4, 4, status=5), req("movie", 5, 5)]
-        self.assertEqual(rstate(rs, [movie(i) for i in (1, 2, 3, 4)] + [movie(5, has_file=True)]), {"canWait": [], "unreleased": {}, "noRelease": {}})
+        self.assertEqual(rstate(rs, [movie(i) for i in (1, 2, 3, 4)] + [movie(5, has_file=True)]), {"canWait": [], "unreleased": {}, "noRelease": {}, "queue": {"movie/3": {"state": "problem", "message": "", "code": "seerr"}}, "imported": ["movie/5"]})
 
     def test_4k_request_uses_the_4k_status_and_service_id(self):
         self.assertEqual(rstate([req("movie", 100, 9, is4k=True)], [movie(9)])["canWait"], ["movie/100"])
@@ -339,16 +343,17 @@ class RequestState(unittest.TestCase):
 
     def test_series_with_an_aired_missing_episode_is_released(self):
         eps = {22: [ep(1, 1, "2026-10-14T01:00:00Z"), ep(1, 2, "2026-11-04T02:00:00Z")]}
-        self.assertEqual(rstate([req("tv", 301, 22, seasons=[1])], series=[{"id": 22, "tags": [], "status": "continuing"}], episodes=eps), {"canWait": ["tv/301"], "unreleased": {}, "noRelease": {}})
+        self.assertEqual(rstate([req("tv", 301, 22, seasons=[1])], series=[{"id": 22, "tags": [], "status": "continuing"}], episodes=eps), {"canWait": ["tv/301"], "unreleased": {}, "noRelease": {}, "fresh": {"tv/301": None}})
 
     def test_series_only_the_unaired_new_season_is_missing(self):
         eps = {11: [ep(1, 1, "2022-09-01T07:00:00Z", True), ep(2, 1, "2024-08-29T07:00:00Z", True), ep(3, 1, "2026-11-11T08:00:00Z")]}
         out = rstate([req("tv", 84773, 11, mstatus=4, seasons=[1, 2, 3])], series=[{"id": 11, "tags": [], "status": "continuing"}], episodes=eps)
-        self.assertEqual(out, {"canWait": ["tv/84773"], "unreleased": {"tv/84773": "2026-11-11"}, "noRelease": {}})
+        self.assertEqual(out, {"canWait": ["tv/84773"], "unreleased": {"tv/84773": "2026-11-11"}, "noRelease": {}, "soFar": ["tv/84773"]})
 
-    def test_series_with_every_requested_episode_downloaded_is_left_out(self):
+    def test_series_with_every_requested_episode_downloaded_is_complete_so_far(self):
         eps = {21: [ep(1, 1, "2024-01-06T15:00:00Z", True), ep(2, 1, "2025-01-04T15:00:00Z")]}
-        self.assertEqual(rstate([req("tv", 127532, 21, mstatus=4, seasons=[1])], series=[{"id": 21, "tags": [], "status": "continuing"}], episodes=eps), {"canWait": [], "unreleased": {}, "noRelease": {}})
+        self.assertEqual(rstate([req("tv", 127532, 21, mstatus=4, seasons=[1])], series=[{"id": 21, "tags": [], "status": "continuing"}], episodes=eps), {"canWait": ["tv/127532"], "unreleased": {}, "noRelease": {}, "soFar": ["tv/127532"]})
+        self.assertEqual(rstate([req("tv", 127532, 21, mstatus=3, seasons=[1])], series=[{"id": 21, "tags": [], "status": "continuing"}], episodes=eps)["imported"], ["tv/127532"])
 
     def test_upcoming_series_without_episodes_uses_next_airing(self):
         out = rstate([req("tv", 5, 5, seasons=[1])], series=[{"id": 5, "tags": [61], "status": "upcoming", "nextAiring": "2027-03-01T20:00:00Z"}], episodes={5: []})
@@ -392,7 +397,7 @@ class RequestState(unittest.TestCase):
                 return {"/movie/54": movie(54), "/series/19": {"id": 19, "tags": [], "status": "upcoming"}, "/episode?seriesId=19": [ep(1, 1)]}[path]
             return call
         out = nd.collect_request_state(MON_DAY, seerr, {"radarr": arr("radarr"), "sonarr": arr("sonarr")})
-        self.assertEqual(out, {"canWait": ["movie/100", "tv/300"], "unreleased": {"tv/300": None}, "noRelease": {}})
+        self.assertEqual(out, {"canWait": ["movie/100", "tv/300"], "unreleased": {"tv/300": None}, "noRelease": {}, "searching": {}, "fresh": {"movie/100": None}, "pending": [], "queue": {}, "imported": [], "soFar": []})
         self.assertNotIn(("radarr", "/movie/7"), calls)
         self.assertEqual(calls[0], ("seerr", "/request?take=1000&skip=0&filter=all&sort=added"))
 
@@ -403,6 +408,167 @@ class RequestState(unittest.TestCase):
             raise nd.NotFound(path)
         out = nd.collect_request_state(MON_DAY, lambda p: {"results": [req("movie", 100, 54)]}, {"radarr": arr, "sonarr": arr})
         self.assertEqual(out["canWait"], ["movie/100"])
+
+
+NOW_UTC = datetime.datetime(2026, 10, 28, 12, 25, tzinfo=datetime.timezone.utc)
+CMDS = [{"name": "MoviesSearch", "status": "started", "queued": "2026-10-28T12:24:03Z", "started": "2026-10-28T12:24:03Z", "body": {"movieIds": [59]}},
+        {"name": "MoviesSearch", "status": "queued", "queued": "2026-10-28T12:24:18Z", "body": {"movieIds": [60]}},
+        {"name": "MoviesSearch", "status": "queued", "queued": "2026-10-28T12:24:30Z", "body": {"movieIds": [61, 59]}},
+        {"name": "MoviesSearch", "status": "completed", "queued": "2026-10-28T12:00:00Z", "body": {"movieIds": [62]}}]
+
+
+class SearchFeedback(unittest.TestCase):
+    def test_search_commands_started_with_time_queued_with_searches_ahead(self):
+        out = nd.search_commands(CMDS)
+        self.assertEqual(out, {59: {"status": "started", "started": "2026-10-28T12:24:03Z"}, 60: {"status": "queued", "ahead": 1}, 61: {"status": "queued", "ahead": 2}})
+        self.assertEqual(nd.search_commands([{"name": "SeriesSearch", "status": "queued", "queued": "a", "body": {"seriesId": 4}}]), {4: {"status": "queued", "ahead": 0}})
+        self.assertEqual(nd.search_commands([{"name": "MissingMoviesSearch", "status": "started", "started": "x", "body": {}}]), {nd.ALL: {"status": "started", "started": "x"}})
+        self.assertEqual(nd.search_commands({"records": []}), {})
+
+    def test_searching_titles_by_seerr_key(self):
+        out = rstate([req("movie", 120, 59), req("movie", 121, 60), req("movie", 122, 62, created="2026-10-28T12:20:00.000Z")], [movie(59), movie(60), movie(62, lastSearchTime="2026-10-28T12:21:00Z")],
+                     now=NOW_UTC, searching={"radarr": {59, 60, 61}}, commands={"radarr": nd.search_commands(CMDS)}, full=True)
+        self.assertEqual(out["searching"], {"movie/120": {"status": "started", "started": "2026-10-28T12:24:03Z"}, "movie/121": {"status": "queued", "ahead": 1}})
+        self.assertEqual((out["fresh"], out["noRelease"]), ({}, {"movie/122": "2026-10-28T12:21:00Z"}))
+
+    def test_a_search_over_all_missing_titles_counts_for_every_released_title_without_a_download(self):
+        cmds = {"radarr": {nd.ALL: {"status": "started", "started": "2026-10-28T04:17:00Z"}}}
+        out = rstate([req("movie", 1, 1), req("movie", 2, 2), req("movie", 3, 3)], [movie(1), movie(2, available=False), movie(3)], now=NOW_UTC, searching={"radarr": nd.ALL}, commands=cmds, queue={("radarr", 3): {"state": "downloading"}}, full=True)
+        self.assertEqual(out["searching"], {"movie/1": {"status": "started", "started": "2026-10-28T04:17:00Z"}})
+
+    def test_just_requested_without_a_search_yet_is_fresh_with_its_request_time(self):
+        rs = [req("movie", 1, 1, created="2026-10-28T12:24:50.000Z"), req("movie", 2, None, created="2026-10-28T12:24:55.000Z"), req("movie", 3, 3, created="2026-10-28T12:00:00.000Z"), req("movie", 4, 4, status=1, created="2026-10-28T12:24:00.000Z")]
+        out = rstate(rs, [movie(1), movie(3, lastSearchTime="2026-10-28T11:00:00Z"), movie(4)], now=NOW_UTC, full=True)
+        self.assertEqual(out["fresh"], {"movie/1": "2026-10-28T12:24:50.000Z", "movie/2": "2026-10-28T12:24:55.000Z", "movie/3": "2026-10-28T12:00:00.000Z"})
+        self.assertEqual(out["noRelease"], {})
+        self.assertEqual(out["pending"], ["movie/4"])
+
+    def test_queue_states_problem_over_importing_over_downloading_over_paused(self):
+        recs = [{"movieId": 1, "status": "paused", "trackedDownloadState": "downloading", "trackedDownloadStatus": "ok"},
+                {"movieId": 1, "status": "downloading", "trackedDownloadState": "downloading", "trackedDownloadStatus": "ok"},
+                {"movieId": 2, "status": "completed", "trackedDownloadState": "importPending", "trackedDownloadStatus": "ok"},
+                {"movieId": 3, "status": "completed", "trackedDownloadState": "importBlocked", "trackedDownloadStatus": "warning",
+                 "statusMessages": [{"title": "Film.2020.2160p", "messages": ["No files found are eligible for import in /data/torrents/movies/Film.2020.2160p"]}]},
+                {"movieId": 3, "status": "downloading", "trackedDownloadState": "downloading"},
+                {"movieId": 4, "status": "paused"},
+                {"movieId": 5, "status": "failed", "trackedDownloadState": "failedPending", "trackedDownloadStatus": "error", "errorMessage": "Download failed: see https://x.example.com/a?apikey=s3cr3t"},
+                {"movieId": 6, "status": "downloading", "trackedDownloadStatus": "warning", "statusMessages": [{"messages": ["qBittorrent is downloading metadata"]}]},
+                {"downloadId": "x"}]
+        out = nd.queue_states("radarr", {"records": recs})
+        self.assertEqual(out[("radarr", 1)], {"state": "downloading"})
+        self.assertEqual(out[("radarr", 2)], {"state": "importing"})
+        self.assertEqual(out[("radarr", 3)], {"state": "problem", "message": "No files found are eligible for import in …"})
+        self.assertEqual(out[("radarr", 4)], {"state": "paused"})
+        self.assertEqual(out[("radarr", 5)], {"state": "problem", "message": "Download failed: see …"})
+        self.assertEqual(out[("radarr", 6)], {"state": "downloading"})
+        self.assertEqual(len(out), 6)
+        self.assertLessEqual(len(nd.brief({"errorMessage": "x" * 500})), 100)
+
+    def test_queue_and_seerr_failed_by_seerr_key(self):
+        out = rstate([req("movie", 1, 1), req("movie", 2, 2, status=4)], [movie(1, lastSearchTime="2026-10-28T11:00:00Z"), movie(2)], now=NOW_UTC, queue={("radarr", 1): {"state": "importing"}}, full=True)
+        self.assertEqual(out["queue"], {"movie/1": {"state": "importing"}, "movie/2": {"state": "problem", "message": "", "code": "seerr"}})
+        self.assertEqual(out["noRelease"], {})
+
+    def test_file_on_disk_while_seerr_still_shows_the_request_is_imported(self):
+        out = rstate([req("movie", 1, 1), req("tv", 2, 2, seasons=[1])], [movie(1, has_file=True)], [{"id": 2, "tags": [], "status": "continuing"}], {2: [ep(1, 1, "2026-01-01T00:00:00Z", True)]}, now=NOW_UTC, full=True)
+        self.assertEqual(out["imported"], ["movie/1", "tv/2"])
+        self.assertEqual(out["canWait"], [])
+
+    def test_series_complete_so_far_aired_all_here_unaired_left(self):
+        sr = [{"id": 30, "tags": [], "status": "continuing", "nextAiring": "2027-01-08T15:00:00Z"}]
+        eps = {30: [ep(1, 1, "2024-01-04T15:00:00Z", True), ep(1, 2, "2024-01-11T15:00:00Z", True), ep(2, 1, "2027-01-08T15:00:00Z")]}
+        out = rstate([req("tv", 400, 30, mstatus=4, seasons=[1, 2])], series=sr, episodes=eps, now=NOW_UTC, full=True)
+        self.assertEqual((out["soFar"], out["unreleased"], out["imported"]), (["tv/400"], {"tv/400": "2027-01-08"}, []))
+        eps[30][1]["hasFile"] = False
+        out = rstate([req("tv", 400, 30, mstatus=4, seasons=[1, 2])], series=sr, episodes=eps, now=NOW_UTC, full=True)
+        self.assertEqual(out["soFar"], [])
+
+    def test_requested_seasons_done_while_seerr_shows_partly_is_complete_so_far_with_the_next_airing(self):
+        sr = [{"id": 31, "tags": [], "status": "continuing", "nextAiring": "2027-01-08T15:00:00Z"}]
+        out = rstate([req("tv", 401, 31, mstatus=4, seasons=[1])], series=sr, episodes={31: [ep(1, 1, "2024-01-04T15:00:00Z", True)]}, now=NOW_UTC, full=True)
+        self.assertEqual((out["soFar"], out["unreleased"], out["imported"]), (["tv/401"], {"tv/401": "2027-01-08"}, []))
+        ended = [{"id": 31, "tags": [], "status": "ended"}]
+        out = rstate([req("tv", 401, 31, mstatus=4, seasons=[1])], series=ended, episodes={31: [ep(1, 1, "2024-01-04T15:00:00Z", True)]}, now=NOW_UTC, full=True)
+        self.assertEqual((out["soFar"], out["unreleased"]), (["tv/401"], {}))
+
+    def test_every_open_request_not_available_lands_in_a_state(self):
+        later = "2027-01-01T00:00:00Z"
+        rs = [req("movie", i, i, created="2026-10-28T12:00:00.000Z") for i in range(1, 9)] + [req("movie", 9, None), req("movie", 10, 10, status=1), req("movie", 11, 11, status=4), req("movie", 12, 12, tags=[64])]
+        ms = [movie(1), movie(2, lastSearchTime="2026-10-28T12:10:00Z"), movie(3, lastSearchTime="2026-10-28T11:00:00Z"), movie(4, available=False, releaseDate=later), movie(5), movie(6), movie(7), movie(8, has_file=True), movie(10), movie(11), movie(12, tags=[64])]
+        out = rstate(rs, ms, now=NOW_UTC, searching={"radarr": {5}}, commands={"radarr": {5: {"status": "started", "started": "x"}}},
+                     queue={("radarr", 6): {"state": "paused"}, ("radarr", 7): {"state": "problem", "message": "m"}}, full=True)
+        covered = set(out["searching"]) | set(out["fresh"]) | set(out["pending"]) | set(out["queue"]) | set(out["unreleased"]) | set(out["noRelease"]) | set(out["imported"])
+        self.assertEqual(covered, {f"movie/{i}" for i in range(1, 13)})
+
+
+class Fast(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.public = pathlib.Path(self.tmp.name) / "seerr" / "night-waiting.json"
+        self.rs = self.public.parent / "request-state.json"
+        self.lock = pathlib.Path(self.tmp.name) / "request-state.lock"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def apps(self, commands, calls):
+        def arr(app):
+            def call(path):
+                calls.append((app, path))
+                if path == "/command":
+                    return commands.get(app, [])
+                if path == "/tag":
+                    return []
+                if path.startswith("/queue"):
+                    return {"records": []}
+                return movie(59)
+            return call
+        return {"radarr": arr("radarr"), "sonarr": arr("sonarr")}
+
+    def seerr(self, results, calls):
+        def call(path):
+            calls.append(("seerr", path))
+            return {"results": results}
+        return call
+
+    def test_idle_reads_only_the_commands_and_the_newest_requests_and_writes_nothing(self):
+        calls = []
+        self.assertEqual(nd.run_fast(NOW_UTC, self.apps({}, calls), self.seerr([req("movie", 1, 1, created="2026-10-28T11:00:00.000Z")], calls), self.public, self.lock), 0)
+        self.assertFalse(self.rs.exists())
+        self.assertEqual(calls, [("radarr", "/command"), ("sonarr", "/command"), ("seerr", "/request?take=10&skip=0&filter=all&sort=added")])
+
+    def test_a_running_search_writes_the_request_state(self):
+        calls = []
+        self.assertEqual(nd.run_fast(NOW_UTC, self.apps({"radarr": CMDS}, calls), self.seerr([req("movie", 120, 59)], calls), self.public, self.lock), 0)
+        out = json.loads(self.rs.read_text())
+        self.assertEqual(out["searching"], {"movie/120": {"status": "started", "started": "2026-10-28T12:24:03Z"}})
+        self.assertIn("updated", out)
+
+    def test_a_request_from_the_last_minutes_writes_the_request_state(self):
+        calls = []
+        nd.run_fast(NOW_UTC, self.apps({}, calls), self.seerr([req("movie", 120, 59, created="2026-10-28T12:24:30.000Z")], calls), self.public, self.lock)
+        self.assertEqual(json.loads(self.rs.read_text())["fresh"], {"movie/120": "2026-10-28T12:24:30.000Z"})
+
+    def test_search_just_ended_one_more_write_clears_it(self):
+        self.rs.parent.mkdir(parents=True)
+        self.rs.write_text(json.dumps({"searching": {"movie/120": {"status": "started"}}}))
+        calls = []
+        nd.run_fast(NOW_UTC, self.apps({}, calls), self.seerr([req("movie", 120, 59)], calls), self.public, self.lock)
+        self.assertEqual(json.loads(self.rs.read_text())["searching"], {})
+
+    def test_busy_lock_skips(self):
+        import fcntl
+        with open(self.lock, "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            calls = []
+            self.assertEqual(nd.run_fast(NOW_UTC, self.apps({"radarr": CMDS}, calls), self.seerr([req("movie", 120, 59)], calls), self.public, self.lock), 0)
+        self.assertFalse(self.rs.exists())
+
+    def test_arr_down_fails_without_writing(self):
+        def down(path):
+            raise nd.ApiError("down")
+        self.assertEqual(nd.run_fast(NOW_UTC, {"radarr": down, "sonarr": down}, self.seerr([], []), self.public, self.lock), 1)
+        self.assertFalse(self.rs.exists())
 
 
 class Revert(unittest.TestCase):

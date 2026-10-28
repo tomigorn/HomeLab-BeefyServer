@@ -423,7 +423,7 @@ Radarr/Sonarr use a tagged client only for a title with a matching tag, otherwis
 | `download-now` | resumed any time, never paused or queued by this |
 | State for fastpi | `~/.local/state/movie-downloads/night-downloads.json` (`pending`; `stalled` = stall clock per torrent). fastpi copies it while beefy is awake and wakes beefy at 22:05 only when `pending > 0` (`HomeLab-FastPi` `Docker/Beefy-Waker/README.md` "Night downloads wake") |
 | Seerr label | outside the low tariff the waiting download ids also go to `/srv/appdata/indexer-bar/night-waiting.json` (env `ND_PUBLIC`, empty = off): Seerr shows them as "Waiting for the night 🌙" (`../Seerr/README.md` "Night label") |
-| Seerr icons | beside it `request-state.json`: open Seerr requests that are Can wait 🌙, searched without a release 🧭, not released 📅 (Seerr API key `../Seerr/secrets/api-key`; env `ND_SEERR_URL`, `ND_SEERR_KEY`) |
+| Seerr icons | beside it `request-state.json`: open Seerr requests that are Can wait 🌙, searched without a release 🧭, not released 📅, searching 🔍, not searched yet 🔎, waiting for approval ⏳, queue state ◌/⚠️, imported ✅, series complete so far (Seerr API key `../Seerr/secrets/api-key`; env `ND_SEERR_URL`, `ND_SEERR_KEY`). `night-downloads.py --request-state` (`systemd/request-state.timer`, every 15 s, journal: errors only) rewrites only this file, only while a search runs or a request is from the last 5 min; shared lock with the 2-min run |
 | Nothing found | a `download-now` title that was searched, has nothing in the queue, no search running and no file loses the tag again (log "download-now removed: searched, nothing found"); a later grab downloads at night. A grab keeps it |
 | First download only | Connect **Download now: first download only** (`scripts/download-now-hook.sh`, On Import/Upgrade) removes `download-now` after the first import; upgrades and later episodes wait again |
 | Existing titles | `scripts/request-tags.sh` copies `download-now` only onto a title that was in Radarr/Sonarr before the request; the paused item then resumes within 2 min |
@@ -444,8 +444,8 @@ Radarr/Sonarr use a tagged client only for a title with a matching tag, otherwis
 
 ```bash
 cd ~/Projects/Docker/Movie-Downloads/systemd
-sudo install -m 0644 night-downloads.service night-downloads.timer /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now night-downloads.timer
+sudo install -m 0644 night-downloads.service night-downloads.timer request-state.service request-state.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now night-downloads.timer request-state.timer
 ```
 
 ### Delete a title

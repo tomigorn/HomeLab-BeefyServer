@@ -1,0 +1,14 @@
+[Unit]
+Description=Seerr request state: request-state.json every 15 s while a search runs or a request is new (night-downloads.py --request-state)
+Documentation=file:///home/buntu/Projects/Docker/Seerr/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/night-downloads.py --request-state
+NoNewPrivileges=true
+PrivateTmp=true
+# every 15 s: only its errors reach the journal
+SyslogLevel=warning
+LogLevelMax=warning

@@ -1,0 +1,11 @@
+[Unit]
+Description=Seerr request state: every 15 s while beefy is awake (writes only while a search runs or a request is new)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=15s
+AccuracySec=1s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

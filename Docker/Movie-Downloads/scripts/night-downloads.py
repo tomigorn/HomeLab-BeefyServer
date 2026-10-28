@@ -5,7 +5,10 @@ Outside the low tariff: night items still downloading are paused unless their ET
 Download now whose search found nothing (searched, nothing queued, no search running, no file): the download-now tag is removed again, so a later grab downloads at night.
 Writes ~/.local/state/movie-downloads/night-downloads.json ({"pending": n, "stalled": {hash: since}}), which fastpi reads to decide its 22:05 wake.
 Writes the download ids waiting for the night (outside the low tariff) to /srv/appdata/indexer-bar/night-waiting.json for Seerr's night label (../Seerr/README.md "Night label"; env ND_PUBLIC, empty = off), and beside it request-state.json: the open Seerr requests that are "Can wait" and those not released yet (Seerr ids only).
-Run by systemd/night-downloads.timer (every 2 min while awake, and at boot). Usage: scripts/night-downloads.py [--dry-run]; ND_NOW=2026-10-27T22:10 simulates a clock (with --dry-run)."""
+request-state.json also carries the live state of each open request (running search, just requested, waiting for approval, queue state, imported), so every requested title has a badge.
+Run by systemd/night-downloads.timer (every 2 min while awake, and at boot). --request-state (systemd/request-state.timer, every 15 s): rewrites only request-state.json, and only while a search runs or a request is from the last minutes.
+Usage: scripts/night-downloads.py [--dry-run | --request-state]; ND_NOW=2026-10-27T22:10 simulates a clock (with --dry-run)."""
+import fcntl
 import datetime
 import json
 import os
@@ -228,7 +231,13 @@ def write_public(path, p, now):
 
 
 OPEN_REQUEST = {1, 2}
+PENDING, APPROVED, FAILED = 1, 2, 4
+FRESH_S = 5 * 60
+PROBLEM_STATES = {"importBlocked", "failedPending", "failed"}
+IMPORT_STATES = {"importPending", "importing"}
+QUEUE_RANK = {"paused": 0, "downloading": 1, "importing": 2, "problem": 3}
 AVAILABLE = 5
+PARTLY = 4
 ALL = frozenset({"*"})
 SEARCHES = {"MoviesSearch": "movieIds", "SeriesSearch": "seriesId", "MissingMoviesSearch": None, "CutoffUnmetMoviesSearch": None,
             "EpisodeSearch": None, "SeasonSearch": "seriesId", "MissingEpisodeSearch": None, "CutoffUnmetEpisodeSearch": None}
@@ -245,6 +254,56 @@ def running_searches(commands):
             return ALL
         out |= set(ids if isinstance(ids, list) else [ids])
     return out
+
+
+def search_commands(commands):
+    """Each title's running search: {"status": "started", "started": time} or {"status": "queued", "ahead": searches queued before it}; a search over all missing titles under ALL."""
+    run = sorted((c for c in commands if isinstance(c, dict) and c.get("name") in SEARCHES and c.get("status") in ("queued", "started")) if isinstance(commands, list) else [],
+                 key=lambda c: str(c.get("queued") or ""))
+    out = {}
+    for i, c in enumerate(run):
+        info = {"status": "started", "started": c.get("started")} if c["status"] == "started" else {"status": "queued", "ahead": i}
+        field_ = SEARCHES[c["name"]]
+        ids = (c.get("body") or {}).get(field_) if field_ else None
+        for t in [ALL] if ids is None else ids if isinstance(ids, list) else [ids]:
+            old = out.get(t)
+            if old is None or (old["status"] == "queued" and (info["status"] == "started" or info["ahead"] < old["ahead"])):
+                out[t] = info
+    return out
+
+
+def brief(rec):
+    msgs = [m for sm in rec.get("statusMessages") or [] for m in sm.get("messages") or []] + [rec.get("errorMessage") or ""]
+    text = next((m for m in msgs if m), "")
+    text = re.sub(r"https?://\S+|(?:/[^\s/]+)+/?", "…", str(text)).strip()
+    return text if len(text) <= 100 else text[:99] + "…"
+
+
+def queue_states(app, queue):
+    """(app, title id) -> its downloads' state: problem (import blocked, failed) > importing > downloading > paused."""
+    out = {}
+    for rec in queue.get("records") or [] if isinstance(queue, dict) else []:
+        tid = rec.get("movieId") or rec.get("seriesId")
+        if not tid:
+            continue
+        tds = rec.get("trackedDownloadState")
+        if tds in PROBLEM_STATES or rec.get("trackedDownloadStatus") == "error" or rec.get("status") == "failed":
+            st = {"state": "problem", "message": brief(rec)}
+        elif tds in IMPORT_STATES:
+            st = {"state": "importing"}
+        else:
+            st = {"state": "paused" if str(rec.get("status")).lower() == "paused" else "downloading"}
+        old = out.get((app, tid))
+        if old is None or QUEUE_RANK[st["state"]] > QUEUE_RANK[old["state"]]:
+            out[(app, tid)] = st
+    return out
+
+
+def _ts(value):
+    try:
+        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp() if value else None
+    except ValueError:
+        return None
 
 
 def _searching(searching, app, ext):
@@ -291,14 +350,21 @@ def _series_release(s, eps, seasons, now):
     return True, False, min(filter(None, (_date(e.get("airDateUtc"), now) for e in missing)), default=None)
 
 
-def request_state(now, requests, dn_tags, movies, series, episodes, queued=frozenset(), searching=None):
-    can_wait, unreleased, no_release, searching = set(), {}, {}, searching or {}
+def request_state(now, requests, dn_tags, movies, series, episodes, queued=frozenset(), searching=None, commands=None, queue=None):
+    can_wait, unreleased, no_release, searching, commands, queue = set(), {}, {}, searching or {}, commands or {}, queue or {}
+    live, fresh, pending, imported, queue_out, so_far = {}, {}, set(), set(), {}, set()
+    queued = set(queued) | set(queue)
     for q in requests:
         media, four_k = q.get("media") or {}, bool(q.get("is4k"))
-        if q.get("status") not in OPEN_REQUEST or media.get("status4k" if four_k else "status") == AVAILABLE or not media.get("tmdbId"):
+        if media.get("status4k" if four_k else "status") == AVAILABLE or not media.get("tmdbId"):
             continue
         tv = q.get("type") == "tv"
         key, dn = f"{'tv' if tv else 'movie'}/{media['tmdbId']}", dn_tags.get("sonarr" if tv else "radarr")
+        if q.get("status") == FAILED:
+            queue_out[key] = {"state": "problem", "message": "", "code": "seerr"}
+            continue
+        if q.get("status") not in OPEN_REQUEST:
+            continue
         ext = media.get("externalServiceId4k" if four_k else "externalServiceId")
         title = (series if tv else movies).get(ext) if ext else None
         if title is None:
@@ -311,19 +377,49 @@ def request_state(now, requests, dn_tags, movies, series, episodes, queued=froze
             else:
                 done = bool(title.get("hasFile"))
                 later, when = _movie_release(title, now)
+        if tv and title is not None:
+            wanted = [e for e in episodes.get(ext) or [] if e.get("seasonNumber") in {x["seasonNumber"] for x in q.get("seasons") or []}]
+            if later and any(e.get("hasFile") for e in wanted):
+                so_far.add(key)
+            if done and media.get("status4k" if four_k else "status") == PARTLY:
+                so_far.add(key)
+                nxt = _date(title.get("nextAiring"), now)
+                if nxt:
+                    unreleased[key] = nxt
+                if not now_tag and title.get("status") != "ended":
+                    can_wait.add(key)
+                continue
         if done:
+            imported.add(key)
             continue
         if not now_tag:
             can_wait.add(key)
         app = "sonarr" if tv else "radarr"
-        if title is not None and not later and (app, ext) not in queued and not _searching(searching, app, ext):
+        if q.get("status") == PENDING:
+            pending.add(key)
+        qs = queue.get((app, ext))
+        has_dl = bool(qs) or (app, ext) in queued
+        if qs and QUEUE_RANK[qs["state"]] > QUEUE_RANK.get((queue_out.get(key) or {}).get("state"), -1):
+            queue_out[key] = qs
+        cmd = commands.get(app) or {}
+        info = cmd.get(ext) or (cmd.get(ALL) if title is not None and not later and not has_dl else None)
+        if info and not later:
+            live[key] = info
+        elif q.get("status") == APPROVED and not later and not has_dl:
             seasons = {x["seasonNumber"] for x in q.get("seasons") or []} if tv else None
-            last = _last_search(title, episodes.get(ext) or [] if tv else None, seasons, now)
-            if last:
+            last = _last_search(title, episodes.get(ext) or [] if tv else None, seasons, now) if title is not None else None
+            created = q.get("createdAt")
+            if not last or (_ts(created) and _ts(last) < _ts(created)):
+                fresh[key] = created
+            elif not _searching(searching, app, ext):
                 no_release[key] = max(no_release.get(key) or last, last)
         if later:
             unreleased[key] = when if unreleased.get(key) is None else min(unreleased[key], when or unreleased[key])
-    return {"canWait": sorted(can_wait), "unreleased": unreleased, "noRelease": no_release}
+    for key in set(fresh) & (set(no_release) | set(live)):
+        del fresh[key]
+    imported -= set(live) | set(fresh) | pending | set(queue_out) | set(unreleased) | set(no_release)
+    return {"canWait": sorted(can_wait - imported), "unreleased": unreleased, "noRelease": no_release, "searching": live, "fresh": fresh,
+            "pending": sorted(pending), "queue": queue_out, "imported": sorted(imported), "soFar": sorted(so_far)}
 
 
 def revert_unfound(apps, queued, searching, dry_run=False, now=None):
@@ -363,8 +459,8 @@ def revert_unfound(apps, queued, searching, dry_run=False, now=None):
     return out
 
 
-def collect_request_state(now, seerr, apps, queued=frozenset(), searching=None):
-    requests = [q for q in seerr("/request?take=1000&skip=0&filter=all&sort=added").get("results") or [] if q.get("status") in OPEN_REQUEST]
+def collect_request_state(now, seerr, apps, queued=frozenset(), searching=None, commands=None, queue=None):
+    requests = [q for q in seerr("/request?take=1000&skip=0&filter=all&sort=added").get("results") or [] if q.get("status") in OPEN_REQUEST | {FAILED}]
     dn, titles, episodes = {}, {"radarr": {}, "sonarr": {}}, {}
     for app, api in apps.items():
         dn[app] = next((t["id"] for t in api("/tag") or [] if t.get("label") == TAG), None)
@@ -383,27 +479,78 @@ def collect_request_state(now, seerr, apps, queued=frozenset(), searching=None):
         except NotFound:
             titles[app][ext] = None
     clean = lambda d: {k: v for k, v in d.items() if v is not None}
-    return request_state(now, requests, dn, clean(titles["radarr"]), clean(titles["sonarr"]), episodes, queued, searching)
+    return request_state(now, requests, dn, clean(titles["radarr"]), clean(titles["sonarr"]), episodes, queued, searching, commands, queue)
 
 
 def write_json(path, data):
     path = pathlib.Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    tmp = path.with_suffix(f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(data) + "\n")
     tmp.chmod(0o644)
     tmp.replace(path)
 
 
+def write_request_state(now, seerr, apps, public_path, lock_path, queued, searching, commands, queue, wait=True):
+    """request-state.json under a lock shared with --request-state; False = the other run holds it."""
+    lock_path = pathlib.Path(lock_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        data = collect_request_state(now, seerr, apps, queued, searching, commands, queue)
+        write_json(pathlib.Path(public_path).parent / "request-state.json", data | {"updated": now.astimezone().isoformat(timespec="seconds")})
+    return True
+
+
+def _recent(created, now):
+    t = _ts(created)
+    return t is not None and now.timestamp() - t < FRESH_S
+
+
+def run_fast(now, apps, seerr, public_path, lock_path):
+    """--request-state: request-state.json again while a search runs, a request is from the last minutes, or the last file still shows one; otherwise nothing is written."""
+    try:
+        cmds = {app: api("/command") for app, api in apps.items()}
+        commands = {app: search_commands(c) for app, c in cmds.items()}
+        active = any(commands.values())
+        if not active:
+            try:
+                prev = json.loads((pathlib.Path(public_path).parent / "request-state.json").read_text())
+            except (OSError, ValueError):
+                prev = {}
+            prev = prev if isinstance(prev, dict) else {}
+            active = bool(prev.get("searching")) or any(_recent(v, now) for v in (prev.get("fresh") or {}).values())
+        if not active:
+            recent = seerr("/request?take=10&skip=0&filter=all&sort=added").get("results") or []
+            active = any(q.get("status") in OPEN_REQUEST and _recent(q.get("createdAt"), now) for q in recent)
+        if not active:
+            return 0
+        queue = {}
+        for app, api in apps.items():
+            queue |= queue_states(app, api("/queue?page=1&pageSize=1000"))
+        searching = {app: running_searches(c) for app, c in cmds.items()}
+        write_request_state(now, seerr, apps, public_path, lock_path, set(), searching, commands, queue, wait=False)
+    except (ApiError, OSError, KeyError, TypeError, ValueError, AttributeError) as e:
+        print(f"Seerr request state not written: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr=None):
-    rc, urgent, titles, positions, searching = 0, set(), {}, {}, {}
+    rc, urgent, titles, positions, searching, commands, qstates = 0, set(), {}, {}, {}, {}, {}
     for app, api in apps.items():
         try:
             queue = api("/queue?page=1&pageSize=1000")
             urgent |= urgent_ids(api("/tag"), queue)
             titles |= title_ids(app, queue)
             positions |= episode_positions(queue)
-            searching[app] = running_searches(api("/command"))
+            qstates |= queue_states(app, queue)
+            cmds = api("/command")
+            searching[app] = running_searches(cmds)
+            commands[app] = search_commands(cmds)
         except ApiError as e:
             print(f"{app}: {e}", file=sys.stderr)
             rc = 1
@@ -470,7 +617,7 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr
             rc = 1
         if seerr:
             try:
-                write_json(pathlib.Path(public_path).parent / "request-state.json", collect_request_state(now, seerr, apps, queued, searching) | {"updated": now.astimezone().isoformat(timespec="seconds")})
+                write_request_state(now, seerr, apps, public_path, state_path.parent / "request-state.lock", queued, searching, commands, qstates)
             except (ApiError, OSError, KeyError, TypeError, ValueError) as e:
                 print(f"Seerr request state not written: {e}", file=sys.stderr)
                 rc = 1
@@ -578,7 +725,7 @@ def seerr_client(base, keyfile):
 
 
 def main():
-    dry = "--dry-run" in sys.argv[1:]
+    dry, fast = "--dry-run" in sys.argv[1:], "--request-state" in sys.argv[1:]
     if os.environ.get("ND_NOW") and not dry:
         sys.exit("ND_NOW only with --dry-run")
     qbit = qbit_client(os.environ.get("ND_QBIT_URL", "http://127.0.0.1:8080") + "/api/v2", os.environ.get("ND_QBIT_USER", "admin"),
@@ -586,6 +733,9 @@ def main():
     sab = sab_client(os.environ.get("ND_SAB_URL", "http://127.0.0.1:8081"), os.environ.get("ND_SAB_KEY", HERE.parent / "secrets" / "hook" / "sabnzbd.apikey"))
     apps = {app: arr_client(app, os.environ.get(f"ND_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml")) for app in APPS}
     seerr = seerr_client(os.environ.get("ND_SEERR_URL", "http://127.0.0.1:5055"), os.environ.get("ND_SEERR_KEY", HERE.parent.parent / "Seerr" / "secrets" / "api-key"))
+    if fast:
+        state = pathlib.Path(os.environ.get("ND_STATE", STATE))
+        return run_fast(datetime.datetime.now().astimezone(), apps, seerr, os.environ.get("ND_PUBLIC", PUBLIC) or PUBLIC, state.parent / "request-state.lock")
     return run(now_from(os.environ), qbit, sab, apps, os.environ.get("ND_STATE", STATE), dry_run=dry, public_path=os.environ.get("ND_PUBLIC", PUBLIC), seerr=seerr)
 
 
