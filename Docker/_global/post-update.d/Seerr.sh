@@ -42,5 +42,6 @@ if want download-now seerr-proxy; then
   check seerr.download-now-requester '^200 403 $' "$(seerr_dn_requester "$DIR/../../Seerr/secrets/api-key" 2>&1)"
   check seerr.my-request-auth '^403$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5055/_download-now/request?type=movie&tmdb=603' 2>&1)"
   check seerr.my-request-requester '^200 403 $' "$(seerr_dn_requester "$DIR/../../Seerr/secrets/api-key" /_download-now/request 2>&1)"
+  check seerr.delete-keeps-files '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/my-request.js | grep -c 'data-delete-keep' 2>&1)"
   check seerr.download-now-script '^media-actions closest\("main"\)$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/download-now.js | grep -o 'media-actions' | head -1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/menu-links.js | grep -o 'closest("main")' | head -1)"
 fi

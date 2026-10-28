@@ -15,6 +15,7 @@
       confirm: "Delete your request for “{t}”?\n\n",
       clear: "This removes the title too: its Radarr/Sonarr entry, downloaded files (7 days in the recycle bin), running downloads and the Jellyfin entry. Nobody else requested it.",
       only: "Only your request goes; the title stays (someone else requested it too, or it was in the library before).",
+      filesWarn: "This also deletes the downloaded files ({f}) from the library", keep: "Remove request only, keep the files", files: "Delete files too", again: "Tap again to delete {s} of files", cancel: "Cancel", episodes: "{n} episodes",
       locale: "en-GB",
     },
     de: {
@@ -27,6 +28,7 @@
       confirm: "Deine Anfrage für «{t}» löschen?\n\n",
       clear: "Damit geht auch der Titel: Eintrag in Radarr/Sonarr, heruntergeladene Dateien (7 Tage im Papierkorb), laufende Downloads und der Jellyfin-Eintrag. Niemand sonst hat ihn angefragt.",
       only: "Nur deine Anfrage geht; der Titel bleibt (jemand anderes hat ihn auch angefragt, oder er war schon vorher in der Bibliothek).",
+      filesWarn: "Damit werden auch die heruntergeladenen Dateien ({f}) aus der Bibliothek gelöscht", keep: "Nur Anfrage entfernen, Dateien behalten", files: "Dateien auch löschen", again: "Nochmals tippen: {s} Dateien löschen", cancel: "Abbrechen", episodes: "{n} Folgen",
       locale: "de-CH",
     },
   };
@@ -43,7 +45,14 @@
     "#hg-my-request .hg-actions button{padding:.45rem 1rem;border-radius:.375rem;font-weight:600;border:1px solid #6366f1;background:#4f46e5;color:#fff;cursor:pointer}" +
     "#hg-my-request .hg-actions button[data-delete]{background:transparent;border-color:#ef4444;color:#fca5a5}" +
     "#hg-my-request .hg-actions button:disabled{opacity:.5;cursor:default}#hg-my-request [data-hg-icon]{cursor:help;margin-left:.2rem}" +
-    "#hg-my-request [role=status]{display:block;margin-top:.6rem}";
+    "#hg-my-request [role=status]{display:block;margin-top:.6rem}" +
+    "#hg-my-request [data-delete-dialog]{margin-top:1rem;padding:.75rem;border:1px solid #ef4444;border-radius:.5rem;background:rgba(127,29,29,.35)}" +
+    "#hg-my-request [data-delete-warning]{color:#f87171;font-weight:700;margin:0 0 .6rem}" +
+    "#hg-my-request [data-delete-dialog] button{padding:.45rem 1rem;border-radius:.375rem;font-weight:600;cursor:pointer;margin:.25rem .5rem .25rem 0}" +
+    "#hg-my-request [data-delete-dialog] button[data-delete-keep]{border:1px solid #6366f1;background:#4f46e5;color:#fff}" +
+    "#hg-my-request [data-delete-dialog] button[data-delete-files]{border:1px solid #ef4444;background:transparent;color:#fca5a5}" +
+    "#hg-my-request [data-delete-dialog] button[data-delete-files][data-armed]{background:#dc2626;color:#fff}" +
+    "#hg-my-request [data-delete-dialog] button[data-delete-cancel]{border:1px solid #4b5563;background:transparent;color:#e5e7eb}";
   var me = null;
   var current = null;
 
@@ -55,7 +64,13 @@
       x.withCredentials = true;
       if (body !== undefined) x.setRequestHeader("Content-Type", "application/json");
       x.onload = function () {
-        try { x.status === 200 ? resolve(JSON.parse(x.responseText)) : reject(new Error(String(x.status))); } catch (e) { reject(e); }
+        var err;
+        if (x.status !== 200) {
+          err = new Error(String(x.status));
+          try { err.body = JSON.parse(x.responseText); } catch (e) { err.body = null; }
+          return reject(err);
+        }
+        try { resolve(JSON.parse(x.responseText)); } catch (e) { reject(e); }
       };
       x.onerror = function () { reject(new Error("network")); };
       x.send(body === undefined ? null : JSON.stringify(body));
@@ -91,6 +106,12 @@
     var s = el(doc, "span", { "data-hg-icon": "", role: "img", title: hint, "aria-label": hint }, list.map(function (x) { return x[0]; }).join(""));
     if (nl.hint) nl.hint(s, hint);
     return [s];
+  }
+
+  function size(bytes) {
+    var b = +bytes || 0;
+    if (b <= 0) return "";
+    return b >= 1e10 ? Math.round(b / 1e9) + " GB" : b >= 1e9 ? (b / 1e9).toFixed(1) + " GB" : Math.max(1, Math.round(b / 1e6)) + " MB";
   }
 
   function day(iso, t) {
@@ -184,15 +205,47 @@
       save.disabled = !changed;
     }
     var del = el(doc, "button", { type: "button", "data-delete": "" }, t.del);
-    del.addEventListener("click", function () {
-      var name = ctx.name;
-      var text = t.confirm.replace("{t}", name) + (r.deleteEffect === "clear" ? t.clear : t.only);
-      if (!(typeof window !== "undefined" ? window.confirm(text) : false)) return;
+    function send(files) {
+      var body = { type: title.type, tmdbId: title.tmdbId, action: "delete", requestId: r.id };
+      if (files) body.files = files;
       del.disabled = true;
-      request("POST", API, { type: title.type, tmdbId: title.tmdbId, action: "delete", requestId: r.id }).then(function () {
+      request("POST", API, body).then(function () {
         box.textContent = "";
         box.appendChild(el(doc, "span", { role: "status" }, t.deleted));
-      }, function () { del.disabled = false; status.textContent = t.error; });
+      }, function (e) {
+        del.disabled = false;
+        if (e && e.message === "409" && e.body && e.body.files) filesDialog(e.body.files);
+        else status.textContent = t.error;
+      });
+    }
+    // files on disk: the title would go with them, so the safe choice (keep the files) is the default and deleting needs a second tap
+    function filesDialog(files) {
+      var old = box.querySelector("[data-delete-dialog]");
+      if (old) old.parentNode.removeChild(old);
+      var d = el(doc, "div", { "data-delete-dialog": "", role: "alertdialog" });
+      var what = (files.count > 1 || !files.name ? t.episodes.replace("{n}", String(files.count)) : files.name) + (size(files.size) ? ", " + size(files.size) : "");
+      d.appendChild(el(doc, "p", { "data-delete-warning": "" }, t.filesWarn.replace("{f}", what)));
+      var keep = el(doc, "button", { type: "button", "data-delete-keep": "" }, t.keep);
+      var gone = el(doc, "button", { type: "button", "data-delete-files": "" }, t.files);
+      var cancel = el(doc, "button", { type: "button", "data-delete-cancel": "" }, t.cancel);
+      keep.addEventListener("click", function () { d.parentNode && d.parentNode.removeChild(d); send("keep"); });
+      gone.addEventListener("click", function () {
+        if (!gone.hasAttribute("data-armed")) { gone.setAttribute("data-armed", ""); gone.textContent = t.again.replace("{s}", size(files.size) || "?"); return; }
+        d.parentNode && d.parentNode.removeChild(d);
+        send("delete");
+      });
+      cancel.addEventListener("click", function () { d.parentNode && d.parentNode.removeChild(d); });
+      d.appendChild(keep);
+      d.appendChild(gone);
+      d.appendChild(cancel);
+      actions.parentNode ? box.insertBefore(d, status) : box.appendChild(d);
+      keep.focus();
+    }
+    del.addEventListener("click", function () {
+      if (r.deleteEffect === "clear" && r.files) return filesDialog(r.files);
+      var text = t.confirm.replace("{t}", ctx.name) + (r.deleteEffect === "clear" ? t.clear : t.only);
+      if (!(typeof window !== "undefined" ? window.confirm(text) : false)) return;
+      send(null);
     });
     actions.appendChild(del);
     box.appendChild(actions);

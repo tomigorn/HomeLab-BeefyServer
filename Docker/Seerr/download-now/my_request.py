@@ -1,6 +1,7 @@
 """My request (README "My request"): the panel on Seerr's title page. Shows what a request set (profile, audio/subtitle tags, Can wait, seasons) and lets its requester (or a manager) change it or delete it.
 Approved requests change the Radarr/Sonarr title (Seerr edits only pending requests); pending ones change in Seerr, which hands them to Radarr/Sonarr on approval. Only audio-*/subs-* tags, only existing profiles.
-A profile picked on a pending request gets the profile-pinned tag (kept on later tag changes); on an approved one Movie-Downloads' request-tags.sh pins it."""
+A profile picked on a pending request gets the profile-pinned tag (kept on later tag changes); on an approved one Movie-Downloads' request-tags.sh pins it.
+A delete that would clear a title with files on disk needs "files": "delete" (or "keep": only the request goes); without it nothing changes (409)."""
 import datetime
 import json
 import re
@@ -65,6 +66,17 @@ class Ctx:
         added, created = _when(self.title.get("added")), _when(r.get("createdAt"))
         return "clear" if added is not None and created is not None and added >= created - ADDED_GRACE else "request-only"
 
+    def files(self):
+        t = self.title or {}
+        if self.kind == "movie":
+            f = t.get("movieFile") if isinstance(t.get("movieFile"), dict) else {}
+            if not t.get("hasFile"):
+                return None
+            return {"count": 1, "size": f.get("size") or t.get("sizeOnDisk") or 0, "name": (f.get("relativePath") or "").rsplit("/", 1)[-1] or None}
+        st = t.get("statistics") if isinstance(t.get("statistics"), dict) else {}
+        n = st.get("episodeFileCount") or 0
+        return {"count": n, "size": st.get("sizeOnDisk") or 0, "name": None} if n > 0 else None
+
     def settings(self, r):
         if r.get("status") == APPROVED and self.title is not None:
             return self.title.get("qualityProfileId"), [self.tags.get(i) for i in self.title.get("tags") or []]
@@ -79,7 +91,7 @@ class Ctx:
                "profile": next((p for p in self.profiles if p["id"] == pid), {"id": pid, "name": str(pid)}),
                "tags": sorted((human(l) for l in labels if ALLOWED.match(l)), key=lambda t: t["label"]),
                "auto": [l for l in labels if l in AUTO], "canWait": self.dn.TAG not in labels,
-               "editable": self.editable(r), "deleteEffect": self.delete_effect(r)}
+               "editable": self.editable(r), "deleteEffect": self.delete_effect(r), "files": self.files()}
         if self.manager:
             out["mine"] = _owner(r) == self.me["id"]
         roots = self.arr("/rootfolder")
@@ -151,10 +163,18 @@ def update(c, r, want):
     return changed
 
 
-def delete(c, r):
+class NeedsFiles(Exception):
+    pass
+
+
+def delete(c, r, files=None):
     if c.deps.seerr_admin is None:
         raise c.dn.ApiError("no Seerr admin key")
     effect = c.delete_effect(r)
+    if effect == "clear" and files == "keep":
+        effect = "request-only"
+    elif effect == "clear" and files != "delete" and c.files():
+        raise NeedsFiles()
     if effect == "clear":
         c.deps.seerr_admin(f"/media/{c.media['mediaInfo']['id']}", "DELETE")
     else:
@@ -195,7 +215,7 @@ def handle(dn, method, path, headers, body, deps):
             kind, tmdb, action, rid = req.get("type"), str(req.get("tmdbId", "")), req.get("action"), req.get("requestId")
         except (ValueError, AttributeError, RecursionError):
             return 400, {"error": "bad request"}
-        if action not in ("update", "delete") or not isinstance(rid, int) or isinstance(rid, bool):
+        if action not in ("update", "delete") or not isinstance(rid, int) or isinstance(rid, bool) or req.get("files") not in (None, "keep", "delete"):
             return 400, {"error": "bad request"}
     else:
         q = urllib.parse.parse_qs(url.query)
@@ -220,7 +240,10 @@ def handle(dn, method, path, headers, body, deps):
             if r is None or not c.editable(r) and not (action == "delete" and _owner(r) == me["id"]):
                 return 403, {"error": "forbidden"}
             if action == "delete":
-                effect = delete(c, r)
+                try:
+                    effect = delete(c, r, req.get("files"))
+                except NeedsFiles:
+                    return 409, {"error": "files", "files": c.files()}
                 print(f"user {me['id']} ({'manager' if manager else 'own request'}) request {rid} {kind} {tmdb}: deleted ({effect})", flush=True)
                 return 200, {"deleted": effect}
             want = validate(req, c)

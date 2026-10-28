@@ -186,3 +186,75 @@ test("leaving the title removes the card; a re-render keeps one card", async () 
   await settle();
   assert.equal(panel(w), null);
 });
+
+const FILES = { count: 1, size: 61000000000, name: "Tied Up (2023) [2160p].mkv" };
+const dialog = (w) => panel(w).querySelector("[data-delete-dialog]");
+
+test("delete with files on disk: a red warning with name and size, 'keep the files' is the focused default and sends files: keep", async () => {
+  const calls = [], confirms = [];
+  const w = page(STATE([R({ files: FILES })]), { [POST]: { deleted: "request-only" } }, calls, undefined, undefined, true, confirms);
+  await settle();
+  panel(w).querySelector("button[data-delete]").click();
+  await settle();
+  assert.equal(confirms.length, 0);
+  const d = dialog(w);
+  assert.ok(d);
+  const warn = d.querySelector("[data-delete-warning]");
+  assert.equal(warn.textContent, "This also deletes the downloaded files (Tied Up (2023) [2160p].mkv, 61 GB) from the library");
+  assert.match(w.document.getElementById("hg-my-request-style").textContent, /\[data-delete-warning\]\{[^}]*color:#f87171/);
+  const keep = d.querySelector("button[data-delete-keep]");
+  assert.equal(keep.textContent, "Remove request only, keep the files");
+  assert.equal(w.document.activeElement, keep);
+  assert.ok(!calls.some((c) => c.method === "POST"));
+  keep.click();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.method === "POST").body, { type: "movie", tmdbId: 1480613, action: "delete", requestId: 57, files: "keep" });
+  assert.match(panel(w).querySelector("[role=status]").textContent, /Request deleted/);
+});
+
+test("delete with files on disk: 'Delete files too' needs a second tap, cancel closes without a change", async () => {
+  const calls = [];
+  const w = page(STATE([R({ files: FILES })]), { [POST]: { deleted: "clear" } }, calls);
+  await settle();
+  panel(w).querySelector("button[data-delete]").click();
+  await settle();
+  const files = dialog(w).querySelector("button[data-delete-files]");
+  assert.equal(files.textContent, "Delete files too");
+  files.click();
+  await settle();
+  assert.ok(!calls.some((c) => c.method === "POST"));
+  assert.equal(files.textContent, "Tap again to delete 61 GB of files");
+  files.click();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.method === "POST").body, { type: "movie", tmdbId: 1480613, action: "delete", requestId: 57, files: "delete" });
+  const calls2 = [];
+  const w2 = page(STATE([R({ files: { count: 12, size: 30000000000, name: null } })]), {}, calls2);
+  await settle();
+  panel(w2).querySelector("button[data-delete]").click();
+  await settle();
+  assert.match(dialog(w2).querySelector("[data-delete-warning]").textContent, /\(12 episodes, 30 GB\)/);
+  dialog(w2).querySelector("button[data-delete-cancel]").click();
+  await settle();
+  assert.equal(dialog(w2), null);
+  assert.ok(!calls2.some((c) => c.method === "POST"));
+});
+
+test("files appeared after the panel loaded: the server refuses (409) and the panel shows the files warning", async () => {
+  const calls = [];
+  const w = page(STATE(), { [POST]: (b) => (b.files ? { deleted: "request-only" } : { status: 409, body: { error: "files", files: FILES } }) }, calls);
+  await settle();
+  panel(w).querySelector("button[data-delete]").click();
+  await settle();
+  assert.match(dialog(w).querySelector("[data-delete-warning]").textContent, /61 GB/);
+});
+
+test("German files warning", async () => {
+  const w = page(STATE([R({ files: FILES })]), {}, [], undefined, titlePage("Angefragt"));
+  await settle();
+  panel(w).querySelector("button[data-delete]").click();
+  await settle();
+  const d = dialog(w);
+  assert.equal(d.querySelector("[data-delete-warning]").textContent, "Damit werden auch die heruntergeladenen Dateien (Tied Up (2023) [2160p].mkv, 61 GB) aus der Bibliothek gelöscht");
+  assert.equal(d.querySelector("button[data-delete-keep]").textContent, "Nur Anfrage entfernen, Dateien behalten");
+  assert.equal(d.querySelector("button[data-delete-files]").textContent, "Dateien auch löschen");
+});

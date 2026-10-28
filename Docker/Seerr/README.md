@@ -343,7 +343,7 @@ Title page → card **My request** under the title header (German **Meine Anfrag
 | Audio & subtitles (`audio-*`, `subs-*` as "Audio: French", "Subtitles: Spanish") | remove (×), add from the existing `audio-*`/`subs-*` tags only; other tags never |
 | Can wait | on/off: off = [Download now](#download-now) (tag, night downloads move, search); on = `download-now` removed |
 | Requested date, status, seasons, 4K, `old-rare` "(automatic)", `profile-pinned` "Quality kept (your pick)", folder only when there is more than one | read-only |
-| **Delete request** | confirm dialog says what goes (below) |
+| **Delete request** | confirm dialog says what goes (below). Files on disk and the delete would clear the title: no plain confirm, a red warning "This also deletes the downloaded files (<file>, 61 GB) from the library", default (focused) **Remove request only, keep the files**; **Delete files too** needs a second tap ("Tap again to delete 61 GB of files") |
 
 | Delete when | What goes |
 |---|---|
@@ -356,7 +356,7 @@ Title page → card **My request** under the title header (German **Meine Anfrag
 | Approved request | Seerr edits only pending requests (409), so the backend changes the Radarr/Sonarr title (`/movie\|series/editor`: profile, tags add/remove); `../Movie-Downloads/scripts/request-tags.sh` sees the change within 2 min and recomputes the title: default rules + every remaining tag, a removed tag goes back to the default, a picked profile is pinned (`../Movie-Downloads/README.md` "Tag changes"); one search if profile or audio changed |
 | Pending request | `PUT /api/v1/request/<id>` (profile, tags incl. `download-now` and `profile-pinned` for a picked non-Swiss profile, seasons kept); Seerr hands it to Radarr/Sonarr on approval |
 | Delete | `DELETE /api/v1/media/<id>` (Clear Data) or `DELETE /api/v1/request/<id>`, with Seerr's API key (`secrets/download-now/seerr.apikey`; a requester's own approved request cannot be deleted with their session) |
-| API | `GET /_download-now/request?type=movie\|tv&tmdb=<id>` → `requests` (`id`, `status`, `profile`, `tags`, `auto`, `canWait`, `seasons`, `editable`, `deleteEffect` clear/request-only, `by` for managers), `profiles`, `tags`. `POST /_download-now/request` `{"type","tmdbId","action":"update","requestId",["profileId"],["tags"],["canWait"]}` or `{"…","action":"delete","requestId"}`; Origin + JSON only like Download now |
+| API | `GET /_download-now/request?type=movie\|tv&tmdb=<id>` → `requests` (`id`, `status`, `profile`, `tags`, `auto`, `canWait`, `seasons`, `editable`, `deleteEffect` clear/request-only, `by` for managers), `profiles`, `tags`. `POST /_download-now/request` `{"type","tmdbId","action":"update","requestId",["profileId"],["tags"],["canWait"]}` or `{"…","action":"delete","requestId",["files":"keep"\|"delete"]}`; a delete that would clear a title with files needs `files` (else 409 `{"error":"files","files":{count,size,name}}`, nothing changes; `keep` = only the request); `requests[].files` = `{count, size, name}` or null; Origin + JSON only like Download now |
 | Script | `indexer-bar/www/my-request.js` (injected by `seerr-proxy`), `<details>` card after `.media-header`; 403 or error = no card |
 | Log | `sudo docker logs seerr-download-now`: one line per change (user, role, request, title, what changed / deleted how) |
 | Deleted right after the request | wiped too: the Radarr/Sonarr add triggers a `clear-data-wipe.sh` snapshot within seconds (`../Movie-Downloads/README.md` "Delete a title") |

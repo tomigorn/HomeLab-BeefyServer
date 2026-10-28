@@ -248,6 +248,32 @@ class Delete(unittest.TestCase):
         post(w, {"action": "delete", "requestId": 57})
         self.assertEqual(w.admin_calls, [("DELETE", "/request/57", None)])
 
+    def test_files_on_disk_are_listed_for_the_delete_warning(self):
+        w = World(t=title(has_file=True) | {"movieFile": {"relativePath": "Tied Up (2023) [2160p].mkv", "size": 61000000000}})
+        self.assertEqual(get(w)[1]["requests"][0]["files"], {"count": 1, "size": 61000000000, "name": "Tied Up (2023) [2160p].mkv"})
+        self.assertIsNone(get(World())[1]["requests"][0]["files"])
+        sw = World(kind="tv", t=title(has_file=False) | {"statistics": {"episodeFileCount": 12, "sizeOnDisk": 30000000000}})
+        self.assertEqual(get(sw, "type=tv&tmdb=673")[1]["requests"][0]["files"], {"count": 12, "size": 30000000000, "name": None})
+
+    def test_clearing_a_title_with_files_needs_the_explicit_files_choice(self):
+        w = World(t=title(has_file=True) | {"movieFile": {"relativePath": "Tied Up (2023) [2160p].mkv", "size": 61000000000}})
+        status, out = post(w, {"action": "delete", "requestId": 57})
+        self.assertEqual((status, out["error"], out["files"]["size"]), (409, "files", 61000000000))
+        self.assertEqual(w.admin_calls, [])
+        status, out = post(w, {"action": "delete", "requestId": 57, "files": "keep"})
+        self.assertEqual((status, out["deleted"]), (200, "request-only"))
+        self.assertEqual(w.admin_calls, [("DELETE", "/request/57", None)])
+        w2 = World(t=title(has_file=True))
+        status, out = post(w2, {"action": "delete", "requestId": 57, "files": "delete"})
+        self.assertEqual((status, out["deleted"]), (200, "clear"))
+        self.assertEqual(w2.admin_calls, [("DELETE", "/media/69", None)])
+        self.assertEqual(post(w2, {"action": "delete", "requestId": 57, "files": "yes"})[0], 400)
+
+    def test_nothing_downloaded_keep_files_still_only_removes_the_request(self):
+        w = World()
+        post(w, {"action": "delete", "requestId": 57, "files": "keep"})
+        self.assertEqual(w.admin_calls, [("DELETE", "/request/57", None)])
+
     def test_without_the_seerr_admin_key_nothing_changes(self):
         w = World()
         d = w.deps()
