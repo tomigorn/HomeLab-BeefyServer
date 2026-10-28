@@ -310,6 +310,23 @@ class Storage(unittest.TestCase):
         self.assertNotIn("/hot", json.dumps(data))
         self.assertIn('beefy_storage_avail_bytes{branch="ssd"}', text)
 
+    def test_bar_texts_come_with_the_data(self):
+        def api(path):
+            raise iu.ApiError("down")
+        st = fake_statvfs({"/hot": FakeStat(8 * TIB, 5 * TIB), "/cold": FakeStat(28 * TIB, 27 * TIB)})
+        with tempfile.TemporaryDirectory() as d:
+            out = pathlib.Path(d) / "usage.json"
+            iu.run(Run.CFG, api, out, utc(2026, 10, 26, 12, 0), disks=DISKS, statvfs=st)
+            data = json.loads(out.read_text())
+        ssd, hdd = data["storage"]
+        self.assertEqual(ssd["hint"]["en"], "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; from 80 % new downloads go straight to the HDD.")
+        self.assertEqual(ssd["hint"]["de"], "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab 80 % landen neue Downloads direkt auf der HDD.")
+        self.assertEqual((ssd["sub"], ssd["partsLabel"]), ({"en": "fast tier, new downloads", "de": "schnell, neue Downloads"}, "SSDs"))
+        self.assertEqual(hdd["hint"]["en"], "Archive for older titles. From 90 % new downloads are no longer imported.")
+        self.assertEqual(hdd["sub"], {"en": "archive", "de": "Archiv"})
+        self.assertTrue(data["note"]["en"].startswith("When a limited indexer is used up, requests may wait until it resets"))
+        self.assertNotIn("showUnlimited", data)
+
     def test_default_disks_are_the_two_branches(self):
         self.assertEqual([(d["name"], d["paths"], d["yellow"], d["red"]) for d in iu.DISKS],
                          [("SSD", ["/srv/.disks/ssd-hot", "/srv/.disks/ssd-hot2"], 0.70, 0.80), ("HDD", ["/srv/.disks/hdd-cold"], 0.80, 0.90)])
