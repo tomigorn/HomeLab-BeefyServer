@@ -7,8 +7,14 @@ const TB = 1024 ** 4, GB = 1024 ** 3;
 function usage(storage) {
   return { ok: true, generated: new Date().toISOString(), indexers: [], subscriptions: [], storage };
 }
-const SSD = { name: "SSD", total: 7.3 * TB, used: 2.7 * TB, free: 4.6 * TB, pct: 37.6, level: "ok", yellow: 70, red: 80 };
-const HDD = { name: "HDD", total: 28 * TB, used: 535 * GB, free: 27.5 * TB, pct: 1.9, level: "ok", yellow: 80, red: 90 };
+// Texts as scripts/indexer-usage.py writes them.
+const SSD = { name: "SSD", total: 7.3 * TB, used: 2.7 * TB, free: 4.6 * TB, pct: 37.6, level: "ok", yellow: 70, red: 80, partsLabel: "SSDs",
+  sub: { en: "fast tier, new downloads", de: "schnell, neue Downloads" },
+  hint: { en: "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; from 80 % new downloads go straight to the HDD.",
+    de: "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab 80 % landen neue Downloads direkt auf der HDD." } };
+const HDD = { name: "HDD", total: 28 * TB, used: 535 * GB, free: 27.5 * TB, pct: 1.9, level: "ok", yellow: 80, red: 90,
+  sub: { en: "archive", de: "Archiv" },
+  hint: { en: "Archive for older titles. From 90 % new downloads are no longer imported.", de: "Archiv für ältere Titel. Ab 90 % werden neue Downloads nicht mehr importiert." } };
 
 const open = [];
 afterEach(() => { while (open.length) open.pop().close(); });
@@ -118,4 +124,30 @@ test("login by client-side navigation: the bar appears without a reload", async 
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(w.document.getElementById("indexer-bar"), null);
   assert.equal(w.document.documentElement.classList.contains("ib-on"), false);
+});
+
+test("without its config tag the bar does nothing", async () => {
+  let n = 0;
+  const w = load("bar.js", "", (win) => { win.fetch = () => { n++; return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(usage([SSD])) }); }; }, undefined, "");
+  open.push(w);
+  await tick(); await tick(); await tick();
+  assert.equal(n, 0);
+  assert.equal(w.document.getElementById("indexer-bar"), null);
+});
+
+test("Seerr: unlimited indexers only under more, no quota chip", async () => {
+  const d = usage([SSD]);
+  d.indexers = [{ name: "NZBgeek", limited: false, window: "rolling", level: "ok", searches: { used: 3, limit: null, level: "ok" }, downloads: { used: 1, limit: null, level: "ok" } }];
+  const w = await bar(d);
+  assert.equal(w.document.querySelector("#indexer-bar [data-ib-indexer]"), null);
+  assert.equal(w.document.querySelector("#indexer-bar [data-ib-quota]"), null);
+  assert.doesNotMatch(w.document.querySelector("#indexer-bar .ib-chips").textContent, /NZBgeek/);
+});
+
+test("panel note comes from the data", async () => {
+  const d = usage([SSD]);
+  d.note = "When a limited indexer is used up, requests may wait until it resets.";
+  const w = await bar(d);
+  w.document.querySelector("#indexer-bar .ib-more").click();
+  assert.match(w.document.querySelector("#indexer-bar .ib-panel").textContent, /requests may wait until it resets/);
 });

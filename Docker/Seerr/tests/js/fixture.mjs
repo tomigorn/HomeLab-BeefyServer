@@ -40,9 +40,12 @@ export function modal(title, ok = "Request") {
   </div></div></div>`;
 }
 
+// bar.js config as seerr-proxy injects it (nginx.conf sub_filter).
+export const BAR_TAG = `<script data-ib-data="/_indexer-bar/usage.json" data-ib-no-bar="^/(login|setup|resetpassword)(/|$)" data-ib-lang-hook="hgNightLabel" data-ib-lang-probe='a[href="/discover/tv"]' data-ib-lang-de="Serien"></script>`;
+
 // A DOM with the given body; `before` runs in the window before the script (stubs), then the script itself.
-export function load(script, body, before, url = "https://requests.example.com/movie/1") {
-  const dom = new JSDOM(`<!doctype html><html><head></head><body>${body}</body></html>`, { runScripts: "outside-only", url });
+export function load(script, body, before, url = "https://requests.example.com/movie/1", head = BAR_TAG) {
+  const dom = new JSDOM(`<!doctype html><html><head>${head}</head><body>${body}</body></html>`, { runScripts: "outside-only", url });
   if (before) before(dom.window);
   dom.window.eval(readFileSync(new URL(script, WWW), "utf8"));
   return dom.window;

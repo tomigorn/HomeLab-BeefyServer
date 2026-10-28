@@ -1,3 +1,4 @@
+/* Shared bar, one codebase: canonical in HomeLab-BeefyServer Docker/Seerr/indexer-bar/www/, vendored unchanged in HomeLab-FastPi Docker/Audiobook-Requests/books-proxy/www/bar/. Page offsets: #__next = Seerr, .toastify-top = AudioBookRequest. */
 :root { --ib-h: 28px; }
 html.ib-mini { --ib-h: 18px; }
 html.ib-on body { padding-top: var(--ib-h) !important; }
@@ -5,6 +6,7 @@ html.ib-on #__next .fixed.top-0,
 html.ib-on #__next .fixed.inset-0,
 html.ib-on #__next .fixed.inset-y-0,
 html.ib-on #__next .sticky.top-0 { top: var(--ib-h) !important; }
+html.ib-on .toastify-top { margin-top: var(--ib-h); }
 
 #indexer-bar, #indexer-bar * { box-sizing: border-box; }
 #indexer-bar {

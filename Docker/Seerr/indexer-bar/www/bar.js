@@ -1,12 +1,16 @@
+// Shared bar, one codebase: canonical in HomeLab-BeefyServer Docker/Seerr/indexer-bar/www/, vendored unchanged in HomeLab-FastPi Docker/Audiobook-Requests/books-proxy/www/bar/ (scripts/sync-bar.sh). Config and data format: indexer-bar/schema.md.
 (function () {
   "use strict";
   if (window.__indexerBar) return;
+  var tag = document.currentScript || document.querySelector("script[data-ib-data]");
+  var cfg = (tag && tag.dataset) || {};
+  if (!cfg.ibData) return;
   window.__indexerBar = true;
 
-  var DATA = "/_indexer-bar/usage.json", REFRESH = 60000, STALE = 10 * 60000, KEY = "indexer-bar-mini";
+  var DATA = cfg.ibData, QUOTA = cfg.ibQuota || null, REFRESH = 60000, STALE = 10 * 60000, KEY = "indexer-bar-mini";
   var RANK = { ok: 0, yellow: 1, warn: 2, orange: 3, full: 4 };
-  var bar, data = null, panelOpen = false, mini = false, authed = false, lastLoad = 0, RETRY = 4000;
-  var NO_BAR = /^\/(login|setup|resetpassword)(\/|$)/;
+  var bar, data = null, quota = null, panelOpen = false, mini = false, authed = false, lastLoad = 0, RETRY = 4000;
+  var NO_BAR = cfg.ibNoBar ? new RegExp(cfg.ibNoBar) : null;
 
   try { mini = localStorage.getItem(KEY) === "1"; } catch (e) {}
 
@@ -63,19 +67,18 @@
     return (s.daysLeft === 1 ? "1 day" : s.daysLeft + " days") + " left · " + day(s.expires);
   }
 
-  var DISK_TEXT = {
-    en: { free: "free", head: "Storage", SSD: "fast tier, new downloads", HDD: "archive",
-      rule: { SSD: function (d) { return "Above " + d.yellow + " % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; from " + d.red + " % new downloads go straight to the HDD."; },
-        HDD: function (d) { return "Archive for older titles. From " + d.red + " % new downloads are no longer imported."; } } },
-    de: { free: "frei", head: "Speicher", SSD: "schnell, neue Downloads", HDD: "Archiv",
-      rule: { SSD: function (d) { return "Ab " + d.yellow + " % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab " + d.red + " % landen neue Downloads direkt auf der HDD."; },
-        HDD: function (d) { return "Archiv für ältere Titel. Ab " + d.red + " % werden neue Downloads nicht mehr importiert."; } } }
+  var TEXT = {
+    en: { free: "free", head: "Storage", quota: "My requests", frees: "next free ", days: function (n) { return " in " + n + " days"; },
+      quotaNote: function (q) { return q.limit + " requests per person in " + q.days + " days, deleted requests count too."; } },
+    de: { free: "frei", head: "Speicher", quota: "Meine Anfragen", frees: "wieder frei ", days: function (n) { return " in " + n + " Tagen"; },
+      quotaNote: function (q) { return q.limit + " Anfragen pro Person in " + q.days + " Tagen, gelöschte Anfragen zählen mit."; } }
   };
+  function tr(v, l) { return v == null ? "" : typeof v === "string" ? v : v[l] || v.en || ""; }
   function lang() {
-    var nl = window.hgNightLabel;
-    if (nl && nl.lang) { try { return nl.lang() === "de" ? "de" : "en"; } catch (e) { /* own detection */ } }
-    var tv = document.querySelector('a[href="/discover/tv"]');
-    if (tv) return /\bSerien\b/.test(tv.textContent) ? "de" : "en";
+    var hook = cfg.ibLangHook && window[cfg.ibLangHook];
+    if (hook && hook.lang) { try { return hook.lang() === "de" ? "de" : "en"; } catch (e) { /* own detection */ } }
+    var probe = cfg.ibLangProbe && document.querySelector(cfg.ibLangProbe);
+    if (probe && cfg.ibLangDe) return probe.textContent.indexOf(cfg.ibLangDe) >= 0 ? "de" : "en";
     return /^de\b/i.test(navigator.language || "") ? "de" : "en";
   }
   function bytes(n, l) {
@@ -87,10 +90,11 @@
     if (used.slice(-2) === total.slice(-2)) used = used.slice(0, -3);
     return used + "/" + total;
   }
+  function diskName(d, l) { return tr(d.label, l) || d.name; }
   function diskHint(d, l) {
-    var t = DISK_TEXT[l], rule = t.rule[d.name];
-    var parts = Array.isArray(d.parts) && d.parts.length > 1 ? " (" + d.parts.length + " SSDs: " + d.parts.map(function (p) { return Math.round(p) + " %"; }).join(" · ") + ")" : "";
-    return d.name + ": " + bytes(d.free, l) + " " + t.free + parts + "." + (rule ? " " + rule(d) : "");
+    var rule = tr(d.hint, l);
+    var parts = Array.isArray(d.parts) && d.parts.length > 1 ? " (" + d.parts.length + (d.partsLabel ? " " + d.partsLabel : "") + ": " + d.parts.map(function (p) { return Math.round(p) + " %"; }).join(" · ") + ")" : "";
+    return diskName(d, l) + ": " + bytes(d.free, l) + " " + TEXT[l].free + parts + "." + (rule ? " " + rule : "");
   }
   function diskMeter(d) {
     var box = el("span", "ib-meter ib-" + d.level), fill = el("span", "ib-fill");
@@ -102,25 +106,45 @@
   function diskChips(box, d) {
     var l = lang();
     disks(d).forEach(function (x) {
-      var c = add(el("span", "ib-chip"), el("span", "ib-name", x.name), diskMeter(x),
+      var c = add(el("span", "ib-chip"), el("span", "ib-name", diskName(x, l)), diskMeter(x),
         el("span", x.level === "ok" ? "" : "ib-" + x.level + "-text", diskUsed(x, l)), el("span", "ib-muted", Math.round(x.pct) + " %"));
-      c.setAttribute("data-ib-disk", x.name);
+      c.setAttribute("data-ib-disk", x.id || x.name);
       c.title = diskHint(x, l);
       box.appendChild(c);
     });
   }
   function diskPanel(p, d) {
-    var list = disks(d), l = lang(), t = DISK_TEXT[l];
+    var list = disks(d), l = lang(), t = TEXT[l];
     if (!list.length) return;
     var tbl = el("table");
     list.forEach(function (x) {
-      var rule = t.rule[x.name];
-      add(tbl, add(el("tr"), add(el("td"), el("div", "ib-name", x.name), el("div", "ib-muted", t[x.name] || "")),
+      var rule = tr(x.hint, l);
+      add(tbl, add(el("tr"), add(el("td"), el("div", "ib-name", diskName(x, l)), el("div", "ib-muted", tr(x.sub, l))),
         add(el("td"), add(el("div", "ib-line"), diskMeter(x), el("span", x.level === "ok" ? "" : "ib-" + x.level + "-text", diskUsed(x, l) + " · " + Math.round(x.pct) + " %")),
           add(el("div", "ib-line"), el("span", "ib-muted", bytes(x.free, l) + " " + t.free)))));
-      if (rule) { var rc = el("td", "ib-muted ib-rule", rule(x)); rc.colSpan = 2; add(tbl, add(el("tr"), rc)); }
+      if (rule) { var rc = el("td", "ib-muted ib-rule", rule); rc.colSpan = 2; add(tbl, add(el("tr"), rc)); }
     });
     add(p, el("h4", null, t.head), tbl);
+  }
+
+  function quotaLevel(q) { return q.used >= q.limit ? "full" : q.used >= q.limit - 1 ? "warn" : "ok"; }
+  function quotaParts(q, l) {
+    var m = { used: q.used, limit: q.limit, level: quotaLevel(q) }, t = TEXT[l];
+    var s = add(el("span", m.level === "ok" ? "" : "ib-" + m.level + "-text"), document.createTextNode(q.used + "/" + q.limit), el("span", "ib-word", t.days(q.days)));
+    return [meter(m), s, m.level === "full" && q.freesAt ? el("span", "ib-full-text", t.frees + at(q.freesAt)) : null];
+  }
+  function quotaChip(box) {
+    if (!quota) return;
+    var l = lang(), c = add.apply(null, [el("span", "ib-chip"), el("span", "ib-name", TEXT[l].quota)].concat(quotaParts(quota, l)));
+    c.setAttribute("data-ib-quota", "");
+    c.title = TEXT[l].quotaNote(quota);
+    box.appendChild(c);
+  }
+  function quotaPanel(p) {
+    if (!quota) return;
+    var l = lang(), t = TEXT[l];
+    add(p, el("h4", null, t.quota), add(el("table"), add(el("tr"), add(el("td"), el("div", "ib-muted", t.quotaNote(quota))),
+      add(el("td"), add.apply(null, [el("div", "ib-line")].concat(quotaParts(quota, l)))))));
   }
 
   function chips(box, d) {
@@ -136,6 +160,15 @@
       add(c, resetText(r));
       box.appendChild(c);
     });
+    (d && d.ok && d.showUnlimited ? d.indexers.filter(function (r) { return !r.limited; }) : []).forEach(function (r) {
+      var c = add(el("span", "ib-chip"), el("span", "ib-name", r.name));
+      [["searches", "searches"], ["downloads", "downloads"]].forEach(function (k) {
+        add(c, add(el("span", "ib-muted"), document.createTextNode(num(r[k[0]].used) + "/∞"), el("span", "ib-word", " " + k[1])));
+      });
+      c.setAttribute("data-ib-indexer", r.name);
+      box.appendChild(c);
+    });
+    quotaChip(box);
     var subs = d ? d.subscriptions || [] : [];
     var due = subs.filter(function (s) { return s.level !== "ok"; });
     due.forEach(function (s) {
@@ -151,7 +184,7 @@
   }
 
   function panel(d) {
-    var p = el("div", "ib-panel");
+    var p = el("div", "ib-panel"), l = lang();
     p.addEventListener("click", function (e) { e.stopPropagation(); });
     if (!d || !d.ok) add(p, el("h4", null, "Indexers"), el("p", "ib-muted", "Usage unavailable right now (Prowlarr not reachable). Requests still work."));
     if (d && d.ok) {
@@ -193,19 +226,21 @@
       add(p, el("h4", null, "Subscriptions"), s);
     }
     diskPanel(p, d);
-    add(p, el("p", "ib-note", "When a limited indexer is used up, requests may wait until it resets; the other indexers keep searching. Searches made by hand on the indexer websites are not counted."));
+    quotaPanel(p);
+    if (d && d.note) add(p, el("p", "ib-note", tr(d.note, l)));
     if (d && d.generated) add(p, el("p", "ib-note", "Updated " + at(d.generated)));
     return p;
   }
 
   function render() {
     try {
+      if (!bar) return;
       var d = usable(), root = document.documentElement;
       root.classList.add("ib-on");
       root.classList.toggle("ib-mini", mini);
       bar.textContent = "";
       var rows = d && d.ok ? d.indexers.filter(function (r) { return r.limited; }) : [];
-      var level = d ? worst(rows.concat(d.subscriptions || [], disks(d))) : null;
+      var level = d ? worst(rows.concat(d.subscriptions || [], disks(d), quota ? [{ level: quotaLevel(quota) }] : [])) : null;
       var title = add(el("button", "ib-title"), el("span", "ib-dot" + (level ? " ib-" + level : "")), el("span", null, "Indexers"));
       title.title = mini ? "Show indexer usage" : "Hide indexer usage";
       title.setAttribute("aria-expanded", String(!mini));
@@ -232,7 +267,7 @@
     render();
   }
 
-  function visible() { return authed && !NO_BAR.test(location.pathname); }
+  function visible() { return authed && !(NO_BAR && NO_BAR.test(location.pathname)); }
 
   function sync() {
     if (visible()) { mount(); render(); return; }
@@ -240,17 +275,27 @@
     document.documentElement.classList.remove("ib-on", "ib-mini");
   }
 
-  // The data needs a Seerr session (401/403 without): the bar only exists once it was served.
+  function get(url) {
+    return fetch(url, { cache: "no-store", credentials: "same-origin", redirect: "manual" });
+  }
+  // The data needs a login (401/403 or a login redirect without): the bar only exists once it was served.
   function load() {
     lastLoad = Date.now();
     try {
-      fetch(DATA, { cache: "no-store", credentials: "same-origin" })
+      get(DATA)
         .then(function (r) {
-          if (r.status === 401 || r.status === 403) { authed = false; data = null; return null; }
+          if (r.status === 401 || r.status === 403 || r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400)) { authed = false; data = null; return null; }
           if (r.ok) authed = true;
           return r.ok ? r.json() : null;
         })
-        .then(function (j) { data = j && Array.isArray(j.indexers) ? j : null; sync(); })
+        .then(function (j) {
+          data = j && Array.isArray(j.indexers) ? j : null;
+          if (!QUOTA || !authed) { quota = null; return sync(); }
+          return get(QUOTA).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }).then(function (q) {
+            quota = q && typeof q.used === "number" && typeof q.limit === "number" ? q : null;
+            sync();
+          });
+        })
         .catch(function () { data = null; sync(); });
     } catch (e) {}
   }
