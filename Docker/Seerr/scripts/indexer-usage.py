@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Indexer bar (README "Indexer bar"): counts Prowlarr searches (queries + RSS) and grabs per indexer inside its limit window from indexer-bar/limits.toml, adds the subscription deadlines, and writes usage.json (names and counts only) for the bar the proxy shows above Seerr.
+"""Indexer bar (README "Indexer bar"): counts Prowlarr searches (queries + RSS) and grabs per indexer inside its limit window from indexer-bar/limits.toml, adds the subscription deadlines and the SSD/HDD fill level (statvfs of each branch), and writes usage.json (names and counts only) for the bar the proxy shows above Seerr.
+Storage also goes to IB_STORAGE_PROM (default ~/.local/state/indexer-bar/storage.prom) for fastpi's alerts.
 Prowlarr unreachable: usage.json says ok=false (the bar shows "usage unavailable"), subscriptions stay. Run by systemd/indexer-usage.timer.
 Usage: scripts/indexer-usage.py"""
 import datetime as dt
@@ -25,6 +26,9 @@ WINDOWS = {"rolling", "day"}
 AMBER, RED = 0.70, 0.95
 SUB_YELLOW_DAYS, SUB_ORANGE_DAYS, SUB_RED_DAYS = 30, 7, 0
 RANK = {"ok": 0, "yellow": 1, "warn": 2, "orange": 3, "full": 4}
+DISKS = [{"name": "SSD", "id": "ssd", "paths": ["/srv/.disks/ssd-hot", "/srv/.disks/ssd-hot2"], "yellow": 0.70, "red": 0.80},
+         {"name": "HDD", "id": "hdd", "paths": ["/srv/.disks/hdd-cold"], "yellow": 0.80, "red": 0.90}]
+PROM = pathlib.Path.home() / ".local/state/indexer-bar/storage.prom"
 
 
 class ApiError(Exception):
@@ -111,6 +115,37 @@ def subscriptions(subs, today):
     return out
 
 
+def storage(disks, statvfs=os.statvfs):
+    out = []
+    for d in disks:
+        sizes = []
+        for path in d["paths"]:
+            try:
+                st = statvfs(path)
+            except OSError:
+                continue
+            sizes.append((st.f_blocks * st.f_frsize, st.f_bavail * st.f_frsize))
+        if not sizes:
+            continue
+        total, free = sum(t for t, _ in sizes), sum(f for _, f in sizes)
+        used = total - free
+        ratio = used / total if total else 0
+        lvl = "full" if ratio >= d["red"] else "yellow" if ratio >= d["yellow"] else "ok"
+        out.append({"name": d["name"], "id": d["id"], "total": total, "used": used, "free": free, "pct": round(100 * ratio, 1),
+                    "level": lvl, "yellow": round(100 * d["yellow"]), "red": round(100 * d["red"])})
+        if len(d["paths"]) > 1:
+            out[-1]["parts"] = [round(100 * (t - f) / t, 1) if t else 0 for t, f in sizes]
+    return out
+
+
+def storage_prom(disks, now):
+    lines = []
+    for metric, key in (("size", "total"), ("avail", "free")):
+        lines += [f'beefy_storage_{metric}_bytes{{branch="{d["id"]}"}} {d[key]}' for d in disks]
+    lines.append(f"beefy_storage_updated_timestamp_seconds {int(now.timestamp())}")
+    return "\n".join(lines) + "\n"
+
+
 def load_config(path):
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
@@ -130,13 +165,18 @@ def write(path, data):
     path = pathlib.Path(path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".usage-")
     with os.fdopen(fd, "w") as f:
-        json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+        if isinstance(data, str):
+            f.write(data)
+        else:
+            json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
     os.chmod(tmp, 0o644)
     os.replace(tmp, path)
 
 
-def run(cfg, api, out, now):
-    data = {"ok": True, "generated": iso(now), "indexers": [], "subscriptions": subscriptions(cfg["subscriptions"], local_date(now))}
+def run(cfg, api, out, now, disks=DISKS, statvfs=os.statvfs, prom=None):
+    disk_rows = storage(disks, statvfs)
+    data = {"ok": True, "generated": iso(now), "indexers": [], "subscriptions": subscriptions(cfg["subscriptions"], local_date(now)),
+            "storage": [{k: v for k, v in d.items() if k != "id"} for d in disk_rows]}
     try:
         indexers = api("/indexer")
         history = api("/history/since?date=" + urllib.parse.quote(iso(since(cfg["indexers"], now)), safe=":"))
@@ -145,6 +185,9 @@ def run(cfg, api, out, now):
         data["ok"] = False
         print(f"indexer-usage: Prowlarr unavailable: {e}", file=sys.stderr)
     write(out, data)
+    if prom and disk_rows:
+        pathlib.Path(prom).parent.mkdir(parents=True, exist_ok=True)
+        write(prom, storage_prom(disk_rows, now))
     return data
 
 
@@ -168,7 +211,7 @@ def main():
     except (OSError, AttributeError):
         def api(path):
             raise ApiError("no Prowlarr API key")
-    run(cfg, api, out, dt.datetime.now(UTC).replace(microsecond=0))
+    run(cfg, api, out, dt.datetime.now(UTC).replace(microsecond=0), prom=os.environ.get("IB_STORAGE_PROM", PROM))
 
 
 if __name__ == "__main__":

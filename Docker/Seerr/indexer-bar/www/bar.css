@@ -53,6 +53,7 @@ html.ib-mini #indexer-bar .ib-dot { width: 6px; height: 6px; }
 #indexer-bar .ib-panel td:last-child { text-align: right; white-space: nowrap; }
 #indexer-bar .ib-panel .ib-line { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 #indexer-bar .ib-panel .ib-meter { width: 60px; }
+#indexer-bar .ib-panel td.ib-rule { text-align: left; white-space: normal; font-size: 12px; border-top: 0; padding-top: 0; }
 #indexer-bar .ib-note { margin: 10px 0 0; color: #9ca3af; font-size: 12px; }
 
 @media (max-width: 640px) {

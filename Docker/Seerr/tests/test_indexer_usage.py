@@ -237,5 +237,83 @@ class Run(unittest.TestCase):
         self.assertEqual(iu.since({"X": {"searches": 1, "window": "day"}}, utc(2026, 10, 25, 22, 30)), utc(2026, 10, 24, 22, 0))
 
 
+TIB = 1024 ** 4
+
+
+class FakeStat:
+    def __init__(self, total, free, frsize=4096):
+        self.f_frsize, self.f_blocks, self.f_bavail = frsize, total // frsize, free // frsize
+
+
+def fake_statvfs(table):
+    def statvfs(path):
+        if path not in table:
+            raise FileNotFoundError(path)
+        return table[path]
+    return statvfs
+
+
+DISKS = [{"name": "SSD", "id": "ssd", "paths": ["/hot"], "yellow": 0.70, "red": 0.80},
+         {"name": "HDD", "id": "hdd", "paths": ["/cold"], "yellow": 0.80, "red": 0.90}]
+
+
+class Storage(unittest.TestCase):
+    def test_used_total_free_and_percent(self):
+        st = fake_statvfs({"/hot": FakeStat(8 * TIB, 5 * TIB), "/cold": FakeStat(28 * TIB, 27 * TIB)})
+        ssd, hdd = iu.storage(DISKS, st)
+        self.assertEqual((ssd["name"], ssd["total"], ssd["used"], ssd["free"], ssd["pct"], ssd["level"]), ("SSD", 8 * TIB, 3 * TIB, 5 * TIB, 37.5, "ok"))
+        self.assertEqual((ssd["yellow"], ssd["red"]), (70, 80))
+        self.assertEqual((hdd["name"], hdd["pct"], hdd["level"], hdd["yellow"], hdd["red"]), ("HDD", 3.6, "ok", 80, 90))
+        self.assertNotIn("paths", ssd)
+        self.assertNotIn("parts", ssd)
+
+    def test_two_ssds_are_one_tier_with_parts(self):
+        disks = [{"name": "SSD", "id": "ssd", "paths": ["/hot", "/hot2"], "yellow": 0.70, "red": 0.80}]
+        st = fake_statvfs({"/hot": FakeStat(8 * TIB, 2 * TIB), "/hot2": FakeStat(8 * TIB, 8 * TIB)})
+        ssd = iu.storage(disks, st)[0]
+        self.assertEqual((ssd["total"], ssd["free"], ssd["pct"], ssd["level"]), (16 * TIB, 10 * TIB, 37.5, "ok"))
+        self.assertEqual(ssd["parts"], [75.0, 0.0])
+        st = fake_statvfs({"/hot": FakeStat(8 * TIB, 2 * TIB)})
+        self.assertEqual(iu.storage(disks, st)[0]["total"], 8 * TIB)
+
+    def test_levels_per_disk(self):
+        want = {"SSD": {0.699: "ok", 0.70: "yellow", 0.799: "yellow", 0.80: "full", 0.95: "full"},
+                "HDD": {0.799: "ok", 0.80: "yellow", 0.899: "yellow", 0.90: "full"}}
+        for disk in DISKS:
+            for ratio, level in want[disk["name"]].items():
+                total = 1000 * 4096
+                st = fake_statvfs({disk["paths"][0]: FakeStat(total, round(total * (1 - ratio) / 4096) * 4096)})
+                self.assertEqual(iu.storage([disk], st)[0]["level"], level, (disk["name"], ratio))
+
+    def test_unreadable_disk_is_left_out(self):
+        st = fake_statvfs({"/hot": FakeStat(8 * TIB, 5 * TIB)})
+        self.assertEqual([d["name"] for d in iu.storage(DISKS, st)], ["SSD"])
+
+    def test_prom_text(self):
+        st = fake_statvfs({"/hot": FakeStat(8 * TIB, 5 * TIB), "/cold": FakeStat(28 * TIB, 27 * TIB)})
+        text = iu.storage_prom(iu.storage(DISKS, st), utc(2026, 10, 26, 12, 0))
+        self.assertIn(f'beefy_storage_size_bytes{{branch="ssd"}} {8 * TIB}\n', text)
+        self.assertIn(f'beefy_storage_avail_bytes{{branch="hdd"}} {27 * TIB}\n', text)
+        self.assertTrue(text.endswith("beefy_storage_updated_timestamp_seconds 1793016000\n"))
+        self.assertNotIn("/hot", text)
+
+    def test_run_writes_storage_even_when_prowlarr_is_down(self):
+        def api(path):
+            raise iu.ApiError("down")
+        st = fake_statvfs({"/hot": FakeStat(8 * TIB, 1 * TIB), "/cold": FakeStat(28 * TIB, 27 * TIB)})
+        with tempfile.TemporaryDirectory() as d:
+            out, prom = pathlib.Path(d) / "usage.json", pathlib.Path(d) / "state" / "storage.prom"
+            iu.run(Run.CFG, api, out, utc(2026, 10, 26, 12, 0), disks=DISKS, statvfs=st, prom=prom)
+            data = json.loads(out.read_text())
+            text = prom.read_text()
+        self.assertEqual([(s["name"], s["level"]) for s in data["storage"]], [("SSD", "full"), ("HDD", "ok")])
+        self.assertNotIn("/hot", json.dumps(data))
+        self.assertIn('beefy_storage_avail_bytes{branch="ssd"}', text)
+
+    def test_default_disks_are_the_two_branches(self):
+        self.assertEqual([(d["name"], d["paths"], d["yellow"], d["red"]) for d in iu.DISKS],
+                         [("SSD", ["/srv/.disks/ssd-hot", "/srv/.disks/ssd-hot2"], 0.70, 0.80), ("HDD", ["/srv/.disks/hdd-cold"], 0.80, 0.90)])
+
+
 if __name__ == "__main__":
     unittest.main()

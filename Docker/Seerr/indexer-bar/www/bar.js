@@ -62,6 +62,66 @@
     return (s.daysLeft === 1 ? "1 day" : s.daysLeft + " days") + " left · " + day(s.expires);
   }
 
+  var DISK_TEXT = {
+    en: { free: "free", head: "Storage", SSD: "fast tier, new downloads", HDD: "archive",
+      rule: { SSD: function (d) { return "Above " + d.yellow + " % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; from " + d.red + " % new downloads go straight to the HDD."; },
+        HDD: function (d) { return "Archive for older titles. From " + d.red + " % new downloads are no longer imported."; } } },
+    de: { free: "frei", head: "Speicher", SSD: "schnell, neue Downloads", HDD: "Archiv",
+      rule: { SSD: function (d) { return "Ab " + d.yellow + " % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab " + d.red + " % landen neue Downloads direkt auf der HDD."; },
+        HDD: function (d) { return "Archiv für ältere Titel. Ab " + d.red + " % werden neue Downloads nicht mehr importiert."; } } }
+  };
+  function lang() {
+    var nl = window.hgNightLabel;
+    if (nl && nl.lang) { try { return nl.lang() === "de" ? "de" : "en"; } catch (e) { /* own detection */ } }
+    var tv = document.querySelector('a[href="/discover/tv"]');
+    if (tv) return /\bSerien\b/.test(tv.textContent) ? "de" : "en";
+    return /^de\b/i.test(navigator.language || "") ? "de" : "en";
+  }
+  function bytes(n, l) {
+    var tb = n / 1099511627776, s = tb >= 1 ? (tb >= 100 ? Math.round(tb) : Math.round(tb * 10) / 10) + " TB" : Math.round(n / 1073741824) + " GB";
+    return l === "de" ? s.replace(".", ",") : s;
+  }
+  function diskUsed(d, l) {
+    var used = bytes(d.used, l), total = bytes(d.total, l);
+    if (used.slice(-2) === total.slice(-2)) used = used.slice(0, -3);
+    return used + "/" + total;
+  }
+  function diskHint(d, l) {
+    var t = DISK_TEXT[l], rule = t.rule[d.name];
+    var parts = Array.isArray(d.parts) && d.parts.length > 1 ? " (" + d.parts.length + " SSDs: " + d.parts.map(function (p) { return Math.round(p) + " %"; }).join(" · ") + ")" : "";
+    return d.name + ": " + bytes(d.free, l) + " " + t.free + parts + "." + (rule ? " " + rule(d) : "");
+  }
+  function diskMeter(d) {
+    var box = el("span", "ib-meter ib-" + d.level), fill = el("span", "ib-fill");
+    fill.style.width = Math.min(100, d.pct) + "%";
+    fill.style.display = "block";
+    return add(box, fill);
+  }
+  function disks(d) { return d && Array.isArray(d.storage) ? d.storage : []; }
+  function diskChips(box, d) {
+    var l = lang();
+    disks(d).forEach(function (x) {
+      var c = add(el("span", "ib-chip"), el("span", "ib-name", x.name), diskMeter(x),
+        el("span", x.level === "ok" ? "" : "ib-" + x.level + "-text", diskUsed(x, l)), el("span", "ib-muted", Math.round(x.pct) + " %"));
+      c.setAttribute("data-ib-disk", x.name);
+      c.title = diskHint(x, l);
+      box.appendChild(c);
+    });
+  }
+  function diskPanel(p, d) {
+    var list = disks(d), l = lang(), t = DISK_TEXT[l];
+    if (!list.length) return;
+    var tbl = el("table");
+    list.forEach(function (x) {
+      var rule = t.rule[x.name];
+      add(tbl, add(el("tr"), add(el("td"), el("div", "ib-name", x.name), el("div", "ib-muted", t[x.name] || "")),
+        add(el("td"), add(el("div", "ib-line"), diskMeter(x), el("span", x.level === "ok" ? "" : "ib-" + x.level + "-text", diskUsed(x, l) + " · " + Math.round(x.pct) + " %")),
+          add(el("div", "ib-line"), el("span", "ib-muted", bytes(x.free, l) + " " + t.free)))));
+      if (rule) { var rc = el("td", "ib-muted ib-rule", rule(x)); rc.colSpan = 2; add(tbl, add(el("tr"), rc)); }
+    });
+    add(p, el("h4", null, t.head), tbl);
+  }
+
   function chips(box, d) {
     var rows = d && d.ok ? d.indexers.filter(function (r) { return r.limited; }) : [];
     if (!d || !d.ok) add(box, el("span", "ib-chip ib-muted", "Indexer usage unavailable"));
@@ -86,6 +146,7 @@
       if (next) add(box, add(el("span", "ib-chip ib-muted"), el("span", "ib-label", "Next renewal: "),
         document.createTextNode(next.name + " in " + next.daysLeft + " d")));
     }
+    diskChips(box, d);
   }
 
   function panel(d) {
@@ -130,6 +191,7 @@
       });
       add(p, el("h4", null, "Subscriptions"), s);
     }
+    diskPanel(p, d);
     add(p, el("p", "ib-note", "When a limited indexer is used up, requests may wait until it resets; the other indexers keep searching. Searches made by hand on the indexer websites are not counted."));
     if (d && d.generated) add(p, el("p", "ib-note", "Updated " + at(d.generated)));
     return p;
@@ -142,7 +204,7 @@
       root.classList.toggle("ib-mini", mini);
       bar.textContent = "";
       var rows = d && d.ok ? d.indexers.filter(function (r) { return r.limited; }) : [];
-      var level = d ? worst(rows.concat(d.subscriptions || [])) : null;
+      var level = d ? worst(rows.concat(d.subscriptions || [], disks(d))) : null;
       var title = add(el("button", "ib-title"), el("span", "ib-dot" + (level ? " ib-" + level : "")), el("span", null, "Indexers"));
       title.title = mini ? "Show indexer usage" : "Hide indexer usage";
       title.setAttribute("aria-expanded", String(!mini));
