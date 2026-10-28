@@ -889,5 +889,47 @@ class Clock(unittest.TestCase):
         self.assertIsInstance(nd.now_from({}), datetime.datetime)
 
 
+class DiskHold(unittest.TestCase):
+    setUp, tearDown = Run.setUp, Run.tearDown
+    GIB = 1024 ** 3
+    LOW, OK, BETWEEN = 5700 * GIB, 5900 * GIB, 5800 * GIB
+
+    def go(self, f, now, free):
+        return nd.run(now, f.qbit, f.sab, {"radarr": f.arr("radarr"), "sonarr": f.arr("sonarr")}, self.state, public_path=self.public, free=free)
+
+    def test_low_space_stops_every_downloading_torrent_and_starts_none(self):
+        f = Fake([T_NIGHT, tor("ddd", 5, state="downloading", cat="radarr"), tor("ggg", 6, state="stalledDL", cat="sonarr"), T_SEEDING], [])
+        self.go(f, MON_2205, self.LOW)
+        acts = f.actions()
+        self.assertEqual(acts, [("qbit", "/torrents/stop", {"hashes": "ddd|ggg"})])
+        self.assertEqual(json.loads(self.state.read_text())["disk_held"], ["ddd", "ggg"])
+
+    def test_held_until_free_is_back_above_the_margin_then_only_held_ones_restart(self):
+        f = Fake([tor("ddd", 5, state="downloading", cat="radarr")], [])
+        self.go(f, MON_DAY, self.LOW)
+        f = Fake([tor("ddd", 5, state="stoppedDL", cat="radarr"), T_NOW_PAUSED], [])
+        self.go(f, MON_DAY, self.BETWEEN)
+        self.assertEqual(f.actions(), [])
+        self.assertEqual(json.loads(self.state.read_text())["disk_held"], ["ddd"])
+        self.go(f, MON_DAY, self.OK)
+        self.assertEqual(f.actions(), [("qbit", "/torrents/start", {"hashes": "ddd"})])
+        self.assertEqual(json.loads(self.state.read_text())["disk_held"], [])
+
+    def test_held_night_torrent_is_left_to_the_night_rules(self):
+        f = Fake([tor("AAA", 100, state="downloading", cat="radarr-night")], [])
+        self.go(f, MON_2205, self.LOW)
+        f = Fake([tor("AAA", 100, state="stoppedDL", cat="radarr-night")], [])
+        self.go(f, MON_DAY, self.OK)
+        self.assertEqual(f.actions(), [])
+
+    def test_free_unknown_changes_nothing(self):
+        f = Fake([T_NIGHT], [J_NIGHT])
+        self.go(f, MON_2205, None)
+        self.assertIn(("qbit", "/torrents/start", {"hashes": "AAA"}), f.actions())
+
+    def test_threshold_defaults(self):
+        self.assertEqual((nd.MIN_FREE_GIB, nd.RESUME_MARGIN_GIB), (5758, 100))
+
+
 if __name__ == "__main__":
     unittest.main()

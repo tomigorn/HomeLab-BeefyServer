@@ -183,23 +183,27 @@ copies. Set qBittorrent to remove torrents at a seed ratio or time
 limit so the download side is gone before demotion, or expect the hot tier to
 fill with orphans.
 
-**Nothing demotes automatically yet.** The nightly mover (§5) and the
-promote-on-detail-view daemon (§7) are designed but unbuilt, so the hot SSD only
-ever fills. When it drops below `minfreespace=50G`, mergerfs `moveonenospc=true`
-starts writing **new downloads straight onto the cold HDD** and nothing brings
-them back. Until the mover exists you are the mover:
+The nightly mover (`Server/3-Storage-Layout-and-Spindown.md`, "Storage — current state") moves titles nobody played or added for 30 days from the SSDs to the HDD when the SSDs are ≥ 70 % (down to 60 %). It never touches a hardlinked (seeding) file. By hand:
 
 ```bash
-# Where is everything, and how close to spilling am I? (does not wake the HDD)
-~/Projects/Server/3-Storage-Layout-and-Spindown/tier-report --top 20
-
-# Demote a title once its torrent has stopped seeding (dry run by default)
-sudo ~/Projects/Server/3-Storage-Layout-and-Spindown/tier-move demote media/movies/Dune
+sudo beefy-mover --plan                                                     # what would move, and why not
+sudo ~/Projects/Server/3-Storage-Layout-and-Spindown/tier-move demote media/movies/Dune          # dry run
 sudo ~/Projects/Server/3-Storage-Layout-and-Spindown/tier-move demote media/movies/Dune --apply
 ```
 
-`tier-move` refuses any file that is open or still hardlinked, so it will not break
-a seeding torrent by accident.
+### Storage limits
+
+`/data` is the whole pool (mergerfs `statfs=base`: free = ssd-hot + ssd-hot2 + hdd-cold), so the apps cannot see one disk. The hard stops are mergerfs per-branch minfreespace (each SSD 1479G, the HDD 2800G); the apps stop politely just before the pool has no room left anywhere: 1479 + 1479 + 2800 = **5758 GiB pool free**.
+
+| App | Setting | Value |
+|---|---|---|
+| Radarr, Sonarr | Media Management → Minimum Free Space | 5896192 MB (= 5758 GiB): imports refused below |
+| SABnzbd | Folders → Minimum free space (temporary + completed), auto-resume | `5758G`, `fulldisk_autoresume = 1` |
+| qBittorrent | no own setting: `scripts/night-downloads.py` (every 2 min) stops every downloading torrent below 5758 GiB pool free and restarts the ones it stopped from 5858 GiB (night torrents follow the night rules again). State `disk_held` in `night-downloads.json`; env `ND_MIN_FREE_GIB` | 5758 GiB |
+
+Hardlinks still work when a download lands on ssd-hot2 or the HDD: mergerfs creates the library folder on the download's branch (tested 2026-10-28).
+
+original-audio (mkvpropedit edits in place) takes the shared media lock `/run/lock/beefy-media.lock` (`flock -w 1800` in both units), so it never edits a file the mover is copying.
 
 ## Download → library pipeline
 

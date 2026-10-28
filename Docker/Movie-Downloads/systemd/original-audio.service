@@ -4,9 +4,10 @@ Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
 After=docker.service
 
 [Service]
+# mkvpropedit edits files in place: one shared media lock with the SSD->HDD mover (Server/3-Storage-Layout-and-Spindown)
 Type=oneshot
 User=buntu
-ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/original-audio.py
+ExecStart=/usr/bin/flock -w 1800 /run/lock/beefy-media.lock /home/buntu/Projects/Docker/Movie-Downloads/scripts/original-audio.py
 AmbientCapabilities=CAP_FOWNER
 CapabilityBoundingSet=CAP_FOWNER
 NoNewPrivileges=true

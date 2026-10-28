@@ -3,7 +3,8 @@
 Low tariff (22:00-06:00 and all Sunday): every night movie resumes (the clients' own limits apply); TV runs one download at a time across both clients: one series at a time, FIFO by its first grab, within it season then episode; a torrent stalled for STALL_MIN lets the next one start too.
 Outside the low tariff: night items still downloading are paused unless their ETA is under GRACE_MIN; they resume at the next low tariff where they stopped. Any time: the night items of titles tagged download-now resume and are never paused.
 Download now whose search found nothing (searched, nothing queued, no search running, no file): the download-now tag is removed again, so a later grab downloads at night.
-Writes ~/.local/state/movie-downloads/night-downloads.json ({"pending": n, "stalled": {hash: since}}), which fastpi reads to decide its 22:05 wake.
+Low pool space (under MIN_FREE_GIB free): every downloading torrent is stopped and restarted after recovery (qBittorrent has no own low-space pause).
+Writes ~/.local/state/movie-downloads/night-downloads.json ({"pending": n, "stalled": {hash: since}, "disk_held": [hash]}), which fastpi reads to decide its 22:05 wake.
 Writes the download ids waiting for the night (outside the low tariff) to /srv/appdata/indexer-bar/night-waiting.json for Seerr's night label (../Seerr/README.md "Night label"; env ND_PUBLIC, empty = off), and beside it request-state.json: the open Seerr requests that are "Can wait" and those not released yet (Seerr ids only).
 request-state.json also carries the live state of each open request (running search, just requested, waiting for approval, queue state, imported), so every requested title has a badge.
 Run by systemd/night-downloads.timer (every 2 min while awake, and at boot). --request-state (systemd/request-state.timer, every 15 s): rewrites only request-state.json, and only while a search runs or a request is from the last minutes.
@@ -30,6 +31,9 @@ TAG = "download-now"
 PAUSED_QBIT = {"pausedDL", "stoppedDL"}
 RUNNING_QBIT = {"downloading", "stalledDL", "metaDL", "forcedMetaDL", "forcedDL", "queuedDL", "checkingDL", "allocating"}
 STALLED_QBIT = {"stalledDL", "metaDL", "forcedMetaDL"}
+# qBittorrent has no low-space pause: below this pool free space (what the arrs see through mergerfs: SSD + HDD free) every downloading torrent is stopped, and restarted once free is back above it + the margin. Same value as Radarr/Sonarr "Minimum Free Space" and SABnzbd's pause (README "Storage limits").
+MIN_FREE_GIB = int(os.environ.get("ND_MIN_FREE_GIB", "5758"))
+RESUME_MARGIN_GIB = 100
 QBIT_ETA_UNKNOWN = 8640000
 GRACE_MIN = 15
 STALL_MIN = int(os.environ.get("ND_STALL_MIN", "20"))
@@ -539,7 +543,25 @@ def run_fast(now, apps, seerr, public_path, lock_path):
     return 0
 
 
-def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr=None):
+def disk_hold(p, torrents, free, held):
+    """Low pool space: stop every downloading torrent and start none; back above min + margin: restart the held ones (night ones stay with the night rules)."""
+    if free is None:
+        return held
+    low = free < MIN_FREE_GIB * 1024 ** 3
+    recovered = free >= (MIN_FREE_GIB + RESUME_MARGIN_GIB) * 1024 ** 3
+    by_hash = {t["hash"]: t for t in torrents}
+    held = [h for h in held if h in by_hash]
+    if low or (held and not recovered):
+        running = [t["hash"] for t in torrents if t.get("state") in RUNNING_QBIT]
+        p.hashes, p.top_hashes = [], []
+        p.pause_hashes = list(dict.fromkeys(p.pause_hashes + running))
+        return list(dict.fromkeys(held + running))
+    restart = [h for h in held if by_hash[h].get("category") not in NIGHT_QBIT and by_hash[h].get("state") in PAUSED_QBIT and h not in p.hashes]
+    p.hashes = p.hashes + restart
+    return []
+
+
+def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr=None, free=None):
     rc, urgent, titles, positions, searching, commands, qstates = 0, set(), {}, {}, {}, {}, {}
     for app, api in apps.items():
         try:
@@ -564,10 +586,14 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr
         return 1
     state_path = pathlib.Path(state_path)
     try:
-        stalled = json.loads(state_path.read_text()).get("stalled") or {}
+        old = json.loads(state_path.read_text())
+        stalled, held = old.get("stalled") or {}, old.get("disk_held") or []
     except (OSError, ValueError, AttributeError):
-        stalled = {}
+        stalled, held = {}, []
     p = plan(now, torrents, slots, urgent, titles, stalled, kbps, positions)
+    held = disk_hold(p, torrents, free, held)
+    if held:
+        print(f"low disk space: {len(held)} torrent(s) held until {MIN_FREE_GIB + RESUME_MARGIN_GIB} GiB are free")
     names = {t["hash"]: t.get("name") for t in torrents} | {s["nzo_id"]: s.get("filename") for s in slots}
     verb = lambda v: f"would {v}" if dry_run else v
     for i in p.hashes + p.nzos:
@@ -600,7 +626,7 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr
         rc = 1
     state_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = state_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"pending": p.pending, "low_tariff": low_tariff(now), "updated": now.isoformat(timespec="seconds"), "stalled": p.stalled}) + "\n")
+    tmp.write_text(json.dumps({"pending": p.pending, "low_tariff": low_tariff(now), "updated": now.isoformat(timespec="seconds"), "stalled": p.stalled, "disk_held": held}) + "\n")
     tmp.replace(state_path)
     queued = set(titles.values())
     try:
@@ -736,7 +762,12 @@ def main():
     if fast:
         state = pathlib.Path(os.environ.get("ND_STATE", STATE))
         return run_fast(datetime.datetime.now().astimezone(), apps, seerr, os.environ.get("ND_PUBLIC", PUBLIC) or PUBLIC, state.parent / "request-state.lock")
-    return run(now_from(os.environ), qbit, sab, apps, os.environ.get("ND_STATE", STATE), dry_run=dry, public_path=os.environ.get("ND_PUBLIC", PUBLIC), seerr=seerr)
+    try:
+        st = os.statvfs(os.environ.get("ND_POOL", "/srv/video"))
+        free = st.f_bavail * st.f_frsize
+    except OSError:
+        free = None
+    return run(now_from(os.environ), qbit, sab, apps, os.environ.get("ND_STATE", STATE), dry_run=dry, public_path=os.environ.get("ND_PUBLIC", PUBLIC), seerr=seerr, free=free)
 
 
 if __name__ == "__main__":
