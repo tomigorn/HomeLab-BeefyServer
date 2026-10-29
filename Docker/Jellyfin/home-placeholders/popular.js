@@ -1,15 +1,20 @@
 (function () {
-  // "Currently popular" page, its nav entries and the home rows Top 10 Shows / Movies in Switzerland (Jellyfin README "Currently popular").
+  // Pages "Popular movies" / "Popular shows", their nav entries and the home rows Top 10 Shows / Movies in Switzerland (Jellyfin README "Popular movies and shows").
   // Data: window.HssPopular from scripts/popular.py; the user's own library and requests through their own session.
   var API = "hss-popular/";
   var TMDB_IMG = "https://image.tmdb.org/t/p/";
   var HOME = [
-    { id: "Top10Shows", key: "shows", after: "RecentlyAddedShows" },
-    { id: "Top10Movies", key: "movies", after: "RecentlyWatchedSeries" }
+    { id: "Top10Shows", key: "shows", kind: "tv", after: "RecentlyAddedShows" },
+    { id: "Top10Movies", key: "movies", kind: "movie", after: "RecentlyWatchedSeries" }
+  ];
+  // Nav order follows the library order (Movies, Shows).
+  var NAV = [
+    { kind: "movie", label: "pageMovies", icon: "movie" },
+    { kind: "tv", label: "pageShows", icon: "live_tv" }
   ];
   var TEXT = {
     en: {
-      Top10Shows: "Top 10 Shows in Switzerland", Top10Movies: "Top 10 Movies in Switzerland", page: "Currently popular", close: "Close",
+      Top10Shows: "Top 10 Shows in Switzerland", Top10Movies: "Top 10 Movies in Switzerland", pageMovies: "Popular movies", pageShows: "Popular shows", close: "Close",
       tonight: "\uD83C\uDF19 Tonight", now: "⚡ Now", tonightHint: "Download tonight (cheaper power)", nowHint: "Download now (daytime power price)",
       limit: "Limit reached: {n} requests per {d} days", left: "{n} requests left this week", failed: "Request failed", season: "S",
       dailyFull: "Today's requests for everyone are used up, again tomorrow",
@@ -19,7 +24,7 @@
       source: "Sources: Netflix Top 10 Switzerland (weekly), TMDB popularity, where to stream in Switzerland by JustWatch (via TMDB). Only titles in the library or with a release found are shown."
     },
     de: {
-      Top10Shows: "Top 10 Serien in der Schweiz", Top10Movies: "Top 10 Filme in der Schweiz", page: "Gerade beliebt", close: "Schliessen",
+      Top10Shows: "Top 10 Serien in der Schweiz", Top10Movies: "Top 10 Filme in der Schweiz", pageMovies: "Beliebte Filme", pageShows: "Beliebte Serien", close: "Schliessen",
       tonight: "\uD83C\uDF19 Heute Nacht", now: "⚡ Jetzt", tonightHint: "Heute Nacht herunterladen (günstigerer Strom)", nowHint: "Jetzt herunterladen (Tagesstrompreis)",
       limit: "Limite erreicht: {n} Anfragen pro {d} Tage", left: "Noch {n} Anfragen diese Woche", failed: "Anfrage fehlgeschlagen", season: "S",
       dailyFull: "Die Anfragen für heute sind für alle aufgebraucht, morgen wieder",
@@ -258,71 +263,123 @@
     return out;
   }
 
+  function navKind(kind) {
+    return kind === "movie" ? NAV[0] : NAV[1];
+  }
+
+  function navSel(kind) {
+    return '.hssPopularNav[data-hss-kind="' + kind + '"]';
+  }
+
+  function tagNav(e, n) {
+    e.classList.add("hssPopularNav");
+    e.setAttribute("data-hss-kind", n.kind);
+    e.setAttribute("href", "#/home");
+    return e;
+  }
+
+  function setLabel(e, label) {
+    var t = e.querySelector(".navMenuOptionText, .MuiListItemText-primary");
+    if (t) {
+      if (t.textContent !== label) t.textContent = label;
+    } else if (e.tagName === "BUTTON") {
+      if (e.getAttribute("title") !== label) e.setAttribute("title", label);
+      if (e.getAttribute("aria-label") !== label) e.setAttribute("aria-label", label);
+    } else {
+      var last = null;
+      for (var n = 0; n < e.childNodes.length; n++) if (e.childNodes[n].nodeType === 3) last = e.childNodes[n];
+      if (!last) last = e.appendChild(e.ownerDocument.createTextNode(""));
+      if (last.nodeValue !== label) last.nodeValue = label;
+    }
+  }
+
+  // One entry per kind in each place, in NAV order: a missing one goes after the previous kind's entry, else before the next kind's, else where place() puts the first.
+  function ensure(scope, build, place, wrap) {
+    wrap = wrap || function (e) { return e; };
+    var prev = null;
+    for (var i = 0; i < NAV.length; i++) {
+      var have = scope.querySelector(navSel(NAV[i].kind));
+      if (!have) {
+        have = build(NAV[i]);
+        var next = null;
+        for (var j = i + 1; j < NAV.length && !next; j++) next = scope.querySelector(navSel(NAV[j].kind));
+        if (prev) wrap(prev).parentNode.insertBefore(wrap(have), wrap(prev).nextSibling);
+        else if (next) wrap(next).parentNode.insertBefore(wrap(have), wrap(next));
+        else place(wrap(have));
+      }
+      prev = have;
+    }
+  }
+
   function navLinks(doc, lang) {
-    var label = tr(lang, "page");
+    var stale = doc.querySelectorAll(".hssPopularNav:not([data-hss-kind])");
+    for (var s = 0; s < stale.length; s++) (stale[s].closest(".MuiDrawer-paper li") || stale[s]).remove();
     var bar = null;
     var links = doc.querySelectorAll(".MuiStack-root > a[href*='collectionType=tvshows']");
     if (links.length) bar = links[links.length - 1];
-    if (bar && !bar.parentNode.querySelector(".hssPopularNav")) {
-      var a = bar.cloneNode(true);
-      a.className = bar.className + " hssPopularNav";
-      a.setAttribute("href", "#/home");
-      var path = a.querySelector("svg path");
-      if (path) path.setAttribute("d", TRENDING_PATH);
-      for (var n = a.childNodes.length - 1; n >= 0; n--) if (a.childNodes[n].nodeType === 3) a.removeChild(a.childNodes[n]);
-      a.appendChild(doc.createTextNode(label));
-      bar.parentNode.insertBefore(a, bar.nextSibling);
+    if (bar) {
+      ensure(bar.parentNode, function (n) {
+        var a = bar.cloneNode(true);
+        a.className = bar.className;
+        var path = a.querySelector("svg path");
+        if (path) path.setAttribute("d", TRENDING_PATH);
+        for (var k = a.childNodes.length - 1; k >= 0; k--) if (a.childNodes[k].nodeType === 3) a.removeChild(a.childNodes[k]);
+        return tagNav(a, n);
+      }, function (a) { bar.parentNode.insertBefore(a, bar.nextSibling); });
     }
     var menu = doc.querySelector(".mainDrawer .customMenuOptions");
-    if (menu && !menu.querySelector(".hssPopularNav")) {
-      var m = el(doc, "a", "navMenuOption lnkMediaFolder emby-button hssPopularNav");
-      m.setAttribute("href", "#/home");
-      m.innerHTML = '<span class="material-icons navMenuOptionIcon trending_up" aria-hidden="true"></span><span class="navMenuOptionText"></span>';
-      m.querySelector(".navMenuOptionText").textContent = label;
-      menu.appendChild(m);
+    if (menu) {
+      ensure(menu, function (n) {
+        var m = el(doc, "a", "navMenuOption lnkMediaFolder emby-button");
+        m.innerHTML = '<span class="material-icons navMenuOptionIcon trending_up" aria-hidden="true"></span><span class="navMenuOptionText"></span>';
+        return tagNav(m, n);
+      }, function (m) { menu.appendChild(m); });
     }
     var favs = doc.querySelectorAll(".MuiDrawer-paper a[href='#/home?tab=1']");
     for (var f = 0; f < favs.length; f++) {
       var li = favs[f].closest("li");
-      if (!li || li.parentNode.querySelector(".hssPopularNav")) continue;
-      var copy = li.cloneNode(true);
-      var link = copy.querySelector("a");
-      link.classList.remove("Mui-selected");
-      link.classList.add("hssPopularNav");
-      link.setAttribute("href", "#/home");
-      var icon = link.querySelector("svg path");
-      if (icon) icon.setAttribute("d", TRENDING_PATH);
-      var text = link.querySelector(".MuiListItemText-primary");
-      if (text) text.textContent = label;
-      li.parentNode.insertBefore(copy, li.nextSibling);
+      if (!li) continue;
+      ensure(li.parentNode, function (n) {
+        var copy = li.cloneNode(true);
+        var link = copy.querySelector("a");
+        link.classList.remove("Mui-selected");
+        var icon = link.querySelector("svg path");
+        if (icon) icon.setAttribute("d", TRENDING_PATH);
+        tagNav(link, n);
+        return link;
+      }, function (item) { li.parentNode.insertBefore(item, li.nextSibling); }, function (link) { return link.closest("li"); });
     }
     var right = doc.documentElement.classList.contains("layout-tv") && doc.querySelector(".skinHeader .headerRight");
-    if (right && !right.querySelector(".hssPopularNav")) {
-      var b = el(doc, "button", "headerButton headerButtonRight paper-icon-button-light hssPopularNav");
-      b.setAttribute("type", "button");
-      b.setAttribute("title", label);
-      b.setAttribute("aria-label", label);
-      b.innerHTML = '<span class="material-icons trending_up" aria-hidden="true"></span>';
-      right.insertBefore(b, right.querySelector(".headerSearchButton"));
+    if (right) {
+      ensure(right, function (n) {
+        var b = el(doc, "button", "headerButton headerButtonRight paper-icon-button-light");
+        b.setAttribute("type", "button");
+        b.innerHTML = '<span class="material-icons ' + n.icon + '" aria-hidden="true"></span>';
+        tagNav(b, n);
+        b.removeAttribute("href");
+        return b;
+      }, function (b) { right.insertBefore(b, right.querySelector(".headerSearchButton")); });
     }
-    var all = doc.querySelectorAll(".hssPopularNav");
-    for (var i = 0; i < all.length; i++) {
-      var txt = all[i].querySelector(".navMenuOptionText");
-      if (txt && txt.textContent !== label) txt.textContent = label;
-    }
+    var all = doc.querySelectorAll(".hssPopularNav[data-hss-kind]");
+    for (var i = 0; i < all.length; i++) setLabel(all[i], tr(lang, navKind(all[i].getAttribute("data-hss-kind")).label));
   }
 
-  function buildPage(doc, data, lib, lang, tv, states) {
+  // kind "movie" or "tv": the matching Netflix Top 10, then the rows of that kind (rows without a kind, published before the split, on both pages).
+  function buildPage(doc, data, lib, lang, tv, states, kind) {
+    var nav = navKind(kind);
     var page = el(doc, "div", "hssPopularPage focuscontainer");
+    page.setAttribute("data-hss-kind", nav.kind);
     var head = el(doc, "div", "hssPopularHead padded-left padded-right");
-    head.appendChild(el(doc, "h1", "sectionTitle", tr(lang, "page")));
+    head.appendChild(el(doc, "h1", "sectionTitle", tr(lang, nav.label)));
     var close = el(doc, "button", "hssPopularClose paper-icon-button-light");
     close.setAttribute("type", "button");
     close.setAttribute("aria-label", tr(lang, "close"));
     close.innerHTML = '<span class="material-icons close" aria-hidden="true"></span>';
     head.appendChild(close);
     page.appendChild(head);
-    var rows = HOME.map(function (h) { return { id: h.id, name: { en: TEXT.en[h.id], de: TEXT.de[h.id] }, items: ((data && data.home) || {})[h.key] }; }).concat((data && data.rows) || []);
+    var rows = HOME.filter(function (h) { return h.kind === nav.kind; })
+      .map(function (h) { return { id: h.id, name: { en: TEXT.en[h.id], de: TEXT.de[h.id] }, items: ((data && data.home) || {})[h.key] }; })
+      .concat(((data && data.rows) || []).filter(function (r) { return !r.kind || r.kind === nav.kind; }));
     for (var i = 0; i < rows.length; i++) {
       var entries = visible(rows[i].items, lib);
       if (!entries.length) continue;
@@ -459,7 +516,7 @@
       var y = page.scrollTop;
       var sel = "a.hssTopCard, button";
       var at = Array.prototype.indexOf.call(page.querySelectorAll(sel), doc.activeElement);
-      var next = buildPage(doc, data, lib, lang(), tv(), states);
+      var next = buildPage(doc, data, lib, lang(), tv(), states, page.getAttribute("data-hss-kind"));
       next.hssStates = states;
       var known = prefit(next, fitMemo, win.innerWidth);
       page.replaceWith(next);
@@ -478,10 +535,11 @@
       var a = api();
       if (!a) return;
       closePage(false);
+      var kind = from.getAttribute("data-hss-kind");
       var mine = ++opening;
       loadLib(a).then(function (l) {
         if (mine !== opening) return;
-        var page = buildPage(doc, data, l, lang(), tv(), states);
+        var page = buildPage(doc, data, l, lang(), tv(), states, kind);
         page.hssStates = states;
         page.hssFrom = from;
         openedAt = win.location.href;

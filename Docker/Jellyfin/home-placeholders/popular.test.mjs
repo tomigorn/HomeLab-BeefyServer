@@ -11,8 +11,10 @@ const HIDDEN = { k: "movie", id: 303, s: null, r: 3, y: 2020, t: { en: "Owned el
 const NONE = { k: "movie", id: 404, s: null, r: 4, y: 2026, t: { en: "No Release", de: "Kein Release" }, p: { en: "/n.jpg" }, o: false, f: null, n: true, c: "2026-10-21" };
 const UNKNOWN = { k: "tv", id: null, s: null, r: 5, y: null, t: { en: "Instadocs", de: "Instadocs" }, p: { en: null, de: null }, o: false, f: null, n: true, c: null, u: true };
 const DATA = { week: "2026-10-18", home: { shows: [FOUND], movies: [OWNED, HIDDEN] }, rows: [
-  { id: "service-8", type: "service", name: { en: "Netflix", de: "Netflix" }, logo: "/nf.png", items: [OWNED, FOUND] },
-  { id: "genre-horror", type: "genre", name: { en: "Horror", de: "Horror" }, logo: null, items: [HIDDEN] }
+  { id: "service-8-movie", kind: "movie", type: "service", name: { en: "Netflix", de: "Netflix" }, logo: "/nf.png", items: [OWNED] },
+  { id: "service-8-tv", kind: "tv", type: "service", name: { en: "Netflix", de: "Netflix" }, logo: "/nf.png", items: [FOUND] },
+  { id: "genre-comedy-tv", kind: "tv", type: "genre", name: { en: "Comedy", de: "Komödie" }, logo: null, items: [FOUND] },
+  { id: "genre-horror-movie", kind: "movie", type: "genre", name: { en: "Horror", de: "Horror" }, logo: null, items: [HIDDEN] }
 ] };
 const LIB = pp.libraryMap([
   { Type: "Movie", Id: "jf121", ServerId: "srv", ProviderIds: { Tmdb: "121" } },
@@ -132,20 +134,40 @@ test("extra rows are registered for the home layout only when there is data", ()
   assert.deepEqual(pp.extraRows(undefined), []);
 });
 
-test("nav entries in the top bar and the drawer, once", () => {
-  const d = doc('<div class="MuiStack-root"><a href="#/">Holy Grail</a><a class="MuiButton-root x" href="#/tv?topParentId=1&amp;collectionType=tvshows"><span class="MuiButton-startIcon"><svg><path d="M0"></path></svg></span>Shows</a></div>' +
+test("nav entries in the top bar and the drawer: movies then shows (the library order), once each", () => {
+  const d = doc('<div class="MuiStack-root"><a href="#/">Holy Grail</a><a class="MuiButton-root x" href="#/movies?topParentId=2&amp;collectionType=movies">Movies</a><a class="MuiButton-root x" href="#/tv?topParentId=1&amp;collectionType=tvshows"><span class="MuiButton-startIcon"><svg><path d="M0"></path></svg></span>Shows</a></div>' +
     '<div class="mainDrawer"><div class="customMenuOptions"></div></div>');
   pp.navLinks(d, "de");
   pp.navLinks(d, "de");
-  const top = d.querySelectorAll(".hssPopularNav");
-  assert.equal(top.length, 2);
-  const bar = d.querySelector(".MuiStack-root .hssPopularNav");
-  assert.equal(bar.textContent, "Gerade beliebt");
-  assert.equal(bar.className, "MuiButton-root x hssPopularNav");
-  assert.equal(bar.previousElementSibling.textContent, "Shows");
-  const drawer = d.querySelector(".customMenuOptions .hssPopularNav");
-  assert.match(drawer.className, /navMenuOption/);
-  assert.match(drawer.textContent, /Gerade beliebt/);
+  assert.equal(d.querySelectorAll(".hssPopularNav").length, 4);
+  const bar = [...d.querySelectorAll(".MuiStack-root .hssPopularNav")];
+  assert.deepEqual(bar.map((a) => [a.textContent, a.getAttribute("data-hss-kind")]), [["Beliebte Filme", "movie"], ["Beliebte Serien", "tv"]]);
+  assert.equal(bar[0].className, "MuiButton-root x hssPopularNav");
+  assert.equal(bar[0].previousElementSibling.textContent, "Shows");
+  assert.equal(bar[1].previousElementSibling, bar[0]);
+  const drawer = [...d.querySelectorAll(".customMenuOptions .hssPopularNav")];
+  assert.match(drawer[0].className, /navMenuOption/);
+  assert.deepEqual(drawer.map((a) => [a.textContent, a.getAttribute("data-hss-kind")]), [["Beliebte Filme", "movie"], ["Beliebte Serien", "tv"]]);
+});
+
+test("nav: a missing entry of one kind is added next to the other, a stale entry without a kind is removed", () => {
+  const d = doc('<div class="mainDrawer"><div class="customMenuOptions"><a class="navMenuOption hssPopularNav" href="#/home"><span class="navMenuOptionText">Currently popular</span></a></div></div>');
+  pp.navLinks(d, "en");
+  assert.deepEqual([...d.querySelectorAll(".hssPopularNav")].map((a) => a.getAttribute("data-hss-kind")), ["movie", "tv"]);
+  d.querySelector('.hssPopularNav[data-hss-kind="movie"]').remove();
+  pp.navLinks(d, "en");
+  assert.deepEqual([...d.querySelectorAll(".hssPopularNav")].map((a) => a.textContent), ["Popular movies", "Popular shows"]);
+});
+
+test("nav: a language change relabels both entries everywhere", () => {
+  const d = doc('<div class="MuiStack-root"><a class="MuiButton-root" href="#/tv?topParentId=1&amp;collectionType=tvshows">Shows</a></div><div class="mainDrawer"><div class="customMenuOptions"></div></div>' +
+    '<div class="skinHeader"><div class="headerRight"><button class="headerSearchButton"></button></div></div>');
+  d.documentElement.classList.add("layout-tv");
+  pp.navLinks(d, "en");
+  pp.navLinks(d, "de");
+  const labels = (kind) => [...d.querySelectorAll(`.hssPopularNav[data-hss-kind="${kind}"]`)].map((a) => a.tagName === "BUTTON" ? a.getAttribute("aria-label") + "|" + a.getAttribute("title") : a.textContent);
+  assert.deepEqual(labels("movie"), ["Beliebte Filme", "Beliebte Filme", "Beliebte Filme|Beliebte Filme"]);
+  assert.deepEqual(labels("tv"), ["Beliebte Serien", "Beliebte Serien", "Beliebte Serien|Beliebte Serien"]);
 });
 
 test("phone layout: an entry in the app drawer after Favourites", () => {
@@ -154,12 +176,13 @@ test("phone layout: an entry in the app drawer after Favourites", () => {
   pp.navLinks(d, "de");
   pp.navLinks(d, "de");
   const items = d.querySelectorAll(".MuiDrawer-paper .hssPopularNav");
-  assert.equal(items.length, 1);
-  assert.equal(items[0].querySelector(".MuiListItemText-primary").textContent, "Gerade beliebt");
+  assert.equal(items.length, 2);
+  assert.deepEqual([...items].map((a) => [a.querySelector(".MuiListItemText-primary").textContent, a.getAttribute("data-hss-kind")]), [["Beliebte Filme", "movie"], ["Beliebte Serien", "tv"]]);
   assert.equal(items[0].getAttribute("href"), "#/home");
   assert.ok(!items[0].classList.contains("Mui-selected"));
   assert.equal(items[0].querySelector("path").getAttribute("d").slice(0, 4), "M16 ");
   assert.equal(items[0].closest("li").previousElementSibling.textContent, "Favourites");
+  assert.equal(items[1].closest("li").previousElementSibling, items[0].closest("li"));
 });
 
 test("TV layout: a header button next to search (TV has no drawer button)", () => {
@@ -170,19 +193,35 @@ test("TV layout: a header button next to search (TV has no drawer button)", () =
   pp.navLinks(d, "en");
   pp.navLinks(d, "en");
   const b = d.querySelectorAll(".headerRight .hssPopularNav");
-  assert.equal(b.length, 1);
-  assert.equal(b[0].tagName, "BUTTON");
-  assert.equal(b[0].getAttribute("title"), "Currently popular");
-  assert.equal(b[0].nextElementSibling.className, "headerSearchButton");
+  assert.equal(b.length, 2);
+  assert.deepEqual([...b].map((x) => [x.tagName, x.getAttribute("data-hss-kind"), x.getAttribute("title"), x.getAttribute("aria-label"), x.querySelector(".material-icons").className]),
+    [["BUTTON", "movie", "Popular movies", "Popular movies", "material-icons movie"], ["BUTTON", "tv", "Popular shows", "Popular shows", "material-icons live_tv"]]);
+  assert.equal(b[1].nextElementSibling.className, "headerSearchButton");
 });
 
-test("the page lists the Netflix rows, every service and genre row with something to show", () => {
+test("the shows page: the Netflix Top 10 Shows, then only the series rows with something to show", () => {
   const d = doc();
-  const page = pp.buildPage(d, DATA, LIB, "en", false, null);
-  assert.deepEqual([...page.querySelectorAll(".hssTopRow h2")].map((h) => h.textContent), ["Top 10 Shows in Switzerland", "Top 10 Movies in Switzerland", "Netflix"]);
+  const page = pp.buildPage(d, DATA, LIB, "en", false, null, "tv");
+  assert.deepEqual([...page.querySelectorAll(".hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Shows", "service-8-tv", "genre-comedy-tv"]);
+  assert.deepEqual([...page.querySelectorAll(".hssTopRow h2")].map((h) => h.textContent), ["Top 10 Shows in Switzerland", "Netflix", "Comedy"]);
   assert.match(page.querySelector(".hssTopRow img.hssTopLogo").getAttribute("src"), /w92\/nf\.png$/);
-  assert.equal(page.querySelector("h1").textContent, "Currently popular");
+  assert.equal(page.querySelector("h1").textContent, "Popular shows");
+  assert.equal(page.getAttribute("data-hss-kind"), "tv");
   assert.match(page.querySelector(".hssPopularSource").textContent, /Netflix.*TMDB.*JustWatch/);
+});
+
+test("the movies page: the Netflix Top 10 Movies, then only the film rows; German title", () => {
+  const d = doc();
+  const page = pp.buildPage(d, DATA, LIB, "de", false, null, "movie");
+  assert.deepEqual([...page.querySelectorAll(".hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Movies", "service-8-movie"]);
+  assert.equal(page.querySelector("h1").textContent, "Beliebte Filme");
+  assert.equal(page.querySelectorAll(".hssTopCard").length, 2);
+});
+
+test("rows without a kind (lists published before the split) appear on both pages", () => {
+  const d = doc();
+  const old = { home: { shows: [], movies: [] }, rows: [{ id: "service-8", type: "service", name: { en: "Netflix", de: "Netflix" }, logo: null, items: [OWNED, FOUND] }] };
+  for (const kind of ["movie", "tv"]) assert.deepEqual([...pp.buildPage(d, old, LIB, "en", false, null, kind).querySelectorAll(".hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["service-8"]);
 });
 
 test("request posts only the entry id and mode with the user's token", async () => {
@@ -216,7 +255,7 @@ test("fitting the rows measures every row before it changes any (one layout, not
 });
 
 function started() {
-  const dom = new JSDOM('<html lang="en"><body><header><a class="logo" href="#/">Holy Grail</a><a class="hssPopularNav" href="#/home">Currently popular</a></header></body></html>', { url: "https://jellyfin.holy-grail.ch/web/#/home" });
+  const dom = new JSDOM('<html lang="en"><body><header><a class="logo" href="#/">Holy Grail</a><a class="hssPopularNav" data-hss-kind="movie" href="#/home">Popular movies</a><a class="hssPopularNav" data-hss-kind="tv" href="#/home">Popular shows</a></header></body></html>', { url: "https://jellyfin.holy-grail.ch/web/#/home" });
   const win = dom.window;
   let stateCalls = 0;
   win.HssPopular = DATA;
@@ -234,6 +273,21 @@ function started() {
   const click = (el) => el.dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
   return { win, d: win.document, tick, click, calls: () => stateCalls };
 }
+
+test("each nav entry opens its own page; the other entry switches to the other kind", async () => {
+  const { win, d, tick, click } = started();
+  click(d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
+  await tick();
+  assert.equal(d.querySelector(".hssPopularPage h1").textContent, "Popular shows");
+  assert.deepEqual([...d.querySelectorAll(".hssPopularPage .hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Shows", "service-8-tv", "genre-comedy-tv"]);
+  click(d.querySelector('.hssPopularNav[data-hss-kind="movie"]'));
+  await tick();
+  await tick();
+  assert.equal(d.querySelectorAll(".hssPopularPage").length, 1);
+  assert.equal(d.querySelector(".hssPopularPage h1").textContent, "Popular movies");
+  assert.deepEqual([...d.querySelectorAll(".hssPopularPage .hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Movies", "service-8-movie"]);
+  win.close();
+});
 
 test("the logo (or any nav link) closes the page even when the route stays the same", async () => {
   const { win, d, tick, click } = started();
