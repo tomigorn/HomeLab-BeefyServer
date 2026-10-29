@@ -24,6 +24,7 @@ if want radarr; then
   check md.radarr-media-management '^true /data/.recyclebin 7 afterManual true srt,ass,ssa,sub,idx$' "$(md_arr radarr 7878 /api/v3/config/mediamanagement | jq -r '"\(.copyUsingHardlinks) \(.recycleBin) \(.recycleBinCleanupDays) \(.rescanAfterRefresh) \(.importExtraFiles) \(.extraFileExtensions)"' 2>&1)"
   check md.radarr-min-free '^5896192$' "$(md_arr radarr 7878 /api/v3/config/mediamanagement | jq -r .minimumFreeSpaceWhenImporting 2>&1)"
   check md.radarr-metadata-off '^0 enabled$' "$(md_arr radarr 7878 /api/v3/metadata | jq -r '[.[] | select(.enable)] | "\(length) enabled"' 2>&1)"
+  check md.radarr-backup-daily '^1 14$' "$(md_arr radarr 7878 /api/v3/config/host | jq -r '"\(.backupInterval) \(.backupRetention)"' 2>&1)"
 fi
 if want sonarr; then
   check md.sonarr-auth '^External$' "$(md_auth sonarr)"
@@ -42,6 +43,7 @@ if want sonarr; then
   check md.sonarr-media-management '^true /data/.recyclebin 7 afterManual true srt,ass,ssa,sub,idx$' "$(md_arr sonarr 8989 /api/v3/config/mediamanagement | jq -r '"\(.copyUsingHardlinks) \(.recycleBin) \(.recycleBinCleanupDays) \(.rescanAfterRefresh) \(.importExtraFiles) \(.extraFileExtensions)"' 2>&1)"
   check md.sonarr-min-free '^5896192$' "$(md_arr sonarr 8989 /api/v3/config/mediamanagement | jq -r .minimumFreeSpaceWhenImporting 2>&1)"
   check md.sonarr-metadata-off '^0 enabled$' "$(md_arr sonarr 8989 /api/v3/metadata | jq -r '[.[] | select(.enable)] | "\(length) enabled"' 2>&1)"
+  check md.sonarr-backup-daily '^1 14$' "$(md_arr sonarr 8989 /api/v3/config/host | jq -r '"\(.backupInterval) \(.backupRetention)"' 2>&1)"
   check md.sonarr-id-parse '^The Boys 2024 4$' "$(md_arr sonarr 8989 '/api/v3/parse?title=The.Boys.2024.S04.2160p.AMZN.WEB-DL-GRP' | jq -r '.parsedEpisodeInfo | "\(.seriesTitleInfo.titleWithoutYear) \(.seriesTitleInfo.year) \(.seasonNumber)"' 2>&1)"
   check md.sonarr-id-import '^id-match auto-import: [0-9]+ candidate\(s\), [0-9]+ importable$' "$(python3 "$MD_DIR/scripts/queue-watchdog.py" --dry-run 2>&1 | tail -1)"
 fi
@@ -67,6 +69,7 @@ if want prowlarr; then
   check md.prowlarr-treasure-limits '^query=null grab=400 unit=0$' "$(md_arr prowlarr 9696 /api/v1/indexer | jq -r '.[] | select(.name == "Treasure Maps") | [.fields[] | select(.name | startswith("baseSettings")) | {(.name | ltrimstr("baseSettings.")): .value}] | add | "query=\(.queryLimit) grab=\(.grabLimit) unit=\(.limitsUnit)"' 2>&1)"
   check md.treasure-rss '^rss=true radarr=true sonarr=true$' "rss=$(md_arr prowlarr 9696 /api/v1/appprofile | jq -r '[.[] | select(.name == "Standard")][0].enableRss' 2>&1) radarr=$(md_arr radarr 7878 /api/v3/indexer | jq -r '[.[] | select(.name == "Treasure Maps (Prowlarr)")][0].enableRss' 2>&1) sonarr=$(md_arr sonarr 8989 /api/v3/indexer | jq -r '[.[] | select(.name == "Treasure Maps (Prowlarr)")][0].enableRss' 2>&1)"
   check md.prowlarr-apps '^Radarr:fullSync Sonarr:fullSync$' "$(md_arr prowlarr 9696 /api/v1/applications | jq -r '[.[] | "\(.name):\(.syncLevel)"] | sort | join(" ")' 2>&1)"
+  check md.prowlarr-backup-daily '^1 14$' "$(md_arr prowlarr 9696 /api/v1/config/host | jq -r '"\(.backupInterval) \(.backupRetention)"' 2>&1)"
 fi
 if want qbittorrent; then
   QBIT_PASS_FILE=$MD_DIR/secrets/qbit-webui.password QBIT_JAR=
@@ -94,6 +97,7 @@ if want bazarr; then
   check md.bazarr-mod-common '^common$' "$(md_bz /system/settings | jq -r '.general.subzero_mods | if type == "array" then join(",") else . end' 2>&1)"
   check md.bazarr-utf8 '^true$' "$(md_bz /system/settings | jq -r .general.utf8_encode 2>&1)"
   check md.bazarr-subsync '^true true false$' "$(md_bz /system/settings | jq -r '.subsync | "\(.use_subsync) \(.use_original_language) \(.no_fix_framerate)"' 2>&1)"
+  check md.bazarr-backup-daily '^Daily 14 4$' "$(md_bz /system/settings | jq -r '.backup | "\(.frequency) \(.retention) \(.hour)"' 2>&1)"
   check md.bazarr-profiles '^(2[2-9]|[3-9][0-9]) profiles$' "$(md_bz /system/languages/profiles | jq -r '"\(length) profiles"' 2>&1)"
 fi
 if want gluetun vpn-status qbittorrent; then
