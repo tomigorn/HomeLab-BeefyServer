@@ -7,7 +7,7 @@ Nightly 04:26 to fastpi's append-only restic server (beefy cannot delete snapsho
 
 ## Image auto-update
 
-Nightly, by tier, with a functional check and automatic rollback. `Docker/_global/scripts/{auto_update.py,test_auto_update.py,update-project.sh}` are verbatim copies of fastpi's (single source: HomeLab-FastPi `Docker/_global/scripts/`, doc `Server/4-Security-Monitoring/auto-updates.md` "beefy"): change them there, then copy.
+Nightly, by tier, with a functional check and automatic rollback. `Docker/_global/scripts/{auto_update.py,test_auto_update.py,update-project.sh,test_update_project.sh}` are verbatim copies of fastpi's (single source: HomeLab-FastPi `Docker/_global/scripts/`, doc `Server/4-Security-Monitoring/auto-updates.md` "beefy"): change them there, then copy.
 
 | Piece | What |
 |---|---|
