@@ -15,7 +15,7 @@
   var TEXT = {
     en: {
       Top10Shows: "Top 10 Shows in Switzerland", Top10Movies: "Top 10 Movies in Switzerland", pageMovies: "Popular movies", pageShows: "Popular shows", close: "Close",
-      tonight: "\uD83C\uDF19 Tonight", now: "⚡ Now", tonightHint: "Download tonight (cheaper power)", nowHint: "Download now (daytime power price)",
+      tonight: "\uD83C\uDF19 Download tonight", now: "⚡ Download now", tonightSub: "lower electricity cost", nowSub: "daytime electricity price", tonightHint: "Download tonight (lower electricity cost)", nowHint: "Download now (daytime electricity price)",
       limit: "Limit reached: {n} requests per {d} days", left: "{n} requests left this week", failed: "Request failed", season: "S",
       dailyFull: "Today's requests for everyone are used up, again tomorrow",
       night: "\uD83C\uDF19 Tonight", searching: "\uD83D\uDD0D Searching", unreleased: "\uD83D\uDCC5 Not released yet", downloading: "⬇️ Downloading", requested: "✓ Requested", declined: "Declined",
@@ -26,7 +26,7 @@
     },
     de: {
       Top10Shows: "Top 10 Serien in der Schweiz", Top10Movies: "Top 10 Filme in der Schweiz", pageMovies: "Beliebte Filme", pageShows: "Beliebte Serien", close: "Schliessen",
-      tonight: "\uD83C\uDF19 Heute Nacht", now: "⚡ Jetzt", tonightHint: "Heute Nacht herunterladen (günstigerer Strom)", nowHint: "Jetzt herunterladen (Tagesstrompreis)",
+      tonight: "\uD83C\uDF19 Heute Nacht herunterladen", now: "⚡ Jetzt herunterladen", tonightCard: "\uD83C\uDF19 Heute Nacht laden", nowCard: "⚡ Jetzt laden", tonightSub: "günstigerer Strom", nowSub: "Tagesstrompreis", tonightHint: "Heute Nacht herunterladen (günstigerer Strom)", nowHint: "Jetzt herunterladen (Tagesstrompreis)",
       limit: "Limite erreicht: {n} Anfragen pro {d} Tage", left: "Noch {n} Anfragen diese Woche", failed: "Anfrage fehlgeschlagen", season: "S",
       dailyFull: "Die Anfragen für heute sind für alle aufgebraucht, morgen wieder",
       night: "\uD83C\uDF19 Heute Nacht", searching: "\uD83D\uDD0D Wird gesucht", unreleased: "\uD83D\uDCC5 Noch nicht erschienen", downloading: "⬇️ Lädt herunter", requested: "✓ Angefragt", declined: "Abgelehnt",
@@ -95,8 +95,14 @@
   }
 
   // TV: icon only, the labels do not fit the poster width there; fillRow adds a legend.
-  function reqButton(doc, lang, mode, tv) {
-    var b = el(doc, "button", "hssTopBtn hssTopBtn-" + mode + (tv ? " hssTopBtn-icon" : ""), tv ? ICON[mode] : tr(lang, mode === "night" ? "tonight" : "now"));
+  // Cards use the short "...Card" text where there is one (de); the second line shows only on posters >= 150 px (CSS), always in the overlay.
+  function reqButton(doc, lang, mode, tv, overlay) {
+    var k = mode === "night" ? "tonight" : "now";
+    var b = el(doc, "button", "hssTopBtn hssTopBtn-" + mode + (tv ? " hssTopBtn-icon" : ""), tv ? ICON[mode] : null);
+    if (!tv) {
+      b.appendChild(el(doc, "span", "hssBtnMain", tr(lang, overlay ? k : (TEXT[langOf(lang)][k + "Card"] ? k + "Card" : k))));
+      b.appendChild(el(doc, "span", "hssBtnSub", tr(lang, k + "Sub")));
+    }
     b.setAttribute("type", "button");
     return b;
   }
@@ -107,12 +113,12 @@
   }
 
   // The request part of a card, also shown in the details overlay (tv: icon-only buttons).
-  function actionsFor(doc, it, lang, tv, states) {
+  function actionsFor(doc, it, lang, tv, states, overlay) {
     var name = titleOf(it, lang);
     var actions = el(doc, "div", "hssTopActions");
     if (!it.x) {
       ["night", "now"].forEach(function (mode) {
-        var off = reqButton(doc, lang, mode, tv);
+        var off = reqButton(doc, lang, mode, tv, overlay);
         off.disabled = true;
         actions.appendChild(off);
       });
@@ -128,7 +134,7 @@
     var full = states && typeof states.left === "number" && states.left <= 0;
     var capped = !full && !!(states && states.dailyFull);
     ["night", "now"].forEach(function (mode) {
-      var b = reqButton(doc, lang, mode, tv);
+      var b = reqButton(doc, lang, mode, tv, overlay);
       b.setAttribute("data-hss-x", it.x);
       b.setAttribute("data-hss-mode", mode);
       b.setAttribute("title", tr(lang, mode === "night" ? "tonightHint" : "nowHint"));
@@ -471,6 +477,11 @@
     ".hssTopActions { grid-column: 2; grid-row: 2; display: flex; flex-wrap: wrap; gap: 0.35em; margin-top: 0.45em; width: var(--hss-p); }",
     ".hssTopBtn { flex: 1 1 auto; font: inherit; font-size: 0.78em; padding: 0.35em 0.4em; border-radius: 0.3em; border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.08); color: #fff; cursor: pointer; white-space: nowrap; }",
     ".hssTopBtn:hover, .hssTopBtn:focus { background: #00a4dc; border-color: #00a4dc; outline: none; }",
+    ".hssTopCard .hssTopActions { container: hssAct / inline-size; }",
+    ".hssBtnMain { display: block; font-weight: 700; white-space: normal; text-wrap: balance; }",
+    ".hssBtnSub { display: none; font-size: 0.82em; font-weight: 400; opacity: 0.8; white-space: normal; }",
+    ".hssDetailsActions .hssBtnSub { display: block; }",
+    "@container hssAct (min-width: 150px) { .hssBtnSub { display: block; } }",
     ".hssTopBtn[disabled] { opacity: 0.4; cursor: default; background: none; }",
     ".hssTopState, .hssTopHint { font-size: 0.78em; opacity: 0.85; }",
     ".hssTopLogo { height: 1.6em; width: auto; margin-right: 0.5em; vertical-align: middle; border-radius: 0.25em; }",
@@ -614,7 +625,7 @@
         id: it.d || null, key: btn.getAttribute("data-hss-key"), from: btn,
         fallback: { title: titleOf(it, l), year: it.y, poster: posterUrl(it, l) },
         line: it.k === "tv" && it.s ? tr(l, "seasonLong", { n: it.s }) : null,
-        actions: function (doc) { return actionsFor(doc, it, lang(), false, states); }
+        actions: function (doc) { return actionsFor(doc, it, lang(), false, states, true); }
       });
     }
 

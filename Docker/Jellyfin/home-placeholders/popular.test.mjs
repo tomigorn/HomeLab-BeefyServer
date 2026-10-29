@@ -56,8 +56,15 @@ test("requestable card is dimmed and has the two buttons with the entry id", () 
   assert.ok(card.classList.contains("hssTopDim"));
   const b = [...card.querySelectorAll("button[data-hss-x]")];
   assert.deepEqual(b.map((x) => [x.getAttribute("data-hss-x"), x.getAttribute("data-hss-mode")]), [["tokTV", "night"], ["tokTV", "now"]]);
-  assert.match(b[0].textContent, /🌙/);
-  assert.match(b[1].textContent, /⚡/);
+  assert.equal(b[0].querySelector(".hssBtnMain").textContent, "🌙 Download tonight");
+  assert.equal(b[1].querySelector(".hssBtnMain").textContent, "⚡ Download now");
+  assert.equal(b[0].querySelector(".hssBtnSub").textContent, "lower electricity cost");
+  assert.equal(b[1].querySelector(".hssBtnSub").textContent, "daytime electricity price");
+  const bde = [...pp.card(d, { item: FOUND, jf: null }, "de", false, null).querySelectorAll("button[data-hss-x]")];
+  assert.deepEqual(bde.map((x) => [x.querySelector(".hssBtnMain").textContent, x.querySelector(".hssBtnSub").textContent]), [["🌙 Heute Nacht laden", "günstigerer Strom"], ["⚡ Jetzt laden", "Tagesstrompreis"]]);
+  assert.equal(b[0].getAttribute("title"), "Download tonight (lower electricity cost)");
+  assert.match(pp.CSS, /\.hssBtnSub \{[^}]*display: none/);
+  assert.match(pp.CSS, /@container hssAct \(min-width: 150px\) \{ \.hssBtnSub \{ display: block/);
   assert.equal(card.querySelector(".hssTopBadge").textContent, "2160p");
   assert.match(card.querySelector(".hssTopBadge").getAttribute("title"), /available/);
   assert.match(card.querySelector(".hssTopSeason").textContent, /S4/);
@@ -386,7 +393,7 @@ test("the source has no characters outside the BMP: the injector config drops th
   assert.equal(/[\u{10000}-\u{10FFFF}]/u.test(src), false);
   const d = doc();
   const c = pp.card(d, { item: FOUND, jf: null }, "en", false, { entries: {}, left: 5 });
-  assert.equal(c.querySelector(".hssTopBtn-night").textContent, "🌙 Tonight");
+  assert.equal(c.querySelector(".hssTopBtn-night .hssBtnMain").textContent, "🌙 Download tonight");
 });
 
 test("phone/tablet (no fitted width): the default poster width is not in em, the rank's big font would multiply it (cards 520 px wide on a 390 px phone)", () => {
@@ -403,13 +410,13 @@ test("TV layout: icon-only request buttons side by side (labels were cut to 'To�
   assert.equal(night.textContent, "🌙");
   assert.equal(now.textContent, "⚡");
   assert.ok(night.classList.contains("hssTopBtn-icon"));
-  assert.equal(night.getAttribute("aria-label"), "The Diplomat: Download tonight (cheaper power)");
-  assert.equal(night.getAttribute("title"), "Download tonight (cheaper power)");
+  assert.equal(night.getAttribute("aria-label"), "The Diplomat: Download tonight (lower electricity cost)");
+  assert.equal(night.getAttribute("title"), "Download tonight (lower electricity cost)");
   const off = pp.card(d, { item: NONE, jf: null }, "de", true, null);
   assert.equal(off.querySelector(".hssTopBtn-night").textContent, "🌙");
   const desk = pp.card(d, { item: FOUND, jf: null }, "de", false, { entries: {}, left: 5 });
-  assert.equal(desk.querySelector(".hssTopBtn-night").textContent, "🌙 Heute Nacht");
-  assert.equal(desk.querySelector(".hssTopBtn-now").textContent, "⚡ Jetzt");
+  assert.equal(desk.querySelector(".hssTopBtn-night .hssBtnMain").textContent, "🌙 Heute Nacht laden");
+  assert.equal(desk.querySelector(".hssTopBtn-now .hssBtnMain").textContent, "⚡ Jetzt laden");
   const rule = pp.CSS.split("\n").find((l) => l.startsWith(".hssTopBtn-icon {")) || "";
   assert.match(rule, /flex: 1 1 0/);
 });
@@ -421,7 +428,7 @@ test("TV layout: a row with request buttons explains the icons next to its title
   pp.fillRow(sec, [{ item: FOUND, jf: null }], "en", true, { entries: {}, left: 5 });
   const lg = sec.querySelector(".sectionTitleContainer .hssTopLegend");
   assert.ok(lg);
-  assert.equal(lg.textContent, "🌙 Download tonight (cheaper power) · ⚡ Download now (daytime power price)");
+  assert.equal(lg.textContent, "🌙 Download tonight (lower electricity cost) · ⚡ Download now (daytime electricity price)");
   pp.fillRow(sec, [{ item: FOUND, jf: null }], "en", true, { entries: {}, left: 5 });
   assert.equal(sec.querySelectorAll(".hssTopLegend").length, 1);
   pp.fillRow(sec, [{ item: OWNED, jf: { id: "x", server: "s" } }], "en", true, null);
@@ -542,7 +549,9 @@ test("popular page: a card opens the overlay on top with the same request button
   assert.ok(o);
   assert.equal(o.querySelector("h1").textContent, "The Diplomat");
   assert.equal(o.querySelector(".hssDetailsOverview").textContent, "A diplomat.");
-  assert.deepEqual([...o.querySelectorAll(".hssDetailsActions button[data-hss-x]")].map((b) => [b.getAttribute("data-hss-x"), b.getAttribute("data-hss-mode"), b.textContent]), [["tokTV", "night", "\uD83C\uDF19 Tonight"], ["tokTV", "now", "⚡ Now"]]);
+  assert.deepEqual([...o.querySelectorAll(".hssDetailsActions button[data-hss-x]")].map((b) => [b.getAttribute("data-hss-x"), b.getAttribute("data-hss-mode"), b.querySelector(".hssBtnMain").textContent, b.querySelector(".hssBtnSub").textContent]), [["tokTV", "night", "\uD83C\uDF19 Download tonight", "lower electricity cost"], ["tokTV", "now", "⚡ Download now", "daytime electricity price"]]);
+  const ode = pp.actionsFor(d, FOUND, "de", false, null, true);
+  assert.deepEqual([...ode.querySelectorAll("button")].map((b) => [b.querySelector(".hssBtnMain").textContent, b.querySelector(".hssBtnSub").textContent]), [["🌙 Heute Nacht herunterladen", "günstigerer Strom"], ["⚡ Jetzt herunterladen", "Tagesstrompreis"]]);
   assert.ok(d.querySelector(".hssPopularPage"), "the page stays below");
   key("Escape", 27);
   assert.equal(d.querySelector(".hssDetails"), null);
