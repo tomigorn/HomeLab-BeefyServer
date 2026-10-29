@@ -6,7 +6,7 @@ Download now whose search found nothing (searched, nothing queued, no search run
 Low pool space (under MIN_FREE_GIB free): every downloading torrent is stopped and restarted after recovery (qBittorrent has no own low-space pause).
 Writes ~/.local/state/movie-downloads/night-downloads.json ({"pending": n, "stalled": {hash: since}, "disk_held": [hash]}), which fastpi reads to decide its 22:05 wake.
 Writes the download ids waiting for the night (outside the low tariff) to /srv/appdata/indexer-bar/night-waiting.json for Seerr's night label (../Seerr/README.md "Night label"; env ND_PUBLIC, empty = off), and beside it request-state.json: the open Seerr requests that are "Can wait" and those not released yet (Seerr ids only).
-request-state.json also carries the live state of each open request (running search, just requested, waiting for approval, queue state, imported), so every requested title has a badge, and "sizes": every request's size on disk by Seerr request id (2-min run only, the 15 s run keeps them; ../Seerr/README.md "Request sizes").
+request-state.json also carries the live state of each open request (running search, just requested, waiting for approval, queue state, imported), so every requested title has a badge, "sizes": every request's size on disk by Seerr request id, and "media": every Radarr/Sonarr title's size by movie|tv/<tmdb id> (2-min run only, the 15 s run keeps them; ../Seerr/README.md "Request sizes").
 Run by systemd/night-downloads.timer (every 2 min while awake, and at boot). --request-state (systemd/request-state.timer, every 15 s): rewrites only request-state.json, and only while a search runs or a request is from the last minutes.
 Usage: scripts/night-downloads.py [--dry-run | --request-state]; ND_NOW=2026-10-27T22:10 simulates a clock (with --dry-run)."""
 import fcntl
@@ -500,6 +500,45 @@ def request_sizes(requests, movies, series, queues):
     return out
 
 
+def _quality(f):
+    res = ((f.get("quality") or {}).get("quality") or {}).get("resolution")
+    hdr = (f.get("mediaInfo") or {}).get("videoDynamicRangeType") or ""
+    return f"{res}p {hdr}".strip() if res else ""
+
+
+def media_sizes(movies, series, queues):
+    """Every Radarr/Sonarr title by "movie|tv/<tmdb id>": {"size", "quality"} (movie file), {"size", "files", "of", "seasons"} (series, monitored aired episodes), else {"queued"}; nothing = left out."""
+    out = {}
+    records = lambda app: (queues.get(app) or {}).get("records") or [] if isinstance(queues.get(app), dict) else []
+    for m in movies.values():
+        if not m.get("tmdbId"):
+            continue
+        f = m.get("movieFile") or {}
+        size = f.get("size") or m.get("sizeOnDisk") or 0
+        if size:
+            out[f"movie/{m['tmdbId']}"] = {"size": size} | ({"quality": _quality(f)} if _quality(f) else {})
+        else:
+            queued = _queued(records("radarr"), lambda r: r.get("movieId") == m["id"])
+            if queued:
+                out[f"movie/{m['tmdbId']}"] = {"queued": queued}
+    for t in series.values():
+        if not t.get("tmdbId"):
+            continue
+        seasons = {}
+        for x in t.get("seasons") or []:
+            st = x.get("statistics") or {}
+            if st.get("sizeOnDisk") or st.get("episodeCount"):
+                seasons[str(x.get("seasonNumber"))] = {"size": st.get("sizeOnDisk") or 0, "files": st.get("episodeFileCount") or 0, "of": st.get("episodeCount") or 0}
+        size = sum(v["size"] for v in seasons.values())
+        if size:
+            out[f"tv/{t['tmdbId']}"] = {"size": size, "files": sum(v["files"] for v in seasons.values()), "of": sum(v["of"] for v in seasons.values()), "seasons": seasons}
+        else:
+            queued = _queued(records("sonarr"), lambda r: r.get("seriesId") == t["id"])
+            if queued:
+                out[f"tv/{t['tmdbId']}"] = {"queued": queued}
+    return out
+
+
 def _all(api, path):
     items = api(path)
     if not isinstance(items, list):
@@ -532,7 +571,8 @@ def collect_request_state(now, seerr, apps, queued=frozenset(), searching=None, 
     out = request_state(now, requests, dn, clean(titles["radarr"]), clean(titles["sonarr"]), episodes, queued, searching, commands, queue)
     if queues is not None:
         try:
-            out["sizes"] = request_sizes(every, _all(apps["radarr"], "/movie"), _all(apps["sonarr"], "/series"), queues)
+            movies, shows = _all(apps["radarr"], "/movie"), _all(apps["sonarr"], "/series")
+            out["sizes"], out["media"] = request_sizes(every, movies, shows, queues), media_sizes(movies, shows, queues)
         except (ApiError, KeyError, TypeError) as e:
             print(f"request sizes not read, the last ones kept: {e}", file=sys.stderr)
     return out
@@ -560,11 +600,12 @@ def write_request_state(now, seerr, apps, public_path, lock_path, queued, search
         path = pathlib.Path(public_path).parent / "request-state.json"
         if "sizes" not in data:
             try:
-                old = json.loads(path.read_text()).get("sizes")
-            except (OSError, ValueError, AttributeError):
-                old = None
-            if isinstance(old, dict):
-                data["sizes"] = old
+                old = json.loads(path.read_text())
+            except (OSError, ValueError):
+                old = {}
+            for key in ("sizes", "media"):
+                if isinstance(old, dict) and isinstance(old.get(key), dict):
+                    data[key] = old[key]
         write_json(path, data | {"updated": now.astimezone().isoformat(timespec="seconds")})
     return True
 

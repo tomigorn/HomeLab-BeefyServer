@@ -465,6 +465,29 @@ class Sizes(unittest.TestCase):
         self.assertNotIn("sizes", nd.collect_request_state(MON_DAY, seerr, apps))
         self.assertEqual(calls.count(("radarr", "/movie")), 1)
 
+    def test_media_sizes_for_every_title_by_tmdb_id(self):
+        fellowship = FELLOWSHIP | {"tmdbId": 120, "movieFile": {"size": 45327147274, "quality": {"quality": {"resolution": 2160}}, "mediaInfo": {"videoDynamicRangeType": "HDR10"}}}
+        plain = {"id": 3, "tmdbId": 7972, "hasFile": True, "movieFile": {"size": 7190407839, "quality": {"quality": {"resolution": 1080}}, "mediaInfo": {"videoDynamicRangeType": ""}}}
+        waiting = {"id": 54, "tmdbId": 1480613, "hasFile": False, "sizeOnDisk": 0}
+        nothing = {"id": 55, "tmdbId": 1, "hasFile": False, "sizeOnDisk": 0}
+        show = SHOW | {"tmdbId": 84773}
+        queues = {"radarr": {"records": [{"movieId": 54, "downloadId": "A", "size": 5378662671}]}, "sonarr": {"records": []}}
+        out = nd.media_sizes({59: fellowship, 3: plain, 54: waiting, 55: nothing}, {11: show, 12: {"id": 12, "tmdbId": 9, "seasons": [season(1, 0, 4, 0)]}}, queues)
+        self.assertEqual(out, {
+            "movie/120": {"size": 45327147274, "quality": "2160p HDR10"},
+            "movie/7972": {"size": 7190407839, "quality": "1080p"},
+            "movie/1480613": {"queued": 5378662671},
+            "tv/84773": {"size": 122003416606, "files": 13, "of": 16, "seasons": {"1": {"size": 82003416606, "files": 8, "of": 8}, "2": {"size": 40000000000, "files": 5, "of": 8}}},
+        })
+
+    def test_collect_adds_the_media_sizes_beside_the_request_sizes(self):
+        def arr(app):
+            def call(path):
+                return {"/tag": [], "/movie": [FELLOWSHIP | {"tmdbId": 120}], "/series": []}[path]
+            return call
+        out = nd.collect_request_state(MON_DAY, lambda p: {"results": []}, {"radarr": arr("radarr"), "sonarr": arr("sonarr")}, queues={})
+        self.assertEqual(out["media"], {"movie/120": {"size": 45327147274}})
+
     def test_collect_sizes_unreadable_leaves_them_out(self):
         def arr(path):
             if path == "/tag":
@@ -630,11 +653,12 @@ class Fast(unittest.TestCase):
 
     def test_a_fast_write_keeps_the_sizes_of_the_last_full_run(self):
         self.rs.parent.mkdir(parents=True)
-        self.rs.write_text(json.dumps({"sizes": {"62": {"size": 45327147274}}}))
+        self.rs.write_text(json.dumps({"sizes": {"62": {"size": 45327147274}}, "media": {"movie/120": {"size": 45327147274}}}))
         calls = []
         nd.run_fast(NOW_UTC, self.apps({"radarr": CMDS}, calls), self.seerr([req("movie", 120, 59)], calls), self.public, self.lock)
         out = json.loads(self.rs.read_text())
         self.assertEqual(out["sizes"], {"62": {"size": 45327147274}})
+        self.assertEqual(out["media"], {"movie/120": {"size": 45327147274}})
         self.assertNotIn(("radarr", "/movie"), calls)
 
     def test_arr_down_fails_without_writing(self):
