@@ -594,6 +594,7 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 | Clip | 10 s, plays to the end → request. Back or stop earlier cancels. Requested titles show `✓ Requested` until they arrive |
 | Rule | request only when position ≥ runtime − 2 s (a stop up to runtime + 30 s counts); same allow-list, limits (10 per user per 7 days, 30 per day for all), audit log and Seerr code as the Popular page |
 | Library | `Trending items` (hidden for every user, never ticked in Seerr). A film already in the library is the real item inside the collection, sorted after the placeholders |
+| Art (`trending_art.py`) | List poster 2:3: service / genre colour, logo (Swiss cross for Top 10, calendar for Coming soon), name large, the first 3 posters fanned. List backdrop: the #1 title's backdrop darkened, logo + name. Placeholder: top-left pill `Download` / `Requested` / `Downloading`, red diagonal banner when not downloadable. Library tile: name + Top 10 posters. Top right stays free for the clients' unplayed corner |
 
 | What | Where |
 |---|---|
@@ -616,6 +617,8 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 - Item queries that must see films inside the sets need `CollapseBoxSetItems=false` (`popular.py`, `studio-logos.py`, `trending.py`), else a BoxSet replaces its films.
 - Renaming Collections needs one full "Scan Media Library" run to resolve; the same run is needed when the Trending library was emptied (rollback) and scans ran: the per-library refresh may stop working until then.
 - Jellyfin auto-generates a collage tile for collection folders: `trending-setup.py` replaces it only with `--force-tile`.
+- Swiftfin's Media tab ("Random image", on by default) builds a library tile from the Backdrop of 3 random items inside, not from the library's Primary: every list needs a Backdrop (`/Images/Backdrop/0`; a plain `/Images/Backdrop` POST appends), else the tile is grey with the name only.
+- The lilac folded corner on Swiftfin posters is Swiftfin's unplayed indicator (Settings → Customize → Indicators), not our art.
 - Stored sort names are normalized (no the/a/an, accents, punctuation; numbers padded): compare with `sort_key`.
 - `lsiown` stays non-recursive on `/srv/appdata/jellyfin/trending` (the clips are hard links shared by all placeholders).
 - `MinResumeDurationSeconds` is 300: any stop past 5 % of a 10 s clip marks it Played, so `Played` means nothing; the hook uses the tracked position.
