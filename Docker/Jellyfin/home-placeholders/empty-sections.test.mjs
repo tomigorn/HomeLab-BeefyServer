@@ -566,6 +566,12 @@ test("one card per title: most titles first, ties in list order, at most 20, no 
   assert.deepEqual(es.assignCards(items, ["id-Pixar"]).map((c) => [c.name, c.items]), [[null, ["a", "b"]]]);
 });
 
+test("one card per title: a smaller studio needs its minimum of titles (studio-logos.py min), the majors one", () => {
+  const items = [film("a", ["A24"], []), film("b", ["Pixar"], []), film("c", ["Neon"], []), film("d", ["Neon"], [])];
+  const cards = es.assignCards(items, [{ name: "Pixar", ids: ["id-Pixar"] }, { name: "A24", ids: ["id-A24"], min: 2 }, { name: "Neon", ids: ["id-Neon"], min: 2 }]);
+  assert.deepEqual(cards.map((c) => [c.name, c.items.length]), [["Neon", 2], ["Pixar", 1]]);
+});
+
 test("discover: each genre's backdrop is its best rated title with a backdrop, a different one per genre where possible", () => {
   const items = [film("top", [], ["Action", "Comedy"], 8.5), film("mid", [], ["Comedy"], 7.0), film("nob", [], ["Comedy"], 9.9, false), film("low", [], ["Action"], 5.0)];
   const genres = es.countBy(items, "GenreItems");

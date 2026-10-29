@@ -62,6 +62,10 @@ MAJOR_STUDIOS = [
     ("Aardman", {297: "Aardman"}, []),
     ("Laika", {11537: "LAIKA"}, []),
 ]
+# Big studios and household brands always get their card; the others only with at least 2 titles the user can see (owner 2026-10-29: trim the row).
+MAJOR_TIER = ["Warner Bros.", "Pixar", "Marvel Studios", "Lucasfilm", "Walt Disney", "Universal", "Paramount", "Sony Pictures", "20th Century",
+              "Netflix", "Amazon MGM", "Apple", "Lionsgate", "DreamWorks", "Illumination", "Studio Ghibli"]
+SMALL_MIN = 2
 # Global streamers, major US/UK/DE/CH broadcasters, Crunchyroll; matched by id, so a shared name like "RTL" (HU) or "max" (AU) never counts.
 NETWORKS = [
     ("Netflix", {213: "Netflix"}, []), ("Prime Video", {1024: "Prime Video"}, []), ("Disney+", {2739: "Disney+"}, []), ("HBO", {49: "HBO"}, []), ("HBO Max", {3186: "HBO Max", 8304: "HBO Max", 7869: "HBO Max", 6783: "HBO Max"}, []),
@@ -115,6 +119,11 @@ def card_groups(table, items, cache, key):
             taken |= set(hit)
             out.append({"name": name, "ids": hit})
     return out
+
+
+def with_min(cards):
+    """Studio cards outside MAJOR_TIER need SMALL_MIN titles (counted per user in the browser, empty-sections.js assignCards)."""
+    return [c if c["name"] in MAJOR_TIER else {**c, "min": SMALL_MIN} for c in cards]
 
 
 def logo_jobs(studios, items, cache, shown):
@@ -220,7 +229,7 @@ def main(argv, api=None, seerr=_seerr, fetch=_fetch, upload=_upload, cache_file=
     plugin_id = next(p["Id"] for p in api("GET", "/Plugins") if p["Name"] == PLUGIN)
     path = f"/Plugins/{plugin_id}/Configuration"
     config = api("GET", path)
-    script = cards_script(majors, nets)
+    script = cards_script(with_min(majors), nets)
     changed = next((s.get("Script") for s in config.get("CustomJavaScripts") or [] if s.get("Name") == NAME), None) != script
     print(f"{len(majors)} studios, {len(nets)} networks", file=out)
     if dry:

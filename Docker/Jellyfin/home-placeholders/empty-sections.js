@@ -250,7 +250,7 @@
     if (!Array.isArray(groups)) return [];
     var cards = groups.map(function (g, i) {
       var one = typeof g === "string";
-      return { name: one ? null : g.name || null, ids: one ? [g] : g.ids || [], items: [], rank: i };
+      return { name: one ? null : g.name || null, ids: one ? [g] : g.ids || [], min: (!one && g.min) || 1, items: [], rank: i };
     });
     for (var i = 0; i < (items || []).length; i++) {
       var mine = (items[i].Studios || []).map(function (s) { return s && s.Id; });
@@ -261,7 +261,7 @@
         }
       }
     }
-    var out = cards.filter(function (c) { return c.items.length; });
+    var out = cards.filter(function (c) { return c.items.length >= c.min; });
     out.sort(function (a, b) { return b.items.length - a.items.length || a.rank - b.rank; });
     return out.slice(0, DISCOVER_LIMIT).map(function (c) { return { name: c.name, ids: c.ids, items: c.items }; });
   }

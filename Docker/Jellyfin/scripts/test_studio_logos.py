@@ -143,6 +143,16 @@ class Pure(unittest.TestCase):
     def test_white_logo_url(self):
         self.assertEqual(sl.logo_url("/pixar.png"), "https://image.tmdb.org/t/p/w500_filter(duotone,ffffff,bababa)/pixar.png")
 
+    def test_smaller_studios_need_two_titles_the_majors_one(self):
+        cards = sl.with_min([{"name": "Pixar", "ids": ["p"]}, {"name": "A24", "ids": ["a"]}, {"name": "Laika", "ids": ["l"]}])
+        self.assertEqual(cards, [{"name": "Pixar", "ids": ["p"]}, {"name": "A24", "ids": ["a"], "min": 2}, {"name": "Laika", "ids": ["l"], "min": 2}])
+        studios = [g[0] for g in sl.MAJOR_STUDIOS]
+        self.assertTrue(set(sl.MAJOR_TIER) <= set(studios))
+        for n in ["Warner Bros.", "Walt Disney", "Universal", "Paramount", "Sony Pictures", "20th Century", "Netflix", "Amazon MGM", "Apple", "Lionsgate", "Pixar", "Marvel Studios", "Lucasfilm", "DreamWorks", "Illumination", "Studio Ghibli"]:
+            self.assertIn(n, sl.MAJOR_TIER)
+        for n in ["A24", "Neon", "Blumhouse", "Legendary", "New Line Cinema"]:
+            self.assertNotIn(n, sl.MAJOR_TIER)
+
     def test_cards_script_is_plain_data(self):
         js = sl.cards_script([{"name": "Pixar", "ids": ["p"]}], [{"name": "HBO", "ids": ["h"]}])
         self.assertEqual(js, 'window.HssStudios = [{"name": "Pixar", "ids": ["p"]}];\nwindow.HssNetworks = [{"name": "HBO", "ids": ["h"]}];\n')
@@ -209,6 +219,13 @@ class Main(unittest.TestCase):
         self.assertEqual(self.calls, [])
         self.assertEqual(len(jf.posts), 1)
         self.assertEqual(text.splitlines()[-1], "0 logos added, cards unchanged")
+
+    def test_a_smaller_studio_card_carries_its_minimum(self):
+        jf = FakeJellyfin([movie("1", ["A24"])], [studio("A24")])
+        seerr = lambda ref: {"productionCompanies": [{"id": 41077, "name": "A24", "logoPath": None}]}
+        self.run_main(jf, [], seerr, self.cache)
+        entry = next(s for s in jf.config["CustomJavaScripts"] if s["Name"] == sl.NAME)
+        self.assertIn('{"name": "A24", "ids": ["id-A24"], "min": 2}', entry["Script"])
 
     def test_dry_run_changes_nothing(self):
         jf = FakeJellyfin([movie("862", ["Pixar"])], [studio("Pixar")])
