@@ -1037,6 +1037,14 @@ class DiskHold(unittest.TestCase):
         self.assertEqual(f.actions(), [("qbit", "/torrents/start", {"hashes": "ddd"})])
         self.assertEqual(json.loads(self.state.read_text())["disk_held"], [])
 
+    def test_torrent_paused_by_hand_before_the_hold_stays_paused_on_release(self):
+        f = Fake([tor("ddd", 5, state="downloading", cat="radarr"), T_NOW_PAUSED, tor("hhh", 7, state="pausedDL", cat="sonarr")], [])
+        self.go(f, MON_DAY, self.LOW)
+        self.assertEqual(json.loads(self.state.read_text())["disk_held"], ["ddd"])
+        f = Fake([tor("ddd", 5, state="stoppedDL", cat="radarr"), T_NOW_PAUSED, tor("hhh", 7, state="pausedDL", cat="sonarr")], [])
+        self.go(f, MON_DAY, self.OK)
+        self.assertEqual(f.actions(), [("qbit", "/torrents/start", {"hashes": "ddd"})])
+
     def test_held_night_torrent_is_left_to_the_night_rules(self):
         f = Fake([tor("AAA", 100, state="downloading", cat="radarr-night")], [])
         self.go(f, MON_2205, self.LOW)
