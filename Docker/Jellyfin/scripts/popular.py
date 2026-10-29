@@ -262,7 +262,7 @@ class Io:
 
     def owned(self):
         import jellyfin_api
-        items = jellyfin_api.api("GET", "/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=ProviderIds&EnableImages=false&EnableUserData=false")["Items"]
+        items = jellyfin_api.api("GET", "/Items?Recursive=true&IncludeItemTypes=Movie,Series&CollapseBoxSetItems=false&Fields=ProviderIds&EnableImages=false&EnableUserData=false")["Items"]
         return {("movie/" if i["Type"] == "Movie" else "tv/") + i["ProviderIds"]["Tmdb"]: i["Id"] for i in items if (i.get("ProviderIds") or {}).get("Tmdb")}
 
     def _plugin_path(self):

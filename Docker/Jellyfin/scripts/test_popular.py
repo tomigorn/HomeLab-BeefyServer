@@ -176,6 +176,19 @@ class Script(unittest.TestCase):
         self.assertEqual(json.loads(src[len("window.HssPopular = "):].rstrip().rstrip(";").replace("<\\/", "</")), {"rows": [{"t": "</script><b>"}]})
 
 
+class OwnedQuery(unittest.TestCase):
+    def test_owned_does_not_collapse_collections(self):
+        import jellyfin_api
+        seen = []
+        real = jellyfin_api.api
+        jellyfin_api.api = lambda method, path, body=None: seen.append(path) or {"Items": [{"Type": "Movie", "Id": "a", "ProviderIds": {"Tmdb": "1"}}]}
+        try:
+            self.assertEqual(pop.Io().owned(), {"movie/1": "a"})
+        finally:
+            jellyfin_api.api = real
+        self.assertIn("CollapseBoxSetItems=false", seen[0])
+
+
 class FakeIo:
     def __init__(self):
         self.searches, self.scripts, self.tsv_fetches = [], [], 0
