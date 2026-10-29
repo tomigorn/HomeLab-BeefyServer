@@ -1,21 +1,24 @@
-// Request sizes (README "Request sizes"): a "Size" line under Profile on every Requests row (bytes on disk from request-state.json "sizes", by Seerr request id) and our own "Largest / Smallest first" control beside Seerr's sort. Sorting moves rows with CSS order only (no DOM moves) and turns 100 rows per page on, so every request is sorted. Missing or unmatched data = Seerr unchanged.
+// Request sizes (README "Request sizes"): a "Size" row after Status in a title page's facts panel, a "Size" line under Profile on every Requests row (bytes on disk from request-state.json "sizes", by Seerr request id) and our own "Largest / Smallest first" control beside Seerr's sort. Sorting moves rows with CSS order only (no DOM moves) and turns 100 rows per page on, so every request is sorted. Missing or unmatched data = Seerr unchanged.
 (function () {
   "use strict";
   var DATA_URL = "/_indexer-bar/request-state.json";
   var LIST = /^(https?:\/\/[^/]+)?\/api\/v1\/request\?(.*&)?take=/;
   var MEDIA = /^\/(movie|tv)\/(\d+)/;
   var REQUEST_PAGE = /\/requests\/?$/;
+  var TITLE_PAGE = /^\/(movie|tv)\/(\d+)\/?$/;
+  var TITLE_API = /^(https?:\/\/[^/]+)?\/api\/v1\/(movie|tv)\/(\d+)(\?.*)?$/;
+  var STATUS = /^(Status)$/;
   var TTL = 2 * 60 * 1000;
   var KEEP_LISTS = 12;
   var MODE_KEY = "hg-size-sort";
   var PREV_KEY = "hg-size-sort-page-size";
   var ALL_ROWS = "100";
   var TEXT = {
-    en: { size: "Size", of: "{a} of {b} episodes", queued: "in queue", off: "Off", desc: "Largest", asc: "Smallest", aria: "Sort by size", page: "Sorted within this page ({a} of {b})", locale: "en-GB" },
-    de: { size: "Grösse", of: "{a} von {b} Episoden", queued: "in der Warteschlange", off: "Aus", desc: "Grösste", asc: "Kleinste", aria: "Nach Grösse sortieren", page: "Innerhalb dieser Seite sortiert ({a} von {b})", locale: "de-CH" },
+    en: { size: "Size", season: "Season", of: "{a} of {b} episodes", queued: "in queue", off: "Off", desc: "Largest", asc: "Smallest", aria: "Sort by size", page: "Sorted within this page ({a} of {b})", locale: "en-GB" },
+    de: { size: "Grösse", season: "Staffel", of: "{a} von {b} Episoden", queued: "in der Warteschlange", off: "Aus", desc: "Grösste", asc: "Kleinste", aria: "Nach Grösse sortieren", page: "Innerhalb dieser Seite sortiert ({a} von {b})", locale: "de-CH" },
   };
   var RESTORE_WAIT = 2000;
-  var state = { sizes: null, at: 0, loading: null, lists: [], mode: "", fetched: {}, restore: null };
+  var state = { sizes: null, at: 0, loading: null, lists: [], mode: "", fetched: {}, restore: null, media: null, requested: {} };
 
   function store(key, value) {
     try {
@@ -93,8 +96,10 @@
   function load(force) {
     if (state.loading || (!force && state.at && Date.now() - state.at < TTL)) return state.loading;
     state.loading = getJSON(DATA_URL).then(function (d) {
-      state.sizes = d && d.sizes && typeof d.sizes === "object" && !Array.isArray(d.sizes) ? d.sizes : null;
-    }, function () { state.sizes = null; }).then(function () {
+      var obj = function (v) { return v && typeof v === "object" && !Array.isArray(v) ? v : null; };
+      state.sizes = obj(d && d.sizes);
+      state.media = obj(d && d.media);
+    }, function () { state.sizes = null; state.media = null; }).then(function () {
       state.at = Date.now();
       state.loading = null;
       run();
@@ -297,6 +302,50 @@
     if ((select.getAttribute("title") || "") !== hint) { if (hint) select.setAttribute("title", hint); else select.removeAttribute("title"); }
   }
 
+  function titleText(entry, l) {
+    if (entry && entry.size > 0) return bytes(entry.size, l) + (entry.quality ? " · " + entry.quality : "") + (entry.of > 0 ? " · " + fill(TEXT[l].of, entry.files || 0, entry.of) : "");
+    return sizeText(entry, l);
+  }
+
+  function seasonHint(entry, l) {
+    var seasons = entry && entry.seasons && typeof entry.seasons === "object" ? entry.seasons : null;
+    if (!seasons) return "";
+    return Object.keys(seasons).sort(function (a, b) { return a - b; }).map(function (n) {
+      var x = seasons[n] || {};
+      return TEXT[l].season + " " + n + ": " + bytes(x.size || 0, l) + " · " + fill(TEXT[l].of, x.files || 0, x.of || 0);
+    }).join("\n");
+  }
+
+  // title page: one row after Status in Seerr's facts panel; nothing known = no row (requested: "—")
+  function titleFact(doc) {
+    var m = TITLE_PAGE.exec(window.location.pathname), panel = m && doc.querySelector(".media-facts");
+    var row = panel ? panel.querySelector(":scope > [data-hg-size-fact]") : doc.querySelector("[data-hg-size-fact]");
+    if (!panel || !state.media) { if (row) row.parentNode.removeChild(row); return; }
+    var key = m[1] + "/" + m[2], entry = state.media[key], status = null;
+    var facts = panel.querySelectorAll(":scope > .media-fact:not([data-hg-size-fact])");
+    for (var i = 0; i < facts.length; i++) if (facts[i].firstElementChild && STATUS.test(facts[i].firstElementChild.textContent.trim())) { status = facts[i]; break; }
+    if (!status || (!entry && !state.requested[key])) { if (row) row.parentNode.removeChild(row); return; }
+    var l = lang(doc), text = titleText(entry, l);
+    if (!row) {
+      row = doc.createElement("div");
+      row.className = "media-fact";
+      row.setAttribute("data-hg-size-fact", "");
+      var name = doc.createElement("span"), value = doc.createElement("span");
+      value.className = "media-fact-value";
+      row.appendChild(name);
+      row.appendChild(value);
+    }
+    if (row.firstChild.textContent !== TEXT[l].size) row.firstChild.textContent = TEXT[l].size;
+    if (row.lastChild.textContent !== text) row.lastChild.textContent = text;
+    if (status.nextElementSibling !== row) status.after(row);
+    var hint = seasonHint(entry, l);
+    if (row.__hgHint !== hint) {
+      row.__hgHint = hint;
+      if (window.hgNightLabel && window.hgNightLabel.hint) window.hgNightLabel.hint(row, hint);
+      else if (hint) row.setAttribute("title", hint); else row.removeAttribute("title");
+    }
+  }
+
   function style(doc) {
     if (doc.getElementById("hg-size-style")) return;
     var s = doc.createElement("style");
@@ -307,7 +356,7 @@
 
   function run() {
     if (typeof document === "undefined") return;
-    try { style(document); apply(document); } catch (e) { /* never break Seerr */ }
+    try { style(document); apply(document); titleFact(document); } catch (e) { /* never break Seerr */ }
   }
 
   function hookXHR(XHR) {
@@ -315,7 +364,7 @@
     var open = XHR.prototype.open, send = XHR.prototype.send;
     XHR.prototype.__hgSizes = true;
     XHR.prototype.open = function (method, url) {
-      this.__hgSizesUrl = String(method).toUpperCase() === "GET" && LIST.test(String(url)) ? String(url) : null;
+      this.__hgSizesUrl = String(method).toUpperCase() === "GET" && (LIST.test(String(url)) || TITLE_API.test(String(url))) ? String(url) : null;
       return open.apply(this, arguments);
     };
     XHR.prototype.send = function () {
@@ -324,7 +373,14 @@
         this.addEventListener("load", function () {
           try {
             if (self.status !== 200) return;
-            remember(self.__hgSizesUrl, self.responseType === "json" ? self.response : JSON.parse(self.responseText));
+            var json = self.responseType === "json" ? self.response : JSON.parse(self.responseText), t = TITLE_API.exec(self.__hgSizesUrl);
+            if (t) {
+              var reqs = json && json.mediaInfo && json.mediaInfo.requests;
+              state.requested[t[2] + "/" + t[3]] = Array.isArray(reqs) && reqs.length > 0;
+              run();
+              return;
+            }
+            remember(self.__hgSizesUrl, json);
             listLoaded();
             load(false);
             run();
@@ -335,13 +391,13 @@
     };
   }
 
-  var api = { sizeText: sizeText, ranking: ranking, bytes: bytes, remember: remember, apply: apply, state: state };
+  var api = { titleFact: titleFact, sizeText: sizeText, ranking: ranking, bytes: bytes, remember: remember, apply: apply, state: state };
   if (typeof window === "undefined") return;
   window.hgRequestSizes = api;
   try {
     hookXHR(window.XMLHttpRequest);
     state.mode = /^(desc|asc)$/.test(stored(MODE_KEY)) ? stored(MODE_KEY) : "";
-    if (REQUEST_PAGE.test(window.location.pathname)) load(false);
+    if (REQUEST_PAGE.test(window.location.pathname) || TITLE_PAGE.test(window.location.pathname)) load(false);
     // a Seerr sort or direction chosen again: Seerr's order back
     document.addEventListener("change", function (e) { if (e.target && e.target.id === "sort") setMode(document, "", false); });
     document.addEventListener("click", function (e) {

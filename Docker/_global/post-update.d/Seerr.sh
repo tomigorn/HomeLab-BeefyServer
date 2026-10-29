@@ -40,7 +40,9 @@ if want seerr-proxy; then
   check seerr.status-icons-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'tonight.s scheduled search (04:17)' 2>&1)"
   check seerr.partly-half-circle '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'data-hg-half' 2>&1)"
   check seerr.request-sizes-data '^object [1-9]' "$(seerr_data /_indexer-bar/request-state.json | jq -r '"\(.sizes|type) \(.sizes|length)"' 2>&1)"
+  check seerr.media-sizes-data '^object [1-9]' "$(seerr_data /_indexer-bar/request-state.json | jq -r '"\(.media|type) \(.media|length)"' 2>&1)"
   check seerr.request-sizes-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-sizes.js | grep -c 'data-hg-size-sort' 2>&1)"
+  check seerr.title-size-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-sizes.js | grep -c 'data-hg-size-fact' 2>&1)"
   check seerr.status-badge-markup '^[1-9]' "$(docker exec seerr sh -c 'grep -l "M5.25 12a.75.75 0 0 1 .75-.75h12" /app/.next/static/chunks/*.js | wc -l' 2>&1)"
 fi
 if want download-now seerr-proxy; then

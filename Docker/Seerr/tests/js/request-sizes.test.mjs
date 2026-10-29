@@ -229,3 +229,69 @@ test("other pages with a sort select (Issues) are left alone", async () => {
   await settle();
   assert.equal(w.document.querySelector("[data-hg-size-sort]"), null);
 });
+
+// Title page facts panel (src/components/MovieDetails, TvDetails "media-facts")
+const MEDIA = {
+  "movie/120": { size: 45327147274, quality: "2160p HDR10" },
+  "movie/1480613": { queued: 5378662671 },
+  "tv/84773": { size: 122003416606, files: 13, of: 16, seasons: { 1: { size: 82003416606, files: 8, of: 8 }, 2: { size: 40000000000, files: 5, of: 8 } } },
+};
+const facts = (status = "Status") => `<div class="media-page"><div class="media-overview-right"><div class="media-facts">
+  <div class="media-ratings"><a class="media-rating"><span>91%</span></a></div>
+  <div class="media-fact"><span>Original Title</span><span class="media-fact-value">Orig</span></div>
+  <div class="media-fact"><span>${status}</span><span class="media-fact-value">Released</span></div>
+  <div class="media-fact"><span>Release Dates</span><span class="media-fact-value">19 Dec 2001</span></div>
+</div></div></div>`;
+async function title(path, { body = facts(), media = MEDIA, titleJson = null, before } = {}) {
+  const calls = [];
+  const routes = { "/_indexer-bar/request-state.json": { ...STATE, media } };
+  if (titleJson) routes["/api/v1" + path] = titleJson;
+  const w = load("request-sizes.js", SIDEBAR + body, (win) => { fakeXHR(routes, calls)(win); if (before) before(win); }, "https://requests.example.com" + path);
+  open.push(w);
+  if (titleJson) { const x = new w.XMLHttpRequest(); x.open("GET", "/api/v1" + path); x.send(); }
+  await settle();
+  return w;
+}
+const factRows = (w) => [...w.document.querySelectorAll(".media-fact")].map((f) => [...f.children].map((c) => c.textContent.trim()).join(" "));
+
+test("title page: a Size row right after Status, styled like Seerr's facts", async () => {
+  const w = await title("/movie/120");
+  assert.deepEqual(factRows(w), ["Original Title Orig", "Status Released", "Size 45.3 GB · 2160p HDR10", "Release Dates 19 Dec 2001"]);
+  const row = w.document.querySelector("[data-hg-size-fact]");
+  assert.equal(row.className, "media-fact");
+  assert.equal(row.lastChild.className, "media-fact-value");
+});
+
+test("title page series: total, episodes, per-season hint; German", async () => {
+  const hints = [];
+  const w = await title("/tv/84773", { before: (win) => { win.hgNightLabel = { lang: () => "de", hint: (el, text) => hints.push(text) }; } });
+  assert.equal(w.document.querySelector("[data-hg-size-fact]").textContent, "Grösse122.0 GB · 13 von 16 Episoden");
+  assert.deepEqual(hints, ["Staffel 1: 82.0 GB · 8 von 8 Episoden\nStaffel 2: 40.0 GB · 5 von 8 Episoden"]);
+});
+
+test("title page: queued shows the expected size, nothing hides the row unless requested (then —)", async () => {
+  const q = await title("/movie/1480613");
+  assert.equal(q.document.querySelector("[data-hg-size-fact]").textContent, "Size≈ 5.4 GB · in queue");
+  const none = await title("/movie/999");
+  assert.equal(none.document.querySelector("[data-hg-size-fact]"), null);
+  const asked = await title("/movie/998", { titleJson: { id: 998, mediaInfo: { requests: [{ id: 1 }] } } });
+  assert.equal(asked.document.querySelector("[data-hg-size-fact]").textContent, "Size—");
+});
+
+test("title page: the row is in place in the same task Seerr renders the panel (no timer)", async () => {
+  const w = await title("/movie/120", { body: '<div id="root"></div>' });
+  w.document.getElementById("root").innerHTML = facts();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(w.document.querySelector("[data-hg-size-fact]").textContent, "Size45.3 GB · 2160p HDR10");
+});
+
+test("title page: another title in the same panel updates the row, no Status row = Seerr unchanged", async () => {
+  const w = await title("/movie/120");
+  w.history.pushState({}, "", "/movie/1480613");
+  w.hgRequestSizes.titleFact(w.document);
+  assert.equal(w.document.querySelectorAll("[data-hg-size-fact]").length, 1);
+  assert.equal(w.document.querySelector("[data-hg-size-fact]").textContent, "Size≈ 5.4 GB · in queue");
+  const other = await title("/movie/120", { body: facts("Estado") });
+  assert.equal(other.document.querySelector("[data-hg-size-fact]"), null);
+});
