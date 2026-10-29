@@ -635,7 +635,8 @@
   }
 
   function filled(el) {
-    var items = el.querySelector(".itemsContainer");
+    // popular.js Top 10 rows have no .itemsContainer (Jellyfin would pause() it).
+    var items = el.querySelector(".itemsContainer, .hssTopScroll");
     if (el.classList.contains("hide") || !items) return false;
     for (var i = 0; i < items.children.length; i++) if (items.children[i].style.display !== "none") return true;
     return false;

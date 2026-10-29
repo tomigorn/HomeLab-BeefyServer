@@ -1081,3 +1081,16 @@ test("a burst of DOM changes (sections arriving, other pages rendering) is handl
   assert.ok(calls <= 6, `handled ${calls / 2} times for 20 changes`);
   win.close();
 });
+
+test("a filled Top 10 row (popular.js, hssTopScroll, no itemsContainer) counts as filled: no duplicate 'Nothing here yet', it keeps its slot order", () => {
+  const top = '<div class="verticalSection hssTopRow Top10Movies" data-hss-client="k"><div class="sectionTitleContainer"><h2>Top 10</h2></div>' +
+    '<div class="hssTopScroll focuscontainer-x"><a class="hssTopCard"></a><a class="hssTopCard"></a></div></div>';
+  const c = home(section("NextUp", 3, 1) + section("HiddenGems", 6, 2) + top);
+  es.render(c, ["NextUp", "Top10Movies", "HiddenGems"], { ...NAMES, Top10Movies: "Top 10" }, "en", () => false, {});
+  assert.equal(c.querySelector('[data-hss-placeholder="Top10Movies"]'), null);
+  assert.deepEqual(order(c), ["NextUp", "hssTopRow", "HiddenGems"]);
+  assert.equal(c.querySelector(".Top10Movies").style.order, "3");
+  const empty = home(section("NextUp", 3, 1) + '<div class="verticalSection hssTopRow Top10Movies" data-hss-client="k"><div class="hssTopScroll"></div></div>');
+  es.render(empty, ["NextUp", "Top10Movies"], { ...NAMES, Top10Movies: "Top 10" }, "en", () => false, {});
+  assert.ok(empty.querySelector('[data-hss-placeholder="Top10Movies"]'), "an empty Top 10 row still gets its placeholder");
+});
