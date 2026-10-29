@@ -11,6 +11,8 @@ import re
 import sys
 import urllib.request
 
+import jellyfin_api
+
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
@@ -184,7 +186,6 @@ def _fetch(url):
 
 
 def _upload(studio_id, data):
-    import jellyfin_api
     req = urllib.request.Request(f"{jellyfin_api.BASE}/Items/{studio_id}/Images/Logo", data=base64.b64encode(data), method="POST")
     req.add_header("Authorization", f'MediaBrowser Token="{jellyfin_api.KEY_FILE.read_text().strip()}"')
     req.add_header("Content-Type", "image/png")
@@ -204,7 +205,6 @@ def main(argv, api=None, seerr=_seerr, fetch=_fetch, upload=_upload, cache_file=
         return 2
     dry = "--dry-run" in argv
     if api is None:
-        import jellyfin_api
         api = jellyfin_api.api
     fields = "Recursive=true&Fields=Studios,ProviderIds&EnableImages=false&EnableUserData=false"
     movies = api("GET", f"/Items?IncludeItemTypes=Movie&{fields}")["Items"]
@@ -228,9 +228,8 @@ def main(argv, api=None, seerr=_seerr, fetch=_fetch, upload=_upload, cache_file=
     jobs = logo_jobs(studios, movies + series, cache, shown)
     plugin_id = next(p["Id"] for p in api("GET", "/Plugins") if p["Name"] == PLUGIN)
     path = f"/Plugins/{plugin_id}/Configuration"
-    config = api("GET", path)
     script = cards_script(with_min(majors), nets)
-    changed = next((s.get("Script") for s in config.get("CustomJavaScripts") or [] if s.get("Name") == NAME), None) != script
+    changed = next((s.get("Script") for s in api("GET", path).get("CustomJavaScripts") or [] if s.get("Name") == NAME), None) != script
     print(f"{len(majors)} studios, {len(nets)} networks", file=out)
     if dry:
         print(f"{len(jobs)} logos to add, cards {'would change' if changed else 'unchanged'}", file=out)
@@ -249,7 +248,8 @@ def main(argv, api=None, seerr=_seerr, fetch=_fetch, upload=_upload, cache_file=
         except Exception as e:
             print(f"logo failed: {name}: {type(e).__name__}", file=out)
     if changed:
-        api("POST", path, upsert(config, script))
+        with jellyfin_api.injector_lock():
+            api("POST", path, upsert(api("GET", path), script))
     cache.setdefault("opaque", [])
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps(cache, sort_keys=True))

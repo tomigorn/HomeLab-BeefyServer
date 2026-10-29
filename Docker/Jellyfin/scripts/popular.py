@@ -259,6 +259,10 @@ class Io:
         ja, path = self._plugin_path()
         ja.api("POST", path, config)
 
+    def injector_lock(self):
+        import jellyfin_api
+        return jellyfin_api.injector_lock()
+
 
 def load_json(path):
     try:
@@ -531,11 +535,12 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
     for r in [r for r in list(tokens) if r not in {e["ref"] for e in allow.values()}]:
         del tokens[r]
     source = script(data)
-    config = io_.injector_get()
-    current = next((s for s in config.get("CustomJavaScripts") or [] if s.get("Name") == NAME), None)
-    if not current or current.get("Script") != source or not current.get("Enabled") or not current.get("RequiresAuthentication"):
-        io_.injector_put(upsert(config, source))
-        say(f"upserted {NAME}")
+    with io_.injector_lock():
+        config = io_.injector_get()
+        current = next((s for s in config.get("CustomJavaScripts") or [] if s.get("Name") == NAME), None)
+        if not current or current.get("Script") != source or not current.get("Enabled") or not current.get("RequiresAuthentication"):
+            io_.injector_put(upsert(config, source))
+            say(f"upserted {NAME}")
     save_json(allow_file, {"updated": stamp, "entries": allow}, 0o644)
     save_json(state_file, state)
     return 0

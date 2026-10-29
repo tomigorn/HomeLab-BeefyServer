@@ -2,6 +2,7 @@
 """TMDB popularity of what is coming soon, for the home row "Coming soon" (home-placeholders/home-layout.js): ranks titles released in the same week.
 Reads the Sonarr and Radarr calendars, asks Seerr (its TMDB access, no own key) for each title's popularity and writes the JavaScript Injector entry "Home upcoming" (window.HssUpcomingPop = {"s:<Sonarr series id>" | "m:<Radarr movie id>": popularity}).
 Never prints API keys. Usage: upcoming-popularity.py [--dry-run]"""
+import contextlib
 import datetime
 import json
 import pathlib
@@ -9,6 +10,8 @@ import re
 import sys
 import urllib.parse
 import urllib.request
+
+import jellyfin_api
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -66,7 +69,6 @@ def main(argv, api=None, arr=_arr, seerr=_seerr, today=None, out=sys.stdout):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     if api is None:
-        import jellyfin_api
         api = jellyfin_api.api
     start = today or datetime.date.today()
     window = {"start": start.isoformat(), "end": (start + datetime.timedelta(days=DAYS)).isoformat()}
@@ -82,11 +84,12 @@ def main(argv, api=None, arr=_arr, seerr=_seerr, today=None, out=sys.stdout):
             pops[key] = round(float(p), 1)
     plugin_id = next(p["Id"] for p in api("GET", "/Plugins") if p["Name"] == PLUGIN)
     path = f"/Plugins/{plugin_id}/Configuration"
-    config = api("GET", path)
     script = pop_script(pops)
-    changed = next((s.get("Script") for s in config.get("CustomJavaScripts") or [] if s.get("Name") == NAME), None) != script
-    if changed and "--dry-run" not in argv:
-        api("POST", path, upsert(config, script))
+    with contextlib.nullcontext() if "--dry-run" in argv else jellyfin_api.injector_lock():
+        config = api("GET", path)
+        changed = next((s.get("Script") for s in config.get("CustomJavaScripts") or [] if s.get("Name") == NAME), None) != script
+        if changed and "--dry-run" not in argv:
+            api("POST", path, upsert(config, script))
     verb = ("would change" if "--dry-run" in argv else "changed") if changed else "unchanged"
     print(f"{len(pops)} of {len(wanted)} upcoming titles ranked, {verb}", file=out)
     return 0

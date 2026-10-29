@@ -1,3 +1,4 @@
+import contextlib
 import datetime
 import importlib.util
 import io
@@ -219,6 +220,9 @@ class FakeIo:
     def injector_put(self, config):
         self.scripts.append(config)
         self.injector = config
+
+    def injector_lock(self):
+        return contextlib.nullcontext()
 
 
 class Main(unittest.TestCase):

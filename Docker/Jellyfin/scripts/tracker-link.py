@@ -6,6 +6,8 @@
 import pathlib
 import sys
 
+import jellyfin_api
+
 PLUGIN = "JavaScript Injector"
 NAME = "Rate in Tracker"
 SOURCE = pathlib.Path(__file__).resolve().parent.parent / "tracker-link" / "rate-in-tracker.js"
@@ -23,7 +25,6 @@ def upsert_script(config, name, source):
 
 def main(argv, api=None, source=None, out=sys.stdout, name=NAME, source_file=SOURCE):
     if api is None:
-        import jellyfin_api
         api = jellyfin_api.api
     if argv:
         print(__doc__.strip(), file=sys.stderr)
@@ -35,7 +36,8 @@ def main(argv, api=None, source=None, out=sys.stdout, name=NAME, source_file=SOU
         return 1
     path = f"/Plugins/{plugin_id}/Configuration"
     source = source_file.read_text() if source is None else source
-    api("POST", path, upsert_script(api("GET", path), name, source))
+    with jellyfin_api.injector_lock():
+        api("POST", path, upsert_script(api("GET", path), name, source))
     print(f"upserted {name}", file=out)
     return 0
 
