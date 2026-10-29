@@ -324,3 +324,26 @@ test("TV layout: a row with request buttons explains the icons next to its title
   pp.fillRow(sec, [{ item: FOUND, jf: null }], "en", false, { entries: {}, left: 5 });
   assert.equal(sec.querySelector(".hssTopLegend"), null, "desktop keeps its labels");
 });
+
+test("a page opened again at the same width gets its poster size before it is attached (no measuring layout); another width is measured", () => {
+  const d = doc('<div class="page"><div class="hssTopScroll"></div><div class="hssTopScroll"></div></div>');
+  const page = d.querySelector(".page");
+  assert.equal(pp.prefit(page, null, 1920), false);
+  assert.equal(pp.prefit(page, { width: 1280, p: 150 }, 1920), false);
+  assert.equal(page.querySelector(".hssTopScroll").style.getPropertyValue("--hss-p"), "");
+  assert.equal(pp.prefit(page, { width: 1920, p: 150 }, 1920), true);
+  for (const l of page.querySelectorAll(".hssTopScroll")) assert.equal(l.style.getPropertyValue("--hss-p"), "150px");
+  assert.equal(pp.prefit(page, { width: 1920, p: null }, 1920), true);
+  assert.equal(page.querySelector(".hssTopScroll").style.getPropertyValue("--hss-p"), "", "too narrow to fit: the rows scroll");
+});
+
+test("fitAll answers the size it set, so the page can remember it", () => {
+  const d = doc('<div class="page"><div class="hssTopScroll"></div></div>');
+  const win = d.defaultView;
+  Object.defineProperty(win, "innerWidth", { value: 1920, configurable: true });
+  win.getComputedStyle = () => ({ paddingLeft: "0", paddingRight: "0", columnGap: "14" });
+  Object.defineProperty(d.querySelector(".hssTopScroll"), "clientWidth", { get: () => 1800 });
+  const p = pp.fitAll(d.querySelector(".page"));
+  assert.equal(p, pp.fitPoster(1800, 14, 1920));
+  assert.equal(pp.fitAll(doc('<div class="page"></div>').querySelector(".page")), undefined);
+});

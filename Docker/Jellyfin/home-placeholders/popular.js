@@ -190,6 +190,15 @@
     var sizes = [];
     for (var i = 0; i < lists.length; i++) sizes.push(measure(lists[i]));
     for (var j = 0; j < lists.length; j++) applyFit(lists[j], sizes[j]);
+    return sizes[0];
+  }
+
+  // The page's rows all have the viewport's width: a size measured once per width is set before the page is attached (one layout instead of two).
+  function prefit(root, memo, width) {
+    if (!memo || memo.width !== width) return false;
+    var lists = root.querySelectorAll(".hssTopScroll");
+    for (var i = 0; i < lists.length; i++) applyFit(lists[i], memo.p);
+    return true;
   }
 
   function fillRow(sec, entries, lang, tv, states) {
@@ -397,6 +406,7 @@
     var lib = null, libAt = 0, libUser = null, libLoading = null;
     var states = null, statesAt = 0, statesLoading = null;
     var timer = null;
+    var fitMemo = null;
 
     function lang() { return doc.documentElement.lang || win.navigator.language || "en"; }
     function tv() { return doc.documentElement.classList.contains("layout-tv"); }
@@ -447,8 +457,9 @@
       var at = Array.prototype.indexOf.call(page.querySelectorAll(sel), doc.activeElement);
       var next = buildPage(doc, data, lib, lang(), tv(), states);
       next.hssStates = states;
+      var known = prefit(next, fitMemo, win.innerWidth);
       page.replaceWith(next);
-      fitAll(next);
+      if (!known) fitMemo = { width: win.innerWidth, p: fitAll(next) };
       next.scrollTop = y;
       next.hssFrom = page.hssFrom;
       var again = next.querySelectorAll(sel);
@@ -465,8 +476,9 @@
         page.hssStates = states;
         page.hssFrom = from;
         openedAt = win.location.href;
+        var known = prefit(page, fitMemo, win.innerWidth);
         doc.body.appendChild(page);
-        fitAll(page);
+        if (!known) fitMemo = { width: win.innerWidth, p: fitAll(page) };
         if (tv()) { var f = page.querySelector("a.hssTopCard, .hssTopBtn"); if (f) f.focus(); }
         loadStates(a, false).then(repaintPage);
       });
@@ -573,7 +585,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { CSS: CSS, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
+    module.exports = { CSS: CSS, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, prefit: prefit, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {
