@@ -1,9 +1,11 @@
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import tempfile
 import unittest
+import unittest.mock
 import urllib.request
 
 _spec = importlib.util.spec_from_file_location("abs_push", pathlib.Path(__file__).with_name("abs-push.py"))
@@ -277,7 +279,7 @@ class SymlinkTest(unittest.TestCase):
             pathlib.Path(d, "pending").mkdir()
             pathlib.Path(d, "pending", "alice.json").symlink_to(secret)
             seen = []
-            ok = ap.apply_all(d, lambda stdin: (seen.append(stdin), (0, "RESULT ok\n"))[1])
+            ok = ap.apply_all(d, {"alice"}, lambda stdin: (seen.append(stdin), (0, "RESULT ok\n"))[1])
             self.assertEqual((ok, seen), (False, []))
 
 
@@ -320,21 +322,52 @@ class FetchTest(unittest.TestCase):
 
 
 class ApplyTest(unittest.TestCase):
-    def run_apply(self, out, code=0):
+    def run_apply(self, out, code=0, user="alice", allowed=("alice",)):
         with tempfile.TemporaryDirectory() as d:
-            ap.write_json(pathlib.Path(d, "pending", "alice.json"), {"payload": {"user": "alice"}, "next_state": {"progress": {}}})
+            ap.write_json(pathlib.Path(d, "pending", "alice.json"), {"payload": {"user": user}, "next_state": {"progress": {}}})
             seen = []
 
             def runner(stdin):
                 seen.append(json.loads(stdin))
                 return code, out
 
-            ok = ap.apply_all(d, runner)
+            ok = ap.apply_all(d, set(allowed), runner)
             return ok, seen, pathlib.Path(d, "pending", "alice.json").exists(), pathlib.Path(d, "applied", "alice.json").exists()
 
     def test_success_marks_applied(self):
         ok, seen, pending, applied = self.run_apply("noise\nRESULT ok alice books=1\n")
         self.assertEqual((ok, seen, pending, applied), (True, [{"user": "alice"}], False, True))
+
+    def test_payload_for_another_user_is_refused(self):
+        ok, seen, pending, applied = self.run_apply("RESULT ok tomigorn\n", user="tomigorn", allowed=("alice", "tomigorn"))
+        self.assertEqual((ok, seen, pending, applied), (False, [], True, False))
+
+    def test_member_not_in_targets_is_refused(self):
+        ok, seen, pending, applied = self.run_apply("RESULT ok alice\n", allowed=("bob",))
+        self.assertEqual((ok, seen, pending, applied), (False, [], True, False))
+
+    def test_main_apply_checks_against_fresh_targets(self):
+        calls = []
+        orig = ap.floppy_users, ap.apply_all
+        ap.floppy_users = lambda: ["alice", "root", "floppy-sync"]
+        ap.apply_all = lambda d, allowed: calls.append(allowed) or True
+        try:
+            with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(os.environ, {"STATE_DIRECTORY": d}):
+                self.assertEqual(ap.main(["abs-push.py", "apply"]), 0)
+        finally:
+            ap.floppy_users, ap.apply_all = orig
+        self.assertEqual(calls, [{"alice"}])
+
+    def test_main_apply_fails_without_floppy_user_list(self):
+        def broken():
+            raise ap.AbsError("Floppy user list failed (exit 1)")
+        orig = ap.floppy_users, ap.apply_all
+        ap.floppy_users, ap.apply_all = broken, lambda d, allowed: self.fail("applied without targets")
+        try:
+            with tempfile.TemporaryDirectory() as d, unittest.mock.patch.dict(os.environ, {"STATE_DIRECTORY": d}):
+                self.assertEqual(ap.main(["abs-push.py", "apply"]), 1)
+        finally:
+            ap.floppy_users, ap.apply_all = orig
 
     def test_failure_keeps_pending(self):
         for out, code in [("RESULT refused x\n", 0), ("Traceback\n", 1), ("", 0)]:

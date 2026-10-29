@@ -283,7 +283,8 @@ def run_floppy(stdin):
     return r.returncode, r.stdout + r.stderr
 
 
-def apply_all(state_dir, runner=run_floppy):
+def apply_all(state_dir, allowed, runner=run_floppy):
+    """allowed: the Floppy targets root computed itself; the spool comes from the unprivileged fetch step."""
     ok = True
     for pending in sorted(pathlib.Path(state_dir, "pending").glob("*.json")):
         member = pending.stem
@@ -292,6 +293,10 @@ def apply_all(state_dir, runner=run_floppy):
         except OSError as e:
             ok = False
             print(f"{member}: pending file refused ({e.strerror})")
+            continue
+        if member not in allowed or not isinstance(payload, dict) or payload.get("user") != member:
+            ok = False
+            print(f"{member}: pending file refused (not a target or another user's payload)")
             continue
         code, out = runner(json.dumps(payload))
         results = [line[7:] for line in out.splitlines() if line.startswith("RESULT ")]
@@ -353,7 +358,12 @@ def main(argv):
             failed = read_json(failed_path)
         except FileNotFoundError:
             failed = []
-        return 0 if apply_all(state_dir) and not failed else 1
+        try:
+            allowed = set(targets(floppy_users(), read_exclude(EXCLUDE_FILE)))
+        except AbsError as e:
+            print(f"apply: {e}, nothing applied")
+            return 1
+        return 0 if apply_all(state_dir, allowed) and not failed else 1
     if cmd == "selftest":
         return 0 if selftest() else 1
     if cmd == "store-key":
