@@ -28,7 +28,7 @@ if want seerr; then
   check seerr.extra-hosts '^192\.168\.1\.2$' "$(docker exec seerr getent ahostsv4 sso.holy-grail.ch 2>&1 | awk 'NR==1{print $1}')"
 fi
 if want seerr-proxy; then
-  check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '\(src\|href\)="/_indexer-bar/[a-z-]*\.\(js\|css\)"' | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
+  check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js _indexer-bar/request-sizes.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '\(src\|href\)="/_indexer-bar/[a-z-]*\.\(js\|css\)"' | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
   check seerr.data-needs-session '^401 401 401 401$' "$(for u in /_indexer-bar/usage.json /_indexer-bar/night-waiting.json /_indexer-bar/request-state.json '/_download-now/api?type=movie&tmdb=603'; do curl -s -m 8 -o /dev/null -w '%{http_code} ' "http://127.0.0.1:5055$u"; done | xargs 2>&1)"
   check seerr.bar-config '^1$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -c 'bar.js" data-ib-data="/_indexer-bar/usage.json"')"
   check seerr.bar-texts '^hint note$' "$(seerr_data /_indexer-bar/usage.json | jq -r '"\(if .storage[0].hint.en then "hint" else "no-hint" end) \(if .note.en then "note" else "no-note" end)"' 2>&1)"
@@ -39,6 +39,8 @@ if want seerr-proxy; then
   check seerr.request-state-live '^active [1-9]' "$(systemctl is-active request-state.timer 2>&1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'hg-pulse' 2>&1)"
   check seerr.status-icons-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'tonight.s scheduled search (04:17)' 2>&1)"
   check seerr.partly-half-circle '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'data-hg-half' 2>&1)"
+  check seerr.request-sizes-data '^object [1-9]' "$(seerr_data /_indexer-bar/request-state.json | jq -r '"\(.sizes|type) \(.sizes|length)"' 2>&1)"
+  check seerr.request-sizes-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-sizes.js | grep -c 'data-hg-size-sort' 2>&1)"
   check seerr.status-badge-markup '^[1-9]' "$(docker exec seerr sh -c 'grep -l "M5.25 12a.75.75 0 0 1 .75-.75h12" /app/.next/static/chunks/*.js | wc -l' 2>&1)"
 fi
 if want download-now seerr-proxy; then
