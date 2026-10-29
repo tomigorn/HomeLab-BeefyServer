@@ -7,6 +7,9 @@ md_auth() { grep -oP '(?<=<AuthenticationMethod>)[^<]+' "/srv/appdata/$1/config.
 md_sab() { curl -s -m 8 "http://127.0.0.1:8081/api?output=json&apikey=$(cat "$MD_DIR/secrets/hook/sabnzbd.apikey")&$1"; }
 md_bz() { curl -s -m 8 -H "X-API-KEY: $(cat "$MD_DIR/secrets/hook/bazarr.apikey")" "http://127.0.0.1:6767/api$1"; }
 md_qb() { QBIT_TIMEOUT=8 qbit_api http://127.0.0.1:8080 "$1"; }
+# ffprobe (bundled, file protocol only) on a library file from an SSD branch, so no HDD spin-up.
+md_ffprobe() { local f; f=$(find /srv/.disks/ssd-hot/media/$2 /srv/.disks/ssd-hot2/media/$2 -name '*.mkv' -size +10M -print -quit 2>/dev/null); [ -n "$f" ] || { echo "no SSD sample"; return; }; docker exec "movie-$1" "/app/$1/bin/ffprobe" -v fatal -show_entries format=duration -of csv=p=0 "/data/${f#/srv/.disks/*/}" 2>&1 | tail -1; }
+md_dirs() { docker exec "movie-$1" sh -c 'b=; for d in "$@"; do [ -d "$d" ] && [ -w "$d" ] || b="$b $d"; done; echo "${b:-ok}"' sh "${@:2}" 2>&1; }
 if want radarr; then
   check md.radarr-auth '^External$' "$(md_auth radarr)"
   check md.radarr-qbit-login '^true 4$' "$(md_arrtest radarr 7878)"
@@ -16,6 +19,8 @@ if want radarr; then
   check md.radarr-extra-audio-cfs '^([4-9][0-9]|[1-9][0-9]{2}) Extra audio$' "$(md_arr radarr 7878 /api/v3/customformat | jq -r '[.[] | select(.name | startswith("Extra audio"))] | "\(length) Extra audio"' 2>&1)"
   check md.radarr-connect '^ok$' "$(md_arr radarr 7878 /api/v3/notification | md_has '["Jellyfin","Language policy","Wrong-film guard","Title wipe","Original audio","Download now: first download only","Seerr sync"]')"
   check md.radarr-hook-deps '^ok$' "$(docker exec movie-radarr sh -c 'command -v bash >/dev/null && command -v curl >/dev/null && command -v jq >/dev/null && command -v flock >/dev/null && test -r /scripts/grab-guard.sh && test -r /secrets/bazarr.apikey && echo ok' 2>&1)"
+  check md.radarr-ffprobe '^[0-9]+\.[0-9]+$' "$(md_ffprobe radarr movies)"
+  check md.radarr-download-dirs '^ok$' "$(md_dirs radarr /data/usenet/complete/movies /data/torrents/movies /data/media/movies)"
   check md.radarr-download-clients '^qBittorrent:download-now:radarr qBittorrent night::radarr-night SABnzbd:download-now:movies SABnzbd night::movies-night$' "$(t=$(md_arr radarr 7878 /api/v3/tag | jq -c 'map({(.id|tostring): .label}) | add'); md_arr radarr 7878 /api/v3/downloadclient | jq -r --argjson t "$t" '[.[] | select(.enable) | "\(.name):\([.tags[] | $t[tostring]] | join(",")):\(.fields[] | select(.name | test("^(movie|tv)Category$")) | .value)"] | join(" ")' 2>&1)"
   check md.radarr-night-paused '^2 -2$' "$(md_arr radarr 7878 /api/v3/downloadclient | jq -r '[(.[] | select(.name == "qBittorrent night") | .fields[] | select(.name == "initialState") | .value), (.[] | select(.name == "SABnzbd night") | .fields[] | select(.name == "recentMoviePriority") | .value)] | join(" ")' 2>&1)"
   check md.radarr-tags '^ok$' "$(md_arr radarr 7878 /api/v3/tag | jq '[.[] | {name: .label}]' | md_has '["download-now","old-rare","audio-swiss-german"]')"
@@ -35,6 +40,8 @@ if want sonarr; then
   check md.sonarr-extra-audio-cfs '^([4-9][0-9]|[1-9][0-9]{2}) Extra audio$' "$(md_arr sonarr 8989 /api/v3/customformat | jq -r '[.[] | select(.name | startswith("Extra audio"))] | "\(length) Extra audio"' 2>&1)"
   check md.sonarr-connect '^ok$' "$(md_arr sonarr 8989 /api/v3/notification | md_has '["Jellyfin","Language policy","Wrong-film guard","Title wipe","Original audio","Download now: first download only","Seerr sync"]')"
   check md.sonarr-hook-deps '^ok$' "$(docker exec movie-sonarr sh -c 'command -v bash >/dev/null && command -v curl >/dev/null && command -v jq >/dev/null && command -v flock >/dev/null && test -r /scripts/grab-guard.sh && test -r /secrets/bazarr.apikey && echo ok' 2>&1)"
+  check md.sonarr-ffprobe '^[0-9]+\.[0-9]+$' "$(md_ffprobe sonarr tv)"
+  check md.sonarr-download-dirs '^ok$' "$(md_dirs sonarr /data/usenet/complete/tv /data/torrents/tv /data/media/tv)"
   check md.sonarr-download-clients '^qBittorrent:download-now:sonarr qBittorrent night::sonarr-night SABnzbd:download-now:tv SABnzbd night::tv-night$' "$(t=$(md_arr sonarr 8989 /api/v3/tag | jq -c 'map({(.id|tostring): .label}) | add'); md_arr sonarr 8989 /api/v3/downloadclient | jq -r --argjson t "$t" '[.[] | select(.enable) | "\(.name):\([.tags[] | $t[tostring]] | join(",")):\(.fields[] | select(.name | test("^(movie|tv)Category$")) | .value)"] | join(" ")' 2>&1)"
   check md.sonarr-night-paused '^2 -2$' "$(md_arr sonarr 8989 /api/v3/downloadclient | jq -r '[(.[] | select(.name == "qBittorrent night") | .fields[] | select(.name == "initialState") | .value), (.[] | select(.name == "SABnzbd night") | .fields[] | select(.name == "recentTvPriority") | .value)] | join(" ")' 2>&1)"
   check md.sonarr-tags '^ok$' "$(md_arr sonarr 8989 /api/v3/tag | jq '[.[] | {name: .label}]' | md_has '["download-now","old-rare","audio-swiss-german"]')"
