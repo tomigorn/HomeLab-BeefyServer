@@ -2,6 +2,7 @@
 plan() decides each title's placeholder (folder, state, clips, badge, sort title) or its real library item; nfo() writes its movie.nfo. No I/O: trending.py applies the plan."""
 import dataclasses
 import datetime
+import copy
 import re
 import xml.etree.ElementTree as ET
 
@@ -214,3 +215,23 @@ def nfo(ph):
         add(a, "thumb", THUMB + c["p"] if c.get("p") else None)
     ET.indent(root)
     return '<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
+
+
+def library_id(folders):
+    return next((f.get("ItemId") for f in folders if f["Name"] == LIBRARY), None)
+
+
+def find_library(folders):
+    return next((f for f in folders if f["Name"] == LIBRARY), None)
+
+
+def hidden(config, lib_id):
+    """config with lib_id added to MyMediaExcludes; unchanged when lib_id is unresolved."""
+    out = copy.deepcopy(config)
+    if not lib_id:
+        return out
+    excludes = list(out.get("MyMediaExcludes") or [])
+    if lib_id not in excludes:
+        excludes.append(lib_id)
+    out["MyMediaExcludes"] = excludes
+    return out

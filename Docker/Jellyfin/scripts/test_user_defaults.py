@@ -61,6 +61,15 @@ class PlanTest(unittest.TestCase):
         done = user("a", MyMediaExcludes=["t"])
         self.assertEqual(ud.plan([done], {"a"}, "t")[0], [])
 
+    def test_unresolved_library_id_writes_nothing(self):
+        self.assertEqual(ud.plan([user("a")], {"a"}, None)[0], [])
+        self.assertNotIn("MyMediaExcludes", ud.plan([user("n")], {"a"}, None)[0][0][1])
+
+    def test_label_tells_new_from_hide_only(self):
+        self.assertEqual(ud.label(None, "a"), "adopted")
+        self.assertEqual(ud.label({"a"}, "a"), "hide")
+        self.assertEqual(ud.label({"a"}, "n"), "defaults")
+
     def test_new_user_gets_defaults_and_hiding(self):
         updates, _ = ud.plan([user("n")], {"a"}, "t")
         self.assertEqual(updates[0][1]["MyMediaExcludes"], ["t"])

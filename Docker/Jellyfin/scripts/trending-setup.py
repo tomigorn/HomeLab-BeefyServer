@@ -10,7 +10,7 @@ import sys
 import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from trending_model import COLLECTIONS_NAME, LIBRARY  # noqa: E402
+from trending_model import COLLECTIONS_NAME, LIBRARY, find_library, hidden, library_id  # noqa: E402
 
 PATH = "/config/trending/library"
 OLD_COLLECTIONS = "Collections"
@@ -41,17 +41,12 @@ def library_options(existing):
     return out
 
 
-def library_id(folders):
-    return next((f["ItemId"] for f in folders if f["Name"] == LIBRARY), None)
+def collections_folder(items):
+    return next((i for i in items if i.get("CollectionType") == "boxsets"), None)
 
 
-def hidden(config, lib_id):
-    out = copy.deepcopy(config)
-    excludes = list(out.get("MyMediaExcludes") or [])
-    if lib_id not in excludes:
-        excludes.append(lib_id)
-    out["MyMediaExcludes"] = excludes
-    return out
+def tile_needed(item, force):
+    return force or not (item.get("ImageTags") or {}).get("Primary")
 
 
 def check_line(users, lib_id):
@@ -89,13 +84,20 @@ def main(argv):
     def say(step):
         print(f"would {step}" if dry else step)
 
-    if lib is None:
+    present = find_library(folders)
+    if present is not None and lib is None:
+        print(f"{LIBRARY} exists but is unresolved (no ItemId); run a library scan, then rerun")
+        return 1
+    if present is None:
         say(f"create library {LIBRARY} at {PATH}")
         if not dry:
             q = urllib.parse.urlencode({"name": LIBRARY, "collectionType": "movies", "paths": PATH, "refreshLibrary": "false"})
             api("POST", f"/Library/VirtualFolders?{q}", {"LibraryOptions": library_options(None)})
             folders = api("GET", "/Library/VirtualFolders")
             lib = library_id(folders)
+            if lib is None:
+                print(f"{LIBRARY} was created but has no ItemId yet; users not changed, rerun after a library scan")
+                return 1
     else:
         folder = next(f for f in folders if f.get("ItemId") == lib)
         if library_options(folder["LibraryOptions"]) != folder["LibraryOptions"]:
@@ -115,15 +117,13 @@ def main(argv):
             q = urllib.parse.urlencode({"name": OLD_COLLECTIONS, "newName": COLLECTIONS_NAME, "refreshLibrary": "false"})
             api("POST", f"/Library/VirtualFolders/Name?{q}")
 
-    say("upload the library tile")
-    if not dry:
-        from trending_art import library_tile
+    coll = collections_folder(api("GET", "/Library/MediaFolders")["Items"])
+    if coll and tile_needed(coll, "--force-tile" in argv):
+        say("upload the library tile")
+        if not dry:
+            from trending_art import library_tile
 
-        coll = next((f for f in api("GET", "/Library/MediaFolders")["Items"] if f["Name"] == COLLECTIONS_NAME), None)
-        if coll:
             api_raw("POST", f"/Items/{coll['Id']}/Images/Primary", base64.b64encode(library_tile(COLLECTIONS_NAME)), "image/jpeg")
-        else:
-            print(f"tile skipped: the {COLLECTIONS_NAME} item is not renamed until the next library scan")
 
     if seerr_enabled():
         print(f"WARNING: Seerr has {LIBRARY} enabled; untick it in Seerr's Jellyfin libraries")
