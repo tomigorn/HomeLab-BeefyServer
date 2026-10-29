@@ -1,3 +1,9 @@
+# Traefik on fastpi terminates TLS and sets X-Forwarded-Proto https: pass it on, $scheme only when the request came without one
+map $http_x_forwarded_proto $fwd_proto {
+  default $http_x_forwarded_proto;
+  ""      $scheme;
+}
+
 server {
   listen      8080;
   server_name _;
@@ -7,7 +13,8 @@ server {
   location /api/ {
     proxy_pass              http://dt5-apiserver:8080;
     proxy_set_header        Host $host;
-    proxy_set_header        X-Forwarded-Proto $scheme;
+    proxy_set_header        X-Forwarded-Proto $fwd_proto;
+    proxy_set_header        X-Forwarded-For   $proxy_add_x_forwarded_for;
     client_max_body_size    100m;
     proxy_read_timeout      300s;
   }
