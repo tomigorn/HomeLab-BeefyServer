@@ -127,7 +127,7 @@ services:
 # #########################################################
 # Indexer manager. Inside the tunnel because it talks to trackers directly.
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:2.6.5
+    image: lscr.io/linuxserver/prowlarr:2.7.0
     container_name: movie-prowlarr
     restart: unless-stopped
     # linuxserver non-root mode: s6 and the app run as 65103, no root PID1, no capabilities.
@@ -369,7 +369,7 @@ services:
 # on its own cron, no ports, no docker.sock. Run a sync by hand with:
 #   docker compose run --rm recyclarr sync
   recyclarr:
-    image: ghcr.io/recyclarr/recyclarr:8.8.0
+    image: ghcr.io/recyclarr/recyclarr:8.8.1
     container_name: movie-recyclarr
     restart: unless-stopped
     user: "65107:65107"
