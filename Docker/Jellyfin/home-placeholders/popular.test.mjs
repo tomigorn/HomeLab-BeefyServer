@@ -246,3 +246,15 @@ test("the logo (or any nav link) closes the page even when the route stays the s
   win.close();
 });
 
+test("reopening within the state TTL builds the page once, no second rebuild", async () => {
+  const { win, d, tick, click } = started();
+  click(d.querySelector(".hssPopularNav"));
+  await tick();
+  let built = 0;
+  new win.MutationObserver((rs) => rs.forEach((r) => r.addedNodes.forEach((n) => { if (n.classList && n.classList.contains("hssPopularPage")) built++; }))).observe(d.body, { childList: true });
+  click(d.querySelector(".hssPopularNav"));
+  await tick();
+  assert.equal(built, 1, "unchanged request states keep the page");
+  win.close();
+});
+

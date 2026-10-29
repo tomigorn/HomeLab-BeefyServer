@@ -424,11 +424,12 @@
 
     function repaintPage() {
       var page = doc.querySelector(".hssPopularPage");
-      if (!page || !lib) return;
+      if (!page || !lib || page.hssStates === states) return;
       var y = page.scrollTop;
       var sel = "a.hssTopCard, button";
       var at = Array.prototype.indexOf.call(page.querySelectorAll(sel), doc.activeElement);
       var next = buildPage(doc, data, lib, lang(), tv(), states);
+      next.hssStates = states;
       page.replaceWith(next);
       fitAll(next);
       next.scrollTop = y;
@@ -444,6 +445,7 @@
       closePage(false);
       loadLib(a).then(function (l) {
         var page = buildPage(doc, data, l, lang(), tv(), states);
+        page.hssStates = states;
         page.hssFrom = from;
         openedAt = win.location.href;
         doc.body.appendChild(page);
