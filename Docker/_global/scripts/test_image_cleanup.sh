@@ -75,10 +75,31 @@ echo "sha256:refd $((NOW - 90*86400))" > "$IMAGE_CLEANUP_STATE/first-seen"
 : > "$T/log"; bash "$HERE/image-cleanup.sh" > "$T/out" 2>&1
 hasnt "referenced image never removed" '^image rm' "$T/log"
 printf '%s\n' sha256:used sha256:rb | sort > "$T/ids"
-printf 'sha256:used|%s|0001-01-01T00:00:00Z|100|app:1\nsha256:rb|%s|0001-01-01T00:00:00Z|100|db:9,db:rollback-9-pre-1\n' "$old" "$old" > "$T/inspect"
+printf 'sha256:used|%s|0001-01-01T00:00:00Z|100|app:1\nsha256:rb|%s|0001-01-01T00:00:00Z|100|db:9,db:9-rollback,db-rollback:9\n' "$old" "$old" > "$T/inspect"
 echo "sha256:rb $((NOW - 90*86400))" > "$IMAGE_CLEANUP_STATE/first-seen"
 : > "$T/log"; bash "$HERE/image-cleanup.sh" > "$T/out" 2>&1
-hasnt "rollback-tagged image never removed" '^image rm' "$T/log"
+hasnt "other tags with rollback in them never removed" '^image rm' "$T/log"
+
+echo ":rollback-* tags: kept for KEEP_DAYS, then cleaned"
+d3=$(date -d @$((NOW - 3*86400)) +%F); d40=$(date -d @$((NOW - 40*86400)) +%F)
+printf '%s\n' sha256:used sha256:rbyoung sha256:rbold sha256:rbref sha256:rbt2 sha256:rbt40 | sort > "$T/ids"
+cat > "$T/inspect" <<EOF2
+sha256:used|$old|0001-01-01T00:00:00Z|100|app:1
+sha256:rbyoung|$old|0001-01-01T00:00:00Z|100|img:rollback-$d3-demo
+sha256:rbold|$old|0001-01-01T00:00:00Z|100|img:rollback-$d40-demo
+sha256:rbref|$old|0001-01-01T00:00:00Z|100|keep/me:3,keep/me:rollback-$d40-demo
+sha256:rbt2|$old|$new|100|cf/x:rollback-2026.10.4
+sha256:rbt40|$old|$old|100|cf/y:rollback-2026.9.1
+EOF2
+printf 'sha256:%s %s\n' rbyoung $((NOW - 90*86400)) rbold $((NOW - 90*86400)) rbref $((NOW - 90*86400)) rbt2 $((NOW - 90*86400)) rbt40 $((NOW - 90*86400)) > "$IMAGE_CLEANUP_STATE/first-seen"
+: > "$T/log"; bash "$HERE/image-cleanup.sh" > "$T/out" 2>&1
+hasnt "rollback tag younger than KEEP_DAYS kept (date in the tag)" "rollback-$d3" "$T/log"
+has "rollback tag older than KEEP_DAYS removed" "^image rm img:rollback-$d40-demo$" "$T/log"
+has "expired rollback tag of a referenced image only untagged" "^image rm keep/me:rollback-$d40-demo$" "$T/log"
+hasnt "referenced tag of that image kept" 'rm keep/me:3' "$T/log"
+hasnt "undated rollback tag kept while its tag time is recent" 'cf/x' "$T/log"
+has "undated rollback tag removed once its tag time is old" '^image rm cf/y:rollback-2026.9.1$' "$T/log"
+grep -q 'sha256:rbyoung' "$IMAGE_CLEANUP_STATE/first-seen" && [[ $(awk '$1=="sha256:rbyoung"{print $2}' "$IMAGE_CLEANUP_STATE/first-seen") -lt $((NOW - 80*86400)) ]] && ok "unused clock keeps running under a rollback tag" || bad "unused clock keeps running under a rollback tag"
 printf '%s\n' sha256:used sha256:kp | sort > "$T/ids"
 printf 'sha256:used|%s|0001-01-01T00:00:00Z|100|app:1\nsha256:kp|%s|0001-01-01T00:00:00Z|100|scan/tool:latest\n' "$old" "$old" > "$T/inspect"
 echo "sha256:kp $((NOW - 90*86400))" > "$IMAGE_CLEANUP_STATE/first-seen"
