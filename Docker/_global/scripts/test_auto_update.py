@@ -19,6 +19,7 @@ from auto_update import (  # noqa: E402
     render_prom,
     rollback_failed_message,
     update_command,
+    update_result,
 )
 
 DAY = 86400
@@ -193,6 +194,11 @@ def test_failure_reason_names_the_missing_customizations():
     assert failure_reason("  check : FAIL (curl x)\nROLLBACK a\n") == "check failed"
     assert failure_reason("  after : a exited -\nROLLBACK a\n") == "containers not running"
     assert failure_reason("OK a\n") == ""
+
+
+def test_update_result_maps_the_exit_codes():
+    assert [update_result(c) for c in (0, 1, 2, 3)] == ["updated", "rolled_back", "error", "rollback_failed"]
+    assert failure_reason("  backup: FAIL /srv/x(missing)\nABORTED a: backup failed\n") == "backup failed: /srv/x(missing)"
 
 
 def test_render_prom_carries_the_reason_of_a_rollback():

@@ -241,9 +241,16 @@ def image_version(image: str) -> str:
     return "" if v == "<no value>" else v
 
 
+def update_result(rc: int) -> str:
+    """update-project.sh exit code -> result: 2 = nothing changed (a backup failed or no project), 3 = the rollback did not verify."""
+    return {0: "updated", 1: "rolled_back", 2: "error"}.get(rc, "rollback_failed")
+
+
 def failure_reason(out: str) -> str:
-    """Why update-project.sh rolled back, from its output: the missing customizations (post-update-check.sh), the functional check, or the containers."""
+    """Why update-project.sh rolled back or aborted, from its output: a failed backup, the missing customizations (post-update-check.sh), the functional check, or the containers."""
     for line in out.splitlines():
+        if line.startswith("  backup: FAIL"):
+            return "backup failed: " + line.split("FAIL", 1)[1].strip()
         if line.startswith("  custom: FAIL"):
             return "customizations missing: " + line.split("FAIL", 1)[1].strip()
     if any(line.startswith("  check : FAIL") for line in out.splitlines()):
@@ -296,7 +303,7 @@ def apply(row: dict, refs: list[str], images: dict[str, str]) -> tuple[dict[str,
                        env=env, text=True, capture_output=True, timeout=1800)
     for line in r.stdout.splitlines():
         log("  | " + line)
-    res = {0: "updated", 1: "rolled_back"}.get(r.returncode, "rollback_failed")
+    res = update_result(r.returncode)
     reason = failure_reason(r.stdout) if res != "updated" else ""
     if res == "rollback_failed":
         log(f"  {row['project']} failed verification AND its rollback did not verify. Check now: cd {d} && docker compose ps")
@@ -371,7 +378,7 @@ def main(argv: list[str]) -> int:
         for r in results:
             if r["project"] == row["project"] and r["ref"] in outcome:
                 r["result"] = outcome[r["ref"]]
-                if reason and r["result"] in ("rolled_back", "rollback_failed"):
+                if reason and r["result"] in ("rolled_back", "rollback_failed", "error"):
                     r["reason"] = reason
                 key = f"{row['project']}|{r['ref']}"
                 if r["result"] == "updated":
