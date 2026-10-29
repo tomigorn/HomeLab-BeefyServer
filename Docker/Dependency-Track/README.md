@@ -62,7 +62,7 @@ v5 came from the v4 database (`v4-migrator`, [docs/v5-cutover.md](docs/v5-cutove
 
 ## Update
 
-`notify` tier in `_global/auto-update.conf` (DB migrates one way). Both images are pinned by digest in `docker-compose.v5.yaml`. Before: `sudo docker exec dt5-db pg_dump -U dtrack -Fc dtrack > ~/backups/dt-$(date +%F).dump`.
+`notify` tier in `_global/auto-update.conf` (DB migrates one way). Both images are pinned by digest in `docker-compose.v5.yaml`. Before: `(umask 077; sudo docker exec dt5-db pg_dump -U dtrack -Fc dtrack > ~/backups/dt-$(date +%F).dump)` (owner-only: it holds the DB).
 
 ## Check
 
