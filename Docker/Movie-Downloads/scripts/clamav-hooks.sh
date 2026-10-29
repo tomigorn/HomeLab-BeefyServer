@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SK=$(sudo grep -oP '^api_key = \K.*' /srv/appdata/sabnzbd/sabnzbd.ini)
-sab() { curl -sf "http://127.0.0.1:8081/api?apikey=$SK&output=json&$1" >/dev/null; }
+sab() { curl -sf -G --data-urlencode apikey@<(printf %s "$SK") "http://127.0.0.1:8081/api?output=json&$1" >/dev/null; }
 
 # SABnzbd: script folder, the hook on the default category (movies, tv, ... inherit it), a non-zero exit fails the job.
 sab "mode=set_config&section=misc&keyword=script_dir&value=/clamav-hook"

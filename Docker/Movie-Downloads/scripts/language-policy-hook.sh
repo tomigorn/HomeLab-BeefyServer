@@ -36,7 +36,7 @@ fi
 xml() { sed -n "s:.*<$1>\(.*\)</$1>.*:\1:p" "$CONFIG"; }
 KEY=$(xml ApiKey)
 URL="http://localhost:$(xml Port)$(xml UrlBase)/api/v3"
-api() { local path=$1; shift; curl -sf -m 10 -H "X-Api-Key: $KEY" -H 'Content-Type: application/json' "$URL$path" "$@"; }
+api() { local path=$1; shift; curl -sf -m 10 -H @<(printf 'X-Api-Key: %s\n' "$KEY") -H 'Content-Type: application/json' "$URL$path" "$@"; }
 
 title=$(api "/$kind/$id")
 read -r MID MEN AID AEN SID < <(api /qualityprofile | jq -r --arg m "$MAIN" --arg a "$ANY" --arg s "$ENG_SUFFIX" --arg w "$SWISS" \

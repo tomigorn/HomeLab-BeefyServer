@@ -22,11 +22,11 @@ log() { local l; while IFS= read -r l; do echo "$l"; echo "$(date '+%F %T') $l" 
 exec 9> "$SNAP.lock"
 flock -w "${CW_LOCK_WAIT:-300}" 9 || { echo "another run still busy after ${CW_LOCK_WAIT:-300} s, nothing done" | log; exit 0; }
 key=$(tr -d '[:space:]' < "$SEERR_KEY") || { echo "no Seerr API key at $SEERR_KEY" | log; exit 1; }
-seerr() { curl -sf -m 30 -H "X-Api-Key: $key" "$SEERR/api/v1$1" "${@:2}" </dev/null; }
+seerr() { curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$key") "$SEERR/api/v1$1" "${@:2}" </dev/null; }
 # details <movie|tv>:<tmdbId>: Seerr's page of the title, with .mediaInfo while a row exists; returns 1 on 404 (Seerr knows no such title), 2 on any other failure or a reply that is no JSON object
 details() {
   local out code
-  out=$(curl -s -m 30 -H "X-Api-Key: $key" -w '\n%{http_code}' "$SEERR/api/v1/${1%%:*}/${1#*:}" </dev/null) || return 2
+  out=$(curl -s -m 30 -H @<(printf 'X-Api-Key: %s\n' "$key") -w '\n%{http_code}' "$SEERR/api/v1/${1%%:*}/${1#*:}" </dev/null) || return 2
   code=${out##*$'\n'}; out=${out%$'\n'*}
   [ "$code" = 404 ] && return 1
   [ "$code" = 200 ] && jq -e 'type == "object"' >/dev/null 2>&1 <<<"$out" || return 2

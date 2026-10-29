@@ -14,7 +14,7 @@ RARE_MINSEEDERS=1
 RARE_TAG=old-rare
 RARE_SUFFIX=" (old-rare)"
 
-p() { local path=$1; shift; curl -sf -H "X-Api-Key: $PK" -H 'Content-Type: application/json' "http://$H:9696/api/v1$path" "$@"; }
+p() { local path=$1; shift; curl -sf -H @<(printf 'X-Api-Key: %s\n' "$PK") -H 'Content-Type: application/json' "http://$H:9696/api/v1$path" "$@"; }
 j() { python3 -c "$@"; }
 
 tag_id=$(p /tag | TAG=$TAG j 'import json,os,sys; print(next((t["id"] for t in json.load(sys.stdin) if t["label"]==os.environ["TAG"]), ""))')
@@ -79,7 +79,7 @@ done
 for app in radarr:7878 sonarr:8989; do
   a=${app%%:*}; port=${app#*:}
   K=$(grep -oP '(?<=<ApiKey>)[^<]+' "/srv/appdata/$a/config.xml")
-  q() { local path=$1; shift; curl -sf -H "X-Api-Key: $K" -H 'Content-Type: application/json' "http://$H:$port/api/v3$path" "$@"; }
+  q() { local path=$1; shift; curl -sf -H @<(printf 'X-Api-Key: %s\n' "$K") -H 'Content-Type: application/json' "http://$H:$port/api/v3$path" "$@"; }
   rtid=$(q /tag | TAG=$RARE_TAG j 'import json,os,sys; print(next((t["id"] for t in json.load(sys.stdin) if t["label"]==os.environ["TAG"]), ""))')
   [ -n "$rtid" ] || rtid=$(q /tag -X POST -d "{\"label\":\"$RARE_TAG\"}" | j 'import json,sys; print(json.load(sys.stdin)["id"])')
   while IFS= read -r ix; do

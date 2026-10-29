@@ -53,7 +53,7 @@ DN_PATH=/scripts/download-now-hook.sh
 api() { # api <radarr|sonarr> <path> [curl args...]
   local app=$1 path=$2; shift 2
   local key port; case $app in radarr) key=$RK; port=7878;; sonarr) key=$SK; port=8989;; esac
-  curl -sf -H "X-Api-Key: $key" -H 'Content-Type: application/json' "http://$H:$port/api/v3$path" "$@"
+  curl -sf -H @<(printf 'X-Api-Key: %s\n' "$key") -H 'Content-Type: application/json' "http://$H:$port/api/v3$path" "$@"
 }
 py() { python3 -c "$@"; }
 

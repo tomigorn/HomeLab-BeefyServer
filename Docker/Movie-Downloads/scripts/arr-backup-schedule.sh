@@ -7,9 +7,9 @@ for a in "radarr 7878 v3" "sonarr 8989 v3" "prowlarr 9696 v1"; do
     set -- $a
     url="http://127.0.0.1:$2/api/$3/config/host"
     k=$(key "$1")
-    cur=$(curl -fsS -m 10 -H "X-Api-Key: $k" "$url")
+    cur=$(curl -fsS -m 10 -H @<(printf 'X-Api-Key: %s\n' "$k") "$url")
     new=$(jq '.backupInterval = 1 | .backupRetention = 14' <<<"$cur")
-    curl -fsS -m 20 -X PUT -H "X-Api-Key: $k" -H 'Content-Type: application/json' --data-binary "$new" "$url/$(jq -r .id <<<"$cur")" \
+    curl -fsS -m 20 -X PUT -H @<(printf 'X-Api-Key: %s\n' "$k") -H 'Content-Type: application/json' --data-binary "$new" "$url/$(jq -r .id <<<"$cur")" \
         | jq -r --arg a "$1" '"\($a): every \(.backupInterval) day(s), \(.backupRetention) days kept"'
 done
 bk=$(cat "$HERE/../secrets/hook/bazarr.apikey")

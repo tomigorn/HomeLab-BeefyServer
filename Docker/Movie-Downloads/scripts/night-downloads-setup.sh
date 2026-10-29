@@ -6,7 +6,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 SK=$(tr -d '[:space:]' < "$HERE/../secrets/hook/sabnzbd.apikey")
-sab() { curl -sf -G "http://127.0.0.1:8081/api" --data-urlencode "apikey=$SK" -d output=json "$@"; }
+sab() { curl -sf -G "http://127.0.0.1:8081/api" --data-urlencode apikey@<(printf %s "$SK") -d output=json "$@"; }
 QB=http://127.0.0.1:8080
 QBIT_PASS_FILE=${QBIT_PASS_FILE:-$HERE/../secrets/qbit-webui.password}
 # shellcheck source=qbit-api.sh
@@ -31,9 +31,9 @@ sab -d mode=get_config -d section=categories | jq -r '.config.categories[] | sel
 for app in radarr sonarr; do
   config=/srv/appdata/$app/config.xml
   key=$(sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' "$config"); port=$(sed -n 's:.*<Port>\(.*\)</Port>.*:\1:p' "$config")
-  api() { local path=$1; shift; curl -sf -m 60 -H "X-Api-Key: $key" -H 'Content-Type: application/json' "http://localhost:$port/api/v3$path" "$@"; }
+  api() { local path=$1; shift; curl -sf -m 60 -H @<(printf 'X-Api-Key: %s\n' "$key") -H 'Content-Type: application/json' "http://localhost:$port/api/v3$path" "$@"; }
   # Writes that carry the qBittorrent password read the body from stdin, never argv.
-  apin() { local path=$1; shift; curl -sf -m 60 -H "X-Api-Key: $key" -H 'Content-Type: application/json' "http://localhost:$port/api/v3$path" --data-binary @- "$@"; }
+  apin() { local path=$1; shift; curl -sf -m 60 -H @<(printf 'X-Api-Key: %s\n' "$key") -H 'Content-Type: application/json' "http://localhost:$port/api/v3$path" --data-binary @- "$@"; }
   case $app in radarr) catf=movieCategory; recent=recentMoviePriority; older=olderMoviePriority;; sonarr) catf=tvCategory; recent=recentTvPriority; older=olderTvPriority;; esac
 
   tag=$(api /tag | jq '[.[] | select(.label == "download-now") | .id][0] // empty')

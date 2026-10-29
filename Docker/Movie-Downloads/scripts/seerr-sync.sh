@@ -52,12 +52,12 @@ claim() {
 unclaim() { local c; for c in "${claimed[@]}"; do cat "$c" >> "${c%.claimed.*}" && rm -f "$c"; done; }
 pending() { local q; for q in $QUEUES; do [ -s "$q" ] && return 0; done; return 1; }
 
-jf() { curl -sf -m 30 -H "Authorization: MediaBrowser Token=\"$jk\"" "$JF$1" "${@:2}" </dev/null; }
+jf() { curl -sf -m 30 -H @<(printf 'Authorization: MediaBrowser Token="%s"\n' "$jk") "$JF$1" "${@:2}" </dev/null; }
 missing() { # paths (Jellyfin side) not known to Jellyfin
   local have; have=$(jf "/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path&EnableImages=false&EnableUserData=false" | jq -r '.Items[].Path // empty') || return 1
   grep -vxFf <(echo "$have") <<<"$1" || true
 }
-seerr() { curl -sf -m 30 -H "X-Api-Key: $sk" "$SEERR/api/v1$1" "${@:2}" </dev/null; }
+seerr() { curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$sk") "$SEERR/api/v1$1" "${@:2}" </dev/null; }
 running() { seerr /settings/jobs | jq -r '.[] | select(.id == "jellyfin-full-scan") | .running'; }
 
 round() {

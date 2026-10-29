@@ -30,7 +30,7 @@ case $app in
 esac
 
 xml() { sed -n "s:.*<$1>\(.*\)</$1>.*:\1:p" "$CONFIG"; }
-api() { local path=$1; shift; curl -sf -m 30 -H "X-Api-Key: $(xml ApiKey)" "http://localhost:$(xml Port)$(xml UrlBase)/api/v3$path" "$@"; }
+api() { local path=$1; shift; curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$(xml ApiKey)") "http://localhost:$(xml Port)$(xml UrlBase)/api/v3$path" "$@"; }
 
 client_of() { # client_of <client name or type> <download id>: qbit | sab
   case ${1,,} in
@@ -139,7 +139,7 @@ qbit_logout
 scats=$(cats Sabnzbd)
 if [ -r "$SAB_KEY" ]; then
   sk=$(tr -d '[:space:]' < "$SAB_KEY")
-  sab() { curl -sf -m 10 -G "$SAB/api" --data-urlencode "apikey=$sk" "$@"; }
+  sab() { curl -sf -m 10 -G "$SAB/api" --data-urlencode apikey@<(printf %s "$sk") "$@"; }
   for mode in queue history; do
     if ! slots=$(sab -d mode=$mode -d output=json -d limit=1000); then echo "$kind $key: SABnzbd $mode not readable" >&2; failed=1; continue; fi
     slots=$(jq -c --argjson c "$scats" --arg m "$mode" '[.[$m].slots // [] | .[] | select((.cat // .category) as $x | $c | index($x)) | . + {title: (.filename // .name)}]' <<<"$slots")
@@ -161,7 +161,7 @@ fi
 # Jellyfin: the item with exactly this provider id in the app's library folder; Radarr/Sonarr's own Jellyfin notification usually drops it first.
 if [ -r "$JF_KEY" ]; then
   jk=$(tr -d '[:space:]' < "$JF_KEY")
-  jitems() { curl -sf -m 30 -H "Authorization: MediaBrowser Token=\"$jk\"" "$JF/Items?Recursive=true&IncludeItemTypes=$jtype&Fields=ProviderIds,Path" \
+  jitems() { curl -sf -m 30 -H @<(printf 'Authorization: MediaBrowser Token="%s"\n' "$jk") "$JF/Items?Recursive=true&IncludeItemTypes=$jtype&Fields=ProviderIds,Path" \
     | jq -c --arg p "$jid" --arg k "$key" --arg r "$jroot" '[.Items[] | select(.ProviderIds[$p] == $k and ((.Path // "") | startswith($r)))]'; }
   waited=0
   while hit=$(jitems) && [ "$(jq length <<<"$hit")" -gt 0 ] && [ "$waited" -lt "$JF_WAIT" ]; do sleep 5; waited=$((waited + 5)); done
@@ -169,7 +169,7 @@ if [ -r "$JF_KEY" ]; then
     echo "$kind $key: Jellyfin not reachable at $JF" >&2; failed=1
   else
     for id in $(jq -r '.[].Id' <<<"$hit"); do
-      if curl -sf -m 30 -X DELETE -H "Authorization: MediaBrowser Token=\"$jk\"" "$JF/Items/$id" >/dev/null; then echo "$kind $key: Jellyfin item $id removed"; else echo "$kind $key: Jellyfin delete of $id failed" >&2; failed=1; fi
+      if curl -sf -m 30 -X DELETE -H @<(printf 'Authorization: MediaBrowser Token="%s"\n' "$jk") "$JF/Items/$id" >/dev/null; then echo "$kind $key: Jellyfin item $id removed"; else echo "$kind $key: Jellyfin delete of $id failed" >&2; failed=1; fi
     done
   fi
   unset jk

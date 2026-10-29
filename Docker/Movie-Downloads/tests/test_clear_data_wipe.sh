@@ -65,10 +65,12 @@ exit "$(cat "$d/hook.rc" 2>/dev/null || echo 0)"
 SH
 
 # run <fake Seerr state json> [env...]: snapshot, pending list and log persist until reset; hook calls in $T/hooks
+mkdir -p "$T/bin"; REAL_CURL=$(command -v curl)
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/argv"\nexec %s "$@"\n' "$T" "$REAL_CURL" > "$T/bin/curl"; chmod +x "$T/bin/curl"
 run() {
   echo "$1" > "$T/state.json"; shift
   : > "$T/calls"; : > "$T/hooks"; : > "$T/deletes"
-  env -i PATH="$PATH" HOME="$T" CW_SEERR_URL="http://127.0.0.1:$PORT" CW_SEERR_KEY="$T/seerr.key" CW_HOOK="$T/hook.sh" \
+  env -i PATH="$T/bin:$PATH" HOME="$T" CW_SEERR_URL="http://127.0.0.1:$PORT" CW_SEERR_KEY="$T/seerr.key" CW_HOOK="$T/hook.sh" \
     CW_SNAPSHOT="$T/snap" CW_LOG="$T/log" CW_RADARR_CONFIG="$T/radarr.xml" CW_SONARR_CONFIG="$T/sonarr.xml" "$@" \
     bash "$SCRIPT" > "$T/out" 2>&1; RC=$?
 }
@@ -202,6 +204,9 @@ grep -q 'another run' "$T/log" && ok "  logged" || bad "  logged" "$(cat "$T/log
 wait $HOLD
 run "{\"media\": [$BAD], $TMDB}"
 assert_eq "  the next run wipes it" "wipe radarr 10331 Night of the Living Dead 1968|radarr.xml" "$(cat "$T/hooks")"
+
+echo "Key handling"
+grep -q seerrkey "$T/argv" && bad "Seerr key never on curl's argv" "$(grep -m1 seerrkey "$T/argv")" || ok "Seerr key never on curl's argv ($(wc -l < "$T/argv") curl calls)"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

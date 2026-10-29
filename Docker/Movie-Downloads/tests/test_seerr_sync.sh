@@ -66,8 +66,10 @@ for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT/System/Info/Public" >/dev
 
 mkdir -p "$T/radarr" "$T/sonarr"
 reset() { rm -f "$T/calls" "$T/started" "$T/polls" "$T/jf-stuck" "$T/seerr-down" "$T/import-during-scan" "$T/log" "$T/last" "$T/radarr/"* "$T/sonarr/"*; echo '[]' > "$T/jf.json"; : > "$T/calls"; }
+mkdir -p "$T/bin"; REAL_CURL=$(command -v curl)
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/argv"\nexec %s "$@"\n' "$T" "$REAL_CURL" > "$T/bin/curl"; chmod +x "$T/bin/curl"
 run() { # run [env...]: runs the script with test settings, prints its exit code
-  env XDG_STATE_HOME="$T/state" SS_QUEUES="$T/radarr/seerr-sync.queue $T/sonarr/seerr-sync.queue" SS_LASTRUN="$T/last" SS_LOG="$T/log" \
+  env PATH="$T/bin:$PATH" XDG_STATE_HOME="$T/state" SS_QUEUES="$T/radarr/seerr-sync.queue $T/sonarr/seerr-sync.queue" SS_LASTRUN="$T/last" SS_LOG="$T/log" \
     SS_SEERR_URL="http://127.0.0.1:$PORT" SS_SEERR_KEY="$T/seerr.key" SS_JF_URL="http://127.0.0.1:$PORT" SS_JF_KEY="$T/jf.key" \
     SS_QUIET=1 SS_CAP=4 SS_MIN_GAP=0 SS_JF_WAIT=2 SS_SCAN_WAIT=10 SS_POLL=1 "$@" bash "$SCRIPT" >"$T/out" 2>&1; echo $?
 }
@@ -131,6 +133,8 @@ reset; echo /data/media/movies/E/E.mkv > "$T/radarr/seerr-sync.queue.claimed.999
 echo /data/media/movies/A/A.mkv > "$T/sonarr/seerr-sync.queue"
 assert_eq "a claimed file left by a killed run is taken too" "0" "$(run)"
 assert_eq "  and removed after success" "" "$(ls "$T/radarr" | grep claimed)"
+
+grep -qE 'seerrkey|jfkey' "$T/argv" && bad "Seerr and Jellyfin keys never on curl's argv" "$(grep -m1 -E 'seerrkey|jfkey' "$T/argv")" || ok "Seerr and Jellyfin keys never on curl's argv ($(wc -l < "$T/argv") curl calls)"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

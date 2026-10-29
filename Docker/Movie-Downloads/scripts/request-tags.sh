@@ -20,7 +20,7 @@ mkdir -p "$(dirname "$STATE")" "$(dirname "$DRIFT")" && touch "$STATE" "$DRIFT"
 touched=" "
 
 key=$(tr -d '[:space:]' < "$SEERR_KEY") || exit 1
-requests=$(curl -sf -m 30 -H "X-Api-Key: $key" "$SEERR/api/v1/request?take=100&skip=0&filter=all&sort=added") \
+requests=$(curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$key") "$SEERR/api/v1/request?take=100&skip=0&filter=all&sort=added") \
   || { echo "Seerr: API error" >&2; exit 1; }
 unset key
 rc=0
@@ -36,8 +36,8 @@ while read -r rid type tid created tags; do
   xml() { sed -n "s:.*<$1>\(.*\)</$1>.*:\1:p" "$config"; }
   akey=$(xml ApiKey)
   url="http://localhost:$(xml Port)$(xml UrlBase)/api/v3"
-  api() { local path=$1; shift; curl -sf -m 30 -H "X-Api-Key: $akey" -H 'Content-Type: application/json' "$url$path" "$@"; }
-  code=$(curl -s -m 30 -o /dev/null -w '%{http_code}' -H "X-Api-Key: $akey" "$url/$kind/$tid")
+  api() { local path=$1; shift; curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$akey") -H 'Content-Type: application/json' "$url$path" "$@"; }
+  code=$(curl -s -m 30 -o /dev/null -w '%{http_code}' -H @<(printf 'X-Api-Key: %s\n' "$akey") "$url/$kind/$tid")
   if [ "$code" = 404 ]; then echo "$rid" >> "$STATE"; continue; fi
   title=$(api "/$kind/$tid") || { echo "$app: request $rid: API error" >&2; rc=1; continue; }
   missing=$(jq -c --argjson want "[$tags]" '$want - (.tags // [])' <<<"$title")
@@ -73,7 +73,7 @@ while read -r type tid; do
   xml() { sed -n "s:.*<$1>\(.*\)</$1>.*:\1:p" "$config"; }
   akey=$(xml ApiKey)
   url="http://localhost:$(xml Port)$(xml UrlBase)/api/v3"
-  api() { local path=$1; shift; curl -sf -m 30 -H "X-Api-Key: $akey" -H 'Content-Type: application/json' "$url$path" "$@"; }
+  api() { local path=$1; shift; curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$akey") -H 'Content-Type: application/json' "$url$path" "$@"; }
   sig() { jq -r --argjson t "$1" '([.qualityProfileId // 0] + ([(.tags // [])[] as $i | $t[] | select(.id == $i and (.label | test("^(audio|subs)-"))) | .id] | sort)) | map(tostring) | join(",")' <<<"$2"; }
   target() { jq -rn --argjson t "$tagmap" --arg s "$1" '($s | split(",")) as $a | [$a[0]] + [$a[1:][] | select(. as $i | any($t[]; (.id | tostring) == $i and (.label | startswith("audio-"))))] | join(",")'; } # profile + audio tags: what a search looks for
   tagmap=$(api /tag) && title=$(api "/$kind/$tid") || continue
@@ -102,7 +102,7 @@ clean_bazarr() {
     if [ "$app" = radarr ]; then config=${RT_RADARR_CONFIG:-/srv/appdata/radarr/config.xml}; else config=${RT_SONARR_CONFIG:-/srv/appdata/sonarr/config.xml}; fi
     akey=$(sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' "$config")
     url="http://localhost:$(sed -n 's:.*<Port>\(.*\)</Port>.*:\1:p' "$config")$(sed -n 's:.*<UrlBase>\(.*\)</UrlBase>.*:\1:p' "$config")/api/v3"
-    d=$(curl -sf -m 30 -H "X-Api-Key: $akey" "$url/tag/detail") && jq -e 'type == "array"' <<<"$d" >/dev/null \
+    d=$(curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$akey") "$url/tag/detail") && jq -e 'type == "array"' <<<"$d" >/dev/null \
       || { echo "$app: API error (tags), Bazarr profiles not cleaned" >&2; return 1; }
     details=$(jq -c --arg app "$app" --argjson d "$d" '. + [$d[] | select(.label | startswith("bz-")) | . + {app: $app}]' <<<"$details")
   done
@@ -122,7 +122,7 @@ clean_bazarr() {
     if [ "$app" = radarr ]; then config=${RT_RADARR_CONFIG:-/srv/appdata/radarr/config.xml}; else config=${RT_SONARR_CONFIG:-/srv/appdata/sonarr/config.xml}; fi
     akey=$(sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' "$config")
     url="http://localhost:$(sed -n 's:.*<Port>\(.*\)</Port>.*:\1:p' "$config")$(sed -n 's:.*<UrlBase>\(.*\)</UrlBase>.*:\1:p' "$config")/api/v3"
-    curl -sf -m 30 -H "X-Api-Key: $akey" -X DELETE "$url/tag/$tagid" >/dev/null && echo "$app: unused tag $label deleted" || { echo "$app: deleting tag $label failed" >&2; return 1; }
+    curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$akey") -X DELETE "$url/tag/$tagid" >/dev/null && echo "$app: unused tag $label deleted" || { echo "$app: deleting tag $label failed" >&2; return 1; }
   done < <(jq -r '[.[] | select(((.movieIds // []) + (.seriesIds // [])) | length > 0) | .label] as $used
     | .[] | select((.label | IN($used[]) | not) and ([to_entries[] | select(.value | type == "array") | .value | length] | add == 0)) | "\(.app) \(.id) \(.label)"' <<<"$details")
 }
@@ -131,11 +131,11 @@ clean_bazarr || rc=1
 config=${RT_RADARR_CONFIG:-/srv/appdata/radarr/config.xml}
 akey=$(sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' "$config")
 url="http://localhost:$(sed -n 's:.*<Port>\(.*\)</Port>.*:\1:p' "$config")$(sed -n 's:.*<UrlBase>\(.*\)</UrlBase>.*:\1:p' "$config")/api/v3"
-profile=$(curl -sf -m 30 -H "X-Api-Key: $akey" "$url/qualityprofile" | jq -c '.[] | select(.name == "Swiss German (Mundart) only - any quality")') \
+profile=$(curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$akey") "$url/qualityprofile" | jq -c '.[] | select(.name == "Swiss German (Mundart) only - any quality")') \
   || { echo "radarr: API error (profiles)" >&2; exit 1; }
 if [ -n "$profile" ] && [ "$(jq -r .language.name <<<"$profile")" != Any ]; then
   jq -c '.language = {id: -1, name: "Any"}' <<<"$profile" \
-    | curl -sf -m 30 -H "X-Api-Key: $akey" -H 'Content-Type: application/json' -X PUT "$url/qualityprofile/$(jq .id <<<"$profile")" -d @- >/dev/null \
+    | curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$akey") -H 'Content-Type: application/json' -X PUT "$url/qualityprofile/$(jq .id <<<"$profile")" -d @- >/dev/null \
     && echo "radarr: profile $(jq .id <<<"$profile") language $(jq -r .language.name <<<"$profile") -> Any" || rc=1
 fi
 exit $rc

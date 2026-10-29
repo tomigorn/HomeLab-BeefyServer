@@ -16,7 +16,7 @@ CONFIG=${DN_CONFIG:-/config/config.xml}
 xml() { sed -n "s:.*<$1>\(.*\)</$1>.*:\1:p" "$CONFIG"; }
 KEY=$(xml ApiKey)
 URL="http://localhost:$(xml Port)$(xml UrlBase)/api/v3"
-api() { local path=$1; shift; curl -sf -m 10 -H "X-Api-Key: $KEY" -H 'Content-Type: application/json' "$URL$path" "$@"; }
+api() { local path=$1; shift; curl -sf -m 10 -H @<(printf 'X-Api-Key: %s\n' "$KEY") -H 'Content-Type: application/json' "$URL$path" "$@"; }
 
 tag=$(api /tag | jq '[.[] | select(.label == "download-now") | .id][0] // empty')
 [ -n "$tag" ] || exit 0

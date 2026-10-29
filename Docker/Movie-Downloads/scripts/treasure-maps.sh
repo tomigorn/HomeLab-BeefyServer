@@ -12,7 +12,7 @@ NAME="Treasure Maps"
 PRIORITY=27   # README "Indexers": after NZBgeek 25 and NzbPlanet 26, before torrents 40 and NZBIndex 50
 PROFILE="Standard"   # RSS + search; Prowlarr syncs enableRss to Radarr and Sonarr from it
 
-p() { local path=$1; shift; curl -sf -H "X-Api-Key: $PK" -H 'Content-Type: application/json' "http://$H:9696/api/v1$path" "$@"; }
+p() { local path=$1; shift; curl -sf -H @<(printf 'X-Api-Key: %s\n' "$PK") -H 'Content-Type: application/json' "http://$H:9696/api/v1$path" "$@"; }
 
 profile_id=$(p /appprofile | PROFILE=$PROFILE python3 -c 'import json,os,sys; print(next((a["id"] for a in json.load(sys.stdin) if a["name"]==os.environ["PROFILE"]), ""))')
 if [ -z "$profile_id" ]; then

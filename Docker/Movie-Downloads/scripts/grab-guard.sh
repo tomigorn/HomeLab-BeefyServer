@@ -21,7 +21,7 @@ CONFIG=${LP_CONFIG:-/config/config.xml}
 xml() { sed -n "s:.*<$1>\(.*\)</$1>.*:\1:p" "$CONFIG"; }
 KEY=$(xml ApiKey)
 URL="http://localhost:$(xml Port)$(xml UrlBase)/api/v3"
-api() { local path=$1; shift; curl -sf -m 10 -H "X-Api-Key: $KEY" "$URL$path" "$@"; }
+api() { local path=$1; shift; curl -sf -m 10 -H @<(printf 'X-Api-Key: %s\n' "$KEY") "$URL$path" "$@"; }
 
 enc=$(jq -rn --arg t "$title" '$t | @uri')
 case $app in
