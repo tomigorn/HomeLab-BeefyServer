@@ -9,7 +9,8 @@
 # Everything it writes under ~/backups is owner-only (umask 077, dirs 0700, files 0600): the backups hold databases and secrets.
 # Env: SERVICES (pull/build/recreate only these, --no-deps; the verify still covers the whole project), WAIT (45), CHECK (functional check, a shell command; retried CHECK_TRIES=6 times 10 s apart),
 #      POST_CHECK=0 (skip the customization check: post-update-check.sh runs after CHECK whenever _global/post-update.d/<dir name>.sh exists, Docker/CUSTOMIZATIONS.md),
-#      TEST_FORCE_FAIL=1 (the verify fails: rollback drill). Exit 0 ok, 1 rolled back, 3 rollback did not verify.
+#      TEST_FORCE_FAIL=1 (the verify fails: rollback drill). Exit 0 ok, 1 rolled back, 2 nothing changed (no project, a backup failed or a backup path is missing), 3 rollback did not verify or the data restore failed.
+# Backups: a failed or empty backup, or a missing path, aborts before up -d (old images re-tagged, stopped containers started again). A rollback after an image change restores this run's backups first (the failed data stays next to it as <path>.failed-update-<time>, a volume's as vol-<name>.failed-update-<time>.tgz); if that restore fails the services stay stopped (exit 3): the old image never starts on migrated data.
 set -uo pipefail
 umask 077
 # beefy: buntu is outside the docker group on purpose; by hand it goes through sudo, the auto-update service has the group.
@@ -17,7 +18,8 @@ if ! docker info >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then do
 dir=$1; mode=$2; shift 2
 here=$(cd "$(dirname "$0")" && pwd)
 cd "$dir" || { echo "FAIL $dir: no such dir"; exit 2; }
-proj=$(docker compose config --format json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
+proj=$(docker compose config --format json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' 2>/dev/null)
+[[ -n $proj && $proj != */* && $proj != .* ]] || { echo "FAIL $dir: docker compose config gave no project name, nothing changed"; exit 2; }
 bk="$HOME/backups/pre-update/$(date +%F)/$proj"; mkdir -p "$bk"; chmod 700 "$HOME/backups/pre-update" "${bk%/*}" "$bk"
 pending="$HOME/backups/pre-update/pending/$proj"
 name=$(basename "$(pwd -P)")
@@ -48,9 +50,10 @@ if [[ $mode == snapshot ]]; then
   take_snapshot "$pending"; echo "snapshot $proj: $(wc -l < "$pending/files") files -> $pending (edit the image refs now, then run pull|build|recreate within 12 h)"; exit 0
 fi
 echo "=== $proj ($dir) mode=$mode"
-snap="$bk/compose-snapshot-$(date +%H%M%S)"
+for b in "$@"; do [[ $b == vol:* || -e $b ]] || { echo "  backup: FAIL $b(missing)"; echo "ABORTED $proj: backup path missing, nothing changed"; exit 2; }; done
+stamp=$(date +%H%M%S); snap="$bk/compose-snapshot-$stamp"; from_pending=0
 if [[ -f $pending/taken ]] && (( $(date +%s) - $(stat -c %Y "$pending/taken") < 43200 )); then
-  mv "$pending" "$snap"; echo "  snapshot: the one taken before the edit -> $snap"
+  mv "$pending" "$snap"; from_pending=1; echo "  snapshot: the one taken before the edit -> $snap"
 else
   [[ -d $pending ]] && { echo "  snapshot: pending one is stale (> 12 h), not used"; rm -rf "$pending"; }
   take_snapshot "$snap"; echo "  snapshot: compose/.env -> $snap"
@@ -97,15 +100,26 @@ esac
 
 # backups: cold (services stopped after the pull), so a live database is never copied mid-write
 if (( $# )); then docker compose stop ${SERVICES:-} 2>&1 | grep -E 'Stopped|Error|error' | head -8; fi
+# one "<path or vol:name>|<tgz>" line per backup of this run: the rollback restores exactly these
+manifest="$bk/backups-$stamp.list"; : > "$manifest"; bkfail=""
 for b in "$@"; do
-  if [[ $b == vol:* ]]; then v=${b#vol:}; docker run --rm -v "$v":/from:ro alpine tar czf - -C /from . > "$bk/vol-$v.tgz" && echo "  backup: volume $v -> $bk"
-  else [[ -e $b ]] && sudo tar czf - -C "$(dirname "$b")" "$(basename "$b")" > "$bk/$(basename "$b").tgz" && echo "  backup: $b -> $bk"; fi
+  if [[ $b == vol:* ]]; then v=${b#vol:}; f="$bk/vol-$v.tgz"; docker run --rm -v "$v":/from:ro alpine tar czf - -C /from . > "$f"
+  elif [[ -e $b ]]; then f="$bk/$(basename "$b").tgz"; sudo tar czf - -C "$(dirname "$b")" "$(basename "$b")" > "$f"
+  else bkfail+=" $b(missing)"; continue; fi
+  if (( $? == 0 )) && [[ -s $f ]]; then echo "$b|$f" >> "$manifest"; echo "  backup: $b -> $f"; else bkfail+=" $b"; fi
 done
+if [[ -n $bkfail ]]; then
+  echo "  backup: FAIL$bkfail"
+  for n in "${!oldid[@]}"; do IFS='|' read -r ref iid _ _ _ _ <<< "${oldid[$n]}"; [[ $ref == *@* || $ref == sha256:* ]] || docker tag "$iid" "$ref" 2>/dev/null; done
+  docker compose start ${SERVICES:-} 2>&1 | grep -E 'Started|Error|error' | head -8
+  (( from_pending )) && [[ ! -e $pending ]] && mv "$snap" "$pending"
+  echo "ABORTED $proj: backup failed, nothing updated (old images re-tagged, stopped containers started again)"; exit 2
+fi
 
 docker compose up -d --remove-orphans ${SERVICES:+--no-deps $SERVICES} 2>&1 | grep -E 'Recreat|Creat|Error|error' | head -8
 
 sleep "${WAIT:-45}"
-ok=1; svcs=""
+ok=1; svcs=""; changed=0
 for n in "${!oldid[@]}"; do
   IFS='|' read -r _ oldimg oldcid oldrc _ _ <<< "${oldid[$n]}"
   info=$(docker inspect -f '{{.State.Status}}|{{if index .State "Health"}}{{(index .State "Health").Status}}{{else}}nohc{{end}}|{{.Image}}|{{.Id}}|{{.RestartCount}}' "$n" 2>/dev/null || echo "missing|-|-|-|0")
@@ -117,6 +131,7 @@ for n in "${!oldid[@]}"; do
   if [[ "$newcid" == "$oldcid" ]]; then crashloop=$(( newrc > oldrc )); else crashloop=$(( newrc >= 2 )); fi
   upd=$( [[ "$newimg" == "$oldimg" ]] && echo unchanged || echo UPDATED )
   echo "  after : $n $status $health rc=$oldrc->$newrc  image $upd"
+  [[ $upd == UPDATED ]] && changed=1
   [[ $upd == UPDATED || $status != running ]] && svcs+=" $(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$n" 2>/dev/null)"
   [[ $status == running && ( $health == healthy || $health == nohc || $health == starting ) && $crashloop -eq 0 ]] || ok=0
 done
@@ -134,6 +149,26 @@ restore_snapshot
 for n in "${!oldid[@]}"; do IFS='|' read -r ref iid _ _ _ _ <<< "${oldid[$n]}"; [[ $ref == *@* || $ref == sha256:* ]] || docker tag "$iid" "$ref" 2>/dev/null; done
 # only what changed or is down; nothing changed (a forced drill) = SERVICES, else the whole project
 svcs=${svcs:-${SERVICES:-}}
+# restore_data: the new image may have migrated the data one way; put back this run's cold backups before the old image starts
+restore_data() {
+  local b f v fails=0
+  docker compose stop ${SERVICES:-} 2>&1 | grep -E 'Error|error' | head -8
+  while IFS='|' read -r b f; do
+    if [[ $b == vol:* ]]; then v=${b#vol:}
+      docker run --rm -v "$v":/from:ro alpine tar czf - -C /from . > "$bk/vol-$v.failed-update-$stamp.tgz" \
+        && docker run --rm -i -v "$v":/to alpine sh -c 'find /to -mindepth 1 -delete && tar xzf - -C /to' < "$f" \
+        && echo "  rollback: volume $v data restored from $f (failed data: $bk/vol-$v.failed-update-$stamp.tgz)" || { echo "  rollback: FAIL volume $v data restore"; fails=1; }
+    else
+      sudo -n mv "$b" "$b.failed-update-$stamp" && sudo -n tar xzf "$f" -C "$(dirname "$b")" \
+        && echo "  rollback: $b data restored from $f (failed data: $b.failed-update-$stamp)" || { echo "  rollback: FAIL $b data restore"; fails=1; }
+    fi
+  done < "$manifest"
+  return $fails
+}
+if (( changed )) && [[ -s $manifest ]]; then
+  restore_data || { echo "ROLLBACK FAILED $proj: data restore failed, services left stopped (the old image must not start on migrated data): restore by hand from $bk"; exit 3; }
+  [[ -n ${SERVICES:-} ]] && svcs=$SERVICES || svcs=""
+fi
 # compose still naming another ref than the old container ran (edited without a snapshot): pin that service to its rollback tag
 want=$(docker compose config --format json 2>/dev/null | python3 -c 'import json,sys; [print(k, v.get("image","")) for k, v in json.load(sys.stdin)["services"].items()]' 2>/dev/null)
 pins=""

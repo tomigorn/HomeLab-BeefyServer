@@ -46,15 +46,16 @@ case $1 in
     (( ${#files[@]} )) || files=(compose.yaml)
     ref=$(resolve "${files[@]}")
     case "$1 $2" in
-      "config --format") echo "{\"name\":\"demo\",\"services\":{\"app\":{\"image\":\"$ref\"}}}" ;;
+      "config --format") [[ -e $D/configfail ]] && exit 1; echo "{\"name\":\"demo\",\"services\":{\"app\":{\"image\":\"$ref\"}}}" ;;
       "ps -q") echo cid1 ;;
       "ps --format") echo "demo-app Up" ;;
       pull*) new=$(awk -v r="$ref" '$1==r {print $2}' "$D/pullmap"); [[ -n $new ]] && settag "$new" "$ref"; : ;;
       up*) id=$(lookup "$ref"); [[ -n $id ]] || { echo "Error: no such image $ref"; exit 1; }
-           read -r _ _ gen < "$D/ctr"; echo "$id $ref $((gen + 1))" > "$D/ctr"; echo " Container demo-app Recreated" ;;
+           read -r _ _ gen < "$D/ctr"; echo "$id $ref $((gen + 1))" > "$D/ctr"; echo " Container demo-app Recreated"
+           [[ -e $D/migrate && $id != sha:old ]] && echo migrated > "$D/data/db/app.db"; : ;;
       *) : ;;
     esac ;;
-  run) echo "tar of ${@: -3:1}" ;;
+  run) if [[ " $* " == *" -i "* ]]; then [[ -e $D/restorefail ]] && exit 1; cat > /dev/null; else [[ -e $D/runfail ]] && exit 1; echo "tar of ${@: -3:1}"; fi ;;
   *) echo "unexpected: $*" >&2; exit 9 ;;
 esac
 STUB
@@ -68,7 +69,7 @@ setup() {  # setup <env ref> <container ref>; tags/pullmap come from the test
   printf 'services:\n  app:\n    image: ${APP_IMAGE}\n' > "$T/Demo/compose.yaml"
   echo "APP_IMAGE=$1" > "$T/Demo/.env"
   echo "sha:old ${2:-$1} 1" > "$T/ctr"
-  : > "$T/pullmap"; : > "$T/log"; rm -rf "$T/backups"
+  : > "$T/pullmap"; : > "$T/log"; rm -rf "$T/backups" "$T/data"; rm -f "$T/configfail" "$T/runfail" "$T/restorefail" "$T/migrate"
 }
 run() { out=$(cd "$T" && "$U" "$T/Demo" "$@" 2>&1); rc=$?; }
 ctr() { cat "$T/ctr"; }
@@ -146,5 +147,53 @@ run snapshot; touch -d '-2 days' "$T/backups/pre-update/pending/demo/taken"
 echo "APP_IMAGE=img:2" > "$T/Demo/.env"
 CHECK=$OLDCHECK run recreate
 [[ $out == *"stale"* && $(cat "$T/Demo/.env") == "APP_IMAGE=img:2" && $(ctr) == "sha:old "* ]] && ok "stale snapshot ignored, old image pinned" || bad "stale snapshot ignored" "rc=$rc $(cat "$T/Demo/.env") $out"
+
+echo "compose config fails: no project name, nothing touched"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"
+mkdir -p "$T/backups/pre-update/pending/other"; touch -d '-2 days' "$T/backups/pre-update/pending/other/taken"; touch "$T/configfail"
+run pull
+[[ $rc == 2 && $out == *FAIL* ]] && ok "exit 2 when the project name is empty" || bad "exit 2 on empty project" "rc=$rc $out"
+[[ -e $T/backups/pre-update/pending/other/taken ]] && ok "other projects' pending snapshots survive" || bad "other pending snapshots survive" "$(ls -R "$T/backups" 2>&1)"
+! grep -q "^compose pull\|^compose up" "$T/log" && ok "no pull, no up" || bad "no pull, no up" "$(cat "$T/log")"
+
+echo "backup path missing: update aborted before anything changes"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "img:1 sha:new" > "$T/pullmap"
+run snapshot; CHECK=true run pull "$T/no-such-dir"
+[[ $rc == 2 && $out == *"ABORTED demo"* ]] && ok "exit 2, ABORTED" || bad "exit 2, ABORTED" "rc=$rc $out"
+[[ $(ctr) == "sha:old img:1 1" ]] && ok "container never recreated" || bad "container never recreated" "$(ctr)"
+[[ $(awk '$1=="img:1"{print $2}' "$T/tags") == sha:old ]] && ok "pulled tag points at the old image again" || bad "tag re-pointed" "$(cat "$T/tags")"
+! grep -q "^compose stop\|^compose pull" "$T/log" && ok "checked before the pull: nothing stopped or pulled" || bad "nothing stopped or pulled" "$(cat "$T/log")"
+[[ -e $T/backups/pre-update/pending/demo/taken ]] && ok "pending snapshot kept for the next try" || bad "pending snapshot kept" "$(ls -R "$T/backups" 2>&1)"
+
+echo "volume backup fails: update aborted"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "img:1 sha:new" > "$T/pullmap"; touch "$T/runfail"
+CHECK=true run pull vol:demo_data
+[[ $rc == 2 && $out == *"backup: FAIL"*"vol:demo_data"* && $(ctr) == "sha:old img:1 1" ]] && ok "exit 2, not recreated" || bad "volume backup failure aborts" "rc=$rc $(ctr) $out"
+grep -q "^compose start" "$T/log" && ok "stopped services started again" || bad "services started again" "$(cat "$T/log")"
+[[ $(awk '$1=="img:1"{print $2}' "$T/tags") == sha:old ]] && ok "pulled tag points at the old image again" || bad "tag re-pointed after a failed backup" "$(cat "$T/tags")"
+
+echo "migrating update rolled back: data restored from this run's backup, failed data kept aside"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "img:1 sha:new" > "$T/pullmap"; touch "$T/migrate"
+mkdir -p "$T/data/db"; echo original > "$T/data/db/app.db"
+CHECK=$OLDCHECK run pull "$T/data/db" vol:demo_data
+[[ $rc == 1 && $out == *"ROLLED BACK demo"* ]] && ok "exit 1, rolled back" || bad "exit 1, rolled back" "rc=$rc $out"
+[[ $(cat "$T/data/db/app.db") == original ]] && ok "bind data restored" || bad "bind data restored" "$(cat "$T/data/db/app.db")"
+aside=$(ls -d "$T"/data/db.failed-update-* 2>/dev/null | head -1)
+[[ -n $aside && $(cat "$aside/app.db") == migrated ]] && ok "migrated data kept aside" || bad "migrated data kept aside" "$(ls "$T/data")"
+grep -q "^run --rm -i -v demo_data:/to" "$T/log" && ok "volume restored" || bad "volume restored" "$(grep '^run' "$T/log")"
+[[ $(grep -c "^run --rm -v demo_data:/from:ro" "$T/log") == 2 ]] && ok "volume's failed state saved before the restore" || bad "volume aside copy" "$(grep '^run' "$T/log")"
+[[ $(grep -n "^compose stop" "$T/log" | tail -1 | cut -d: -f1) -lt $(grep -n "^run --rm -i" "$T/log" | cut -d: -f1) ]] && ok "services stopped before the restore" || bad "stopped before restore" "$(cat "$T/log")"
+
+echo "rollback without an image change (drill): data left alone"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; mkdir -p "$T/data/db"; echo original > "$T/data/db/app.db"
+TEST_FORCE_FAIL=1 CHECK=true run recreate "$T/data/db"
+[[ $rc == 1 && $out != *"data restored"* && -z $(ls -d "$T"/data/db.failed-update-* 2>/dev/null) ]] && ok "no data restore when no image changed" || bad "no restore on drill" "rc=$rc $out"
+
+echo "data restore fails: exit 3, old image NOT started on the migrated data"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "img:1 sha:new" > "$T/pullmap"; touch "$T/migrate" "$T/restorefail"
+mkdir -p "$T/data/db"; echo original > "$T/data/db/app.db"
+CHECK=$OLDCHECK run pull vol:demo_data
+[[ $rc == 3 && $out == *"ROLLBACK FAILED demo"* && $out == *"restore"* ]] && ok "exit 3, ROLLBACK FAILED" || bad "restore failure exit 3" "rc=$rc $out"
+! grep -q "^compose.*up -d --force-recreate" "$T/log" && ok "no recreate after a failed restore" || bad "no recreate after failed restore" "$(cat "$T/log")"
 
 echo "$PASS passed, $FAIL failed"; [[ $FAIL == 0 ]]
