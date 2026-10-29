@@ -23,6 +23,8 @@ proj=$(docker compose config --format json 2>/dev/null | python3 -c 'import json
 bk="$HOME/backups/pre-update/$(date +%F)/$proj"; mkdir -p "$bk"; chmod 700 "$HOME/backups/pre-update" "${bk%/*}" "$bk"
 pending="$HOME/backups/pre-update/pending/$proj"
 name=$(basename "$(pwd -P)")
+# tar helper for volume backups and restores, pinned by digest (multi-arch index: fastpi arm64, beefy amd64)
+HELPER_IMAGE=${HELPER_IMAGE:-alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a}
 
 # The files that define the image refs: the compose files the containers were started from (or the default names here) and .env.
 compose_files() {
@@ -103,7 +105,7 @@ if (( $# )); then docker compose stop ${SERVICES:-} 2>&1 | grep -E 'Stopped|Erro
 # one "<path or vol:name>|<tgz>" line per backup of this run: the rollback restores exactly these
 manifest="$bk/backups-$stamp.list"; : > "$manifest"; bkfail=""
 for b in "$@"; do
-  if [[ $b == vol:* ]]; then v=${b#vol:}; f="$bk/vol-$v.tgz"; docker run --rm -v "$v":/from:ro alpine tar czf - -C /from . > "$f"
+  if [[ $b == vol:* ]]; then v=${b#vol:}; f="$bk/vol-$v.tgz"; docker run --rm -v "$v":/from:ro "$HELPER_IMAGE" tar czf - -C /from . > "$f"
   elif [[ -e $b ]]; then f="$bk/$(basename "$b").tgz"; sudo tar czf - -C "$(dirname "$b")" "$(basename "$b")" > "$f"
   else bkfail+=" $b(missing)"; continue; fi
   if (( $? == 0 )) && [[ -s $f ]]; then echo "$b|$f" >> "$manifest"; echo "  backup: $b -> $f"; else bkfail+=" $b"; fi
@@ -155,8 +157,8 @@ restore_data() {
   docker compose stop ${SERVICES:-} 2>&1 | grep -E 'Error|error' | head -8
   while IFS='|' read -r b f; do
     if [[ $b == vol:* ]]; then v=${b#vol:}
-      docker run --rm -v "$v":/from:ro alpine tar czf - -C /from . > "$bk/vol-$v.failed-update-$stamp.tgz" \
-        && docker run --rm -i -v "$v":/to alpine sh -c 'find /to -mindepth 1 -delete && tar xzf - -C /to' < "$f" \
+      docker run --rm -v "$v":/from:ro "$HELPER_IMAGE" tar czf - -C /from . > "$bk/vol-$v.failed-update-$stamp.tgz" \
+        && docker run --rm -i -v "$v":/to "$HELPER_IMAGE" sh -c 'find /to -mindepth 1 -delete && tar xzf - -C /to' < "$f" \
         && echo "  rollback: volume $v data restored from $f (failed data: $bk/vol-$v.failed-update-$stamp.tgz)" || { echo "  rollback: FAIL volume $v data restore"; fails=1; }
     else
       sudo -n mv "$b" "$b.failed-update-$stamp" && sudo -n tar xzf "$f" -C "$(dirname "$b")" \

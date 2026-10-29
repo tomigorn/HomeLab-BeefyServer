@@ -181,6 +181,7 @@ CHECK=$OLDCHECK run pull "$T/data/db" vol:demo_data
 aside=$(ls -d "$T"/data/db.failed-update-* 2>/dev/null | head -1)
 [[ -n $aside && $(cat "$aside/app.db") == migrated ]] && ok "migrated data kept aside" || bad "migrated data kept aside" "$(ls "$T/data")"
 grep -q "^run --rm -i -v demo_data:/to" "$T/log" && ok "volume restored" || bad "volume restored" "$(grep '^run' "$T/log")"
+! grep "^run " "$T/log" | grep -vq "alpine:[0-9.]*@sha256:" && ok "helper image pinned by digest" || bad "helper image pinned by digest" "$(grep '^run' "$T/log")"
 [[ $(grep -c "^run --rm -v demo_data:/from:ro" "$T/log") == 2 ]] && ok "volume's failed state saved before the restore" || bad "volume aside copy" "$(grep '^run' "$T/log")"
 [[ $(grep -n "^compose stop" "$T/log" | tail -1 | cut -d: -f1) -lt $(grep -n "^run --rm -i" "$T/log" | cut -d: -f1) ]] && ok "services stopped before the restore" || bad "stopped before restore" "$(cat "$T/log")"
 
