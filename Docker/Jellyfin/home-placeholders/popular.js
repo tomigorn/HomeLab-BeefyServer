@@ -456,6 +456,19 @@
     });
   }
 
+  function hideTrending(doc, hide) {
+    if (!hide) return 0;
+    var ids = {};
+    [].concat(hide.lib || [], hide.sets || [], hide.items || []).forEach(function (i) { ids[i] = true; });
+    var n = 0;
+    var els = doc.querySelectorAll("[data-id]");
+    for (var i = 0; i < els.length; i++) {
+      var e = els[i];
+      if (ids[e.getAttribute("data-id")] && !e.classList.contains("hssTrendingHidden")) { e.classList.add("hssTrendingHidden"); n++; }
+    }
+    return n;
+  }
+
   var CSS = [
     ".hssTopScroll { --hss-p: 7rem; display: flex; flex-wrap: nowrap; align-items: flex-start; overflow-x: auto; overflow-y: hidden; gap: 0.9em; padding: 0.6em 3.3% 1.6em max(3.3%, 1.2em); scroll-snap-type: x proximity; scrollbar-width: thin; }",
     ".hssTopCard { position: relative; flex: 0 0 auto; display: grid; grid-template-columns: auto var(--hss-p); align-items: end; color: inherit; text-decoration: none; scroll-snap-align: start; outline: none; }",
@@ -497,7 +510,8 @@
     ".hssTopLegend { margin-left: 1.2em; font-size: 0.9em; opacity: 0.7; }",
     "body.hssPopularOpen .MuiDrawer-paper .Mui-selected:not(.hssPopularNav) { background-color: transparent !important; }",
     "body.hssPopularOpen .MuiStack-root > .Mui-selected:not(.hssPopularNav) { background-color: transparent !important; }",
-    "body.hssPopularOpen .navMenuOption-selected:not(.hssPopularNav) { background: transparent !important; color: inherit !important; }"
+    "body.hssPopularOpen .navMenuOption-selected:not(.hssPopularNav) { background: transparent !important; color: inherit !important; }",
+    ".hssTrendingHidden { display: none !important; }"
   ].join("\n");
 
   function styles(doc) {
@@ -711,6 +725,7 @@
 
     function tick() {
       timer = null;
+      hideTrending(doc, win.HssTrendingHide);
       if (openedAt && openedAt !== win.location.href) { openedAt = null; closePage(false); }
       if (!register()) return;
       observer.disconnect();
@@ -735,7 +750,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { CSS: CSS, actionsFor: actionsFor, detailKey: detailKey, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, prefit: prefit, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
+    module.exports = { CSS: CSS, hideTrending: hideTrending, actionsFor: actionsFor, detailKey: detailKey, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, prefit: prefit, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {

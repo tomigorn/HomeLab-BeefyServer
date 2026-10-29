@@ -635,3 +635,19 @@ test("rank digits: opaque page-colour fill under a doubled outer stroke, so over
   assert.match(pp.CSS, /\.hssTopPoster \{[^}]*z-index: 1/);
   assert.match(pp.CSS, /\.hssTopRank-2 \{[^}]*font-size/);
 });
+
+test("hideTrending hides library tile, list collections and placeholders", () => {
+  const d = doc('<div class="card" data-id="lib1"></div><div class="listItem" data-id="set1"></div><div class="card" data-id="ph1"></div><div class="card" data-id="real1"></div>');
+  const hide = { lib: "lib1", sets: ["set1"], items: ["ph1"] };
+  assert.equal(pp.hideTrending(d, hide), 3);
+  assert.deepEqual([...d.querySelectorAll(".hssTrendingHidden")].map((e) => e.getAttribute("data-id")), ["lib1", "set1", "ph1"]);
+  assert.equal(pp.hideTrending(d, hide), 0);
+  assert.match(pp.CSS, /\.hssTrendingHidden \{ display: none !important; \}/);
+});
+
+test("hideTrending without data does nothing", () => {
+  const d = doc('<div class="card" data-id="lib1"></div>');
+  assert.equal(pp.hideTrending(d, undefined), 0);
+  assert.equal(pp.hideTrending(d, {}), 0);
+  assert.equal(d.querySelectorAll(".hssTrendingHidden").length, 0);
+});
