@@ -4,15 +4,14 @@
   "agent": true,
   "refresh_interval": "0 0 4 * * Sun",
   "ignore_update_type": "none",
+  "registries": {
+    "rollback.invalid": { "ignore": true }
+  },
   "images": {
     "exclude": [
       "jellyfin-local",
       "clamav-local",
-      "python:rollback",
-      "lscr.io/linuxserver/bazarr:rollback",
-      "lscr.io/linuxserver/prowlarr:rollback",
-      "ghcr.io/recyclarr/recyclarr:rollback",
-      "ghcr.io/tecnativa/docker-socket-proxy:rollback"
+      "rollback.invalid/"
     ],
     "extra": [
       "lscr.io/linuxserver/jellyfin:12.4ubu2604-ls57"

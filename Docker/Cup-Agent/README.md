@@ -57,7 +57,7 @@ server.
 
 ## Local rollback images
 
-Tags like `rollback-4.0.20-20261021` are not versions: Cup logs "no remote version tags" and the agent restarts in a loop. List each such image under `images.exclude` in `cup.json` (and remove it there once the image is deleted). `update-project.sh` creates `<repo>:rollback-<date>-<project>` on every update, so exclude `<repo>:rollback` (Cup matches the start of the reference) for each repo it tagged, else the next agent restart loops (2026-10-29: bazarr).
+Cup reads only the first tag of an image and exits on one with no remote versions ("no remote version tags": the agent restarts in a loop, 2026-10-29: bazarr). `update-project.sh` tags every old image `rollback.invalid/<repo>:<date>-<project>`, which `cup.json` excludes with one prefix (`images.exclude` `rollback.invalid/`, plus `registries.rollback.invalid.ignore` so Cup does not probe the fake host). Name a manual rollback image the same way. Details: `_global/UPDATE-RUNBOOK.md` "Rollback tags".
 
 ## Locally built images
 

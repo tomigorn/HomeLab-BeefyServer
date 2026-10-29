@@ -157,6 +157,7 @@ Hooks in SABnzbd / qBittorrent: Movie-Downloads `md.sab-clamav-script`, `md.qbit
 | Customization | Where | Reapply | Verify | Update can break |
 |---|---|---|---|---|
 | Agent API for fastpi's Cup | `Cup-Agent/cup.json` | compose | `cup.api`: /api/v3/json → n images | API path change |
+| Rollback tags excluded: `images.exclude` `rollback.invalid/` + `registries.rollback.invalid.ignore` (UPDATE-RUNBOOK.md "Rollback tags") | `Cup-Agent/cup.json` | `sudo docker restart cup-agent` | `cup.exclude-rollback`: → rollback.invalid/ ignore=True; `cup.rollback-tags-last`: → 0 images; `cup.no-crash-loop`: → stable over 12 s | exclude semantics (3.6: prefix match on the reference, only the first tag is read) |
 | Read-only socket proxy | compose | compose | `cup.proxy-read-only`: env → BUILD=0 EXEC=0 NETWORKS=0 POST=0 VOLUMES=0 | |
 
 Portainer-Agent: no customization (the tag must match fastpi's Portainer, notify tier).
