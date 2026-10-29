@@ -166,21 +166,18 @@
     }).join(",") + "|" + (states ? states.left + ":" + !!states.dailyFull : "");
   }
 
-  // Card = rank box 0.75 p + poster p, the poster covering 0.25 p of the rank (#10: 0.85 p, 0.05 p): ten cards = 15.3 p + 9 gaps.
-  var FIT_MIN_VIEWPORT = 1280;
-  var FIT_MIN_POSTER = 90;
-  function fitPoster(width, gap, viewport) {
-    if (!width || viewport < FIT_MIN_VIEWPORT) return null;
-    var p = Math.floor((width - 9 * gap) / 15.3);
-    return p >= FIT_MIN_POSTER ? p : null;
+  // Jellyfin's .overflowPortraitCard widths (vw per min-width in px), so the posters match Hidden Gems; below 700 px the CSS default applies.
+  var CARD_VW = [[2100, 9.3], [1920, 10.41], [1600, 11.6], [1400, 13.3], [1200, 15.5], [800, 18.5], [700, 23.1]];
+
+  function fitPoster(viewport) {
+    for (var i = 0; i < CARD_VW.length; i++) if (viewport >= CARD_VW[i][0]) return Math.round(CARD_VW[i][1] * viewport / 100);
+    return null;
   }
 
   function measure(list) {
     var win = list.ownerDocument.defaultView;
-    if (!win || !win.getComputedStyle) return undefined;
-    var cs = win.getComputedStyle(list);
-    var width = list.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
-    return fitPoster(width, parseFloat(cs.columnGap) || 0, win.innerWidth);
+    if (!win) return undefined;
+    return fitPoster(win.innerWidth);
   }
 
   function applyFit(list, p) {

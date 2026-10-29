@@ -95,14 +95,14 @@ test("two-digit ranks get their own width so the poster does not hide the 0", ()
   assert.ok(!pp.card(d, { item: OWNED, jf: LIB["movie/121"] }, "en", false, null).querySelector(".hssTopRank").classList.contains("hssTopRank-2"));
 });
 
-test("ten cards fit the row width from 1280 px up, below that the row scrolls", () => {
-  const p = pp.fitPoster(1800, 14, 1920);
-  assert.ok(p > 100 && p < 120, String(p));
-  assert.ok(15.3 * p + 9 * 14 <= 1800);
-  assert.ok(pp.fitPoster(2400, 14, 2560) > p);
-  assert.equal(pp.fitPoster(1100, 14, 1200), null);
-  assert.equal(pp.fitPoster(1200, 14, 1280), null, "posters under 90 px: scroll instead");
-  assert.equal(pp.fitPoster(0, 14, 1920), null);
+test("posters are as wide as Jellyfin's own portrait cards (Hidden Gems), from 700 px up; below that the row keeps its default and scrolls", () => {
+  assert.equal(pp.fitPoster(1920), 200);
+  assert.equal(pp.fitPoster(1280), 198);
+  assert.equal(pp.fitPoster(1600), 186);
+  assert.equal(pp.fitPoster(2560), 238);
+  assert.equal(pp.fitPoster(800), 148);
+  assert.equal(pp.fitPoster(699), null);
+  assert.equal(pp.fitPoster(0), null);
 });
 
 test("poster paths are checked before they reach CSS", () => {
@@ -281,7 +281,7 @@ test("fitting the rows measures every row before it changes any (one layout, not
   pp.fitAll(d.querySelector(".page"));
   assert.equal(log.filter((x) => x === "write").length, 3);
   assert.equal(log.lastIndexOf("read") < log.indexOf("write"), true, log.join(","));
-  assert.match(d.querySelector(".hssTopScroll").style.getPropertyValue("--hss-p"), /^1\d\dpx$/);
+  assert.equal(d.querySelector(".hssTopScroll").style.getPropertyValue("--hss-p"), "200px");
 });
 
 function started() {
@@ -439,7 +439,7 @@ test("fitAll answers the size it set, so the page can remember it", () => {
   win.getComputedStyle = () => ({ paddingLeft: "0", paddingRight: "0", columnGap: "14" });
   Object.defineProperty(d.querySelector(".hssTopScroll"), "clientWidth", { get: () => 1800 });
   const p = pp.fitAll(d.querySelector(".page"));
-  assert.equal(p, pp.fitPoster(1800, 14, 1920));
+  assert.equal(p, 200);
   assert.equal(pp.fitAll(doc('<div class="page"></div>').querySelector(".page")), undefined);
 });
 
