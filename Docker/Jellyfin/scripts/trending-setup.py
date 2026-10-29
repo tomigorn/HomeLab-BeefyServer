@@ -15,6 +15,8 @@ from trending_model import COLLECTIONS_NAME, LIBRARY, find_library, hidden, libr
 PATH = "/config/trending/library"
 OLD_COLLECTIONS = "Collections"
 SEERR_SETTINGS = pathlib.Path("/srv/appdata/seerr/settings.json")
+LISTS = pathlib.Path("/srv/appdata/jellyfin-popular/lists.json")
+CACHE = pathlib.Path("/srv/appdata/jellyfin/trending/cache")
 WANT = {
     "Enabled": True,
     "EnableRealtimeMonitor": False,
@@ -47,6 +49,25 @@ def collections_folder(items):
 
 def tile_needed(item, force):
     return force or not (item.get("ImageTags") or {}).get("Primary")
+
+
+def tile_posters(lists_file, cache):
+    """Cached posters (w780) of the Top 10 movies, in rank order, for the library tile."""
+    try:
+        movies = json.loads(lists_file.read_text()).get("home", {}).get("movies") or []
+    except (OSError, ValueError):
+        return []
+    out = []
+    for e in movies:
+        p = e.get("p")
+        p = (p.get("en") or p.get("de")) if isinstance(p, dict) else p
+        if not p or "/" in p[1:]:
+            continue
+        try:
+            out.append((cache / f"w780_{p[1:]}").read_bytes())
+        except OSError:
+            continue
+    return out
 
 
 def check_line(users, lib_id):
@@ -123,7 +144,7 @@ def main(argv):
         if not dry:
             from trending_art import library_tile
 
-            api_raw("POST", f"/Items/{coll['Id']}/Images/Primary", base64.b64encode(library_tile(COLLECTIONS_NAME)), "image/jpeg")
+            api_raw("POST", f"/Items/{coll['Id']}/Images/Primary", base64.b64encode(library_tile(COLLECTIONS_NAME, tile_posters(LISTS, CACHE)[:3])), "image/jpeg")
 
     if seerr_enabled():
         print(f"WARNING: Seerr has {LIBRARY} enabled; untick it in Seerr's Jellyfin libraries")

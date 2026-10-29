@@ -67,6 +67,17 @@ class UnresolvedTest(unittest.TestCase):
         self.assertEqual(ts.collections_folder(items)["Id"], "c")
         self.assertIsNone(ts.collections_folder(items[:1]))
 
+    def test_tile_posters_from_the_cache_in_top_10_order(self):
+        import json
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "lists.json").write_text(json.dumps({"home": {"movies": [{"p": {"en": "/a.jpg"}}, {"p": {"en": None}}, {"p": {"en": "/missing.jpg"}}, {"p": "/b.jpg"}], "shows": []}}))
+            (root / "w780_a.jpg").write_bytes(b"A")
+            (root / "w780_b.jpg").write_bytes(b"B")
+            self.assertEqual(ts.tile_posters(root / "lists.json", root), [b"A", b"B"])
+            self.assertEqual(ts.tile_posters(root / "absent.json", root), [])
+
     def test_tile_only_when_needed(self):
         self.assertTrue(ts.tile_needed({"ImageTags": {}}, False))
         self.assertTrue(ts.tile_needed({}, False))
