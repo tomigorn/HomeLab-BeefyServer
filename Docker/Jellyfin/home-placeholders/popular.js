@@ -160,19 +160,30 @@
     return p >= FIT_MIN_POSTER ? p : null;
   }
 
-  function fitRow(list) {
+  function measure(list) {
     var win = list.ownerDocument.defaultView;
-    if (!win || !win.getComputedStyle) return;
+    if (!win || !win.getComputedStyle) return undefined;
     var cs = win.getComputedStyle(list);
     var width = list.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
-    var p = fitPoster(width, parseFloat(cs.columnGap) || 0, win.innerWidth);
+    return fitPoster(width, parseFloat(cs.columnGap) || 0, win.innerWidth);
+  }
+
+  function applyFit(list, p) {
+    if (p === undefined) return;
     if (p) list.style.setProperty("--hss-p", p + "px");
     else list.style.removeProperty("--hss-p");
   }
 
+  function fitRow(list) {
+    applyFit(list, measure(list));
+  }
+
+  // All reads first, then all writes: a write between two reads forces a full layout of the page per row.
   function fitAll(root) {
     var lists = root.querySelectorAll(".hssTopScroll");
-    for (var i = 0; i < lists.length; i++) fitRow(lists[i]);
+    var sizes = [];
+    for (var i = 0; i < lists.length; i++) sizes.push(measure(lists[i]));
+    for (var j = 0; j < lists.length; j++) applyFit(lists[j], sizes[j]);
   }
 
   function fillRow(sec, entries, lang, tv, states) {
@@ -541,7 +552,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { fitPoster: fitPoster, libraryMap: libraryMap, visible: visible, card: card, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
+    module.exports = { fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {

@@ -197,3 +197,21 @@ test("request posts only the entry id and mode with the user's token", async () 
   assert.equal(calls[0][1].headers["X-Emby-Token"], "T".repeat(32));
   assert.deepEqual(JSON.parse(calls[0][1].body), { id: "tokTV", mode: "now" });
 });
+
+test("fitting the rows measures every row before it changes any (one layout, not one per row)", () => {
+  const d = doc('<div class="page"><div class="hssTopScroll"></div><div class="hssTopScroll"></div><div class="hssTopScroll"></div></div>');
+  const win = d.defaultView;
+  const log = [];
+  Object.defineProperty(win, "innerWidth", { value: 1920, configurable: true });
+  win.getComputedStyle = () => { log.push("read"); return { paddingLeft: "0", paddingRight: "0", columnGap: "14" }; };
+  for (const l of d.querySelectorAll(".hssTopScroll")) {
+    Object.defineProperty(l, "clientWidth", { get: () => { log.push("read"); return 1800; } });
+    const set = l.style.setProperty.bind(l.style);
+    l.style.setProperty = (k, v) => { log.push("write"); set(k, v); };
+  }
+  pp.fitAll(d.querySelector(".page"));
+  assert.equal(log.filter((x) => x === "write").length, 3);
+  assert.equal(log.lastIndexOf("read") < log.indexOf("write"), true, log.join(","));
+  assert.match(d.querySelector(".hssTopScroll").style.getPropertyValue("--hss-p"), /^1\d\dpx$/);
+});
+
