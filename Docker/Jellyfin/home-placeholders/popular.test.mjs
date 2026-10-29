@@ -79,13 +79,16 @@ test("no release yet: greyed out, badge with the check date, buttons disabled an
   const d = doc();
   const c = pp.card(d, { item: NONE, jf: null }, "en", false, { entries: {}, left: 5 });
   assert.ok(c.classList.contains("hssTopNone"));
-  assert.equal(c.querySelector(".hssTopBadge").textContent, "No release yet");
+  assert.equal(c.querySelector(".hssTopBanner").textContent, "Not able to download");
+  assert.equal(c.querySelector(".hssTopBadge"), null, "the banner replaces the old chip");
+  assert.ok(c.querySelector(".hssTopPoster .hssTopBanner"));
   assert.match(c.querySelector(".hssTopHint").textContent, /checked 21 Oct · rechecked daily/);
   const b = [...c.querySelectorAll(".hssTopBtn")];
   assert.equal(b.length, 2);
   assert.ok(b.every((x) => x.disabled && !x.hasAttribute("data-hss-x")));
   const de = pp.card(d, { item: NONE, jf: null }, "de", false, null);
-  assert.equal(de.querySelector(".hssTopBadge").textContent, "Noch kein Release");
+  assert.equal(de.querySelector(".hssTopBanner").textContent, "Nicht herunterladbar");
+  assert.equal(de.querySelector(".hssTopBadge"), null);
   assert.match(de.querySelector(".hssTopHint").textContent, /geprüft 21\. Okt\. · täglich neu geprüft/);
   const u = pp.card(d, { item: UNKNOWN, jf: null }, "en", false, null);
   assert.match(u.querySelector(".hssTopHint").textContent, /not identified/);
@@ -356,14 +359,18 @@ test("reopening within the state TTL builds the page once, no second rebuild", a
   win.close();
 });
 
-test("no release yet: a red diagonal strike over the poster, kept red (grey only underneath), badge readable above it", () => {
+test("no release yet: a red diagonal banner over the poster, kept red (grey only underneath)", () => {
   const d = doc();
   const c = pp.card(d, { item: NONE, jf: null }, "en", false, null);
   assert.ok(c.classList.contains("hssTopNone"));
   assert.ok(c.querySelector(".hssTopPoster"));
   const css = pp.CSS;
   const rule = (sel) => (css.split("\n").find((l) => l.startsWith(sel + " {")) || "");
-  assert.match(rule(".hssTopNone .hssTopPoster::after"), /linear-gradient\(to top right, transparent calc\(50% - [\d.]+em\), rgba\(229, 57, 53/);
+  assert.equal(rule(".hssTopNone .hssTopPoster::after"), "", "the thin line is gone");
+  assert.match(rule(".hssTopBanner"), /rotate\(-30deg\)/);
+  assert.match(rule(".hssTopBanner"), /background: #d32f2f/);
+  assert.match(rule(".hssTopBanner"), /font-size: calc\(var\(--hss-p\) \* 0\.09\)/);
+  assert.match(rule(".hssTopBanner"), /width: 1[5-9]\d%/);
   assert.match(rule(".hssTopNone .hssTopPoster::before"), /filter: grayscale\(1\)/);
   assert.match(rule(".hssTopNone .hssTopPoster::before"), /background: inherit/);
   assert.doesNotMatch(css, /\.hssTopNone[^{]*\.hssTopPoster \{[^}]*filter: grayscale/, "a filter on the poster itself would grey the red line too");

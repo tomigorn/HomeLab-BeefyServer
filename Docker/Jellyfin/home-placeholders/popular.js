@@ -21,7 +21,7 @@
       night: "\uD83C\uDF19 Tonight", searching: "\uD83D\uDD0D Searching", unreleased: "\uD83D\uDCC5 Not released yet", downloading: "⬇️ Downloading", requested: "✓ Requested", declined: "Declined",
       empty: "Nothing on the list right now.", found: "available",
       details: "details", seasonLong: "Season {n}",
-      none: "No release yet", checked: "checked {d} · rechecked daily", unchecked: "not checked yet · checked tonight", unknown: "Title not identified",
+      none: "Not able to download", checked: "checked {d} · rechecked daily", unchecked: "not checked yet · checked tonight", unknown: "Title not identified",
       source: "Sources: Netflix Top 10 Switzerland (weekly), TMDB popularity, where to stream in Switzerland by JustWatch (via TMDB). Only titles in the library or with a release found are shown."
     },
     de: {
@@ -32,7 +32,7 @@
       night: "\uD83C\uDF19 Heute Nacht", searching: "\uD83D\uDD0D Wird gesucht", unreleased: "\uD83D\uDCC5 Noch nicht erschienen", downloading: "⬇️ Lädt herunter", requested: "✓ Angefragt", declined: "Abgelehnt",
       empty: "Gerade nichts auf der Liste.", found: "verfügbar",
       details: "Details", seasonLong: "Staffel {n}",
-      none: "Noch kein Release", checked: "geprüft {d} · täglich neu geprüft", unchecked: "noch nicht geprüft · wird heute Nacht geprüft", unknown: "Titel nicht erkannt",
+      none: "Nicht herunterladbar", checked: "geprüft {d} · täglich neu geprüft", unchecked: "noch nicht geprüft · wird heute Nacht geprüft", unknown: "Titel nicht erkannt",
       source: "Quellen: Netflix Top 10 Schweiz (wöchentlich), TMDB-Beliebtheit, Streaming-Angebot in der Schweiz von JustWatch (über TMDB). Nur Titel aus der Bibliothek oder mit gefundenem Release."
     }
   };
@@ -174,7 +174,7 @@
     c.appendChild(poster);
     if (entry.jf) return c;
     if (!it.x) {
-      poster.appendChild(el(doc, "div", "hssTopBadge", tr(lang, "none")));
+      poster.appendChild(el(doc, "div", "hssTopBanner", tr(lang, "none")));
     } else {
       var res = el(doc, "div", "hssTopBadge", it.f);
       res.setAttribute("title", it.f + " " + tr(lang, "found"));
@@ -460,7 +460,7 @@
     ".hssTopDim:hover .hssTopPoster, .hssTopDim:focus-within .hssTopPoster { filter: saturate(0.8) brightness(0.85); }",
     ".hssTopNone .hssTopPoster, .hssTopNone:hover .hssTopPoster, .hssTopNone:focus-within .hssTopPoster { filter: none; }",
     ".hssTopNone .hssTopPoster::before { content: ''; position: absolute; inset: 0; background: inherit; filter: grayscale(1) brightness(0.45); }",
-    ".hssTopNone .hssTopPoster::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(to top right, transparent calc(50% - 0.2em), rgba(229, 57, 53, 0.85) calc(50% - 0.18em), rgba(229, 57, 53, 0.85) calc(50% + 0.18em), transparent calc(50% + 0.2em)); }",
+    ".hssTopBanner { position: absolute; left: 50%; top: 50%; width: 170%; transform: translate(-50%, -50%) rotate(-30deg); text-align: center; white-space: nowrap; box-sizing: border-box; padding: 0.4em 0; background: #d32f2f; color: #fff; font-weight: 800; font-size: calc(var(--hss-p) * 0.09); line-height: 1.2; letter-spacing: 0.02em; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5); box-shadow: 0 0.15em 0.5em rgba(0, 0, 0, 0.55); pointer-events: none; }",
     ".hssTopNone .hssTopPoster > * { z-index: 2; }",
     ".hssTopNone .hssTopRank { -webkit-text-stroke-color: rgba(255, 255, 255, 0.4); }",
     ".hssTopRank-2 { width: calc(var(--hss-p) * 0.85); margin-right: calc(var(--hss-p) * -0.05); font-size: calc(var(--hss-p) * 0.8); letter-spacing: -0.1em; }",
