@@ -206,7 +206,7 @@ def main(argv, api=None, seerr=_seerr, fetch=_fetch, upload=_upload, cache_file=
     dry = "--dry-run" in argv
     if api is None:
         api = jellyfin_api.api
-    fields = "Recursive=true&Fields=Studios,ProviderIds&EnableImages=false&EnableUserData=false"
+    fields = "Recursive=true&CollapseBoxSetItems=false&Fields=Studios,ProviderIds&EnableImages=false&EnableUserData=false"
     movies = api("GET", f"/Items?IncludeItemTypes=Movie&{fields}")["Items"]
     series = api("GET", f"/Items?IncludeItemTypes=Series&{fields}")["Items"]
     studios = api("GET", "/Studios?Recursive=true&EnableImageTypes=Logo&ImageTypeLimit=1")["Items"]

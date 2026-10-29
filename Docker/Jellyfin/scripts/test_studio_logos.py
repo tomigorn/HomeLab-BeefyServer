@@ -174,6 +174,7 @@ class FakeJellyfin:
                 return None
             return self.config
         if path.startswith("/Items?"):
+            assert "CollapseBoxSetItems=false" in path, path
             kind = "Movie" if "IncludeItemTypes=Movie" in path else "Series"
             return {"Items": [i for i in self.items if i["Type"] == kind]}
         if path.startswith("/Studios?"):
