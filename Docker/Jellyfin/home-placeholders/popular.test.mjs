@@ -4,17 +4,20 @@ import { createRequire } from "node:module";
 import { JSDOM } from "jsdom";
 
 const pp = createRequire(import.meta.url)("./popular.js");
+const dt = createRequire(import.meta.url)("./details.js");
 
 const OWNED = { k: "movie", id: 121, s: null, r: 1, y: 2003, t: { en: "The Return of the King", de: "Die Rückkehr des Königs" }, p: { en: "/rotk.jpg", de: "/rotk-de.jpg" }, o: true, f: null };
-const FOUND = { k: "tv", id: 202, s: 4, r: 2, y: 2023, t: { en: "The Diplomat", de: "Diplomatische Beziehungen" }, p: { en: "/d.jpg", de: "/d-de.jpg" }, o: false, f: "2160p", x: "tokTV" };
+const FOUND = { k: "tv", id: 202, s: 4, r: 2, y: 2023, t: { en: "The Diplomat", de: "Diplomatische Beziehungen" }, p: { en: "/d.jpg", de: "/d-de.jpg" }, o: false, f: "2160p", x: "tokTV", d: "detTVxxxxxxxxxxxxxxxx" };
 const HIDDEN = { k: "movie", id: 303, s: null, r: 3, y: 2020, t: { en: "Owned elsewhere", de: "x" }, p: { en: "/x.jpg" }, o: true, f: null };
-const NONE = { k: "movie", id: 404, s: null, r: 4, y: 2026, t: { en: "No Release", de: "Kein Release" }, p: { en: "/n.jpg" }, o: false, f: null, n: true, c: "2026-10-21" };
+const NONE = { k: "movie", id: 404, s: null, r: 4, y: 2026, t: { en: "No Release", de: "Kein Release" }, p: { en: "/n.jpg" }, o: false, f: null, n: true, c: "2026-10-21", d: "detNONExxxxxxxxxxxxxx" };
 const UNKNOWN = { k: "tv", id: null, s: null, r: 5, y: null, t: { en: "Instadocs", de: "Instadocs" }, p: { en: null, de: null }, o: false, f: null, n: true, c: null, u: true };
 const DATA = { week: "2026-10-18", home: { shows: [FOUND], movies: [OWNED, HIDDEN] }, rows: [
   { id: "service-8-movie", kind: "movie", type: "service", name: { en: "Netflix", de: "Netflix" }, logo: "/nf.png", items: [OWNED] },
   { id: "service-8-tv", kind: "tv", type: "service", name: { en: "Netflix", de: "Netflix" }, logo: "/nf.png", items: [FOUND] },
   { id: "genre-comedy-tv", kind: "tv", type: "genre", name: { en: "Comedy", de: "Komödie" }, logo: null, items: [FOUND] },
-  { id: "genre-horror-movie", kind: "movie", type: "genre", name: { en: "Horror", de: "Horror" }, logo: null, items: [HIDDEN] }
+  { id: "genre-horror-movie", kind: "movie", type: "genre", name: { en: "Horror", de: "Horror" }, logo: null, items: [HIDDEN] },
+  { id: "genre-drama-movie", kind: "movie", type: "genre", name: { en: "Drama", de: "Drama" }, logo: null, items: [NONE] },
+  { id: "genre-docs-tv", kind: "tv", type: "genre", name: { en: "Docs", de: "Doku" }, logo: null, items: [UNKNOWN] }
 ] };
 const LIB = pp.libraryMap([
   { Type: "Movie", Id: "jf121", ServerId: "srv", ProviderIds: { Tmdb: "121" } },
@@ -63,13 +66,13 @@ test("requestable card is dimmed and has the two buttons with the entry id", () 
 test("card state: requested shows the badge, limit reached disables the buttons", () => {
   const d = doc();
   const c1 = pp.card(d, { item: FOUND, jf: null }, "en", false, { entries: { tokTV: { state: "requested", badge: "night" } }, left: 5 });
-  assert.equal(c1.querySelector("button"), null);
+  assert.equal(c1.querySelector(".hssTopBtn"), null);
   assert.match(c1.querySelector(".hssTopState").textContent, /🌙/);
   const c2 = pp.card(d, { item: FOUND, jf: null }, "de", false, { entries: { tokTV: { state: "requestable" } }, left: 0, limit: 10, days: 7 });
-  assert.ok([...c2.querySelectorAll("button")].every((b) => b.disabled));
+  assert.ok([...c2.querySelectorAll(".hssTopBtn")].every((b) => b.disabled));
   assert.match(c2.querySelector(".hssTopHint").textContent, /10.*7/);
   const c3 = pp.card(d, { item: FOUND, jf: null }, "en", false, { entries: { tokTV: { state: "owned" } }, left: 3 });
-  assert.equal(c3.querySelector("button"), null);
+  assert.equal(c3.querySelector(".hssTopBtn"), null);
 });
 
 test("no release yet: greyed out, badge with the check date, buttons disabled and without an entry id", () => {
@@ -78,7 +81,7 @@ test("no release yet: greyed out, badge with the check date, buttons disabled an
   assert.ok(c.classList.contains("hssTopNone"));
   assert.equal(c.querySelector(".hssTopBadge").textContent, "No release yet");
   assert.match(c.querySelector(".hssTopHint").textContent, /checked 21 Oct · rechecked daily/);
-  const b = [...c.querySelectorAll("button")];
+  const b = [...c.querySelectorAll(".hssTopBtn")];
   assert.equal(b.length, 2);
   assert.ok(b.every((x) => x.disabled && !x.hasAttribute("data-hss-x")));
   const de = pp.card(d, { item: NONE, jf: null }, "de", false, null);
@@ -232,8 +235,8 @@ test("TV layout: a header button next to search (TV has no drawer button)", () =
 test("the shows page: the Netflix Top 10 Shows, then only the series rows with something to show", () => {
   const d = doc();
   const page = pp.buildPage(d, DATA, LIB, "en", false, null, "tv");
-  assert.deepEqual([...page.querySelectorAll(".hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Shows", "service-8-tv", "genre-comedy-tv"]);
-  assert.deepEqual([...page.querySelectorAll(".hssTopRow h2")].map((h) => h.textContent), ["Top 10 Shows in Switzerland", "Netflix", "Comedy"]);
+  assert.deepEqual([...page.querySelectorAll(".hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Shows", "service-8-tv", "genre-comedy-tv", "genre-docs-tv"]);
+  assert.deepEqual([...page.querySelectorAll(".hssTopRow h2")].map((h) => h.textContent), ["Top 10 Shows in Switzerland", "Netflix", "Comedy", "Docs"]);
   assert.match(page.querySelector(".hssTopRow img.hssTopLogo").getAttribute("src"), /w92\/nf\.png$/);
   assert.equal(page.querySelector("h1").textContent, "Popular shows");
   assert.equal(page.getAttribute("data-hss-kind"), "tv");
@@ -243,9 +246,9 @@ test("the shows page: the Netflix Top 10 Shows, then only the series rows with s
 test("the movies page: the Netflix Top 10 Movies, then only the film rows; German title", () => {
   const d = doc();
   const page = pp.buildPage(d, DATA, LIB, "de", false, null, "movie");
-  assert.deepEqual([...page.querySelectorAll(".hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Movies", "service-8-movie"]);
+  assert.deepEqual([...page.querySelectorAll(".hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Movies", "service-8-movie", "genre-drama-movie"]);
   assert.equal(page.querySelector("h1").textContent, "Beliebte Filme");
-  assert.equal(page.querySelectorAll(".hssTopCard").length, 2);
+  assert.equal(page.querySelectorAll(".hssTopCard").length, 3);
 });
 
 test("rows without a kind (lists published before the split) appear on both pages", () => {
@@ -310,7 +313,7 @@ test("each nav entry opens its own page; the other entry switches to the other k
   click(d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
   await tick();
   assert.equal(d.querySelector(".hssPopularPage h1").textContent, "Popular shows");
-  assert.deepEqual([...d.querySelectorAll(".hssPopularPage .hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Shows", "service-8-tv", "genre-comedy-tv"]);
+  assert.deepEqual([...d.querySelectorAll(".hssPopularPage .hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Shows", "service-8-tv", "genre-comedy-tv", "genre-docs-tv"]);
   assert.equal(d.querySelector('.MuiDrawer-paper .hssPopularNav[data-hss-kind="tv"]').getAttribute("aria-current"), "page");
   assert.ok(d.body.classList.contains("hssPopularOpen"));
   click(d.querySelector('.hssPopularNav[data-hss-kind="movie"]'));
@@ -326,7 +329,7 @@ test("each nav entry opens its own page; the other entry switches to the other k
   await tick();
   assert.equal(d.querySelectorAll(".hssPopularPage").length, 1);
   assert.equal(d.querySelector(".hssPopularPage h1").textContent, "Popular movies");
-  assert.deepEqual([...d.querySelectorAll(".hssPopularPage .hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Movies", "service-8-movie"]);
+  assert.deepEqual([...d.querySelectorAll(".hssPopularPage .hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Movies", "service-8-movie", "genre-drama-movie"]);
   win.close();
 });
 
@@ -446,7 +449,7 @@ test("fitAll answers the size it set, so the page can remember it", () => {
 test("daily cap used up for everyone: buttons disabled with an honest hint (no silent no-op)", () => {
   const d = doc();
   const c = pp.card(d, { item: FOUND, jf: null }, "en", false, { entries: { tokTV: { state: "requestable" } }, left: 4, limit: 10, days: 7, dailyFull: true });
-  assert.ok([...c.querySelectorAll("button")].every((b) => b.disabled));
+  assert.ok([...c.querySelectorAll(".hssTopBtn")].every((b) => b.disabled));
   assert.match(c.querySelector(".hssTopHint").textContent, /today/i);
   const de = pp.card(d, { item: FOUND, jf: null }, "de", false, { entries: {}, left: 4, limit: 10, days: 7, dailyFull: true });
   assert.match(de.querySelector(".hssTopHint").textContent, /heute/i);
@@ -477,5 +480,131 @@ test("closing while the first library load is in flight leaves no page behind", 
   await tick();
   await tick();
   assert.equal(d.querySelectorAll(".hssPopularPage").length, 0);
+  win.close();
+});
+
+test("cards not in the library open the details overlay: the poster is a button with the title's key, owned cards keep their link", () => {
+  const d = doc();
+  const found = pp.card(d, { item: FOUND, jf: null }, "en", false, null);
+  const open = found.querySelector(".hssTopPoster");
+  assert.equal(open.tagName, "BUTTON");
+  assert.ok(open.classList.contains("hssTopOpen"));
+  assert.equal(open.getAttribute("type"), "button");
+  assert.equal(open.getAttribute("data-hss-key"), "tv/202");
+  assert.equal(open.getAttribute("aria-label"), "The Diplomat: details");
+  assert.equal(pp.card(d, { item: NONE, jf: null }, "en", false, null).querySelector(".hssTopOpen").getAttribute("data-hss-key"), "movie/404");
+  assert.equal(pp.card(d, { item: UNKNOWN, jf: null }, "en", false, null).querySelector(".hssTopOpen").getAttribute("data-hss-key"), "rank/tv/5");
+  const owned = pp.card(d, { item: OWNED, jf: LIB["movie/121"] }, "en", false, null);
+  assert.equal(owned.querySelector(".hssTopOpen"), null);
+  assert.equal(owned.querySelector(".hssTopPoster").tagName, "DIV");
+  assert.match(pp.CSS, /button\.hssTopPoster \{[^}]*border: 0/);
+});
+
+const INFO = { k: "tv", id: 202, t: { en: "The Diplomat" }, o: { en: "A diplomat." }, y: 2023, g: { en: ["Drama"] }, rt: 50, ns: 4, cert: null, p: { en: "/d.jpg" }, b: "/db.jpg", imdb: "tt1", sc: {}, cast: [], v: [] };
+
+function withDetails(states) {
+  const s = started();
+  const posts = [];
+  let st = states || { entries: { tokTV: { state: "requestable" } }, left: 5, limit: 10, days: 7 };
+  s.win.fetch = (url, opts) => {
+    if (String(url).startsWith("hss-popular/details")) return Promise.resolve({ status: String(url).includes("detTV") ? 200 : 404, json: () => Promise.resolve({ details: INFO }) });
+    if (opts && opts.method === "POST") {
+      posts.push(JSON.parse(opts.body));
+      st = { entries: { tokTV: { state: "requested", badge: "night" } }, left: 4, limit: 10, days: 7 };
+      return Promise.resolve({ status: 200, json: () => Promise.resolve({ ok: true }) });
+    }
+    return Promise.resolve({ status: 200, json: () => Promise.resolve(st) });
+  };
+  s.win.ApiClient.getUrl = (p, q) => p + (q ? "?" + new URLSearchParams(q) : "");
+  dt.start(s.win);
+  s.key = (k, code) => s.win.dispatchEvent(new s.win.KeyboardEvent("keydown", { key: k, keyCode: code, bubbles: true, cancelable: true }));
+  s.posts = posts;
+  return s;
+}
+
+test("popular page: a card opens the overlay on top with the same request buttons; Back closes only the overlay, then the page", async () => {
+  const { win, d, tick, click, key } = withDetails();
+  click(d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
+  await tick();
+  const card = d.querySelector('.hssPopularPage .hssTopOpen[data-hss-key="tv/202"]');
+  card.focus();
+  click(card);
+  await tick();
+  await tick();
+  const o = d.querySelector(".hssDetails");
+  assert.ok(o);
+  assert.equal(o.querySelector("h1").textContent, "The Diplomat");
+  assert.equal(o.querySelector(".hssDetailsOverview").textContent, "A diplomat.");
+  assert.deepEqual([...o.querySelectorAll(".hssDetailsActions button[data-hss-x]")].map((b) => [b.getAttribute("data-hss-x"), b.getAttribute("data-hss-mode"), b.textContent]), [["tokTV", "night", "\uD83C\uDF19 Tonight"], ["tokTV", "now", "⚡ Now"]]);
+  assert.ok(d.querySelector(".hssPopularPage"), "the page stays below");
+  key("Escape", 27);
+  assert.equal(d.querySelector(".hssDetails"), null);
+  assert.ok(d.querySelector(".hssPopularPage"), "only the top layer closed");
+  assert.equal(d.activeElement.getAttribute("data-hss-key"), "tv/202");
+  key("Escape", 27);
+  assert.equal(d.querySelector(".hssPopularPage"), null);
+  win.close();
+});
+
+test("overlay buttons request like the card's and the overlay then shows the new state", async () => {
+  const { win, d, tick, click, posts } = withDetails();
+  click(d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
+  await tick();
+  click(d.querySelector('.hssPopularPage .hssTopOpen[data-hss-key="tv/202"]'));
+  await tick();
+  click(d.querySelector('.hssDetails .hssTopBtn[data-hss-mode="night"]'));
+  await tick();
+  await tick();
+  assert.deepEqual(posts, [{ id: "tokTV", mode: "night" }]);
+  assert.equal(d.querySelector(".hssDetails .hssTopState").textContent, "\uD83C\uDF19 Tonight");
+  assert.equal(d.querySelector('.hssPopularPage .hssTopOpen[data-hss-key="tv/202"]').closest(".hssTopCard").querySelector(".hssTopState").textContent, "\uD83C\uDF19 Tonight");
+  win.close();
+});
+
+test("no release and unidentified titles open the overlay too: disabled buttons, or only the name", async () => {
+  const { win, d, tick, click } = withDetails();
+  click(d.querySelector('.hssPopularNav[data-hss-kind="movie"]'));
+  await tick();
+  click(d.querySelector('.hssPopularPage .hssTopOpen[data-hss-key="movie/404"]'));
+  await tick();
+  let o = d.querySelector(".hssDetails");
+  assert.equal(o.querySelector("h1").textContent, "No Release");
+  assert.ok([...o.querySelectorAll(".hssDetailsActions button")].every((b) => b.disabled));
+  assert.match(o.querySelector(".hssDetailsActions .hssTopHint").textContent, /checked 21 Oct/);
+  click(d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
+  await tick();
+  click(d.querySelector('.hssPopularPage .hssTopOpen[data-hss-key="rank/tv/5"]'));
+  await tick();
+  o = d.querySelector(".hssDetails");
+  assert.equal(o.querySelector("h1").textContent, "Instadocs");
+  assert.match(o.querySelector(".hssDetailsActions .hssTopHint").textContent, /not identified/);
+  win.close();
+});
+
+test("a link in the overlay (IMDb, TMDB) does not close the page below", async () => {
+  const { win, d, tick, click } = withDetails();
+  click(d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
+  await tick();
+  click(d.querySelector('.hssPopularPage .hssTopOpen[data-hss-key="tv/202"]'));
+  await tick();
+  await tick();
+  d.querySelector(".hssDetails .hssDetailsLink").addEventListener("click", (e) => e.preventDefault());
+  click(d.querySelector(".hssDetails .hssDetailsLink"));
+  await tick();
+  assert.ok(d.querySelector(".hssPopularPage"));
+  assert.ok(d.querySelector(".hssDetails"));
+  win.close();
+});
+
+test("a nav link closes page and overlay alike (route change pattern)", async () => {
+  const { win, d, tick, click } = withDetails();
+  click(d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
+  await tick();
+  click(d.querySelector('.hssPopularPage .hssTopOpen[data-hss-key="tv/202"]'));
+  await tick();
+  win.HssDetails.close(false);
+  click(d.querySelector("a.logo"));
+  await tick();
+  assert.equal(d.querySelector(".hssPopularPage"), null);
   win.close();
 });

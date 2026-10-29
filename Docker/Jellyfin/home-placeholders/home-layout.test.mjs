@@ -5,6 +5,7 @@ import { JSDOM } from "jsdom";
 
 const hl = createRequire(import.meta.url)("./home-layout.js");
 const es = createRequire(import.meta.url)("./empty-sections.js");
+const dt = createRequire(import.meta.url)("./details.js");
 
 const DAY = 86400000;
 const NOW = Date.UTC(2026, 9, 29);
@@ -149,9 +150,107 @@ test("coming soon: cards are portrait posters from the plugin's image cache, nam
   assert.equal(card.querySelector(".cardText-first bdi").textContent, "<b>X</b>");
   assert.equal(card.querySelector(".cardText-secondary bdi").textContent, "S02 · Wed 11 Nov");
   assert.equal(card.querySelector("[data-action]"), null);
+  assert.equal(card.tagName, "BUTTON", "not in the library: a button that opens the details overlay");
+  assert.ok(card.classList.contains("hssComingOpen"));
   const odd = make(doc, { name: "Y", movie: true, at: Date.now(), poster: "https://evil.example.com/x.png" }, api, false);
   assert.equal(odd.querySelector(".cardImageContainer").style.backgroundImage, "");
   assert.equal(make(doc, { name: "Y", movie: true, at: Date.now(), poster: null }, api, true).tagName, "BUTTON");
+});
+
+test("coming soon: the series' soonest episode with its number, whatever order the plugin sends", () => {
+  const shows = [ep("Rings", 3, "13.11.2026", { IndexNumber: 6 }), ep("Rings", 3, "06.11.2026", { IndexNumber: 5 }), ep("Quest", 1, "04.11.2026")];
+  const cards = hl.comingSoon(shows, [], {});
+  const rings = cards.find((c) => c.name === "Rings");
+  assert.equal(rings.episode, 5);
+  assert.equal(new Date(rings.at).getDate(), 6);
+  assert.equal(cards.find((c) => c.name === "Quest").episode, null);
+  const now = new Date(2026, 9, 29);
+  assert.equal(hl.comingLine({ season: 1, episode: 5, at: new Date(2026, 10, 4).getTime() }, "en", now), "S01E05 · Wed 4 Nov");
+  assert.equal(hl.comingLine({ season: 2, episode: 12, at: new Date(2026, 10, 4).getTime() }, "de", now), "S02E12 · Mi., 4. Nov.");
+  assert.equal(hl.comingLine({ season: 2, at: new Date(2026, 10, 4).getTime() }, "en", now), "S02 · Wed 4 Nov", "cached cards from before keep the season line");
+});
+
+const LIBRARY = [
+  { Type: "Series", Id: "jfRings", ServerId: "srv", Name: "The Lord of the Rings: The Rings of Power", ProviderIds: { Tvdb: "367506", Tmdb: "84773", Imdb: "tt7631058" } },
+  { Type: "Series", Id: "jfQuest", ServerId: "srv", Name: "VisionQuest", ProviderIds: {} },
+  { Type: "Movie", Id: "jfDune", ServerId: "srv", Name: "Dune", ProviderIds: { Tmdb: "438631" } },
+  { Type: "Movie", Id: "jfRingsFilm", ServerId: "srv", Name: "Rings", ProviderIds: { Tmdb: "1" } }
+];
+
+test("coming soon: a title in the library is matched by TMDB, TVDB or IMDb id of the same type; by name only without ids", () => {
+  const idx = hl.libIndex(LIBRARY);
+  const info = { "s:1": { tmdb: "999", tvdb: "367506" }, "s:2": { tmdb: "5" }, "m:3": { tmdb: "438631" }, "s:4": { tmdb: "1" } };
+  assert.equal(hl.matchComing({ key: "s:1", name: "Whatever" }, info, idx).Id, "jfRings");
+  assert.equal(hl.matchComing({ key: "s:2", name: "VisionQuest" }, info, idx), null, "ids known but not in the library: no name guess");
+  assert.equal(hl.matchComing({ key: "s:9", name: "Visionquest!" }, info, idx).Id, "jfQuest");
+  assert.equal(hl.matchComing({ key: "m:3", name: "Dune: Part Two", movie: true }, info, idx).Id, "jfDune");
+  assert.equal(hl.matchComing({ key: "s:4", name: "Rings" }, info, idx), null, "a film's id never matches a series");
+  assert.equal(hl.matchComing({ key: "s:1", name: "x" }, info, null), null);
+});
+
+test("coming soon: in the library the card links to Jellyfin's details page (desktop link, TV item button)", () => {
+  const doc = new JSDOM("").window.document;
+  const api = { getUrl: (p) => "https://jf.example.com/" + p };
+  const ctx = { lib: hl.libIndex(LIBRARY), info: { "s:1": { tmdb: "84773" } } };
+  const c = { key: "s:1", name: "Rings of Power", season: 3, episode: 5, at: new Date(2026, 10, 6).getTime(), poster: "/HomeScreen/CachedImage/abc123" };
+  const desk = hl.comingCard("en", new Date(2026, 9, 29), ctx)(doc, c, api, false);
+  assert.equal(desk.getAttribute("data-id"), "jfRings");
+  assert.equal(desk.getAttribute("data-serverid"), "srv");
+  assert.equal(desk.getAttribute("data-type"), "Series");
+  const a = desk.querySelector("a.cardImageContainer");
+  assert.equal(a.getAttribute("href"), "#/details?id=jfRings&serverId=srv");
+  assert.equal(a.getAttribute("data-action"), "link");
+  assert.ok(!desk.classList.contains("hssComingOpen"));
+  assert.equal(desk.querySelector(".cardText-secondary bdi").textContent, "S03E05 · Fri 6 Nov");
+  const tvCard = hl.comingCard("en", new Date(2026, 9, 29), ctx)(doc, c, api, true);
+  assert.equal(tvCard.tagName, "BUTTON");
+  assert.equal(tvCard.getAttribute("data-action"), "link");
+  assert.ok(tvCard.classList.contains("itemAction"));
+  assert.equal(tvCard.getAttribute("data-id"), "jfRings");
+  assert.equal(tvCard.getAttribute("data-isfolder"), "true");
+});
+
+test("coming soon: a card not in the library opens the details overlay with its details id, no request buttons", async () => {
+  const win = homeWin();
+  const d = win.document;
+  const opened = [];
+  win.HssDetails = { open: (o) => opened.push(o), isOpen: () => false };
+  win.HssUpcomingInfo = { "s:7": { tmdb: "5", d: "detComingxxxxxxxxxxxx" } };
+  hl.create(win);
+  const api = { getUrl: (p) => "https://jf.example.com/" + p };
+  const card = hl.comingCard("en", new Date(2026, 9, 29), { lib: hl.libIndex([]), info: win.HssUpcomingInfo })(d, { key: "s:7", name: "New Show", season: 1, episode: 2, at: new Date(2026, 10, 4).getTime(), poster: "/HomeScreen/CachedImage/abc" }, api, false);
+  d.body.appendChild(card);
+  card.dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].id, "detComingxxxxxxxxxxxx");
+  assert.equal(opened[0].key, "coming/s:7");
+  assert.equal(card.getAttribute("data-hss-key"), "coming/s:7");
+  assert.equal(opened[0].from, card);
+  assert.equal(opened[0].fallback.title, "New Show");
+  assert.equal(opened[0].fallback.poster, "https://jf.example.com/HomeScreen/CachedImage/abc");
+  assert.equal(opened[0].line, "S01E02 · Wed 4 Nov");
+  assert.equal(opened[0].actions, undefined);
+  win.close();
+});
+
+test("coming soon: with the real overlay the minimal fallback shows poster, name and the episode line", async () => {
+  const win = homeWin();
+  const d = win.document;
+  win.ApiClient = { accessToken: () => "t", getUrl: (p) => p };
+  win.fetch = () => Promise.resolve({ status: 404, json: () => Promise.resolve({}) });
+  dt.start(win);
+  hl.create(win);
+  const api = { getUrl: (p) => "https://jf.example.com/" + p };
+  const card = hl.comingCard("en", new Date(2026, 9, 29), { lib: null, info: {} })(d, { key: "m:1", name: "Film X", movie: true, at: new Date(2026, 10, 4).getTime(), poster: "/HomeScreen/CachedImage/abc" }, api, true);
+  d.body.appendChild(card);
+  card.click();
+  await new Promise((r) => setTimeout(r, 20));
+  const o = d.querySelector(".hssDetails");
+  assert.equal(o.querySelector("h1").textContent, "Film X");
+  assert.equal(o.querySelector(".hssDetailsLine").textContent, "Movie · Wed 4 Nov");
+  assert.match(o.querySelector(".hssDetailsPoster").style.backgroundImage, /CachedImage\/abc/);
+  assert.equal(o.querySelector(".hssTopBtn"), null);
+  win.close();
 });
 
 test("coming soon: loads the plugin's two Upcoming results with the user's session, ranked by the server's popularity", async () => {
@@ -172,8 +271,9 @@ test("rows: skeleton until loaded, then built through empty-sections' tools; a n
   const c = win.document.querySelector(".homeSectionsContainer");
   const ext = hl.create(win);
   const api = fakeApi((u) => {
-    if (u.startsWith("HomeScreen/Section/UpcomingShows")) return { Items: [ep("A", 1, "04.11.2026")] };
+    if (u.startsWith("HomeScreen/Section/UpcomingShows")) return { Items: [ep("A", 1, "04.11.2026"), ep("Quest", 1, "05.11.2026", { IndexNumber: 3 })] };
     if (u.startsWith("HomeScreen/Section")) return { Items: [] };
+    if (u.includes("Fields=ProviderIds")) return { Items: [{ Type: "Series", Id: "jfQuest", ServerId: "srv", Name: "Quest", ProviderIds: {} }] };
     if (/^Items\/\w+\/Similar/.test(u)) return { Items: Array.from({ length: 4 }, (_, i) => ({ Id: "sim" + i, Type: "Movie", Name: "S" + i })) };
     return { Items: u.includes("IsPlayed=true") && u.includes("Movie") ? [played("m1", "Dune", 1), played("m2", "Heat", 1)] : [] };
   });
@@ -181,7 +281,8 @@ test("rows: skeleton until loaded, then built through empty-sections' tools; a n
   const synced = [];
   const tools = {
     repaint: () => { repaints++; },
-    syncRow: (cont, id, items, name, a, make) => synced.push([id, name, items.length, make(win.document, items[0], a, false).querySelector(".cardText-secondary bdi").textContent]),
+    syncRow: (cont, id, items, name, a, make, keyOf) => synced.push([id, name, items.length, make(win.document, items[0], a, false).querySelector(".cardText-secondary bdi").textContent,
+      items.map((i) => make(win.document, i, a, false).getAttribute("data-id")), items.map(keyOf)]),
     syncRecent: (cont, id, items, name) => synced.push([id, name, items.length])
   };
   assert.deepEqual(ext.ids, [hl.COMING, hl.BYW]);
@@ -196,7 +297,9 @@ test("rows: skeleton until loaded, then built through empty-sections' tools; a n
   const byw = synced.find((s) => s[0] === hl.BYW);
   assert.match(byw[1], /^Because you watched (Dune|Heat)$/);
   assert.equal(byw[2], 4);
-  assert.deepEqual(synced.find((s) => s[0] === hl.COMING), [hl.COMING, "Coming soon", 1, "S01 · Wed 4 Nov"]);
+  const coming = synced.filter((s) => s[0] === hl.COMING).pop();
+  assert.deepEqual(coming.slice(0, 5), [hl.COMING, "Coming soon", 2, "S01 · Wed 4 Nov", [null, "jfQuest"]], "the library loads with the user's session; Quest links to its page");
+  assert.match(coming[5][1], /jfQuest/, "the row is rebuilt once the link is known");
   assert.equal(ext.name(hl.COMING, "de", c), "Demnächst");
   assert.equal(ext.hint(hl.COMING, "en"), "Nothing coming in the next months.");
   const first = win.localStorage.getItem("hss-byw:u1");

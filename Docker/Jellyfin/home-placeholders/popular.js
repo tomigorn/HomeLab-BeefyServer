@@ -20,6 +20,7 @@
       dailyFull: "Today's requests for everyone are used up, again tomorrow",
       night: "\uD83C\uDF19 Tonight", searching: "\uD83D\uDD0D Searching", unreleased: "\uD83D\uDCC5 Not released yet", downloading: "⬇️ Downloading", requested: "✓ Requested", declined: "Declined",
       empty: "Nothing on the list right now.", found: "available",
+      details: "details", seasonLong: "Season {n}",
       none: "No release yet", checked: "checked {d} · rechecked daily", unchecked: "not checked yet · checked tonight", unknown: "Title not identified",
       source: "Sources: Netflix Top 10 Switzerland (weekly), TMDB popularity, where to stream in Switzerland by JustWatch (via TMDB). Only titles in the library or with a release found are shown."
     },
@@ -30,6 +31,7 @@
       dailyFull: "Die Anfragen für heute sind für alle aufgebraucht, morgen wieder",
       night: "\uD83C\uDF19 Heute Nacht", searching: "\uD83D\uDD0D Wird gesucht", unreleased: "\uD83D\uDCC5 Noch nicht erschienen", downloading: "⬇️ Lädt herunter", requested: "✓ Angefragt", declined: "Abgelehnt",
       empty: "Gerade nichts auf der Liste.", found: "verfügbar",
+      details: "Details", seasonLong: "Staffel {n}",
       none: "Noch kein Release", checked: "geprüft {d} · täglich neu geprüft", unchecked: "noch nicht geprüft · wird heute Nacht geprüft", unknown: "Titel nicht erkannt",
       source: "Quellen: Netflix Top 10 Schweiz (wöchentlich), TMDB-Beliebtheit, Streaming-Angebot in der Schweiz von JustWatch (über TMDB). Nur Titel aus der Bibliothek oder mit gefundenem Release."
     }
@@ -99,6 +101,46 @@
     return b;
   }
 
+  // Opener of the details overlay: stable per title, so the focus finds the card again after a repaint.
+  function detailKey(it) {
+    return it.id ? it.k + "/" + it.id : "rank/" + it.k + "/" + it.r;
+  }
+
+  // The request part of a card, also shown in the details overlay (tv: icon-only buttons).
+  function actionsFor(doc, it, lang, tv, states) {
+    var name = titleOf(it, lang);
+    var actions = el(doc, "div", "hssTopActions");
+    if (!it.x) {
+      ["night", "now"].forEach(function (mode) {
+        var off = reqButton(doc, lang, mode, tv);
+        off.disabled = true;
+        actions.appendChild(off);
+      });
+      actions.appendChild(el(doc, "div", "hssTopHint", it.u ? tr(lang, "unknown") : it.c ? tr(lang, "checked", { d: dayOf(it.c, lang) }) : tr(lang, "unchecked")));
+      return actions;
+    }
+    var st = states && states.entries ? states.entries[it.x] : null;
+    if (st && st.state !== "requestable") {
+      var label = st.state === "requested" ? tr(lang, st.badge || "requested") : st.state === "declined" ? tr(lang, "declined") : tr(lang, "requested");
+      actions.appendChild(el(doc, "div", "hssTopState", label));
+      return actions;
+    }
+    var full = states && typeof states.left === "number" && states.left <= 0;
+    var capped = !full && !!(states && states.dailyFull);
+    ["night", "now"].forEach(function (mode) {
+      var b = reqButton(doc, lang, mode, tv);
+      b.setAttribute("data-hss-x", it.x);
+      b.setAttribute("data-hss-mode", mode);
+      b.setAttribute("title", tr(lang, mode === "night" ? "tonightHint" : "nowHint"));
+      b.setAttribute("aria-label", name + ": " + tr(lang, mode === "night" ? "tonightHint" : "nowHint"));
+      if (full || capped) b.disabled = true;
+      actions.appendChild(b);
+    });
+    if (full) actions.appendChild(el(doc, "div", "hssTopHint", tr(lang, "limit", { n: states.limit, d: states.days })));
+    else if (capped) actions.appendChild(el(doc, "div", "hssTopHint", tr(lang, "dailyFull")));
+    return actions;
+  }
+
   // states: answer of GET hss-popular/state ({entries: {id: {state, badge}}, left, limit, days}) or null while unknown.
   function card(doc, entry, lang, tv, states) {
     var it = entry.item;
@@ -115,47 +157,30 @@
     var rank = el(doc, "div", String(it.r).length > 1 ? "hssTopRank hssTopRank-2" : "hssTopRank", String(it.r));
     rank.setAttribute("aria-hidden", "true");
     c.appendChild(rank);
-    var poster = el(doc, "div", "hssTopPoster");
+    var poster;
+    if (entry.jf) {
+      poster = el(doc, "div", "hssTopPoster");
+    } else {
+      poster = el(doc, "button", "hssTopPoster hssTopOpen");
+      poster.setAttribute("type", "button");
+      poster.setAttribute("data-hss-key", detailKey(it));
+      poster.setAttribute("aria-label", name + ": " + tr(lang, "details"));
+      poster.hssItem = it;
+    }
     var url = posterUrl(it, lang);
     if (url) poster.style.backgroundImage = 'url("' + url + '")';
     else poster.appendChild(el(doc, "div", "hssTopNoPoster", name));
     if (it.k === "tv" && it.s) poster.appendChild(el(doc, "div", "hssTopSeason", tr(lang, "season") + it.s));
     c.appendChild(poster);
     if (entry.jf) return c;
-    var actions = el(doc, "div", "hssTopActions");
-    c.appendChild(actions);
     if (!it.x) {
       poster.appendChild(el(doc, "div", "hssTopBadge", tr(lang, "none")));
-      ["night", "now"].forEach(function (mode) {
-        var off = reqButton(doc, lang, mode, tv);
-        off.disabled = true;
-        actions.appendChild(off);
-      });
-      actions.appendChild(el(doc, "div", "hssTopHint", it.u ? tr(lang, "unknown") : it.c ? tr(lang, "checked", { d: dayOf(it.c, lang) }) : tr(lang, "unchecked")));
-      return c;
+    } else {
+      var res = el(doc, "div", "hssTopBadge", it.f);
+      res.setAttribute("title", it.f + " " + tr(lang, "found"));
+      poster.appendChild(res);
     }
-    var res = el(doc, "div", "hssTopBadge", it.f);
-    res.setAttribute("title", it.f + " " + tr(lang, "found"));
-    poster.appendChild(res);
-    var st = states && states.entries ? states.entries[it.x] : null;
-    if (st && st.state !== "requestable") {
-      var label = st.state === "requested" ? tr(lang, st.badge || "requested") : st.state === "declined" ? tr(lang, "declined") : tr(lang, "requested");
-      actions.appendChild(el(doc, "div", "hssTopState", label));
-      return c;
-    }
-    var full = states && typeof states.left === "number" && states.left <= 0;
-    var capped = !full && !!(states && states.dailyFull);
-    ["night", "now"].forEach(function (mode) {
-      var b = reqButton(doc, lang, mode, tv);
-      b.setAttribute("data-hss-x", it.x);
-      b.setAttribute("data-hss-mode", mode);
-      b.setAttribute("title", tr(lang, mode === "night" ? "tonightHint" : "nowHint"));
-      b.setAttribute("aria-label", name + ": " + tr(lang, mode === "night" ? "tonightHint" : "nowHint"));
-      if (full || capped) b.disabled = true;
-      actions.appendChild(b);
-    });
-    if (full) actions.appendChild(el(doc, "div", "hssTopHint", tr(lang, "limit", { n: states.limit, d: states.days })));
-    else if (capped) actions.appendChild(el(doc, "div", "hssTopHint", tr(lang, "dailyFull")));
+    c.appendChild(actionsFor(doc, it, lang, tv, states));
     return c;
   }
 
@@ -441,6 +466,7 @@
     ".hssTopRank-2 { width: calc(var(--hss-p) * 0.85); margin-right: calc(var(--hss-p) * -0.05); font-size: calc(var(--hss-p) * 0.8); letter-spacing: -0.1em; }",
     ".hssTopBadge, .hssTopSeason { position: absolute; top: 0.45em; font-size: 0.72em; font-weight: 600; padding: 0.15em 0.5em; border-radius: 1em; background: rgba(0, 0, 0, 0.78); color: #fff; }",
     ".hssTopBadge { left: 0.45em; } .hssTopSeason { right: 0.45em; }",
+    "button.hssTopPoster { display: block; margin: 0; padding: 0; border: 0; font: inherit; color: inherit; text-align: inherit; cursor: pointer; outline: none; }",
     ".hssTopNoPoster { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 0.5em; font-weight: 700; }",
     ".hssTopActions { grid-column: 2; grid-row: 2; display: flex; flex-wrap: wrap; gap: 0.35em; margin-top: 0.45em; width: var(--hss-p); }",
     ".hssTopBtn { flex: 1 1 auto; font: inherit; font-size: 0.78em; padding: 0.35em 0.4em; border-radius: 0.3em; border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.08); color: #fff; cursor: pointer; white-space: nowrap; }",
@@ -541,7 +567,7 @@
       next.hssFrom = page.hssFrom;
       var again = next.querySelectorAll(sel);
       if (at >= 0 && again[at]) again[at].focus();
-      else if (tv() && next.querySelector("a.hssTopCard, .hssTopBtn")) next.querySelector("a.hssTopCard, .hssTopBtn").focus();
+      else if (tv() && next.querySelector("a.hssTopCard, .hssTopOpen, .hssTopBtn")) next.querySelector("a.hssTopCard, .hssTopOpen, .hssTopBtn").focus();
     }
 
     // A double tap or a close while the library loads: only the latest open still attaches a page.
@@ -563,7 +589,7 @@
         doc.body.appendChild(page);
         if (!known) fitMemo = { width: win.innerWidth, p: fitAll(page) };
         markNav(doc, kind);
-        if (tv()) { var f = page.querySelector("a.hssTopCard, .hssTopBtn"); if (f) f.focus(); }
+        if (tv()) { var f = page.querySelector("a.hssTopCard, .hssTopOpen, .hssTopBtn"); if (f) f.focus(); }
         loadStates(a, false).then(repaintPage);
       });
     }
@@ -578,6 +604,24 @@
       return true;
     }
 
+    // Details overlay (details.js) on top of the page or home: the same request buttons, full labels.
+    function openDetails(btn) {
+      var it = btn.hssItem;
+      var d = win.HssDetails;
+      if (!it || !d) return;
+      var l = lang();
+      d.open({
+        id: it.d || null, key: btn.getAttribute("data-hss-key"), from: btn,
+        fallback: { title: titleOf(it, l), year: it.y, poster: posterUrl(it, l) },
+        line: it.k === "tv" && it.s ? tr(l, "seasonLong", { n: it.s }) : null,
+        actions: function (doc) { return actionsFor(doc, it, lang(), false, states); }
+      });
+    }
+
+    function detailsOpen() {
+      return !!(win.HssDetails && win.HssDetails.isOpen && win.HssDetails.isOpen());
+    }
+
     function press(btn) {
       var a = api();
       if (!a || btn.disabled) return;
@@ -587,7 +631,7 @@
       request(win, a, btn.getAttribute("data-hss-x"), btn.getAttribute("data-hss-mode")).then(function (r) {
         if (r.status !== 200 && r.status !== 409 && r.status !== 429) throw new Error(String(r.status));
         return loadStates(a, true);
-      }).then(function () { repaintPage(); paintHome(); }, function () {
+      }).then(function () { repaintPage(); paintHome(); if (win.HssDetails) win.HssDetails.refresh(); }, function () {
         for (var i = 0; i < buttons.length; i++) buttons[i].disabled = false;
         var hint = row.querySelector(".hssTopHint") || row.appendChild(el(doc, "div", "hssTopHint"));
         hint.textContent = tr(lang(), "failed");
@@ -615,13 +659,21 @@
         press(btn);
         return;
       }
+      var opener = t.closest(".hssTopOpen");
+      if (opener) {
+        e.preventDefault();
+        e.stopPropagation();
+        openDetails(opener);
+        return;
+      }
+      if (t.closest(".hssDetails")) return;
       if (t.closest(".hssPopularClose")) closePage(true);
       else if (t.closest(".hssPopularPage a.hssTopCard")) win.setTimeout(function () { closePage(false); }, 0);
       // The logo leads to the route that is already open (#/ redirects to #/home): no route change to close on.
       else if (!t.closest(".hssPopularPage") && t.closest("a[href], .headerHomeButton, .headerBackButton, .emby-tab-button")) closePage(false);
     }, true);
     win.addEventListener("keydown", function (e) {
-      if (!doc.querySelector(".hssPopularPage")) return;
+      if (!doc.querySelector(".hssPopularPage") || detailsOpen()) return;
       if (!BACK_KEYS[e.key] && !BACK_CODES[e.keyCode]) return;
       if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
       e.preventDefault();
@@ -672,7 +724,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { CSS: CSS, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, prefit: prefit, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
+    module.exports = { CSS: CSS, actionsFor: actionsFor, detailKey: detailKey, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, prefit: prefit, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {

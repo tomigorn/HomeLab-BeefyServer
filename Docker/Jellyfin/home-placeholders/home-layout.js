@@ -28,6 +28,7 @@
   var COMING_FRESH_MS = 600000;
   var COMING_TTL_MS = 6 * 3600000;
   var COMING_PREFIX = "hss-coming:";
+  var LIB_TTL_MS = 600000;
   var POSTER = /^\/HomeScreen\/CachedImage\/[0-9A-Za-z]+$/;
 
   function langOf(lang) {
@@ -186,19 +187,22 @@
     return de ? text : text.replace(/,/g, "");
   }
 
-  // shows, movies: the plugin's UpcomingShows / UpcomingMovies items; pop: {"s:<Sonarr id>" | "m:<Radarr id>": TMDB popularity}. One card per series (its first episode), soonest week first, the most popular first within a week.
+  // shows, movies: the plugin's UpcomingShows / UpcomingMovies items; pop: {"s:<Sonarr id>" | "m:<Radarr id>": TMDB popularity}. One card per series (its soonest episode), soonest week first, the most popular first within a week.
   function comingSoon(shows, movies, pop) {
     var out = [];
     var seen = {};
     var i;
-    for (i = 0; i < (shows || []).length; i++) {
-      var e = shows[i];
+    var eps = (shows || []).map(function (e, n) { return { e: e, at: releaseOf(e), n: n }; })
+      .sort(function (a, b) { return (a.at ? a.at.getTime() : Infinity) - (b.at ? b.at.getTime() : Infinity) || a.n - b.n; });
+    for (i = 0; i < eps.length; i++) {
+      var e = eps[i].e;
       var ids = (e && e.ProviderIds) || {};
-      var sid = ids.SonarrSeriesId || e.SeriesName;
-      var at = releaseOf(e);
+      var sid = ids.SonarrSeriesId || (e && e.SeriesName);
+      var at = eps[i].at;
       if (!sid || !at || seen[sid]) continue;
       seen[sid] = true;
-      out.push({ key: "s:" + sid, name: e.SeriesName || e.Name || "", season: typeof e.ParentIndexNumber === "number" ? e.ParentIndexNumber : null, at: at, poster: ids.SonarrPoster || null });
+      out.push({ key: "s:" + sid, name: e.SeriesName || e.Name || "", season: typeof e.ParentIndexNumber === "number" ? e.ParentIndexNumber : null,
+        episode: typeof e.IndexNumber === "number" ? e.IndexNumber : null, at: at, poster: ids.SonarrPoster || null });
     }
     for (i = 0; i < (movies || []).length; i++) {
       var m = movies[i];
@@ -211,29 +215,89 @@
     out.sort(function (a, b) {
       return weekOf(a.at) - weekOf(b.at) || (p[b.key] || 0) - (p[a.key] || 0) || a.at - b.at || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
     });
-    return out.map(function (c) { return { key: c.key, name: c.name, season: c.season, movie: !!c.movie, at: c.at.getTime(), poster: c.poster }; });
+    return out.map(function (c) { return { key: c.key, name: c.name, season: c.season, episode: c.movie ? null : c.episode, movie: !!c.movie, at: c.at.getTime(), poster: c.poster }; });
+  }
+
+  function two(n) {
+    return (n < 10 ? "0" : "") + n;
   }
 
   function comingLine(c, lang, now) {
     var date = shortDate(new Date(c.at), lang, now);
     if (c.movie) return TEXT[langOf(lang)].movie + " \u00b7 " + date;
-    return (c.season !== null && c.season !== undefined ? "S" + (c.season < 10 ? "0" : "") + c.season + " \u00b7 " : "") + date;
+    if (c.season === null || c.season === undefined) return date;
+    return "S" + two(c.season) + (typeof c.episode === "number" ? "E" + two(c.episode) : "") + " \u00b7 " + date;
+  }
+
+  function normName(s) {
+    return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+
+  // The user's films and series by provider id and by name, per type.
+  function libIndex(items) {
+    var idx = { Movie: { tmdb: {}, tvdb: {}, imdb: {}, name: {} }, Series: { tmdb: {}, tvdb: {}, imdb: {}, name: {} } };
+    for (var i = 0; i < (items || []).length; i++) {
+      var it = items[i];
+      var t = it && idx[it.Type];
+      if (!t || !it.Id) continue;
+      var p = it.ProviderIds || {};
+      if (p.Tmdb) t.tmdb[String(p.Tmdb)] = it;
+      if (p.Tvdb) t.tvdb[String(p.Tvdb)] = it;
+      if (p.Imdb) t.imdb[String(p.Imdb)] = it;
+      var n = normName(it.Name);
+      if (n && !t.name[n]) t.name[n] = it;
+    }
+    return idx;
+  }
+
+  // info: window.HssUpcomingInfo (upcoming-popularity.py: the arr's TMDB/TVDB/IMDb ids; the plugin's items carry only Sonarr/Radarr ids). Name only when no ids are known.
+  function matchComing(c, info, idx) {
+    if (!idx) return null;
+    var t = idx[c.movie ? "Movie" : "Series"];
+    var ids = info && info[c.key];
+    if (ids && (ids.tmdb || ids.tvdb || ids.imdb)) {
+      var keys = ["tmdb", "tvdb", "imdb"];
+      for (var i = 0; i < keys.length; i++) if (ids[keys[i]] && t[keys[i]][String(ids[keys[i]])]) return t[keys[i]][String(ids[keys[i]])];
+      return null;
+    }
+    return t.name[normName(c.name)] || null;
   }
 
   var COMING_CARD = '<div class="cardBox cardBox-bottompadded"><div class="cardScalable"><div class="cardPadder cardPadder-overflowPortrait"></div>' +
     '<div class="cardImageContainer coveredImage cardContent"></div></div>' +
     '<div class="cardText cardTextCentered cardText-first"><bdi></bdi></div><div class="cardText cardTextCentered cardText-secondary"><bdi></bdi></div></div>';
 
-  // Like the plugin's Upcoming cards: nothing to open; a button on TV so the row can be scrolled.
-  function comingCard(lang, now) {
+  var COMING_LINK = COMING_CARD.replace('<div class="cardImageContainer coveredImage cardContent"></div>', '<a data-action="link" class="cardImageContainer coveredImage cardContent itemAction"></a>');
+
+  // ctx: {lib: libIndex of the user's library, info: window.HssUpcomingInfo}. In the library = Jellyfin's own item card (link on desktop, item button on TV);
+  // else a button that opens the details overlay (details.js), without request buttons: the title is already in Sonarr/Radarr.
+  function comingCard(lang, now, ctx) {
     return function (doc, c, api, tv) {
-      var card = doc.createElement(tv ? "button" : "div");
-      card.className = "card overflowPortraitCard hssComingCard" + (tv ? " show-focus show-animation" : "");
-      if (tv) card.setAttribute("type", "button");
-      card.innerHTML = COMING_CARD;
+      var jf = ctx ? matchComing(c, ctx.info, ctx.lib) : null;
+      var card = doc.createElement(tv || !jf ? "button" : "div");
+      card.className = "card overflowPortraitCard hssComingCard" + (tv ? " show-focus show-animation" : "") + (jf ? (tv ? " itemAction" : "") : " hssComingOpen");
+      if (tv || !jf) card.setAttribute("type", "button");
+      card.innerHTML = jf && !tv ? COMING_LINK : COMING_CARD;
       card.setAttribute("aria-label", c.name);
+      if (jf) {
+        card.setAttribute("data-id", jf.Id);
+        card.setAttribute("data-serverid", jf.ServerId || "");
+        card.setAttribute("data-type", jf.Type);
+        card.setAttribute("data-isfolder", jf.Type === "Series" ? "true" : "false");
+        card.setAttribute("data-context", "home");
+        if (tv) card.setAttribute("data-action", "link");
+        else card.querySelector(".cardImageContainer").setAttribute("href", "#/details?id=" + encodeURIComponent(jf.Id) + "&serverId=" + encodeURIComponent(jf.ServerId || ""));
+      } else {
+        card.setAttribute("data-hss-key", "coming/" + c.key);
+        card.hssComing = c;
+        card.hssLine = comingLine(c, lang, now);
+      }
       var box = card.querySelector(".cardImageContainer");
-      if (c.poster && POSTER.test(c.poster)) box.style.backgroundImage = 'url("' + String(api.getUrl(c.poster.slice(1))).replace(/["\\\n]/g, encodeURIComponent) + '")';
+      if (c.poster && POSTER.test(c.poster)) {
+        var url = String(api.getUrl(c.poster.slice(1))).replace(/["\\\n]/g, encodeURIComponent);
+        box.style.backgroundImage = 'url("' + url + '")';
+        card.hssPoster = url;
+      }
       var texts = card.querySelectorAll(".cardText bdi");
       texts[0].textContent = c.name;
       texts[1].textContent = comingLine(c, lang, now);
@@ -250,6 +314,8 @@
 
   var CSS = [
     ".hssComingCard { cursor: default; }",
+    "button.hssComingCard { margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: inherit; }",
+    ".hssComingOpen { cursor: pointer; }",
     // My List: a full-width tinted band with compact posters, the strongest divider.
     '.verticalSection.MyList:not(.hide), [data-hss-placeholder="MyList"] { position: relative; margin: 1.6em 0 1.8em; padding: 0.9em 0 0.5em; background: linear-gradient(100deg, rgba(0, 164, 220, 0.20), rgba(170, 92, 195, 0.16) 55%, rgba(170, 92, 195, 0.05)); border-top: 1px solid rgba(255, 255, 255, 0.10); border-bottom: 1px solid rgba(255, 255, 255, 0.10); }',
     '.verticalSection.MyList .sectionTitle, [data-hss-placeholder="MyList"] .sectionTitle { text-transform: uppercase; letter-spacing: 0.12em; font-size: 1.05em; font-weight: 700; }',
@@ -319,6 +385,38 @@
       return poolLoading;
     }
 
+    var lib = null;
+    var libAt = 0;
+    var libUser = null;
+    var libLoading = null;
+
+    function getLib(api, userId) {
+      if (lib && libUser === userId && Date.now() - libAt < LIB_TTL_MS) return Promise.resolve(lib);
+      if (libLoading) return libLoading;
+      libLoading = api.getJSON(api.getUrl("Users/" + userId + "/Items", { Recursive: true, IncludeItemTypes: "Movie,Series", Fields: "ProviderIds", EnableImages: false, EnableUserData: false }))
+        .then(function (r) {
+          lib = libIndex((r && r.Items) || []);
+          libAt = Date.now();
+          libUser = userId;
+          libLoading = null;
+          return lib;
+        }, function () {
+          libLoading = null;
+          return lib;
+        });
+      return libLoading;
+    }
+
+    win.document.addEventListener("click", function (e) {
+      var t = e.target && e.target.closest ? e.target.closest(".hssComingOpen") : null;
+      if (!t || !t.hssComing || !win.HssDetails) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var c = t.hssComing;
+      var info = (win.HssUpcomingInfo || {})[c.key] || {};
+      win.HssDetails.open({ id: info.d || null, key: t.getAttribute("data-hss-key"), from: t, fallback: { title: c.name, poster: t.hssPoster || null }, line: t.hssLine });
+    });
+
     function rowOf(container, id) {
       var all = rows ? rows.get(container) : container.hssLayoutRows;
       return all && all[id];
@@ -369,8 +467,13 @@
       var userId = api.getCurrentUserId();
       var c = cachedComing(userId);
       var age = c ? Date.now() - c.at : Infinity;
-      var r = { done: age <= COMING_TTL_MS, items: age <= COMING_TTL_MS ? c.items : [] };
+      var r = { done: age <= COMING_TTL_MS, items: age <= COMING_TTL_MS ? c.items : [], lib: lib && libUser === userId ? lib : null };
       setRow(container, COMING, r);
+      getLib(api, userId).then(function (l) {
+        if (l === r.lib) return;
+        r.lib = l;
+        if (r.done && container.isConnected) tools.repaint();
+      });
       if (age <= COMING_FRESH_MS) return;
       loadComing(api, userId, win.HssUpcomingPop).then(function (items) {
         r.items = items;
@@ -401,7 +504,13 @@
         if (!rowOf(container, COMING)) startComing(container, api, tools);
         if (!rowOf(container, BYW)) startBecause(container, api, tools);
         var c = rowOf(container, COMING);
-        if (c.done) tools.syncRow(container, COMING, c.items, TEXT[langOf(lang)].coming, api, comingCard(lang), function (x) { return x.key + "@" + x.at + "@" + langOf(lang); });
+        if (c.done) {
+          var ctx = { lib: c.lib, info: win.HssUpcomingInfo };
+          tools.syncRow(container, COMING, c.items, TEXT[langOf(lang)].coming, api, comingCard(lang, null, ctx), function (x) {
+            var jf = matchComing(x, ctx.info, ctx.lib);
+            return x.key + "@" + x.at + "@" + x.episode + "@" + langOf(lang) + "@" + (jf ? jf.Id : "");
+          });
+        }
         var b = rowOf(container, BYW);
         if (b.done) tools.syncRecent(container, BYW, b.items, bywName(b.seed ? b.seed.Name : null, lang), api);
       }
@@ -409,7 +518,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { COMING: COMING, comingSoon: comingSoon, comingLine: comingLine, comingCard: comingCard, releaseOf: releaseOf, weekOf: weekOf, loadComing: loadComing, BYW: BYW, DIVIDERS: DIVIDERS, layout: layout, bywName: bywName, buildPool: buildPool, weightOf: weightOf, pickSeed: pickSeed, similarOf: similarOf, loadPool: loadPool, loadRow: loadRow, likedOf: likedOf, styles: styles, create: create, CSS: CSS };
+    module.exports = { COMING: COMING, comingSoon: comingSoon, comingLine: comingLine, comingCard: comingCard, libIndex: libIndex, matchComing: matchComing, releaseOf: releaseOf, weekOf: weekOf, loadComing: loadComing, BYW: BYW, DIVIDERS: DIVIDERS, layout: layout, bywName: bywName, buildPool: buildPool, weightOf: weightOf, pickSeed: pickSeed, similarOf: similarOf, loadPool: loadPool, loadRow: loadRow, likedOf: likedOf, styles: styles, create: create, CSS: CSS };
   } else {
     (window.HssHomeExt = window.HssHomeExt || []).push(create(window));
   }
