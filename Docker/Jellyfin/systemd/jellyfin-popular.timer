@@ -1,0 +1,10 @@
+[Unit]
+Description=Currently popular lists in the maintenance window and at the night-download wake (never wakes beefy)
+
+[Timer]
+OnCalendar=*-*-* 04:39:00 Europe/Zurich
+OnCalendar=*-*-* 22:20:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target

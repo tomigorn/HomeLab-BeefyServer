@@ -1,0 +1,8 @@
+[Unit]
+Description=Jellyfin "Currently popular" lists: Netflix CH Top 10, TMDB popularity per service and genre, release check (never grabs)
+
+[Service]
+Type=oneshot
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/popular.py
+Nice=10
+TimeoutStartSec=40min
