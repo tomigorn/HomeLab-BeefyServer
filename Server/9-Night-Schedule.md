@@ -20,7 +20,7 @@ beefy sleeps (S5) and its timers cannot wake it. Everything recurring runs in on
 | 04:07-04:13 | Sun clamav-hostscan 04:07, Jellyfin IMDb 04:08, Jellyfin scan 04:10, auto-update 04:12, Jellyfin Intro Skipper analysis 04:13 |
 | 04:14-04:20 | description-scout 04:14, Recyclarr 04:15, nfo-scout 04:16, night-search 04:17 (new episodes/films + cutoff-unmet, Treasure Maps ≤ 200), language-missing 04:18, original-audio sweep 04:20 (+ Sun image-cleanup) |
 | 04:21-04:29 | subtitle-check 04:21 (subtitles changed since the last run, SSD only; findings to the queue-watchdog digest), Seerr jellyfin-full-scan 04:22, Jellyfin trickplay 04:24, backup to fastpi 04:26 (`10-Backup.md`), Sun fstrim 04:26, Sun xfs/e2 scrub 04:28/04:29 |
-| 04:30-04:44 | anacron 04:30 (`cron.daily` 04:35: chkrootkit, rkhunter), Jellyfin chapters 04:30, Seerr availability-sync 04:30, image-cache 04:32, segments 04:33, apt-daily-upgrade 04:34, Sun blocklisted-tags 04:34, man-db 04:36, Jellyfin studio-logos 04:38, Jellyfin popular lists 04:39 (Prowlarr release checks, never grabs), tmpfiles-clean 04:40, update-notifier 04:41, Jellyfin daily tasks 04:35-04:44 |
+| 04:30-04:44 | anacron 04:30 (`cron.daily` 04:35: chkrootkit, rkhunter), Jellyfin chapters 04:30, Seerr availability-sync 04:30, image-cache 04:32, segments 04:33, apt-daily-upgrade 04:34, Sun blocklisted-tags 04:34, man-db 04:36, Jellyfin studio-logos 04:38, Jellyfin popular lists 04:39 (Prowlarr release checks, never grabs), tmpfiles-clean 04:40, update-notifier 04:41 (Sun motd 04:42), launchpadlib cache clean 04:43 (user), Jellyfin daily tasks 04:35-04:44 |
 | 04:45 | window releases (after the listed jobs), idle watcher powers off ~15 min later |
 
 fastpi pulls from beefy at 04:02-04:20 (never wakes it: `fetch_nowake`).
@@ -57,6 +57,6 @@ Details: `Docker/Movie-Downloads/README.md` "Can wait: downloads at night".
 | `snap.firmware-updater.firmware-notifier.timer` (user, masked) | desktop notifier |
 | `pro config set apt_news=false` | ads in `apt upgrade` |
 
-Kept on purpose: the live pollers (`request-tags`, `night-downloads`, `clear-data-wipe`, `indexer-usage`, `hdd-spinstate`, `queue-watchdog`, `sysstat-collect`, `jellyfin-user-defaults`) run only while beefy is awake and never wake it. Radarr/Sonarr internal tasks and Bazarr's scheduler have fixed intervals and stay.
+Kept on purpose: the live pollers (`request-tags`, `night-downloads`, `clear-data-wipe`, `indexer-usage`, `hdd-spinstate`, `queue-watchdog`, `sysstat-collect`, `jellyfin-user-defaults`, `request-state` 15 s, `media-metrics` 5 min, `floppy-abs-push` 15 min, `smart-exporter` 30 min, never spins up a parked HDD) run only while beefy is awake and never wake it. `snapd.snap-repair` (snapd default 05/11/17/23 h, only while awake) is left as shipped. Radarr/Sonarr internal tasks and Bazarr's scheduler have fixed intervals and stay.
 
 Floppy snapshots its SQLite itself at 04:20 inside the container (no systemd timer).
