@@ -311,7 +311,22 @@
     }
   }
 
-  function navLinks(doc, lang) {
+  // The open page's entries take the real selected classes (the theme's own look); Jellyfin's selected entry is neutralised by CSS on the body class, which React re-renders cannot undo.
+  function markNav(doc, open) {
+    if (doc.body) doc.body.classList.toggle("hssPopularOpen", !!open);
+    var all = doc.querySelectorAll(".hssPopularNav[data-hss-kind]");
+    for (var i = 0; i < all.length; i++) {
+      var e = all[i];
+      if (e.tagName === "BUTTON") continue;
+      var on = !!open && e.getAttribute("data-hss-kind") === open;
+      if (e.closest(".MuiDrawer-paper, .MuiStack-root")) e.classList.toggle("Mui-selected", on);
+      if (e.classList.contains("navMenuOption")) e.classList.toggle("navMenuOption-selected", on);
+      if (on) e.setAttribute("aria-current", "page");
+      else e.removeAttribute("aria-current");
+    }
+  }
+
+  function navLinks(doc, lang, open) {
     var stale = doc.querySelectorAll(".hssPopularNav:not([data-hss-kind])");
     for (var s = 0; s < stale.length; s++) (stale[s].closest(".MuiDrawer-paper li") || stale[s]).remove();
     var bar = null;
@@ -362,6 +377,7 @@
     }
     var all = doc.querySelectorAll(".hssPopularNav[data-hss-kind]");
     for (var i = 0; i < all.length; i++) setLabel(all[i], tr(lang, navKind(all[i].getAttribute("data-hss-kind")).label));
+    markNav(doc, open || null);
   }
 
   // kind "movie" or "tv": the matching Netflix Top 10, then the rows of that kind (rows without a kind, published before the split, on both pages).
@@ -444,7 +460,10 @@
     ".hssPopularSource { margin-top: 2em; font-size: 0.8em; opacity: 0.55; }",
     ".hssTopBtn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }",
     ".hssTopBtn-icon { flex: 1 1 0; font-size: 1.05em; padding: 0.3em 0; text-align: center; }",
-    ".hssTopLegend { margin-left: 1.2em; font-size: 0.9em; opacity: 0.7; }"
+    ".hssTopLegend { margin-left: 1.2em; font-size: 0.9em; opacity: 0.7; }",
+    "body.hssPopularOpen .MuiDrawer-paper .Mui-selected:not(.hssPopularNav) { background-color: transparent !important; }",
+    "body.hssPopularOpen .MuiStack-root > .Mui-selected:not(.hssPopularNav) { background-color: transparent !important; }",
+    "body.hssPopularOpen .navMenuOption-selected:not(.hssPopularNav) { background: transparent !important; color: inherit !important; }"
   ].join("\n");
 
   function styles(doc) {
@@ -546,6 +565,7 @@
         var known = prefit(page, fitMemo, win.innerWidth);
         doc.body.appendChild(page);
         if (!known) fitMemo = { width: win.innerWidth, p: fitAll(page) };
+        markNav(doc, kind);
         if (tv()) { var f = page.querySelector("a.hssTopCard, .hssTopBtn"); if (f) f.focus(); }
         loadStates(a, false).then(repaintPage);
       });
@@ -556,6 +576,7 @@
       var page = doc.querySelector(".hssPopularPage");
       if (!page) return false;
       page.remove();
+      markNav(doc, null);
       if (refocus && page.hssFrom && page.hssFrom.isConnected) page.hssFrom.focus();
       return true;
     }
@@ -634,7 +655,8 @@
       if (!register()) return;
       observer.disconnect();
       try {
-        navLinks(doc, lang());
+        var open = doc.querySelector(".hssPopularPage");
+        navLinks(doc, lang(), open && open.getAttribute("data-hss-kind"));
       } finally {
         watch();
       }

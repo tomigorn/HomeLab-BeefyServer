@@ -170,6 +170,36 @@ test("nav: a language change relabels both entries everywhere", () => {
   assert.deepEqual(labels("tv"), ["Beliebte Serien", "Beliebte Serien", "Beliebte Serien|Beliebte Serien"]);
 });
 
+const PLACES = '<div class="MuiStack-root"><a class="MuiButton-root" href="#/tv?topParentId=1&amp;collectionType=tvshows">Shows</a></div><div class="mainDrawer"><div class="customMenuOptions"><a class="navMenuOption navMenuOption-selected" href="#/home">Home</a></div></div>' +
+  '<div class="MuiDrawer-paper"><ul><li><a class="MuiListItemButton-root Mui-selected" aria-current="page" href="#/home">Home</a></li><li><a class="MuiListItemButton-root" href="#/home?tab=1"><span class="MuiListItemText-primary">Favourites</span></a></li></ul></div>' +
+  '<div class="skinHeader"><div class="headerRight"><button class="headerSearchButton"></button></div></div>';
+
+test("nav: an open page marks its own entries selected in every place (TV button excepted), the other kind not", () => {
+  const d = doc(PLACES);
+  d.documentElement.classList.add("layout-tv");
+  pp.navLinks(d, "en", "movie");
+  const on = (kind) => [...d.querySelectorAll(`.hssPopularNav[data-hss-kind="${kind}"]`)].map((e) =>
+    [e.closest(".MuiStack-root") ? "bar" : e.closest(".customMenuOptions") ? "drawer" : e.closest(".MuiDrawer-paper") ? "mui" : "tv", e.classList.contains("Mui-selected"), e.classList.contains("navMenuOption-selected"), e.getAttribute("aria-current")]);
+  assert.deepEqual(on("movie"), [["bar", true, false, "page"], ["drawer", false, true, "page"], ["mui", true, false, "page"], ["tv", false, false, null]]);
+  assert.deepEqual(on("tv"), [["bar", false, false, null], ["drawer", false, false, null], ["mui", false, false, null], ["tv", false, false, null]]);
+  assert.ok(d.body.classList.contains("hssPopularOpen"));
+  pp.navLinks(d, "en", "tv");
+  assert.deepEqual(on("movie").map((x) => x.slice(1)), [[false, false, null], [false, false, null], [false, false, null], [false, false, null]]);
+  assert.deepEqual(on("tv").map((x) => x[3]), ["page", "page", "page", null]);
+  pp.navLinks(d, "en", null);
+  assert.equal(d.querySelectorAll(".hssPopularNav.Mui-selected, .hssPopularNav.navMenuOption-selected, .hssPopularNav[aria-current]").length, 0);
+  assert.ok(!d.body.classList.contains("hssPopularOpen"));
+  assert.ok(d.querySelector('.MuiDrawer-paper a[href="#/home"]').classList.contains("Mui-selected"), "Jellyfin's own state is left alone");
+  assert.equal(d.querySelector('.MuiDrawer-paper a[href="#/home"]').getAttribute("aria-current"), "page");
+});
+
+test("nav: while a page is open, the entry Jellyfin marks selected (Home) loses its look by CSS on the body class, which survives React re-renders", () => {
+  const rule = (sel) => pp.CSS.split("\n").find((l) => l.startsWith(sel)) || "";
+  assert.match(rule("body.hssPopularOpen .MuiDrawer-paper .Mui-selected:not(.hssPopularNav)"), /background-color: transparent !important/);
+  assert.match(rule("body.hssPopularOpen .MuiStack-root > .Mui-selected:not(.hssPopularNav)"), /background-color: transparent !important/);
+  assert.match(rule("body.hssPopularOpen .navMenuOption-selected:not(.hssPopularNav)"), /background: transparent !important/);
+});
+
 test("phone layout: an entry in the app drawer after Favourites", () => {
   const d = doc('<div class="MuiDrawer-root"><div class="MuiDrawer-paper"><ul><li class="it"><a class="MuiListItemButton-root" href="#/home"><span class="MuiListItemText-primary">Home</span></a></li>' +
     '<li class="it"><a class="MuiListItemButton-root Mui-selected" href="#/home?tab=1"><svg><path d="M1"></path></svg><span class="MuiListItemText-primary">Favourites</span></a></li></ul></div></div>');
@@ -255,7 +285,8 @@ test("fitting the rows measures every row before it changes any (one layout, not
 });
 
 function started() {
-  const dom = new JSDOM('<html lang="en"><body><header><a class="logo" href="#/">Holy Grail</a><a class="hssPopularNav" data-hss-kind="movie" href="#/home">Popular movies</a><a class="hssPopularNav" data-hss-kind="tv" href="#/home">Popular shows</a></header></body></html>', { url: "https://jellyfin.holy-grail.ch/web/#/home" });
+  const dom = new JSDOM('<html lang="en"><body><header><a class="logo" href="#/">Holy Grail</a><a class="hssPopularNav" data-hss-kind="movie" href="#/home">Popular movies</a><a class="hssPopularNav" data-hss-kind="tv" href="#/home">Popular shows</a></header>' +
+    '<div class="MuiDrawer-paper"><ul><li><a class="MuiListItemButton-root Mui-selected" href="#/home">Home</a></li><li><a class="MuiListItemButton-root" href="#/home?tab=1"><span class="MuiListItemText-primary">Favourites</span></a></li></ul></div></body></html>', { url: "https://jellyfin.holy-grail.ch/web/#/home" });
   const win = dom.window;
   let stateCalls = 0;
   win.HssPopular = DATA;
@@ -280,8 +311,18 @@ test("each nav entry opens its own page; the other entry switches to the other k
   await tick();
   assert.equal(d.querySelector(".hssPopularPage h1").textContent, "Popular shows");
   assert.deepEqual([...d.querySelectorAll(".hssPopularPage .hssTopRow")].map((r) => r.getAttribute("data-hss-row")), ["Top10Shows", "service-8-tv", "genre-comedy-tv"]);
+  assert.equal(d.querySelector('.MuiDrawer-paper .hssPopularNav[data-hss-kind="tv"]').getAttribute("aria-current"), "page");
+  assert.ok(d.body.classList.contains("hssPopularOpen"));
   click(d.querySelector('.hssPopularNav[data-hss-kind="movie"]'));
   await tick();
+  await tick();
+  assert.ok(d.querySelector('.MuiDrawer-paper .hssPopularNav[data-hss-kind="movie"]').classList.contains("Mui-selected"));
+  assert.ok(!d.querySelector('.MuiDrawer-paper .hssPopularNav[data-hss-kind="tv"]').classList.contains("Mui-selected"));
+  click(d.querySelector("a.logo"));
+  await tick();
+  assert.equal(d.querySelectorAll(".hssPopularNav.Mui-selected, .hssPopularNav[aria-current]").length, 0, "closed: no stale highlight");
+  assert.ok(!d.body.classList.contains("hssPopularOpen"));
+  click(d.querySelector('.hssPopularNav[data-hss-kind="movie"]'));
   await tick();
   assert.equal(d.querySelectorAll(".hssPopularPage").length, 1);
   assert.equal(d.querySelector(".hssPopularPage h1").textContent, "Popular movies");
