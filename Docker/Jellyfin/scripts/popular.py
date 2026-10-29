@@ -6,6 +6,7 @@ Writes the JavaScript Injector entry "Currently popular" (window.HssPopular) and
 Never prints API keys. Usage: popular.py [--dry-run] [--tsv FILE]  (FILE: the Netflix TSV downloaded elsewhere, when netflix.com is unreachable from beefy)"""
 import datetime
 import io
+import itertools
 import json
 import os
 import pathlib
@@ -55,6 +56,12 @@ INDEXERS = ["NzbPlanet", "NZBgeek", "Knaben"]
 # Runs at 04:39 and 22:20: a title without a release is searched once per night, a found one once a week.
 RECHECK_NONE = datetime.timedelta(hours=20)
 RECHECK_FOUND = datetime.timedelta(days=7)
+# A found release not re-checked for this long (search budget used up) is no longer offered.
+FOUND_MAX_AGE = datetime.timedelta(days=14)
+# Failures of single titles (Seerr / TMDB) are skipped; more than this share of the titles failing fails the run and keeps the published lists.
+FAIL_SHARE = 0.2
+FAIL_MIN = 3
+FAILURES = (OSError, urllib.error.URLError, ValueError, KeyError, TypeError)
 LISTS_TTL = datetime.timedelta(days=7)
 DETAILS_TTL = datetime.timedelta(days=7)
 MIN_GB = {"movie": 1.5, "episode": 0.3, "pack": 1.0}
@@ -336,7 +343,8 @@ def check(io_, kind, d, season, ix, budget, sleep):
 
 def write_prom(path, now, ok, stats):
     lines = ["# TYPE jf_popular_last_run_timestamp_seconds gauge", f"jf_popular_last_run_timestamp_seconds {now.timestamp():.0f}",
-             "# TYPE jf_popular_last_run_success gauge", f"jf_popular_last_run_success {1 if ok else 0}"]
+             "# TYPE jf_popular_last_run_success gauge", f"jf_popular_last_run_success {1 if ok else 0}",
+             "# TYPE jf_popular_errors gauge", f"jf_popular_errors {stats.get('errors', 0)}"]
     if ok:
         lines += ["# TYPE jf_popular_items gauge"] + [f'jf_popular_items{{list="{k}"}} {n}' for k, (n, _) in stats["lists"].items()]
         lines += ["# TYPE jf_popular_items_available gauge"] + [f'jf_popular_items_available{{list="{k}"}} {a}' for k, (_, a) in stats["lists"].items()]
@@ -359,6 +367,8 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
         raise
     if code == 0 and "lists" in stats:
         write_prom(prom_file, now, True, stats)
+    elif code == 1 and "--dry-run" not in argv:
+        write_prom(prom_file, now, False, stats)
     return code
 
 
@@ -402,8 +412,16 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             say(f"Netflix list not fetched: {e}")
     state["top"] = top or {"week": None, "movie": [], "tv": []}
 
-    lists = state.get("lists")
-    if not fresh(lists, LISTS_TTL, now) or sorted(lists.get("rows", {})) != sorted([f"service-{p}" for p, _ in services] + [f"genre-{g[0]}" for g in genres]):
+    tried, failed = set(), {}
+
+    def failure(key, e):
+        if key not in failed:
+            failed[key] = type(e).__name__
+            say(f"{key}: skipped this run ({type(e).__name__})")
+
+    def refresh_lists(lists):
+        if fresh(lists, LISTS_TTL, now) and sorted(lists.get("rows", {})) == sorted([f"service-{p}" for p, _ in services] + [f"genre-{g[0]}" for g in genres]):
+            return lists
         logos = {p["id"]: p.get("logoPath") for p in io_.seerr(f"/api/v1/watchproviders/movies?watchRegion={COUNTRY}")}
         union = urllib.parse.quote("|".join(str(p) for p, _ in services), safe="")
 
@@ -422,8 +440,16 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             rows[f"service-{p}"] = merge(discover("movie", p, None), discover("tv", p, None), CANDIDATES)
         for g in genres:
             rows[f"genre-{g[0]}"] = merge(discover("movie", union, g[3]), discover("tv", union, g[4]) if g[4] else [], CANDIDATES)
-        lists = state["lists"] = {"at": stamp, "rows": rows, "logos": {str(k): v for k, v in logos.items()}}
         say(f"lists refreshed: {len(rows)} rows")
+        return {"at": stamp, "rows": rows, "logos": {str(k): v for k, v in logos.items()}}
+
+    lists = state.get("lists")
+    try:
+        lists = state["lists"] = refresh_lists(lists)
+    except FAILURES as e:
+        if not lists:
+            raise
+        failure("lists", e)
 
     owned = io_.owned()
     cache = state.setdefault("checks", {})
@@ -435,10 +461,27 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
         if f"{kind}/{tmdb}" in owned:
             return "owned"
         c = cache.get(r)
-        return (c.get("res") or "none") if c else None
+        if not c:
+            return None
+        if c.get("res") and now - datetime.datetime.fromisoformat(c["at"]) > FOUND_MAX_AGE:
+            return None
+        return c.get("res") or "none"
+
+    def safe_details(kind, tmdb):
+        key = f"{kind}/{tmdb}"
+        tried.add(key)
+        if key in failed:
+            return state["details"].get(key)
+        try:
+            return details(io_, state, kind, tmdb, now)
+        except FAILURES as e:
+            failure(key, e)
+            return state.setdefault("details", {}).get(key)
 
     def candidate(kind, tmdb, season_title=None, show=None, rank=None):
-        d = details(io_, state, kind, tmdb, now)
+        d = safe_details(kind, tmdb)
+        if d is None:
+            return None
         season = season_number(show or d["title"], season_title, d["seasons"], today) if kind == "tv" else None
         if kind == "tv" and not season:
             return None
@@ -457,9 +500,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
                 try:
                     res = check(io_, c["kind"], c["d"], c["season"], ix, budget, sleep)
                 except Budget:
-                    if st in (None, "none"):
-                        continue
-                    res = cache[c["ref"]]["res"]
+                    continue
                 cache[c["ref"]] = {"res": res, "at": stamp}
                 st = status(c["ref"])
                 say(f"{label}: {c['ref']} {c['d']['title']!r}: {res or 'no suitable release'}")
@@ -474,7 +515,12 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             tmdb = tmdb or state.setdefault("matches", {}).get(mkey)
             if not tmdb:
                 q = urllib.parse.quote(e["title"], safe="")
-                h = pick(e["title"], io_.seerr(f"/api/v1/search?query={q}&page=1&language=en").get("results") or [], kind)
+                tried.add(mkey)
+                try:
+                    h = pick(e["title"], io_.seerr(f"/api/v1/search?query={q}&page=1&language=en").get("results") or [], kind)
+                except FAILURES as err:
+                    failure(mkey, err)
+                    h = None
                 if h:
                     tmdb = state["matches"][mkey] = h["id"]
             c = candidate(kind, tmdb, e.get("season"), e["title"], e["rank"]) if tmdb else None
@@ -489,7 +535,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
 
     row_cands = {}
     for rid, pairs in lists["rows"].items():
-        cands = [c for c in (candidate(k, t) for k, t in pairs) if c][:ROW_SIZE]
+        cands = list(itertools.islice(filter(None, (candidate(k, t) for k, t in pairs)), ROW_SIZE))
         fill(cands, rid)
         row_cands[rid] = cands
         if not dry:
@@ -526,8 +572,13 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
         rows.append({"id": rid, "type": typ, "name": {"en": en, "de": de}, "logo": logo, "items": [item(c, i) for i, c in enumerate(shown, 1)]})
     data = {"week": state["top"].get("week"), "lists": lists["at"], "home": home, "rows": rows}
     say(f"home: {len(home['shows'])} shows, {len(home['movies'])} films; rows: " + ", ".join(f"{r['id']} {len(r['items'])}" for r in rows) + f"; searches {SEARCH_MAX - budget[0]}")
+    stats["errors"] = len(failed)
     if dry:
         return 0
+    if len(failed) > max(FAIL_MIN, int(len(tried) * FAIL_SHARE)):
+        say(f"{len(failed)} of {len(tried)} lookups failed: published lists kept")
+        save_json(state_file, state)
+        return 1
     avail = lambda items: sum(1 for i in items if i["o"] or i["f"])
     stats["lists"] = {"home-shows": (len(home["shows"]), avail(home["shows"])), "home-movies": (len(home["movies"]), avail(home["movies"]))}
     stats["lists"].update({r["id"]: (len(r["items"]), avail(r["items"])) for r in rows})

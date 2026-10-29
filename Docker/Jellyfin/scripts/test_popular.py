@@ -6,6 +6,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+import urllib.error
 
 _spec = importlib.util.spec_from_file_location("popular", pathlib.Path(__file__).with_name("popular.py"))
 pop = importlib.util.module_from_spec(_spec)
@@ -360,6 +361,100 @@ class Main(unittest.TestCase):
             m = self.prom(sf)
         self.assertEqual(m["jf_popular_last_run_success"], 0)
         self.assertIn("jf_popular_last_run_timestamp_seconds", m)
+
+    def test_one_failing_title_does_not_stop_the_run(self):
+        fake = FakeIo()
+        seerr = fake.seerr
+
+        def flaky(path):
+            if path.startswith("/api/v1/movie/103") or "query=Ghost" in path:
+                raise urllib.error.HTTPError(path, 500, "boom", None, None)
+            return seerr(path)
+        fake.seerr = flaky
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            code, text = self.run_main(fake, sf)
+            m = self.prom(sf)
+            allow = json.loads(sf.with_name("allow.json").read_text())
+        self.assertEqual(code, 0)
+        self.assertEqual((m["jf_popular_last_run_success"], m["jf_popular_errors"]), (1, 2))
+        self.assertEqual(sorted(e["ref"] for e in allow["entries"].values()), ["movie/101", "tv/202/s4"])
+        self.assertEqual([(i["r"], i["id"], i.get("u")) for i in self.data(fake)["home"]["movies"]], [(1, 101, None), (2, None, True), (3, None, True)])
+        self.assertIn("HTTPError", text)
+
+    def test_a_title_whose_details_fail_keeps_its_cached_details_and_its_entry(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.run_main(fake, sf)
+            before = json.loads(sf.with_name("allow.json").read_text())["entries"]
+            seerr = fake.seerr
+            fake.seerr = lambda path: (_ for _ in ()).throw(urllib.error.URLError("down")) if path.startswith("/api/v1/movie/101") else seerr(path)
+            code, _ = self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=8))
+            after = json.loads(sf.with_name("allow.json").read_text())["entries"]
+            m = self.prom(sf)
+        self.assertEqual(code, 0)
+        self.assertEqual(m["jf_popular_errors"], 1)
+        tok = next(k for k, v in before.items() if v["ref"] == "movie/101")
+        self.assertEqual(after[tok]["ref"], "movie/101")
+
+    def test_many_failures_fail_the_run_and_keep_the_previous_lists(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.run_main(fake, sf)
+            allow_before = sf.with_name("allow.json").read_text()
+            scripts = len(fake.scripts)
+            seerr = fake.seerr
+            fake.seerr = lambda path: (_ for _ in ()).throw(urllib.error.URLError("down")) if path.startswith(("/api/v1/movie/", "/api/v1/tv/", "/api/v1/search")) else seerr(path)
+            state = json.loads(sf.read_text())
+            state["details"], state["matches"] = {}, {}
+            sf.write_text(json.dumps(state))
+            code, _ = self.run_main(fake, sf, now=self.NOW + datetime.timedelta(hours=1))
+            m = self.prom(sf)
+            self.assertEqual(sf.with_name("allow.json").read_text(), allow_before)
+        self.assertEqual((code, m["jf_popular_last_run_success"]), (1, 0))
+        self.assertEqual(len(fake.scripts), scripts)
+
+    def test_rows_build_only_the_titles_they_show(self):
+        fake = FakeIo()
+        asked = []
+        seerr = fake.seerr
+
+        def spy(path):
+            asked.append(path.split("?")[0])
+            if path.startswith("/api/v1/discover/movies") and "page=1" in path:
+                return {"results": [{"id": 104, "popularity": 90}, {"id": 101, "popularity": 50}, {"id": 103, "popularity": 40}]}
+            return seerr(path)
+        fake.seerr = spy
+        old, pop.ROW_SIZE = pop.ROW_SIZE, 1
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                fake.tsv = lambda known: (iter(tsv(("Switzerland", "CH", "2026-10-18", "Films", 1, "Ghost", "N/A", 1))), "lm")
+                self.run_main(fake, pathlib.Path(d) / "s.json")
+        finally:
+            pop.ROW_SIZE = old
+        self.assertIn("/api/v1/movie/104", asked)
+        self.assertNotIn("/api/v1/movie/101", asked)
+        self.assertNotIn("/api/v1/movie/103", asked)
+
+    def test_a_found_title_keeps_its_check_date_when_the_budget_runs_out(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.run_main(fake, sf)
+            old, pop.SEARCH_MAX = pop.SEARCH_MAX, 0
+            try:
+                self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=8))
+                first = json.loads(sf.read_text())["checks"]["movie/101"]["at"]
+                film = self.data(fake)["home"]["movies"][0]
+                self.assertEqual((film["f"], film["c"]), ("1080p", "2026-10-21"))
+                self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=15))
+                film = self.data(fake)["home"]["movies"][0]
+            finally:
+                pop.SEARCH_MAX = old
+        self.assertEqual(first, "2026-10-21T04:39:00")
+        self.assertEqual((film["f"], film.get("x"), film["n"]), (None, None, True))
 
     def test_dry_run_writes_no_prom_file(self):
         with tempfile.TemporaryDirectory() as d:
