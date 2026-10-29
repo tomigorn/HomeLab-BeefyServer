@@ -217,6 +217,17 @@
     return insertAfter(enabled, DISCOVER_ROWS, DISCOVER_AFTER);
   }
 
+  // Rows built by other injector scripts (popular.js): window.HssExtraRows = [{id, after, name: {en, de}}].
+  function extraRows(win) {
+    var rows = win && win.HssExtraRows;
+    return Array.isArray(rows) ? rows.filter(function (r) { return r && /^[A-Za-z0-9]+$/.test(r.id) && typeof r.after === "string"; }) : [];
+  }
+
+  function withExtra(enabled, extra) {
+    for (var i = 0; i < extra.length; i++) enabled = insertAfter(enabled, [extra[i].id], extra[i].after);
+    return enabled;
+  }
+
   // only: studio ids allowed (the networks); counts titles per studio or genre.
   function countBy(items, field, only) {
     var by = {};
@@ -1000,6 +1011,7 @@
       var listed = endPaging(win.HssPageMeta, container);
       return function (id) {
         if (RECENT_ROWS.indexOf(id) !== -1) return !st.recent;
+        if (extraRows(win).some(function (r) { return r.id === id; })) return now - since <= SLOT_WAIT_MS;
         if (DISCOVER_ROWS.indexOf(id) !== -1) return !st.discover;
         if (listed && !realOf(container, id).length) return false;
         if (now - since > SLOT_WAIT_MS) return false;
@@ -1012,11 +1024,13 @@
       var live = liveContainers();
       if (!live.length) return;
       var lang = st.lang;
-      var enabled = withDiscover(withRecent(st.base.enabled));
+      var extra = extraRows(win);
+      var enabled = withExtra(withDiscover(withRecent(st.base.enabled)), extra);
       var names = {};
       for (var k in st.base.names) names[k] = st.base.names[k];
       for (var n = 0; n < RECENT_ROWS.length; n++) names[RECENT_ROWS[n]] = recentName(RECENT_ROWS[n], lang);
       for (var d = 0; d < DISCOVER_ROWS.length; d++) names[DISCOVER_ROWS[d]] = discoverName(DISCOVER_ROWS[d], lang);
+      for (var x = 0; x < extra.length; x++) names[extra[x].id] = (extra[x].name && extra[x].name[langOf(lang)]) || extra[x].id;
       var recent = (st.recent && st.recent.rows) || {};
       var discover = (st.discover && st.discover.rows) || {};
       observer.disconnect();
@@ -1109,7 +1123,7 @@
       LOCKED_SELECTOR: LOCKED_SELECTOR, lockHomeSettings: lockHomeSettings, homeStyles: homeStyles, render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, upcomingNow: upcomingNow,
       hintFor: hintFor, namesOf: namesOf, modesOf: modesOf, enabledOf: enabledOf, start: start, pickMovies: pickMovies, seriesCandidates: seriesCandidates, pickSeries: pickSeries,
       completeCollection: completeCollection, loadRecent: loadRecent, withRecent: withRecent, recentName: recentName, syncRecent: syncRecent, RECENT_DAYS: RECENT_DAYS, RECENT_LIMIT: RECENT_LIMIT,
-      withDiscover: withDiscover, discoverName: discoverName, countBy: countBy, pickBackdrops: pickBackdrops, genreColors: genreColors, loadDiscover: loadDiscover, syncDiscover: syncDiscover, DISCOVER_LIMIT: DISCOVER_LIMIT,
+      withDiscover: withDiscover, withExtra: withExtra, extraRows: extraRows, discoverName: discoverName, countBy: countBy, pickBackdrops: pickBackdrops, genreColors: genreColors, loadDiscover: loadDiscover, syncDiscover: syncDiscover, DISCOVER_LIMIT: DISCOVER_LIMIT,
       readCache: readCache, writeCache: writeCache, staleParts: staleParts, netsKey: netsKey, assignCards: assignCards, usable: usable, RECENT_TTL_MS: RECENT_TTL_MS, DISCOVER_TTL_MS: DISCOVER_TTL_MS
     };
   } else if (window.MutationObserver && document.body) {

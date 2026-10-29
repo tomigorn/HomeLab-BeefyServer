@@ -1024,3 +1024,11 @@ test("studio list: picking a title or the close button closes the page", async (
   assert.equal(win.document.querySelector(".hssList"), null);
   win.close();
 });
+
+test("rows of other injector scripts get their slot after their anchor", () => {
+  const extra = es.extraRows({ HssExtraRows: [{ id: "Top10Shows", after: "RecentlyAddedShows" }, { id: "Top10Movies", after: "RecentlyWatchedSeries" }, { id: "bad id", after: "X" }, null] });
+  assert.deepEqual(extra.map((r) => r.id), ["Top10Shows", "Top10Movies"]);
+  const enabled = es.withExtra(es.withRecent(["NextUp", "RecentlyAddedShows", "BecauseYouWatched"]), extra);
+  assert.deepEqual(enabled, ["NextUp", "RecentlyAddedShows", "Top10Shows", "RecentlyWatchedMovies", "RecentlyWatchedSeries", "Top10Movies", "BecauseYouWatched"]);
+  assert.deepEqual(es.extraRows({}), []);
+});
