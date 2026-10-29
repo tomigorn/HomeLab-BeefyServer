@@ -1,6 +1,7 @@
 [Unit]
-Description=Jellyfin studio and network logos for the home rows
+Description=Jellyfin studio and network logos and the Coming soon popularity for the home rows
 
 [Service]
 Type=oneshot
 ExecStart=%h/Projects/Docker/Jellyfin/scripts/studio-logos.py
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/upcoming-popularity.py
