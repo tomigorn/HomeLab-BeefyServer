@@ -13,7 +13,7 @@ NAME = "Jane Doe"
 VIEW = {"Id": "v1", "Name": "Collections & Trending", "CollectionType": "boxsets"}
 MOVIES = {"Id": "v2", "Name": "Movies", "CollectionType": "movies"}
 TOP = {"Id": "b1", "Name": "Top 10 Switzerland · Movies", "Type": "BoxSet"}
-FOUND = {"Id": "m1", "Name": "Some Film", "MediaSources": [{"Name": "⬇ Download movie now"}, {"Name": "🌙 Download movie tonight · lower power cost"}], "UserData": {"Key": UID}}
+FOUND = {"Id": "m1", "Name": "Some Film", "MediaSources": [{"Name": "⬇ Download movie now", "Path": "/media/internal/film.mp4"}, {"Name": "🌙 Download movie tonight · lower power cost"}], "Path": "/media/internal/film.mp4", "UserData": {"Key": UID, "IsFavorite": True, "Played": True, "PlayCount": 3, "PlaybackPositionTicks": 777, "LastPlayedDate": "2026-01-02T03:04:05Z", "PlayedPercentage": 55.5, "Likes": True, "UnplayedItemCount": 4}}
 
 
 def fake(path):
@@ -51,7 +51,7 @@ class DeviceViewsTest(unittest.TestCase):
             self.assertEqual(len(list(d.glob("*.json"))), 13)
             for f in d.glob("*.json"):
                 text = f.read_text()
-                for bad in ("api_key", "Token", UID, NAME):
+                for bad in ("api_key", "Token", UID, NAME, "LastPlayedDate", '"IsFavorite": true', '"Played": true', "PlayCount", "PlayedPercentage", "Likes", "777", '"Path"', "/media/internal"):
                     self.assertNotIn(bad, text, f.name)
         for r in (x for rs in reqs.values() for x in rs):
             self.assertEqual(r["method"], "GET")
@@ -64,6 +64,19 @@ class DeviceViewsTest(unittest.TestCase):
         text = json.dumps(tdv.scrub(data, UID, NAME))
         for bad in ("UserId", "AccessToken", NAME, UID, "tok"):
             self.assertNotIn(bad, text)
+
+    def test_scrub_whole_words_and_short_names(self):
+        out = tdv.scrub({"a": "Madison and Max", "b": "Al's list", "c": "Alps"}, "", "Al")
+        self.assertEqual(out, {"a": "Madison and Max", "b": "viewer's list", "c": "Alps"})
+        self.assertEqual(tdv.scrub({"a": "Madison"}, "", "Mad"), {"a": "Madison"})
+
+    def test_logout_failure_does_not_skip_other_client(self):
+        calls = []
+        def lg(tok, dev):
+            calls.append(dev)
+            raise OSError("x")
+        tdv.logout_all([("t1", "d1"), ("t2", "d2")], lg)
+        self.assertEqual(calls, ["d1", "d2"])
 
     def test_hidden_library_not_in_media_and_found_item_is_the_target(self):
         out, reqs = self.capture()

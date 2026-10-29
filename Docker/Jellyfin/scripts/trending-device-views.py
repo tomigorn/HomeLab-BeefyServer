@@ -15,7 +15,7 @@ sys.path.insert(0, str(HERE))
 COLLECTIONS_VIEW = "Collections & Trending"
 TOP_MOVIES = "Top 10 Switzerland · Movies"
 SCREENS = ("media", "collections", "list", "details", "movies", "search")
-DROP_KEYS = {"UserId", "AccessToken", "Token", "User", "ApiKey", "api_key"}
+DROP_KEYS = {"UserId", "AccessToken", "Token", "User", "ApiKey", "api_key", "Path"}
 SF_FIELDS = "MediaSources,ParentId,ChannelInfo"
 SF_PAGE = 50
 ATV_FIELDS = "CanDelete,ChannelInfo,Chapters,ChildCount,CumulativeRunTimeTicks,DateCreated,DisplayPreferencesId,Genres,ItemCounts,MediaSourceCount,MediaSources,MediaStreams,Overview,Path,PrimaryImageAspectRatio,Taglines,Trickplay"
@@ -51,13 +51,28 @@ def query(path, params):
     return path + "?" + urllib.parse.urlencode(params, safe=",") if params else path
 
 
+def neutral_user_data(d):
+    out = {"PlaybackPositionTicks": 0, "IsFavorite": False, "Played": False}
+    if "UnplayedItemCount" in d:
+        out["UnplayedItemCount"] = d["UnplayedItemCount"]
+    return out
+
+
+def logout_all(sessions, logout):
+    for tok, device_id in sessions:
+        try:
+            logout(tok, device_id)
+        except Exception as e:
+            print(f"logout of {device_id} failed: {type(e).__name__}", file=sys.stderr)
+
+
 def scrub(obj, user_id="", user_name=""):
-    names = [re.compile(rf"(?<!\w){re.escape(user_name)}(?!\w)", re.I)] if len(user_name or "") >= 3 else []
+    names = [re.compile(rf"(?<!\w){re.escape(user_name)}(?!\w)", re.I)] if user_name else []
     ids = {x for x in (user_id, (user_id or "").replace("-", "")) if x}
 
     def walk(o):
         if isinstance(o, dict):
-            return {k: walk(v) for k, v in o.items() if k not in DROP_KEYS}
+            return {k: neutral_user_data(v) if k == "UserData" and isinstance(v, dict) else walk(v) for k, v in o.items() if k not in DROP_KEYS}
         if isinstance(o, list):
             return [walk(v) for v in o]
         if isinstance(o, str):
@@ -182,15 +197,17 @@ def main(argv=None):
     user = next(u for u in users if not u["Policy"]["IsAdministrator"] and not u["Policy"]["IsDisabled"])
     user_id, user_name = user["Id"], user["Name"]
     per_client = {}
-    for name, c in CLIENTS.items():
-        tok = qc.token(c["client"], c["device"], c["device_id"], c["version"], user_id)
-        try:
+    sessions = []
+    try:
+        for name, c in CLIENTS.items():
+            tok = qc.token(c["client"], c["device"], c["device_id"], c["version"], user_id)
+            sessions.append((tok, c["device_id"]))
             auth = qc.header(c["client"], c["device"], c["device_id"], c["version"], tok)
             data, reqs = run_client(name, lambda p: qc.http("GET", p, None, auth), user_id)
             save(out_dir, name, data, user_id, user_name)
             per_client[name] = reqs
-        finally:
-            qc.logout(tok, c["device_id"])
+    finally:
+        logout_all(sessions, qc.logout)
     save_meta(out_dir, per_client)
     print(f"{len(per_client) * len(SCREENS)} screen files and meta.json in {out_dir}")
 
