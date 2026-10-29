@@ -79,13 +79,16 @@ while :; do sleep 0.1; done
 EOF
 cat > "$T/bin/clamdscan" <<'EOF'
 #!/bin/sh
-ARGS_SEEN="$*"; conf=; ping=0; targets=; multi=0
+ARGS_SEEN="$*"; conf=; ping=0; targets=; multi=0; move=
 while [ $# -gt 0 ]; do
   case $1 in
     -c) conf=$2; shift ;;
     --config-file=*) conf=${1#*=} ;;
     --ping) ping=1; shift ;;
     --multiscan) multi=1 ;;
+    --move=*) move=${1#*=} ;;
+    --file-list=*) targets="$targets
+$(cat "${1#*=}")" ;;
     -*) ;;
     *) targets="$targets
 $1" ;;
@@ -95,6 +98,7 @@ done
 sock=$(awk '$1 == "LocalSocket" { print $2 }' "$conf")
 if [ "$ping" = 1 ]; then [ -e "$sock" ]; exit $?; fi
 echo "$conf $multi $ARGS_SEEN" >> "$FAKE_CLAMD_LOG"
+[ -n "$FAKE_SCANNED" ] && printf '%s\n' $targets >> "$FAKE_SCANNED"
 files=$(mktemp); infected=0; errors=0
 for t in $targets; do
   if [ -d "$t" ]; then find "$t" -type f >> "$files"
@@ -106,12 +110,14 @@ while IFS= read -r re; do grep -Ev "$re" "$files" > "$files.x"; mv "$files.x" "$
 while IFS= read -r f; do
   [ -n "$(find "$f" -size +2000k)" ] && continue
   [ "$f" = "$FAKE_DENY" ] && { echo "$f: Access denied. ERROR"; errors=$((errors+1)); continue; }
-  grep -q EICAR-STANDARD-ANTIVIRUS-TEST-FILE "$f" && { infected=$((infected+1)); echo "$f: Eicar-Test-Signature FOUND"; }
+  grep -q EICAR-STANDARD-ANTIVIRUS-TEST-FILE "$f" && { infected=$((infected+1)); echo "$f: Eicar-Test-Signature FOUND"
+    [ -n "$move" ] && mv "$f" "$move/" && echo "$f: moved to '$move/${f##*/}'"; }
 done < "$files"
 printf '\n----------- SCAN SUMMARY -----------\nInfected files: %s\n' "$infected"
 [ "$errors" -gt 0 ] && echo "Total errors: $errors"
 printf 'Time: 0.005 sec (0 m 0 s)\nStart Date: 2026:10:26 01:27:47\nEnd Date:   2026:10:26 01:27:47\n'
 rm -f "$files" "$files.excl" "$files.x"
+[ -n "$FAKE_CLOCK_SET" ] && echo "$FAKE_CLOCK_SET" > "$SCAN_NOW_FILE"
 [ "$errors" -gt 0 ] && exit 2
 [ "$infected" -gt 0 ] && exit 1
 exit 0
@@ -163,10 +169,17 @@ assert_eq "files_listed 0" 0 "$(metric clamav_files_listed new)"
 
 echo "== new: excludes"
 reset; marker
-for p in antivirus-quarantine/x.exe some/quarantine/x.exe .snapshots/s1/x.exe qbittorrent/incomplete/x.exe qbittorrent/config/qBittorrent/logs/qbittorrent.log.bak3 movies/a.part movies/b.!qB sonarr/logs.db-wal sonarr/logs.db-shm sonarr/logs.db-journal; do fresh "$T/red/$p"; done
+for p in antivirus-quarantine/x.exe some/quarantine/x.exe .snapshots/s1/x.exe .recyclebin/Show/x.mkv .clamav-queue/job1/0001 qbittorrent/incomplete/x.exe qbittorrent/config/qBittorrent/logs/qbittorrent.log.bak3 movies/a.part movies/b.!qB sonarr/logs.db-wal sonarr/logs.db-shm sonarr/logs.db-journal; do fresh "$T/red/$p"; done
 fresh "$T/red/movies/keep.mkv"
 run new > /dev/null
 assert_eq "only keep.mkv listed" "$T/red/movies/keep.mkv" "$(cat "$STATE/new.list")"
+
+echo "== new: SCAN_EXCLUDE_DIRS prunes an unreadable app dir"
+reset; marker; fresh "$T/red/appcfg/db/app.db"; fresh "$T/red/movies/keep.mkv"; chmod 000 "$T/red/appcfg/db"
+assert_eq "exits 0" 0 "$(SCAN_EXCLUDE_DIRS="$T/red/appcfg" run new)"
+assert_eq "only keep.mkv listed" "$T/red/movies/keep.mkv" "$(cat "$STATE/new.list")"
+assert_eq "scan_errors 0" 0 "$(metric clamav_scan_errors new)"
+chmod 755 "$T/red/appcfg/db"
 
 echo "== new: error keeps the marker"
 reset; marker; fresh "$T/red/movies/new.mkv"
@@ -214,6 +227,52 @@ assert_eq "clean run exits 0" 0 "$(run new)"
 assert_eq "infected_last_run back to 0" 0 "$(metric clamav_infected_last_run new)"
 assert_eq "infected_total kept" 2 "$(metric clamav_infected_total)"
 assert_grep "last-infected kept after a clean run" evil2.exe "$STATE/last-infected.txt"
+
+echo "== new: hardlinks are scanned once"
+reset; marker
+fresh "$T/red/torrents/a.mkv"; mkdir -p "$T/red/movies/A"; ln "$T/red/torrents/a.mkv" "$T/red/movies/A/a.mkv"; fresh "$T/red/movies/b.mkv"
+assert_eq "exits 0" 0 "$(run new)"
+assert_eq "two of three paths listed (one per inode)" 2 "$(wc -l < "$STATE/new.list" | tr -d ' ')"
+assert_eq "files_scanned 2" 2 "$(metric clamav_files_scanned new)"
+
+echo "== new: an infected inode is quarantined under every path"
+reset; marker
+fresh "$T/red/torrents/evil.mkv" "x $SIG x"; mkdir -p "$T/red/movies/E" "$T/black/books"; ln "$T/red/torrents/evil.mkv" "$T/red/movies/E/evil.mkv"
+assert_eq "hit exits 1" 1 "$(run new)"
+[ ! -e "$T/red/torrents/evil.mkv" ] && [ ! -e "$T/red/movies/E/evil.mkv" ] && ok "no path left outside quarantine" || bad "no path left outside quarantine" "$(find "$T/red" -name 'evil*')"
+assert_eq "both links in quarantine" 2 "$(find "$QUARANTINE" -name 'evil.mkv*' | wc -l | tr -d ' ')"
+assert_eq "an index line per path" 2 "$(grep -c "evil.mkv${TAB}Eicar" "$QUARANTINE/index.txt")"
+assert_grep "the second link's own path indexed" "$TAB$T/red/movies/E/evil.mkv${TAB}Eicar" "$QUARANTINE/index.txt"
+assert_eq "restore of the second link works" 0 "$(run restore "$(find "$QUARANTINE" -name 'evil.mkv.*' | head -1)")"
+
+echo "== new through the running clamd: parallel clamdscan, same reporting"
+reset; marker
+printf 'LocalSocket %s\n' "$T/run.sock" > "$T/run.conf"; : > "$T/run.sock"
+for i in 1 2 3 4 5; do fresh "$T/red/movies/m$i.mkv"; done; fresh "$T/black/books/bad.exe" "$SIG"
+rm -f "$T/scanned"
+assert_eq "hit exits 1" 1 "$(FAKE_SCANNED="$T/scanned" NEW_CLAMD=1 NEW_PARALLEL=3 CLAMD_RUNNING_CONF="$T/run.conf" run new)"
+[ -e "$FAKE_LOG" ] && bad "clamscan not used" "$(cat "$FAKE_LOG")" || ok "clamscan not used"
+assert_eq "three clamdscan runs" 3 "$(grep -c -- "-c $T/run.conf -i --move=$QUARANTINE --file-list=" "$FAKE_CLAMD_LOG")"
+assert_eq "every listed file scanned once" 6 "$(sort -u "$T/scanned" | grep -c .)"
+[ -e "$QUARANTINE/bad.exe" ] && ok "infected moved" || bad "infected moved"
+assert_eq "files_scanned 6" 6 "$(metric clamav_files_scanned new)"
+assert_eq "infected_last_run 1" 1 "$(metric clamav_infected_last_run new)"
+assert_eq "scan_errors 0" 0 "$(metric clamav_scan_errors new)"
+advanced "marker advanced"
+
+echo "== new through clamd: files over the limit never reach clamd (it would refuse them as errors)"
+reset; marker; printf 'LocalSocket %s\n' "$T/run.sock" > "$T/run.conf"; : > "$T/run.sock"
+fresh "$T/red/movies/a.mkv"; dd if=/dev/zero of="$T/red/movies/huge.mkv" bs=1 count=0 seek=2146435073 2>/dev/null; rm -f "$T/scanned"
+assert_eq "exits 0" 0 "$(FAKE_SCANNED="$T/scanned" NEW_CLAMD=1 CLAMD_RUNNING_CONF="$T/run.conf" run new)"
+assert_no_grep "huge file not sent" huge.mkv "$T/scanned"
+assert_eq "skipped_large 1" 1 "$(metric clamav_files_skipped_large new)"
+assert_eq "files_scanned 1" 1 "$(metric clamav_files_scanned new)"
+
+echo "== new through clamd: clamd down falls back to clamscan"
+reset; marker; fresh "$T/red/movies/a.mkv"; rm -f "$T/run.sock"
+assert_eq "exits 0" 0 "$(NEW_CLAMD=1 CLAMD_RUNNING_CONF="$T/run.conf" run new)"
+assert_grep "clamscan used" "--file-list=$STATE/new.list" "$FAKE_LOG"
+assert_grep "says so" "clamd not reachable" "$T/out"
 
 echo "== prom file"
 reset; marker; fresh "$T/red/movies/new.mkv"
@@ -306,6 +365,78 @@ reset; fresh "$T/red/movies/a.mkv"
 assert_eq "clamd that does not start exits 2" 2 "$(FAKE_CLAMD_FAIL=1 CLAMD_WAIT=3 USE_CLAMD=1 SCAN_HOST=0 run all)"
 assert_eq "startup failure is an error" 1 "$(metric clamav_scan_errors all)"
 [ -e "$CLAMD_SOCK" ] && bad "no clamd left" || ok "no clamd left"
+
+echo "== resumable host scan: window, chunks, progress"
+export TZ=UTC
+at() { date -d "$1" +%s; }
+R="USE_CLAMD=1 SCAN_HOST=0 SCAN_RESUME=1 CHUNK_FILES=2 SCAN_NOW_FILE=$T/clock"
+rrun() { env $R "$@" sh "$SCAN" all > "$T/out" 2>&1; echo $?; }
+nscans() { grep -c . "$FAKE_CLAMD_LOG" 2>/dev/null || echo 0; }
+reset; for n in 1 2 3 4 5; do fresh "$T/red/movies/f$n.mkv"; done
+export FAKE_SCANNED="$T/scanned.log"; rm -f "$FAKE_SCANNED"
+at "2026-10-28 12:00" > "$T/clock"
+assert_eq "closed window (Wed noon) exits 0" 0 "$(rrun)"
+assert_eq "closed window scans nothing" 0 "$(nscans)"
+[ -e "$STATE/all.list" ] && bad "no list built when closed" || ok "no list built when closed"
+at "2026-10-28 21:59" > "$T/clock"
+assert_eq "Wed 21:59 still closed" 0 "$(rrun)"; assert_eq "21:59 scans nothing" 0 "$(nscans)"
+at "2026-11-02 06:00" > "$T/clock"
+assert_eq "Mon 06:00 closed" 0 "$(rrun)"; assert_eq "Mon 06:00 scans nothing" 0 "$(nscans)"
+fresh "$T/red/movies/f2.mkv" "$SIG"
+at "2026-10-28 23:00" > "$T/clock"
+assert_eq "open night, stopped at 06:00 after chunk 1: exit 1 (hit)" 1 "$(FAKE_CLOCK_SET=$(at "2026-10-29 06:00") rrun)"
+assert_eq "one chunk scanned" 1 "$(nscans)"
+assert_eq "progress saved" 2 "$(cat "$STATE/all.done")"
+[ -e "$STATE/all.list" ] && ok "list kept" || bad "list kept"
+[ -e "$STATE/all.finished" ] && bad "pass not finished" || ok "pass not finished"
+assert_eq "listed is the whole pass" 5 "$(metric clamav_files_listed all)"
+assert_eq "scanned so far" 2 "$(metric clamav_files_scanned all)"
+assert_eq "hit already visible" 1 "$(metric clamav_infected_last_run all)"
+assert_grep "hit in last-infected" "f2.mkv" "$STATE/last-infected.txt"
+at "2026-10-29 12:00" > "$T/clock"
+assert_eq "Thu noon closed, progress untouched" 0 "$(rrun)"
+assert_eq "still one scan" 1 "$(nscans)"
+assert_eq "progress unchanged" 2 "$(cat "$STATE/all.done")"
+at "2026-10-29 22:30" > "$T/clock"
+assert_eq "next night resumes and finishes: exit 0 (no new hit)" 0 "$(rrun)"
+assert_eq "all chunks scanned in total" 3 "$(nscans)"
+assert_eq "scanned cumulative" 5 "$(metric clamav_files_scanned all)"
+assert_eq "hit of the earlier night kept for the pass" 1 "$(metric clamav_infected_last_run all)"
+assert_eq "each file scanned once" 5 "$(sort "$FAKE_SCANNED" | uniq -c | awk '$1 == 1' | wc -l | tr -d ' ')"
+[ -e "$STATE/all.finished" ] && ok "pass finished" || bad "pass finished"
+[ -e "$STATE/all.list" ] && bad "list removed" || ok "list removed"
+at "2026-10-30 23:00" > "$T/clock"
+assert_eq "finished 1 day ago: nothing to do" 0 "$(rrun)"
+assert_eq "no new scan" 3 "$(nscans)"
+at "2026-11-05 23:00" > "$T/clock"
+fresh "$T/red/movies/f2.mkv"
+assert_eq "week later: new pass, clean" 0 "$(rrun)"
+assert_eq "second pass scanned everything again" 6 "$(nscans)"
+assert_eq "infected reset by the new pass" 0 "$(metric clamav_infected_last_run all)"
+at "2026-11-08 12:00" > "$T/clock"
+rm -f "$STATE/all.finished"
+assert_eq "Sunday daytime is open" 0 "$(rrun)"
+assert_eq "Sunday scans" 9 "$(nscans)"
+at "2026-11-02 05:30" > "$T/clock"; rm -f "$STATE/all.finished"
+assert_eq "Mon 05:30 open (Sunday night)" 0 "$(rrun)"
+assert_eq "Mon 05:30 scans" 12 "$(nscans)"
+echo "== resumable host scan: excludes, errors, startup failure"
+reset; fresh "$T/red/movies/a.mkv"; fresh "$T/black/books/skipme/b.mkv"; fresh "$T/black/books/c.epub"
+: > "$T/red/movies/empty.nfo"; at "2026-10-28 23:00" > "$T/clock"; rm -f "$FAKE_SCANNED"
+assert_eq "exclude run clean" 0 "$(SCAN_EXCLUDE_DIRS="$T/black/books/skipme" rrun)"
+assert_eq "empty file not listed, exclude honoured" 2 "$(metric clamav_files_listed all)"
+assert_no_grep "excluded file never scanned" skipme "$FAKE_SCANNED"
+reset; fresh "$T/red/movies/a.mkv"; fresh "$T/red/movies/b.mkv"; fresh "$T/red/movies/x.mkv"; mkdir -p "$STATE"; printf '%s\n' "$T/red/movies/x.mkv" > "$STATE/allow.txt"
+at "2026-10-28 23:00" > "$T/clock"; rm -f "$FAKE_SCANNED"
+assert_eq "allow list run" 0 "$(rrun)"
+assert_eq "allow-listed file not in the pass" 2 "$(metric clamav_files_listed all)"
+reset; fresh "$T/red/movies/a.mkv"; fresh "$T/red/movies/secret.mkv"; at "2026-10-28 23:00" > "$T/clock"
+assert_eq "unreadable file exits 2" 2 "$(FAKE_DENY="$T/red/movies/secret.mkv" rrun)"
+assert_eq "error counted" 1 "$(metric clamav_scan_errors all)"
+reset; fresh "$T/red/movies/a.mkv"; at "2026-10-28 23:00" > "$T/clock"
+assert_eq "clamd start failure exits 2" 2 "$(FAKE_CLAMD_FAIL=1 CLAMD_WAIT=3 rrun)"
+[ -e "$STATE/all.done" ] && [ "$(cat "$STATE/all.done")" != 0 ] && bad "no progress on failure" || ok "no progress on failure"
+unset FAKE_SCANNED TZ
 
 echo "== <path>: move under roots, report elsewhere"
 reset

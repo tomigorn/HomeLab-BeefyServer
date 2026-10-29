@@ -20,7 +20,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    # clamd and a nightly clamscan each hold the signatures (~1.5G), twice that while clamd reloads them.
+    # clamd holds the signatures (~1.5G), twice that while it reloads them; the nightly scan uses this clamd (NEW_CLAMD), clamscan only if clamd is down.
     mem_limit: 4g
     restart: unless-stopped
     environment:
@@ -28,6 +28,7 @@ services:
       - SCAN_HOST=0   # the host root is scanned by clamav-hostscan, which has no network
       - SCAN_ROOTS=/scan/ssd-hot /scan/ssd-hot2
       - QUARANTINE=/scan/ssd-hot/quarantine
+      - NEW_CLAMD=1      # nightly new-files scan through this clamd, 4 clamdscan at once (MaxThreads 6 leaves 2 for the completion queue); one signature load
       - STATE=/state
       - TEXTFILE=/textfile
     volumes:

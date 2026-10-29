@@ -15,6 +15,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | `scan.sh <path>…`, `scan.sh restore <file>` | by hand | see below |
 
 - 04:05: fastpi wakes beefy at 03:55 and the maintenance window (`Server/9-Night-Schedule.md`) holds it up until 04:45, so a later time never fires. A night asleep is skipped: the marker stays, the next run catches up.
+- Engine (`NEW_CLAMD=1`, 2026-10-29): `new` runs 4 `clamdscan` clients against the container's own clamd (local socket, `MaxThreads 6`, 2 left for the completion queue), one path per hardlinked inode (an infected inode is quarantined under every path), `.recyclebin` and `.clamav-queue` skipped, files over 2047M not sent. Measured on 12 files / 12 GB: 848 s single client, 220 s with 4 (3.9×); the 2026-10-29 night (95 files, 113 GB, single clamscan) took 2 h 19 min, about 35 min now. clamd down = the old `clamscan`.
 - Install / reinstall the units (both timers) and host folders: `Docker/Antivirus/install.sh`. Start: `sudo docker build --network host -t clamav-local:latest ./clamav && sudo docker compose up -d` (Movie-Downloads first: its network must exist).
 
 ## Nightly and manual scans

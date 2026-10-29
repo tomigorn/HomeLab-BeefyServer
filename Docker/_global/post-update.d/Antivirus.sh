@@ -2,6 +2,7 @@
 if want clamav; then
   check av.clamd-tcp '^PONG$' "$(docker exec clamav sh -c 'printf "zPING\0" | nc -w3 127.0.0.1 3310' 2>&1 | tr -d '\0')"
   check av.scan-branches '^/scan/ssd-hot /scan/ssd-hot2 ok ok$' "$(docker exec clamav sh -c 'echo $SCAN_ROOTS; for b in ssd-hot ssd-hot2; do test -w /scan/$b/quarantine && echo ok; done' 2>&1 | xargs)"
+  check av.new-clamd '^1 6 1$' "$(docker exec clamav sh -c 'echo "$NEW_CLAMD $(sed -n "s/^MaxThreads //p" /etc/clamav/clamd.conf) $(grep -c "^clamd_new()" /scan.sh)"' 2>&1)"
   check av.local-build '^clamav-local:' "$(docker inspect -f '{{.Config.Image}}' clamav 2>&1)"
 fi
 if want clamav-queue; then
