@@ -1,4 +1,6 @@
+import contextlib
 import datetime
+import io
 import json
 import pathlib
 import socket
@@ -473,6 +475,237 @@ class State(Base):
     def test_unknown_path(self):
         self.assertEqual(self.core.handle("GET", "/hss-popular/../etc", {"X-Emby-Token": TOKEN}, b"")[0], 404)
         self.assertEqual(self.core.handle("GET", "/hss-popular/health", {}, b""), (200, {"ok": True}))
+
+SECRET = "s3cr3t-hook-token-xxxxxxxxxxxxxxxxxxxx"
+T0 = NOW
+SEC = 10_000_000
+CLEARED = {"PositionTicks": None, "MediaSourceId": None, "IsPaused": False, "CanSeek": False}
+
+
+class HookBase(Base):
+    def setUp(self):
+        super().setUp()
+        d = pathlib.Path(self.tmp.name)
+        self.index = d / "trending-index.json"
+        rec = {"x": "tok-movie-xxxxxxxxxxxx", "t": "Animals", "modes": {"ms_now": "now", "ms_night": "night"}}
+        nope = {"x": None, "t": "Nope", "modes": {}}
+        self.index.write_text(json.dumps({"updated": "2026-10-28T04:39:00+00:00", "library": "lib", "runtimeTicks": 10 * SEC, "items": {"ph1": rec, "ms_now": rec, "ms_night": rec, "ph2": nope}}))
+        self.signal = d / "signal" / "requested"
+        self.signal.parent.mkdir()
+        self.dry = d / "hook-dry-run"
+        self.admin = []
+        self.core = app.Core(app.Config(allow_file=self.allow, audit_file=d / "audit.jsonl", request_state=d / "rs.json", origins=[ORIGIN], hook_secret=SECRET, signal_file=self.signal, dry_flag=self.dry),
+                             seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now, jellyfin_admin=lambda m, p, b=None: self.admin.append((m, p, b)))
+
+    def event(self, event, at, item="ph1", ms=None, pos=None, paused=False, user="u1", disabled=False, played=False, session="s1", secret=SECRET):
+        self.now = T0 + datetime.timedelta(seconds=at)
+        ps = dict(CLEARED) if ms is None and pos is None else {"MediaSourceId": ms, "PositionTicks": pos, "IsPaused": paused, "CanSeek": True}
+        body = {"Event": event, "Item": {"Id": item, "Type": "Movie", "RunTimeTicks": 10 * SEC, "UserData": {"Played": played}},
+                "User": {"Id": user, "Name": "anna", "Policy": {"IsDisabled": disabled}},
+                "Session": {"Id": session, "Client": "Android TV", "PlayState": ps}, "Server": {"Id": "srv"}}
+        return self.core.hook("/hook/" + secret, {"Content-Type": "application/json"}, json.dumps(body).encode())
+
+    def requests(self):
+        return [p for p in self.seerr.posts if p[0] == "request"]
+
+    def audits(self):
+        f = pathlib.Path(self.tmp.name, "audit.jsonl")
+        return [json.loads(l) for l in f.read_text().splitlines()] if f.exists() else []
+
+    def reset_calls(self, item="ph1", user="u1"):
+        return [c for c in self.admin if c == ("POST", f"/UserItems/{item}/UserData?userId={user}", {"Played": False, "PlaybackPositionTicks": 0})]
+
+
+class Hook(HookBase):
+    def test_hook_wrong_secret_403_and_counted(self):
+        self.assertEqual(self.event("Stop", 10, ms="ms_night", pos=int(9.9 * SEC), secret="wrong")[0], 403)
+        self.assertEqual(self.core.hook("/hook/", {}, b"{}")[0], 403)
+        self.assertEqual(self.core.rejected(), {"bad hook secret": 2})
+        self.assertEqual((self.requests(), self.admin, self.audits()), ([], [], []))
+
+    def test_hook_bad_body(self):
+        self.assertEqual(self.core.hook("/hook/" + SECRET, {}, b"{nope")[0], 400)
+        self.assertEqual(self.core.hook("/hook/" + SECRET, {}, b"[]")[0], 400)
+        self.assertEqual(self.core.hook("/hook/" + SECRET, {}, b"x" * (app.MAX_HOOK_BODY + 1))[0], 413)
+
+    def test_hook_without_a_configured_secret_refuses_everything(self):
+        self.core.cfg.hook_secret = None
+        self.assertEqual(self.event("Stop", 10, ms="ms_night", pos=int(9.9 * SEC))[0], 403)
+
+    def test_hook_unknown_item_204_silent(self):
+        for ev, at in (("Play", 0), ("Progress", 5), ("Pause", 6), ("Stop", 3600)):
+            self.assertEqual(self.event(ev, at, item="realfilm", ms="realms", pos=5 * SEC), (204, {}))
+        self.assertEqual((self.requests(), self.admin, self.audits()), ([], [], []))
+
+    def test_hook_play_then_stop_at_end_requests_night(self):
+        self.assertEqual(self.event("Play", 0, ms="ms_night", pos=0)[0], 204)
+        self.assertEqual(self.event("Stop", 10.5)[0], 204)
+        self.assertEqual([(b["mediaId"], "tags" in b) for _, b, _ in self.requests()], [(101, False)])
+        a = self.audits()[-1]
+        self.assertEqual((a["decision"], a["via"], a["mode"], a["entry"], a["client"], a["userId"]), ("requested", "tv", "night", "tok-movie-xxxxxxxxxxxx", "Android TV", "u1"))
+        self.assertTrue(self.signal.exists())
+        self.assertEqual(len(self.reset_calls()), 1)
+
+    def test_hook_now_version_adds_the_tag(self):
+        self.event("Play", 0, ms="ms_now", pos=0)
+        self.event("Stop", 10.2)
+        self.assertEqual(self.requests()[-1][1]["tags"], [5])
+        self.assertEqual(self.audits()[-1]["mode"], "now")
+
+    def test_hook_stop_with_cleared_playstate_back_at_3s_no_request(self):
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("Stop", 3)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.audits()[-1]["decision"], "tv: stopped early")
+        self.assertFalse(self.signal.exists())
+        self.assertEqual(len(self.reset_calls()), 1)
+
+    def test_hook_pause_time_not_counted(self):
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("Pause", 4, ms="ms_night", pos=4 * SEC, paused=True)
+        self.event("Resume", 60, ms="ms_night", pos=4 * SEC)
+        self.event("Stop", 63)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.audits()[-1]["decision"], "tv: stopped early")
+
+    def test_hook_pause_without_position_keeps_the_estimate(self):
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("Pause", 4, ms="ms_night", pos=None, paused=True)
+        self.event("Resume", 60, ms="ms_night", pos=None)
+        self.event("Stop", 66.5)
+        self.assertEqual(len(self.requests()), 1)
+
+    def test_hook_progress_position_used(self):
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("Progress", 1, ms="ms_night", pos=int(9.5 * SEC))
+        self.event("Stop", 1.2)
+        self.assertEqual(len(self.requests()), 1)
+
+    def test_hook_stop_playstate_position_preferred(self):
+        self.event("Stop", 0, ms="ms_night", pos=int(9.9 * SEC))
+        self.assertEqual(len(self.requests()), 1)
+        self.assertEqual(self.audits()[-1]["mode"], "night")
+
+    def test_hook_late_session_end_does_not_request(self):
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("Stop", 300)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.audits()[-1]["decision"], "tv: stale stop")
+
+    def test_hook_old_tracked_records_are_dropped(self):
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("Play", 700, item="ph2", ms="ph2", pos=0)
+        self.assertEqual(list(self.core.tracked), [("s1", "ph2")])
+
+    def test_hook_ignores_played_flag(self):
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("Stop", 2, played=True)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.audits()[-1]["decision"], "tv: stopped early")
+
+    def test_hook_unknown_version_no_request(self):
+        self.event("Play", 0, ms="other", pos=0)
+        self.event("Stop", 10.5)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.audits()[-1]["decision"], "tv: unknown version")
+
+    def test_hook_sessions_are_tracked_apart(self):
+        self.event("Play", 0, ms="ms_night", pos=0, session="s1")
+        self.event("Play", 8, ms="ms_night", pos=0, session="s2")
+        self.event("Stop", 10.5, session="s2")
+        self.assertEqual(self.requests(), [])
+
+    def test_hook_not_requestable_item_resets_only(self):
+        self.event("Play", 0, item="ph2", ms="ph2", pos=0)
+        self.event("Stop", 10.5, item="ph2")
+        self.assertEqual((self.requests(), self.audits()), ([], []))
+        self.assertEqual(len(self.reset_calls(item="ph2")), 1)
+
+    def test_hook_reset_error_is_logged_by_type_only(self):
+        def boom(m, p, b=None):
+            raise app.urllib.error.URLError("http://jellyfin:8096/secret")
+        self.core.jellyfin_admin = boom
+        self.event("Play", 0, ms="ms_night", pos=0)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.event("Stop", 10.5)[0], 204)
+        self.assertIn("URLError", out.getvalue())
+        self.assertNotIn("secret", out.getvalue())
+        self.assertEqual(len(self.requests()), 1)
+
+    def test_hook_disabled_user_refused(self):
+        self.event("Play", 0, ms="ms_night", pos=0, disabled=True)
+        self.event("Stop", 10.5, disabled=True)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.audits()[-1]["decision"], "disabled user")
+        self.assertEqual(len(self.reset_calls()), 1)
+
+    def test_hook_limits_shared_with_web(self):
+        uid = "70d44a367988405d8792444c1c716d9a"
+        for _ in range(10):
+            self.assertEqual(self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"})[0], 200)
+            self.core.hits.clear()
+        self.event("Play", 0, ms="ms_night", pos=0, user="70d44a36-7988-405d-8792-444c1c716d9a")
+        self.event("Stop", 10.5, user="70d44a36-7988-405d-8792-444c1c716d9a")
+        self.assertEqual(len(self.requests()), 10)
+        a = self.audits()[-1]
+        self.assertEqual((a["decision"], a["userId"], a["via"]), ("refused: user limit", uid, "tv"))
+
+    def test_hook_dry_flag_audits_without_seerr_post(self):
+        self.dry.touch()
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("Stop", 10.5)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.audits()[-1]["decision"], "dry-run: requestable")
+        self.assertEqual(self.core.overview("u1")[0], 10)
+        self.assertFalse(self.signal.exists())
+        self.assertEqual(len(self.reset_calls()), 1)
+
+    def test_hook_dry_flag_still_audits_owned(self):
+        self.dry.touch()
+        self.seerr.media["movie/101"] = {"status": 5, "requests": []}
+        self.event("Stop", 0, ms="ms_night", pos=int(9.9 * SEC))
+        self.assertEqual(self.audits()[-1]["decision"], "refused: owned")
+
+    def test_public_listener_has_no_hook_route(self):
+        self.assertEqual(self.core.handle("POST", "/hook/" + SECRET, {"Content-Type": "application/json"}, b"{}")[0], 404)
+        self.assertEqual(self.core.handle("POST", "/hss-popular/hook/" + SECRET, {"Content-Type": "application/json"}, b"{}")[0], 404)
+
+
+class HookServer(unittest.TestCase):
+    def setUp(self):
+        self.seen = []
+        app.HookHandler.core = type("C", (), {"hook": lambda s, p, h, b: self.seen.append((p, len(b))) or (204, {})})()
+        self.srv = app.make_hook_server(("127.0.0.1", 0))
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.port = self.srv.server_address[1]
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+
+    def send(self, raw):
+        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
+            s.sendall(raw)
+            out = b""
+            while chunk := s.recv(4096):
+                out += chunk
+            return out.decode(errors="replace")
+
+    def test_post_reaches_the_hook_and_the_path_is_never_logged(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            first = self.send(b"POST /hook/" + SECRET.encode() + b" HTTP/1.0\r\nContent-Length: 2\r\n\r\n{}")
+            other = self.send(b"GET /hook/" + SECRET.encode() + b" HTTP/1.0\r\n\r\n")
+            big = self.send(f"POST /hook/{SECRET} HTTP/1.0\r\nContent-Length: {app.MAX_HOOK_BODY + 5}\r\n\r\n".encode())
+        self.assertIn(" 204 ", first.split("\r\n")[0])
+        self.assertNotIn(" 2", other.split("\r\n")[0][8:12])
+        self.assertIn(" 413 ", big.split("\r\n")[0])
+        self.assertEqual(self.seen, [("/hook/" + SECRET, 2)])
+        self.assertNotIn(SECRET, out.getvalue())
+
+    def test_four_workers(self):
+        self.assertEqual(self.srv.pool._max_workers, 4)
 
 
 if __name__ == "__main__":

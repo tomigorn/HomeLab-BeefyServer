@@ -65,7 +65,9 @@ services:
 # Request backend of "Currently popular" (README): checks the caller with Jellyfin
 # (/Users/Me, their own token) and requests only titles of the current published
 # lists in Seerr. fastpi Traefik routes jellyfin.holy-grail.ch/hss-popular/ here;
-# the published port only answers fastpi (DOCKER-USER guard).
+# the published port only answers fastpi (DOCKER-USER guard). TV requests: the
+# Webhooks plugin posts playback events to jellyfin-popular:8098/hook/<secret>,
+# on the jellyfin network only (not published).
   popular:
     image: python:3.15.2-alpine3.24
     container_name: jellyfin-popular
@@ -84,6 +86,10 @@ services:
       - POP_LIMIT=${POPULAR_LIMIT}
       - POP_DAYS=${POPULAR_DAYS}
       - POP_DAILY_MAX=${POPULAR_DAILY_MAX}
+      - POP_HOOK_PORT=${POPULAR_HOOK_PORT}
+      - POP_HOOK_SECRET_FILE=/run/secrets/popular/hook.secret
+      - POP_JELLYFIN_KEY_FILE=/run/secrets/popular/jellyfin.apikey
+      - POP_SIGNAL=/signal/requested
     volumes:
       - ./popular:/app:ro
       - ./secrets/popular:/run/secrets/popular:ro
@@ -93,6 +99,8 @@ services:
       - ${APPDATA_ROOT}/jellyfin-popular-state:/state
       # request-state.json of the night run (badges)
       - ${APPDATA_ROOT}/indexer-bar:/indexer-bar:ro
+      # requested: touched after a TV request, starts jellyfin-trending.path
+      - ${APPDATA_ROOT}/jellyfin-popular-signal:/signal
     ports:
       - "${POPULAR_PORT}:8097"
     networks:

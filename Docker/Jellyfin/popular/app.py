@@ -3,7 +3,8 @@ POST /hss-popular/request {"id": <opaque list entry id>, "mode": "night" | "now"
 Details: only ids of the sidecars details.json (popular.py) and coming.json (upcoming-popularity.py), never a TMDB id, so it is no open TMDB proxy; those ids are never requestable.
 The caller is checked with Jellyfin (/Users/Me with their own token, disabled = refused); only entries of the current allow-list (scripts/popular.py) with a found release can be requested, nothing free-form.
 The request goes to Seerr with its API key as the caller's linked Seerr user, else as the service user "jellyfin-popular". Every decision of a signed-in caller is written to the audit log (rotated);
-unauthenticated and wrong-origin hits are only counted. Limits are counted in a small SQLite file next to the log."""
+unauthenticated and wrong-origin hits are only counted. Limits are counted in a small SQLite file next to the log.
+TV requests: a second listener on :8098 (internal network only, not published) takes Jellyfin Webhooks plugin events at POST /hook/<secret>. A Stop of a trending placeholder (trending-index.json of scripts/trending.py) played to its end (runtime - 2 s .. runtime + 30 s, from the Stop position or the tracked Play/Progress position plus unpaused time) requests the allow-list entry as the event's user in the mode of the played version, with the same limits, audit log and Seerr code; the placeholder's Played/position is reset for that user after every Stop. The flag file /state/hook-dry-run turns TV requests into checks."""
 import collections
 import concurrent.futures
 import contextlib
@@ -30,6 +31,10 @@ DETAILS_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 AUTH_RE = re.compile(r'Token="([^"]*)"')
 ALLOWED_KEYS = {"id", "mode", "check"}
 MAX_BODY = 2048
+MAX_HOOK_BODY = 1 << 20
+TICKS = 10_000_000
+TRACK_FOR = datetime.timedelta(minutes=10)
+HOOK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 STATE_FRESH = datetime.timedelta(minutes=10)
 AUDIT_MAX_BYTES = 1 << 20
 AUDIT_KEEP = 3
@@ -45,13 +50,17 @@ class Unauthorized(Exception):
 
 class Config:
     def __init__(self, allow_file, audit_file, request_state, origins, limit=10, days=7, daily_max=30, rate_per_min=10, list_max_age_days=9, tz="Europe/Zurich", state_db=None, audit_max_bytes=AUDIT_MAX_BYTES,
-                 details_files=None, details_per_min=60):
+                 details_files=None, details_per_min=60, index_file=None, hook_secret=None, signal_file=None, dry_flag=None):
         self.allow_file, self.audit_file, self.request_state = pathlib.Path(allow_file), pathlib.Path(audit_file), pathlib.Path(request_state)
         self.details_files = [pathlib.Path(f) for f in details_files] if details_files else [self.allow_file.with_name("details.json"), self.allow_file.with_name("coming.json")]
         self.details_per_min = details_per_min
         self.state_db = pathlib.Path(state_db) if state_db else self.audit_file.with_name("state.db")
         self.origins, self.limit, self.days, self.daily_max, self.rate_per_min, self.list_max_age = origins, limit, days, daily_max, rate_per_min, datetime.timedelta(days=list_max_age_days)
         self.tz, self.audit_max_bytes = zoneinfo.ZoneInfo(tz), audit_max_bytes
+        self.index_file = pathlib.Path(index_file) if index_file else self.allow_file.with_name("trending-index.json")
+        self.hook_secret = hook_secret or None
+        self.signal_file = pathlib.Path(signal_file) if signal_file else None
+        self.dry_flag = pathlib.Path(dry_flag) if dry_flag else self.audit_file.with_name("hook-dry-run")
 
 
 def seerr_status(kind, season, media):
@@ -95,8 +104,9 @@ def badge(kind, tmdb, rs, now):
 
 
 class Core:
-    def __init__(self, cfg, seerr, jellyfin, clock=None):
-        self.cfg, self.seerr, self.jellyfin = cfg, seerr, jellyfin
+    def __init__(self, cfg, seerr, jellyfin, clock=None, jellyfin_admin=None):
+        self.cfg, self.seerr, self.jellyfin, self.jellyfin_admin = cfg, seerr, jellyfin, jellyfin_admin
+        self.tracked = {}
         self.clock = clock or (lambda: datetime.datetime.now(datetime.timezone.utc))
         # Short critical sections only; Seerr and Jellyfin calls run outside, under the caller's own lock.
         self.lock = threading.Lock()
@@ -476,16 +486,151 @@ class Core:
             try:
                 created = self.seerr("POST", "/api/v1/request", payload, user=sid)
             except urllib.error.HTTPError as e:
-                self.audit(**log, decision=f"seerr refused: HTTP {e.code}", seerrUser=sid, via=via)
+                self.audit(**log, decision=f"seerr refused: HTTP {e.code}", **self.who(log, sid, via))
                 return 502, {"error": "Seerr refused the request"}
             except (OSError, ValueError) as e:
-                self.audit(**log, decision=f"seerr error: {type(e).__name__}", seerrUser=sid, via=via)
+                self.audit(**log, decision=f"seerr error: {type(e).__name__}", **self.who(log, sid, via))
                 return 502, {"error": "Seerr did not answer"}
             ok = True
         finally:
             self.settle(rid, ok)
-        self.audit(**log, decision="requested", seerrUser=sid, via=via, requestId=(created or {}).get("id"))
+        self.audit(**log, decision="requested", requestId=(created or {}).get("id"), **self.who(log, sid, via))
         return 200, {"ok": True, "state": "requested", "left": left - 1}
+
+    @staticmethod
+    def who(log, sid, via):
+        return {"seerrUser": sid, "seerrVia" if "via" in log else "via": via}
+
+    # --- TV playback hook -------------------------------------------------
+    def trending_index(self):
+        path = self.cfg.index_file
+        try:
+            st = path.stat()
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return {}
+        with self.lock:
+            hit = self.cache.get("index")
+        if hit and hit[0] == sig:
+            return hit[1]
+        try:
+            data = json.loads(path.read_text())
+            items = data["items"] if isinstance(data.get("items"), dict) else {}
+            data = {"runtime": int(data.get("runtimeTicks") or 0), "items": items}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            data = {"runtime": 0, "items": {}}
+        with self.lock:
+            self.cache["index"] = (sig, data)
+        return data
+
+    @staticmethod
+    def hook_id(value):
+        v = str(value or "").replace("-", "").lower()
+        return v if HOOK_ID_RE.match(v) else None
+
+    @staticmethod
+    def ticks(value):
+        return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+    def estimate(self, rec, now):
+        if rec is None:
+            return None
+        return rec["pos"] if rec["paused"] else rec["pos"] + int((now - rec["at"]).total_seconds() * TICKS)
+
+    def hook(self, path, headers, body):
+        m = re.fullmatch(r"/hook/([^/?#]*)", path.partition("?")[0])
+        if not m:
+            return 404, {"error": "not found"}
+        if not self.cfg.hook_secret or not secrets.compare_digest(m.group(1).encode(), self.cfg.hook_secret.encode()):
+            self.reject("bad hook secret")
+            return 403, {"error": "forbidden"}
+        if len(body) > MAX_HOOK_BODY:
+            return 413, {"error": "too large"}
+        try:
+            p = json.loads(body)
+        except ValueError:
+            return 400, {"error": "bad JSON"}
+        if not isinstance(p, dict):
+            return 400, {"error": "bad JSON"}
+        item = p.get("Item") if isinstance(p.get("Item"), dict) else {}
+        iid = self.hook_id(item.get("Id"))
+        idx = self.trending_index()
+        rec = idx["items"].get(iid) if iid else None
+        if not isinstance(rec, dict):
+            return 204, {}
+        sess = p.get("Session") if isinstance(p.get("Session"), dict) else {}
+        user = p.get("User") if isinstance(p.get("User"), dict) else {}
+        ps = sess.get("PlayState") if isinstance(sess.get("PlayState"), dict) else {}
+        uid = self.hook_id(user.get("Id"))
+        event = p.get("Event")
+        if not uid or event not in ("Play", "Progress", "Pause", "Resume", "Stop"):
+            return 204, {}
+        now = self.clock()
+        key = (str(sess.get("Id") or ""), iid)
+        ms, pos = self.hook_id(ps.get("MediaSourceId")), self.ticks(ps.get("PositionTicks"))
+        with self.lock:
+            for k in [k for k, v in self.tracked.items() if now - v["at"] > TRACK_FOR]:
+                del self.tracked[k]
+            old = self.tracked.get(key)
+            if event != "Stop":
+                paused = event == "Pause" or (event != "Resume" and bool(ps.get("IsPaused")))
+                if event == "Play":
+                    est = pos or 0
+                else:
+                    est = pos if pos is not None else (self.estimate(old, now) or 0)
+                self.tracked[key] = {"ms": ms or (old or {}).get("ms"), "pos": est, "at": now, "paused": paused}
+                return 204, {}
+            self.tracked.pop(key, None)
+        try:
+            self.tv_stop(rec, idx, item, user, uid, sess, ms or (old or {}).get("ms"), pos if pos is not None else self.estimate(old, now))
+        finally:
+            self.reset(iid, uid)
+        return 204, {}
+
+    def tv_stop(self, rec, idx, item, user, uid, sess, ms, est):
+        x = rec.get("x")
+        if not x:
+            return
+        mode = (rec.get("modes") or {}).get(ms) if ms else None
+        name = str(user.get("Name") or "")
+        log = {"user": name, "userId": uid, "entry": str(x)[:64], "mode": mode, "via": "tv", "client": str(sess.get("Client") or "")[:40]}
+        policy = user.get("Policy") if isinstance(user.get("Policy"), dict) else {}
+        if bool(policy.get("IsDisabled")):
+            self.audit(**log, decision="disabled user")
+            return
+        if mode not in ("now", "night"):
+            self.audit(**log, decision="tv: unknown version")
+            return
+        runtime = self.ticks(item.get("RunTimeTicks")) or idx["runtime"]
+        if est is None or not runtime or est < runtime - 2 * TICKS:
+            self.audit(**log, decision="tv: stopped early")
+            return
+        if est > runtime + 30 * TICKS:
+            self.audit(**log, decision="tv: stale stop")
+            return
+        entry = self.allow().get(x)
+        if not entry:
+            self.audit(**log, decision="unknown entry")
+            return
+        log.update(title=entry["title"], ref=entry["ref"])
+        dry = self.cfg.dry_flag.exists()
+        with self.user_lock(uid):
+            code, _ = self.send({"id": uid, "name": name}, entry, mode, dry, log)
+        if dry and code == 200:
+            self.audit(**log, decision="dry-run: requestable")
+        elif code == 200 and self.cfg.signal_file:
+            try:
+                self.cfg.signal_file.touch()
+            except OSError as e:
+                print(f"signal failed {type(e).__name__}", flush=True)
+
+    def reset(self, iid, uid):
+        if not self.jellyfin_admin:
+            return
+        try:
+            self.jellyfin_admin("POST", f"/UserItems/{iid}/UserData?userId={uid}", {"Played": False, "PlaybackPositionTicks": 0})
+        except Exception as e:  # noqa: BLE001
+            print(f"reset failed {type(e).__name__}", flush=True)
 
 
 # --- production wiring ------------------------------------------------------
@@ -517,19 +662,32 @@ def make_core():
             h["X-Api-User"] = str(user)
         return http_json(seerr_url + path, h, method, body)
 
+    jf_key = secret_file(env.get("POP_JELLYFIN_KEY_FILE", "/run/secrets/popular/jellyfin.apikey"))
+
+    def jellyfin_admin(method, path, body=None):
+        return http_json(jf + path, {"Authorization": f'MediaBrowser Client="hss-popular", Device="hss-popular", DeviceId="hss-popular", Version="1", Token="{jf_key}"'}, method, body)
+
     cfg = Config(allow_file=env.get("POP_ALLOW", "/data/allow.json"), audit_file=env.get("POP_AUDIT", "/state/audit.jsonl"),
                  request_state=env.get("POP_REQUEST_STATE", "/indexer-bar/request-state.json"), origins=[o for o in env.get("POP_ORIGINS", "").split(",") if o],
-                 limit=int(env.get("POP_LIMIT", "10")), days=int(env.get("POP_DAYS", "7")), daily_max=int(env.get("POP_DAILY_MAX", "30")), tz=env.get("TZ") or "Europe/Zurich")
-    return Core(cfg, seerr, jellyfin)
+                 limit=int(env.get("POP_LIMIT", "10")), days=int(env.get("POP_DAYS", "7")), daily_max=int(env.get("POP_DAILY_MAX", "30")), tz=env.get("TZ") or "Europe/Zurich",
+                 hook_secret=secret_file(env.get("POP_HOOK_SECRET_FILE", "/run/secrets/popular/hook.secret")), signal_file=env.get("POP_SIGNAL", "/signal/requested"))
+    return Core(cfg, seerr, jellyfin, jellyfin_admin=jellyfin_admin if jf_key else None)
 
 
-def body_length(value):
-    """Content-Length as an int (0 when absent), MAX_BODY + 1 for anything larger, None when invalid."""
+def secret_file(path):
+    try:
+        return pathlib.Path(path).read_text().strip() or None
+    except OSError:
+        return None
+
+
+def body_length(value, cap=MAX_BODY):
+    """Content-Length as an int (0 when absent), cap + 1 for anything larger, None when invalid."""
     if value is None or value == "":
         return 0
     if not re.fullmatch(r"[0-9]{1,12}", value.strip()):
         return None
-    return min(int(value), MAX_BODY + 1)
+    return min(int(value), cap + 1)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -572,6 +730,49 @@ class Handler(http.server.BaseHTTPRequestHandler):
         print("%s %s" % (getattr(self, "command", None) or "-", fmt % args), flush=True)
 
 
+class HookHandler(Handler):
+    """POST /hook/<secret> only. The path holds the secret, so it is never logged; 204 answers are not logged at all."""
+    server_version = "hss-popular-hook"
+
+    def _go(self, method):
+        n = body_length(self.headers.get("Content-Length"), MAX_HOOK_BODY)
+        if n is None:
+            code, data = 400, {"error": "bad length"}
+        elif n > MAX_HOOK_BODY:
+            self.close_connection = True
+            code, data = 413, {"error": "too large"}
+        else:
+            try:
+                body = self.rfile.read(n) if n else b""
+                code, data = self.core.hook(self.path, self.headers, body)
+            except TimeoutError:
+                self.close_connection = True
+                return
+            except Exception as e:  # noqa: BLE001
+                print(f"hook error {type(e).__name__}", flush=True)
+                code, data = 500, {"error": "internal"}
+        raw = b"" if code == 204 else json.dumps(data).encode()
+        self.send_response(code)
+        if raw:
+            self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_GET(self):
+        self.send_error(405)
+
+    def log_request(self, code="-", size="-"):
+        if str(getattr(code, "value", code)) != "204":
+            print(f"hook {getattr(code, 'value', code)}", flush=True)
+
+    def log_error(self, fmt, *args):
+        print("hook error", flush=True)
+
+    def log_message(self, fmt, *args):
+        print("hook", flush=True)
+
+
 class Server(http.server.HTTPServer):
     """A fixed pool of workers (pids_limit 64) and a bounded queue: connections beyond it are closed at once instead of starting threads."""
     request_queue_size = 64
@@ -605,8 +806,13 @@ def make_server(addr=("0.0.0.0", 8097), workers=16, backlog=32):
     return Server(addr, Handler, workers, backlog)
 
 
+def make_hook_server(addr=("0.0.0.0", 8098), workers=4, backlog=8):
+    return Server(addr, HookHandler, workers, backlog)
+
+
 def main():
-    Handler.core = make_core()
+    Handler.core = HookHandler.core = make_core()
+    threading.Thread(target=make_hook_server(("0.0.0.0", int(os.environ.get("POP_HOOK_PORT", "8098")))).serve_forever, daemon=True).start()
     make_server().serve_forever()
 
 
