@@ -9,8 +9,8 @@ services:
 # library it serves should outlive any particular download stack, and a restart
 # of the downloaders has no business interrupting playback.
   jellyfin:
-    build: .   # lscr.io/linuxserver/jellyfin:12.2ubu2604-ls55 + the Intel OpenCL runtime, see Dockerfile
-    image: jellyfin-local:12.2ubu2604-ls55
+    build: .   # lscr.io/linuxserver/jellyfin:12.4ubu2604-ls57 + the Intel OpenCL runtime, see Dockerfile
+    image: jellyfin-local:12.4ubu2604-ls57
     container_name: jellyfin
     restart: unless-stopped
     # This image has no non-root mode (its service always switches user), so s6 starts as root
