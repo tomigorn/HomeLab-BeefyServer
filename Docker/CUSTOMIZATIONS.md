@@ -170,6 +170,8 @@ Only in `post-update-check.sh all` (no compose project).
 
 | Customization | Where | Reapply | Verify | Update can break |
 |---|---|---|---|---|
+| unattended-upgrades also from `-updates`, never reboots | `Server/11-OS-Updates/52unattended-upgrades-local` | `sudo install -m 0644` to `/etc/apt/apt.conf.d/` | `host.os-updates`: → installed false | a release upgrade renames the conffiles |
+| Headless: `multi-user.target`, gdm disabled, cloud-init disabled | host (`Server/11-OS-Updates.md`) | `systemctl set-default multi-user.target; systemctl disable gdm; touch /etc/cloud/cloud-init.disabled` | `host.headless`: → multi-user.target disabled disabled | a desktop meta-package upgrade re-enabling gdm |
 | Memory limit on every container (`_global/docs/container-hardening.md`, Memory limits) | each compose `mem_limit` | `docker compose up -d`, or live `docker update --memory X --memory-swap 2X` | `host.mem-limits`: → none | a new service without `mem_limit` |
 | DOCKER-USER: containers cannot reach the LAN | `_global/scripts/docker-user-guard.sh` | `sudo docker-user-guard.sh --persist` | `host.docker-user-lan`: sonarr → fastpi:22 blocked | docker restart with stale rules |
 | BEEFY-INPUT: containers cannot reach the host | docker-user-guard.sh | same | `host.beefy-input`: sonarr → bridge gateway :22 blocked | |

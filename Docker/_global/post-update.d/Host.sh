@@ -35,3 +35,5 @@ EOF
 }
 check host.root-copies "^ok$" "$(root_copies)"
 check host.mem-limits '^none$' "$(docker ps --format '{{.Names}}' | while read -r c; do [ "$(docker inspect -f '{{.HostConfig.Memory}}' "$c")" = 0 ] && echo "$c"; done | xargs | sed 's/^$/none/')"
+check host.os-updates '^installed false$' "$(cmp -s "$DIR/../../../Server/11-OS-Updates/52unattended-upgrades-local" /etc/apt/apt.conf.d/52unattended-upgrades-local && echo installed || echo differs) $(apt-config dump Unattended-Upgrade::Automatic-Reboot | sed -n 's/.*"\(.*\)";/\1/p')"
+check host.headless '^multi-user.target disabled disabled$' "$(systemctl get-default) $(systemctl is-enabled gdm.service 2>&1) $(test -e /etc/cloud/cloud-init.disabled && echo disabled || echo enabled)"
