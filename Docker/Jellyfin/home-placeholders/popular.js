@@ -14,6 +14,7 @@
       limit: "Limit reached: {n} requests per {d} days", left: "{n} requests left this week", failed: "Request failed", season: "S",
       night: "🌙 Tonight", searching: "🔍 Searching", unreleased: "📅 Not released yet", downloading: "⬇️ Downloading", requested: "✓ Requested", declined: "Declined",
       empty: "Nothing on the list right now.", found: "available",
+      none: "No release yet", checked: "checked {d} · rechecked daily", unchecked: "not checked yet · checked tonight", unknown: "Title not identified",
       source: "Sources: Netflix Top 10 Switzerland (weekly), TMDB popularity, where to stream in Switzerland by JustWatch (via TMDB). Only titles in the library or with a release found are shown."
     },
     de: {
@@ -22,6 +23,7 @@
       limit: "Limite erreicht: {n} Anfragen pro {d} Tage", left: "Noch {n} Anfragen diese Woche", failed: "Anfrage fehlgeschlagen", season: "S",
       night: "🌙 Heute Nacht", searching: "🔍 Wird gesucht", unreleased: "📅 Noch nicht erschienen", downloading: "⬇️ Lädt herunter", requested: "✓ Angefragt", declined: "Abgelehnt",
       empty: "Gerade nichts auf der Liste.", found: "verfügbar",
+      none: "Noch kein Release", checked: "geprüft {d} · täglich neu geprüft", unchecked: "noch nicht geprüft · wird heute Nacht geprüft", unknown: "Titel nicht erkannt",
       source: "Quellen: Netflix Top 10 Schweiz (wöchentlich), TMDB-Beliebtheit, Streaming-Angebot in der Schweiz von JustWatch (über TMDB). Nur Titel aus der Bibliothek oder mit gefundenem Release."
     }
   };
@@ -59,15 +61,20 @@
     return out;
   }
 
-  // Titles the user has (their own library view) or that can be requested; owned elsewhere but not visible to this user = hidden.
+  // Every rank: the user's own titles, requestable ones and those without a release yet; owned but not in this user's library view = hidden.
   function visible(items, lib) {
     var out = [];
     for (var i = 0; i < (items || []).length; i++) {
       var it = items[i];
-      var jf = (lib || {})[it.k + "/" + it.id] || null;
-      if (jf || (it.f && it.x)) out.push({ item: it, jf: jf });
+      var jf = it.id ? (lib || {})[it.k + "/" + it.id] || null : null;
+      if (jf || (it.f && it.x) || (it.n && !it.o)) out.push({ item: it, jf: jf });
     }
     return out;
+  }
+
+  function dayOf(iso, lang) {
+    var d = new Date(iso + "T12:00:00");
+    return isNaN(d.getTime()) ? iso : d.toLocaleDateString(langOf(lang) === "de" ? "de-CH" : "en-GB", { day: "numeric", month: "short" });
   }
 
   function el(doc, tag, cls, text) {
@@ -86,11 +93,11 @@
       c = el(doc, "a", "hssTopCard");
       c.setAttribute("href", "#/details?id=" + encodeURIComponent(entry.jf.id) + "&serverId=" + encodeURIComponent(entry.jf.server));
     } else {
-      c = el(doc, "div", "hssTopCard hssTopDim");
+      c = el(doc, "div", "hssTopCard hssTopDim" + (it.x ? "" : " hssTopNone"));
     }
     c.setAttribute("aria-label", it.r + ". " + name);
     c.setAttribute("title", name + (it.y ? " (" + it.y + ")" : ""));
-    var rank = el(doc, "div", "hssTopRank", String(it.r));
+    var rank = el(doc, "div", String(it.r).length > 1 ? "hssTopRank hssTopRank-2" : "hssTopRank", String(it.r));
     rank.setAttribute("aria-hidden", "true");
     c.appendChild(rank);
     var poster = el(doc, "div", "hssTopPoster");
@@ -100,9 +107,22 @@
     if (it.k === "tv" && it.s) poster.appendChild(el(doc, "div", "hssTopSeason", tr(lang, "season") + it.s));
     c.appendChild(poster);
     if (entry.jf) return c;
-    poster.appendChild(el(doc, "div", "hssTopBadge", it.f + " " + tr(lang, "found")));
     var actions = el(doc, "div", "hssTopActions");
     c.appendChild(actions);
+    if (!it.x) {
+      poster.appendChild(el(doc, "div", "hssTopBadge", tr(lang, "none")));
+      ["night", "now"].forEach(function (mode) {
+        var off = el(doc, "button", "hssTopBtn hssTopBtn-" + mode, tr(lang, mode === "night" ? "tonight" : "now"));
+        off.setAttribute("type", "button");
+        off.disabled = true;
+        actions.appendChild(off);
+      });
+      actions.appendChild(el(doc, "div", "hssTopHint", it.u ? tr(lang, "unknown") : it.c ? tr(lang, "checked", { d: dayOf(it.c, lang) }) : tr(lang, "unchecked")));
+      return c;
+    }
+    var res = el(doc, "div", "hssTopBadge", it.f);
+    res.setAttribute("title", it.f + " " + tr(lang, "found"));
+    poster.appendChild(res);
     var st = states && states.entries ? states.entries[it.x] : null;
     if (st && st.state !== "requestable") {
       var label = st.state === "requested" ? tr(lang, st.badge || "requested") : st.state === "declined" ? tr(lang, "declined") : tr(lang, "requested");
@@ -131,10 +151,35 @@
     }).join(",") + "|" + (states ? states.left : "");
   }
 
+  // Card = rank box 0.75 p + poster p, the poster covering 0.25 p of the rank (#10: 0.85 p, 0.05 p): ten cards = 15.3 p + 9 gaps.
+  var FIT_MIN_VIEWPORT = 1280;
+  var FIT_MIN_POSTER = 90;
+  function fitPoster(width, gap, viewport) {
+    if (!width || viewport < FIT_MIN_VIEWPORT) return null;
+    var p = Math.floor((width - 9 * gap) / 15.3);
+    return p >= FIT_MIN_POSTER ? p : null;
+  }
+
+  function fitRow(list) {
+    var win = list.ownerDocument.defaultView;
+    if (!win || !win.getComputedStyle) return;
+    var cs = win.getComputedStyle(list);
+    var width = list.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    var p = fitPoster(width, parseFloat(cs.columnGap) || 0, win.innerWidth);
+    if (p) list.style.setProperty("--hss-p", p + "px");
+    else list.style.removeProperty("--hss-p");
+  }
+
+  function fitAll(root) {
+    var lists = root.querySelectorAll(".hssTopScroll");
+    for (var i = 0; i < lists.length; i++) fitRow(lists[i]);
+  }
+
   function fillRow(sec, entries, lang, tv, states) {
     var list = sec.querySelector(".itemsContainer");
     while (list.firstChild) list.removeChild(list.firstChild);
     for (var i = 0; i < entries.length; i++) list.appendChild(card(sec.ownerDocument, entries[i], lang, tv, states));
+    if (sec.isConnected) fitRow(list);
   }
 
   var ROW = '<div class="sectionTitleContainer sectionTitleContainer-cards padded-left"><h2 class="sectionTitle sectionTitle-cards"></h2></div>' +
@@ -275,13 +320,16 @@
   }
 
   var CSS = [
-    ".hssTopScroll { display: flex; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; gap: 1.6em; padding: 0.6em 3.3% 1.6em max(3.3%, 1.2em); scroll-snap-type: x proximity; scrollbar-width: thin; }",
-    ".hssTopCard { --hss-p: clamp(7.2em, 10.5vw, 11.5em); position: relative; flex: 0 0 auto; display: grid; grid-template-columns: auto var(--hss-p); align-items: end; color: inherit; text-decoration: none; scroll-snap-align: start; outline: none; }",
-    ".hssTopRank { grid-column: 1; grid-row: 1; font: 900 calc(var(--hss-p) * 1.32)/0.78 'Arial Black', 'Helvetica Neue', Arial, sans-serif; letter-spacing: -0.09em; color: transparent; -webkit-text-stroke: 0.028em rgba(255, 255, 255, 0.78); margin-right: -0.2em; padding-left: 0.06em; position: relative; z-index: 0; user-select: none; }",
+    ".hssTopScroll { --hss-p: 7em; display: flex; flex-wrap: nowrap; align-items: flex-start; overflow-x: auto; overflow-y: hidden; gap: 0.9em; padding: 0.6em 3.3% 1.6em max(3.3%, 1.2em); scroll-snap-type: x proximity; scrollbar-width: thin; }",
+    ".hssTopCard { position: relative; flex: 0 0 auto; display: grid; grid-template-columns: auto var(--hss-p); align-items: end; color: inherit; text-decoration: none; scroll-snap-align: start; outline: none; }",
+    ".hssTopRank { grid-column: 1; grid-row: 1; width: calc(var(--hss-p) * 0.75); margin-right: calc(var(--hss-p) * -0.25); text-align: right; white-space: nowrap; font: 900 calc(var(--hss-p) * 1.15)/0.8 'Arial Black', 'Helvetica Neue', Arial, sans-serif; letter-spacing: -0.06em; color: transparent; -webkit-text-stroke: 0.03em rgba(255, 255, 255, 0.78); position: relative; z-index: 0; user-select: none; }",
     ".hssTopPoster { grid-column: 2; grid-row: 1; position: relative; z-index: 1; width: var(--hss-p); aspect-ratio: 2 / 3; border-radius: 0.35em; background: #22252c center / cover no-repeat; box-shadow: -0.4em 0 1em rgba(0, 0, 0, 0.55); overflow: hidden; transition: transform 0.15s; }",
     ".hssTopCard:hover .hssTopPoster, .hssTopCard:focus .hssTopPoster, .hssTopCard:focus-within .hssTopPoster { transform: scale(1.04); box-shadow: 0 0 0 0.15em #00a4dc, -0.4em 0 1em rgba(0, 0, 0, 0.55); }",
     ".hssTopDim .hssTopPoster { filter: saturate(0.55) brightness(0.62); }",
     ".hssTopDim:hover .hssTopPoster, .hssTopDim:focus-within .hssTopPoster { filter: saturate(0.8) brightness(0.85); }",
+    ".hssTopNone .hssTopPoster, .hssTopNone:hover .hssTopPoster { filter: grayscale(1) brightness(0.45); }",
+    ".hssTopNone .hssTopRank { -webkit-text-stroke-color: rgba(255, 255, 255, 0.4); }",
+    ".hssTopRank-2 { width: calc(var(--hss-p) * 0.85); margin-right: calc(var(--hss-p) * -0.05); font-size: calc(var(--hss-p) * 0.8); letter-spacing: -0.1em; }",
     ".hssTopBadge, .hssTopSeason { position: absolute; top: 0.45em; font-size: 0.72em; font-weight: 600; padding: 0.15em 0.5em; border-radius: 1em; background: rgba(0, 0, 0, 0.78); color: #fff; }",
     ".hssTopBadge { left: 0.45em; } .hssTopSeason { right: 0.45em; }",
     ".hssTopNoPoster { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 0.5em; font-weight: 700; }",
@@ -298,7 +346,7 @@
     ".hssPopularHead { display: flex; align-items: center; justify-content: space-between; }",
     ".hssPopularHead h1 { margin: 0.3em 0; font-size: 1.8em; }",
     ".hssPopularSource { margin-top: 2em; font-size: 0.8em; opacity: 0.55; }",
-    ".layout-tv .hssTopCard { --hss-p: 10em; } .layout-mobile .hssTopCard { --hss-p: 7em; }"
+    ".hssTopBtn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }"
   ].join("\n");
 
   function styles(doc) {
@@ -354,7 +402,8 @@
       if (!a) return;
       var containers = doc.querySelectorAll(".homeSectionsContainer");
       var live = [];
-      for (var i = 0; i < containers.length; i++) if (containers[i].querySelector(".verticalSection[data-page]")) live.push(containers[i]);
+      // Jellyfin keeps visited pages in the DOM: only the home page on screen, so other pages trigger no work and no requests.
+      for (var i = 0; i < containers.length; i++) if (!containers[i].closest(".hide") && containers[i].querySelector(".verticalSection[data-page]")) live.push(containers[i]);
       if (!live.length) return;
       loadLib(a).then(function (l) {
         live.forEach(function (c) { syncHome(c, data, l, lang(), states); });
@@ -370,6 +419,7 @@
       var at = Array.prototype.indexOf.call(page.querySelectorAll(sel), doc.activeElement);
       var next = buildPage(doc, data, lib, lang(), tv(), states);
       page.replaceWith(next);
+      fitAll(next);
       next.scrollTop = y;
       next.hssFrom = page.hssFrom;
       var again = next.querySelectorAll(sel);
@@ -384,7 +434,9 @@
       loadLib(a).then(function (l) {
         var page = buildPage(doc, data, l, lang(), tv(), states);
         page.hssFrom = from;
+        openedAt = win.location.href;
         doc.body.appendChild(page);
+        fitAll(page);
         if (tv()) { var f = page.querySelector("a.hssTopCard, .hssTopBtn"); if (f) f.focus(); }
         loadStates(a, false).then(repaintPage);
       });
@@ -447,6 +499,11 @@
       closePage(true);
     }, true);
     win.addEventListener("hashchange", function () { closePage(false); });
+    var resizing = null;
+    win.addEventListener("resize", function () {
+      if (resizing) win.clearTimeout(resizing);
+      resizing = win.setTimeout(function () { resizing = null; fitAll(doc); }, 200);
+    });
 
     // The data entry may load after this script: picked up on the next change.
     function register() {
@@ -456,8 +513,12 @@
       return true;
     }
 
+    // Jellyfin's router changes the hash with pushState (no hashchange event): a route change seen here closes the page.
+    var openedAt = null;
+
     function tick() {
       timer = null;
+      if (openedAt && openedAt !== win.location.href) { openedAt = null; closePage(false); }
       if (!register()) return;
       observer.disconnect();
       try {
@@ -480,7 +541,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { libraryMap: libraryMap, visible: visible, card: card, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
+    module.exports = { fitPoster: fitPoster, libraryMap: libraryMap, visible: visible, card: card, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {

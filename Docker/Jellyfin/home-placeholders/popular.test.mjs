@@ -8,6 +8,8 @@ const pp = createRequire(import.meta.url)("./popular.js");
 const OWNED = { k: "movie", id: 121, s: null, r: 1, y: 2003, t: { en: "The Return of the King", de: "Die Rückkehr des Königs" }, p: { en: "/rotk.jpg", de: "/rotk-de.jpg" }, o: true, f: null };
 const FOUND = { k: "tv", id: 202, s: 4, r: 2, y: 2023, t: { en: "The Diplomat", de: "Diplomatische Beziehungen" }, p: { en: "/d.jpg", de: "/d-de.jpg" }, o: false, f: "2160p", x: "tokTV" };
 const HIDDEN = { k: "movie", id: 303, s: null, r: 3, y: 2020, t: { en: "Owned elsewhere", de: "x" }, p: { en: "/x.jpg" }, o: true, f: null };
+const NONE = { k: "movie", id: 404, s: null, r: 4, y: 2026, t: { en: "No Release", de: "Kein Release" }, p: { en: "/n.jpg" }, o: false, f: null, n: true, c: "2026-10-21" };
+const UNKNOWN = { k: "tv", id: null, s: null, r: 5, y: null, t: { en: "Instadocs", de: "Instadocs" }, p: { en: null, de: null }, o: false, f: null, n: true, c: null, u: true };
 const DATA = { week: "2026-10-18", home: { shows: [FOUND], movies: [OWNED, HIDDEN] }, rows: [
   { id: "service-8", type: "service", name: { en: "Netflix", de: "Netflix" }, logo: "/nf.png", items: [OWNED, FOUND] },
   { id: "genre-horror", type: "genre", name: { en: "Horror", de: "Horror" }, logo: null, items: [HIDDEN] }
@@ -27,8 +29,7 @@ test("library map by TMDB id and type", () => {
 });
 
 test("a row shows titles the user has or that can be requested, nothing else", () => {
-  assert.deepEqual(pp.visible([OWNED, FOUND, HIDDEN], LIB).map((e) => [e.item.id, e.jf && e.jf.id]), [[121, "jf121"], [202, null]]);
-  assert.deepEqual(pp.visible([{ ...FOUND, x: undefined }], LIB), []);
+  assert.deepEqual(pp.visible([OWNED, FOUND, HIDDEN, NONE, UNKNOWN], LIB).map((e) => [e.item.r, e.jf && e.jf.id]), [[1, "jf121"], [2, null], [4, null], [5, null]]);
 });
 
 test("owned card links to the Jellyfin item, big outlined rank, German title", () => {
@@ -52,7 +53,8 @@ test("requestable card is dimmed and has the two buttons with the entry id", () 
   assert.deepEqual(b.map((x) => [x.getAttribute("data-hss-x"), x.getAttribute("data-hss-mode")]), [["tokTV", "night"], ["tokTV", "now"]]);
   assert.match(b[0].textContent, /🌙/);
   assert.match(b[1].textContent, /⚡/);
-  assert.match(card.querySelector(".hssTopBadge").textContent, /2160p/);
+  assert.equal(card.querySelector(".hssTopBadge").textContent, "2160p");
+  assert.match(card.querySelector(".hssTopBadge").getAttribute("title"), /available/);
   assert.match(card.querySelector(".hssTopSeason").textContent, /S4/);
 });
 
@@ -66,6 +68,39 @@ test("card state: requested shows the badge, limit reached disables the buttons"
   assert.match(c2.querySelector(".hssTopHint").textContent, /10.*7/);
   const c3 = pp.card(d, { item: FOUND, jf: null }, "en", false, { entries: { tokTV: { state: "owned" } }, left: 3 });
   assert.equal(c3.querySelector("button"), null);
+});
+
+test("no release yet: greyed out, badge with the check date, buttons disabled and without an entry id", () => {
+  const d = doc();
+  const c = pp.card(d, { item: NONE, jf: null }, "en", false, { entries: {}, left: 5 });
+  assert.ok(c.classList.contains("hssTopNone"));
+  assert.equal(c.querySelector(".hssTopBadge").textContent, "No release yet");
+  assert.match(c.querySelector(".hssTopHint").textContent, /checked 21 Oct · rechecked daily/);
+  const b = [...c.querySelectorAll("button")];
+  assert.equal(b.length, 2);
+  assert.ok(b.every((x) => x.disabled && !x.hasAttribute("data-hss-x")));
+  const de = pp.card(d, { item: NONE, jf: null }, "de", false, null);
+  assert.equal(de.querySelector(".hssTopBadge").textContent, "Noch kein Release");
+  assert.match(de.querySelector(".hssTopHint").textContent, /geprüft 21\. Okt\. · täglich neu geprüft/);
+  const u = pp.card(d, { item: UNKNOWN, jf: null }, "en", false, null);
+  assert.match(u.querySelector(".hssTopHint").textContent, /not identified/);
+  assert.equal(u.querySelector(".hssTopNoPoster").textContent, "Instadocs");
+});
+
+test("two-digit ranks get their own width so the poster does not hide the 0", () => {
+  const d = doc();
+  assert.ok(pp.card(d, { item: { ...OWNED, r: 10 }, jf: LIB["movie/121"] }, "en", false, null).querySelector(".hssTopRank").classList.contains("hssTopRank-2"));
+  assert.ok(!pp.card(d, { item: OWNED, jf: LIB["movie/121"] }, "en", false, null).querySelector(".hssTopRank").classList.contains("hssTopRank-2"));
+});
+
+test("ten cards fit the row width from 1280 px up, below that the row scrolls", () => {
+  const p = pp.fitPoster(1800, 14, 1920);
+  assert.ok(p > 100 && p < 120, String(p));
+  assert.ok(15.3 * p + 9 * 14 <= 1800);
+  assert.ok(pp.fitPoster(2400, 14, 2560) > p);
+  assert.equal(pp.fitPoster(1100, 14, 1200), null);
+  assert.equal(pp.fitPoster(1200, 14, 1280), null, "posters under 90 px: scroll instead");
+  assert.equal(pp.fitPoster(0, 14, 1920), null);
 });
 
 test("poster paths are checked before they reach CSS", () => {
