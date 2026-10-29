@@ -1,0 +1,9 @@
+[Unit]
+Description=Jellyfin trending sync after each request from a TV
+
+[Path]
+PathModified=/srv/appdata/jellyfin-popular-signal/requested
+Unit=jellyfin-trending.service
+
+[Install]
+WantedBy=default.target

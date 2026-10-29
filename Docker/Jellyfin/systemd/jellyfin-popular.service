@@ -4,5 +4,6 @@ Description=Jellyfin "Currently popular" lists: Netflix CH Top 10, TMDB populari
 [Service]
 Type=oneshot
 ExecStart=%h/Projects/Docker/Jellyfin/scripts/popular.py
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/trending.py
 Nice=10
 TimeoutStartSec=40min

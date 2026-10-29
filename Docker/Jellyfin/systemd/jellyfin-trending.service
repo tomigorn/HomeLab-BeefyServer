@@ -1,0 +1,8 @@
+[Unit]
+Description=Jellyfin trending sync: placeholder library, list collections and request index for the TV apps
+
+[Service]
+Type=oneshot
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/trending.py
+Nice=10
+TimeoutStartSec=20min
