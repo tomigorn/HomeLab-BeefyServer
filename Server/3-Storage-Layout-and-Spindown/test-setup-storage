@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Tests for setup-storage.sh provisioning guards against stub disk tools (nothing real is touched). Run: ./test-setup-storage
+set -uo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+SUT="$HERE/setup-storage.sh"
+PASS=0; FAIL=0
+ok()  { printf '  ok   %s\n' "$1"; PASS=$((PASS+1)); }
+bad() { printf '  FAIL %s %s\n' "$1" "${2:-}"; FAIL=$((FAIL+1)); }
+
+setup() {
+    T=$(mktemp -d); mkdir -p "$T/bin" "$T/by-id" "$T/dev" "$T/fs"
+    for d in hot hot2 cold; do : > "$T/dev/$d"; done
+    ln -s "$T/dev/hot" "$T/by-id/ata-SSD_HOTSERIAL"; ln -s "$T/dev/hot2" "$T/by-id/ata-SSD_HOT2SERIAL"; ln -s "$T/dev/cold" "$T/by-id/ata-HDD_COLDSERIAL"
+    for c in wipefs sgdisk dd partprobe udevadm mkfs.ext4 mkfs.xfs apt-get vgchange mount umount; do
+        printf '#!/usr/bin/env bash\necho "%s $*" >> "$STUB_LOG"\n[[ %s == wipefs && " $* " == *" -n "* ]] && { f=$(basename "$(readlink -f "${@: -1}")"); [[ -e $STUB_DIR/fs/$f ]] && cat "$STUB_DIR/fs/$f"; }\nexit 0\n' "$c" "$c" > "$T/bin/$c"
+    done
+    printf '#!/usr/bin/env bash\ncase "$*" in *SOURCE\\ /) echo /dev/nvme0n1p2 ;; *) cat "$STUB_DIR/mounts" 2>/dev/null ;; esac\n' > "$T/bin/findmnt"
+    printf '#!/usr/bin/env bash\ncase $(basename "${@: -1}") in cold) echo 28000000000000 ;; *) echo 8000000000000 ;; esac\n' > "$T/bin/blockdev"
+    printf '#!/usr/bin/env bash\necho "lsblk $*" >> "$STUB_LOG"; f=$(basename "${@: -1}"); echo "$f"; [[ -e $STUB_DIR/parts/$f ]] && cat "$STUB_DIR/parts/$f"; exit 0\n' > "$T/bin/lsblk"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$T/bin/blkid"
+    chmod +x "$T/bin/"*
+    : > "$T/log"
+}
+run() {  # run <stdin> <args...>
+    local input=$1; shift
+    out=$(printf '%s' "$input" | env PATH="$T/bin:$PATH" STUB_LOG="$T/log" STUB_DIR="$T" STORAGE_TEST_ROOT=1 \
+        HOT_SSD="$T/by-id/ata-SSD_HOTSERIAL" HOT2_SSD="$T/by-id/ata-SSD_HOT2SERIAL" COLD_HDD="$T/by-id/ata-HDD_COLDSERIAL" bash "$SUT" "$@" 2>&1); rc=$?
+}
+wiped() { grep -E '^(wipefs -a|sgdisk|dd|mkfs)' "$T/log"; }
+teardown() { rm -rf "$T"; }
+
+echo "1. no argument: usage, nothing wiped"
+setup; run "" ; [[ $rc != 0 && -z $(wiped) && $out == *--provision* ]] && ok "refuses, prints usage" || bad "no-arg refuses" "rc=$rc $out"; teardown
+
+echo "2. the old --yes shortcut is gone"
+setup; run "" --yes; [[ $rc != 0 && -z $(wiped) ]] && ok "--yes alone refused" || bad "--yes refused" "rc=$rc"; teardown
+setup; run "" --provision cold --yes; [[ $rc != 0 && -z $(wiped) ]] && ok "--provision with --yes refused" || bad "--provision --yes refused" "rc=$rc"; teardown
+
+echo "3. --provision needs named drives"
+setup; run "" --provision; [[ $rc != 0 && -z $(wiped) ]] && ok "no drive named: refused" || bad "no drive named" "rc=$rc"; teardown
+setup; run "" --provision all; [[ $rc != 0 && -z $(wiped) ]] && ok "unknown drive name refused" || bad "unknown drive refused" "rc=$rc"; teardown
+
+echo "4. a drive with a filesystem or label is refused"
+setup; echo "0x438 ext4 ssd-hot2" > "$T/fs/hot2"
+run "HOT2SERIAL"$'\n' --provision hot2; [[ $rc != 0 && -z $(wiped) && $out == *filesystem* ]] && ok "filesystem signature: refused" || bad "fs signature refused" "rc=$rc $out"; teardown
+
+echo "5. a drive with partitions is refused (e.g. a nofail branch that did not mount)"
+setup; mkdir -p "$T/parts"; echo "cold1" > "$T/parts/cold"
+run "COLDSERIAL"$'\n' --provision cold; [[ $rc != 0 && -z $(wiped) && $out == *partition* ]] && ok "partition table: refused" || bad "partitions refused" "rc=$rc $out"; teardown
+
+echo "6. a mounted drive is refused"
+setup; echo "$T/dev/cold /srv/.disks/hdd-cold" > "$T/mounts"
+run "COLDSERIAL"$'\n' --provision cold; [[ $rc != 0 && -z $(wiped) ]] && ok "mounted: refused" || bad "mounted refused" "rc=$rc $out"; teardown
+
+echo "7. the serial must be typed per drive"
+setup; run "YES"$'\n' --provision cold; [[ $rc != 0 && -z $(wiped) ]] && ok "YES is not the serial: aborted" || bad "wrong confirmation aborted" "rc=$rc $out"; teardown
+setup; run "HOTSERIAL"$'\n'"nope"$'\n' --provision hot cold; [[ $rc != 0 && -z $(wiped) ]] && ok "one wrong serial: nothing wiped at all" || bad "one wrong serial wipes nothing" "rc=$rc $(wiped)"; teardown
+
+echo "8. a blank drive with its serial typed: only that drive is provisioned, configure not run"
+setup; run "COLDSERIAL"$'\n' --provision cold; rc8=$rc
+[[ $rc8 == 0 ]] && ok "exit 0" || bad "exit 0" "rc=$rc8 $out"
+[[ -n $(wiped) ]] && ! wiped | grep -q -E "hot" && ok "only the cold drive touched" || bad "only cold touched" "$(wiped)"
+grep -q "^mkfs.xfs .*-L hdd-cold .*COLDSERIAL-part1" "$T/log" && ok "cold formatted xfs, label hdd-cold" || bad "cold mkfs" "$(cat "$T/log")"
+! grep -q "^mount" "$T/log" && [[ $out == *--configure* ]] && ok "stops before configure, says to run --configure" || bad "stops before configure" "$out"
+teardown
+
+echo
+echo "passed $PASS, failed $FAIL"
+[ "$FAIL" -eq 0 ]

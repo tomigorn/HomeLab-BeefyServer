@@ -13,28 +13,34 @@
 # Nothing references /dev/sdX or a SATA port, so drives may be re-cabled to any slot.
 #
 # Usage (run as root):
-#   sudo bash setup-storage.sh              provision (WIPES) + configure   [interactive YES]
-#   sudo bash setup-storage.sh --yes        same, skip the confirm prompt
-#   sudo bash setup-storage.sh --configure  configure only: NO wipe (mounts/fstab/services)
+#   sudo bash setup-storage.sh --configure                   configure only: NO wipe (mounts/fstab/services)
+#   sudo bash setup-storage.sh --provision <hot|hot2|cold>...  WIPE + format only the named drives, then run --configure
 #
-# >>> Provision WIPES THE THREE DATA DRIVES BELOW. The NVMe OS disk is never touched. <<<
+# Provision refuses a drive that is mounted, has partitions or carries any filesystem/label signature (a live branch
+# that failed to mount under nofail looks exactly like that): clear a drive you really mean to reuse by hand first
+# (wipefs -a). Each named drive asks for its serial typed back; one wrong answer and nothing is wiped. No --yes.
+# The NVMe OS disk is never touched.
 
 set -euo pipefail
 
 # ── Device assignment — BY SERIAL (never sdX, never SATA port) ───────────────
-HOT_SSD=/dev/disk/by-id/ata-Samsung_SSD_870_QVO_8TB_S5SSNF0WA00268B    # hot tier (with cold HDD)
-COLD_HDD=/dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M            # 28TB cold tier
-HOT2_SSD=/dev/disk/by-id/ata-Samsung_SSD_870_QVO_8TB_S5SSNF0W909892P   # second hot branch (ex-audio spare)
+HOT_SSD=${HOT_SSD:-/dev/disk/by-id/ata-Samsung_SSD_870_QVO_8TB_S5SSNF0WA00268B}    # hot tier (with cold HDD)
+COLD_HDD=${COLD_HDD:-/dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M}            # 28TB cold tier
+HOT2_SSD=${HOT2_SSD:-/dev/disk/by-id/ata-Samsung_SSD_870_QVO_8TB_S5SSNF0W909892P}   # second hot branch (ex-audio spare)
 
-MODE=full; ASSUME_YES=0
+usage() { sed -n '15,23p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+MODE=""; DRIVES=()
 for a in "$@"; do
   case "$a" in
-    --configure) MODE=configure ;;
-    --yes) ASSUME_YES=1 ;;
-    *) echo "unknown arg: $a"; exit 1 ;;
+    --configure) [[ -z $MODE ]] || usage; MODE=configure ;;
+    --provision) [[ -z $MODE ]] || usage; MODE=provision ;;
+    hot|hot2|cold) [[ $MODE == provision ]] || usage; [[ " ${DRIVES[*]} " == *" $a "* ]] || DRIVES+=("$a") ;;
+    *) echo "unknown arg: $a"; usage ;;
   esac
 done
-[[ $EUID -eq 0 ]] || { echo "Must run as root (sudo)."; exit 1; }
+[[ -n $MODE ]] || usage
+[[ $MODE != provision || ${#DRIVES[@]} -gt 0 ]] || { echo "name the drives to wipe: --provision hot|hot2|cold ..."; exit 1; }
+[[ $EUID -eq 0 || -n ${STORAGE_TEST_ROOT:-} ]] || { echo "Must run as root (sudo)."; exit 1; }
 
 OS_DISK=$(readlink -f "$(findmnt -no SOURCE / | sed 's/p\?[0-9]*$//')" 2>/dev/null || true)
 
@@ -48,53 +54,59 @@ check() {  # check <label> <by-id> <min-bytes> <max-bytes>
   echo "  OK  $label -> $real  ($(numfmt --to=iec "$sz"))  serial=$(basename "$id")"
 }
 
+drive_id()    { case $1 in hot) echo "$HOT_SSD" ;; hot2) echo "$HOT2_SSD" ;; cold) echo "$COLD_HDD" ;; esac; }
+drive_label() { case $1 in hot) echo ssd-hot ;; hot2) echo ssd-hot2 ;; cold) echo hdd-cold ;; esac; }
+drive_serial() { local b; b=$(basename "$(drive_id "$1")"); echo "${b##*_}"; }
+
 provision() {
-  echo "Verifying target drives by serial:"
-  for real in "$(readlink -f "$HOT_SSD")" "$(readlink -f "$HOT2_SSD")" "$(readlink -f "$COLD_HDD")"; do
-    ! findmnt -rno SOURCE | grep -q "^${real}" || { echo "FATAL: $real has a mounted partition. Aborting."; exit 1; }
+  local d id real sig parts ans
+  echo "Verifying the named drives by serial:"
+  for d in "${DRIVES[@]}"; do
+    id=$(drive_id "$d")
+    case $d in
+      cold) check "COLD HDD" "$id" 25000000000000 32000000000000 ;;
+      *)    check "$(drive_label "$d")" "$id" 7000000000000 9000000000000 ;;
+    esac
+    real=$(readlink -f "$id")
+    ! findmnt -rno SOURCE | grep -q "^${real}" || { echo "FATAL: $d ($real) has a mounted partition. Aborting, nothing wiped."; exit 1; }
+    parts=$(lsblk -nro NAME "$real" 2>/dev/null | tail -n +2)
+    [[ -z $parts ]] || { echo "FATAL: $d ($real) has a partition table ($(echo $parts)): it may be a live branch that did not mount. Aborting, nothing wiped."; exit 1; }
+    sig=$(wipefs -n --noheadings "$real" 2>/dev/null)
+    [[ -z $sig ]] || { echo "FATAL: $d ($real) carries a filesystem or label signature: $sig. Aborting, nothing wiped."; exit 1; }
   done
-  check "HOT  SSD" "$HOT_SSD"   7000000000000  9000000000000
-  check "HOT2 SSD" "$HOT2_SSD"  7000000000000  9000000000000
-  check "COLD HDD" "$COLD_HDD"  25000000000000 32000000000000
 
-  # Re-wipe guard: refuse if drives already carry our labels (use --configure to finish).
-  if blkid -o value -s LABEL "${COLD_HDD}-part1" 2>/dev/null | grep -qx hdd-cold; then
-    echo "Drives already provisioned (label 'hdd-cold' present)."
-    echo "Run with --configure to finish setup without wiping. Aborting."
-    exit 1
-  fi
-
-  if [[ $ASSUME_YES -eq 0 ]]; then
-    echo; echo "ALL DATA on the three drives above will be ERASED."
-    read -r -p 'Type YES to proceed: ' ans
-    [[ "$ans" == "YES" ]] || { echo "Aborted."; exit 1; }
-  fi
+  echo; echo "ALL DATA on: ${DRIVES[*]} will be ERASED."
+  for d in "${DRIVES[@]}"; do
+    read -r -p "Type the serial of $d ($(drive_serial "$d")) to erase it: " ans || ans=""
+    [[ $ans == "$(drive_serial "$d")" ]] || { echo "Aborted, nothing wiped."; exit 1; }
+  done
 
   echo "Installing packages..."
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq mergerfs hd-idle smartmontools xfsprogs gdisk parted util-linux
 
-  vgchange -an 2>/dev/null || true
   wipe_dev() {
-    local d=$1 p
-    for p in "$d"-part*; do [[ -e "$p" ]] && wipefs -a "$p" || true; done
+    local d=$1
     wipefs -a "$d" || true
     sgdisk --zap-all "$d" >/dev/null 2>&1 || true
     dd if=/dev/zero of="$d" bs=1M count=16 conv=fsync status=none
   }
-  echo "Wiping drives..."
-  wipe_dev "$HOT_SSD"; wipe_dev "$HOT2_SSD"; wipe_dev "$COLD_HDD"
-
-  for d in "$HOT_SSD" "$HOT2_SSD" "$COLD_HDD"; do
-    sgdisk -n 1:0:0 -t 1:8300 "$d" >/dev/null
+  echo "Wiping: ${DRIVES[*]}"
+  for d in "${DRIVES[@]}"; do
+    id=$(drive_id "$d"); wipe_dev "$id"
+    sgdisk -n 1:0:0 -t 1:8300 "$id" >/dev/null
   done
   partprobe; udevadm settle
-
-  mkfs.ext4 -F -m 0 -L ssd-hot "${HOT_SSD}-part1"
-  mkfs.ext4 -F -m 0 -L ssd-hot2 "${HOT2_SSD}-part1"
-  mkfs.xfs  -f -L hdd-cold "${COLD_HDD}-part1"
+  for d in "${DRIVES[@]}"; do
+    id=$(drive_id "$d")
+    case $d in
+      cold) mkfs.xfs -f -L hdd-cold "${id}-part1" ;;
+      *)    mkfs.ext4 -F -m 0 -L "$(drive_label "$d")" "${id}-part1" ;;
+    esac
+  done
   udevadm settle
+  echo "Provisioned: ${DRIVES[*]}. Next: sudo bash $0 --configure"
 }
 
 configure() {
@@ -163,5 +175,4 @@ EOF
   echo "Done. Storage is up. (nofail is safe only with the docker.service drop-in, added in the Docker phase: storage doc 14.2-F.)"
 }
 
-[[ "$MODE" == full ]] && provision
-configure
+if [[ $MODE == provision ]]; then provision; else configure; fi

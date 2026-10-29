@@ -185,8 +185,8 @@ serial, mounted by filesystem `UUID`, and hd-idle/smartd target the HDD by seria
 ## 4. Build steps
 
 > **These steps are implemented and automated by `3-Storage-Layout-and-Spindown/setup-storage.sh`** (which is how
-> the live system was built). Run it as root: `sudo bash 3-Storage-Layout-and-Spindown/setup-storage.sh` for a fresh
-> wipe+build, or `sudo bash 3-Storage-Layout-and-Spindown/setup-storage.sh --configure` to (re)apply mounts/services
+> the live system was built). Run it as root: `sudo bash 3-Storage-Layout-and-Spindown/setup-storage.sh --provision hot|hot2|cold ...` wipes and
+> formats only the named blank drives (refuses a mounted, partitioned or labelled drive; the serial is typed back per drive; tests `./test-setup-storage`), then `sudo bash 3-Storage-Layout-and-Spindown/setup-storage.sh --configure` to (re)apply mounts/services
 > without wiping. The drive serial→role assignment and all options are baked into that script.
 > The manual steps below explain what it does and why.
 
