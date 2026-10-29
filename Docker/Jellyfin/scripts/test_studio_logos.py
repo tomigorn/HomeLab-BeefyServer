@@ -124,6 +124,7 @@ class Pure(unittest.TestCase):
         jobs = sl.logo_jobs([studio("HBO")], [show("4546", ["HBO"])], CACHE, ["id-HBO"])
         self.assertEqual(jobs, [("id-HBO", "HBO", "/hbo.png")])
 
+    @unittest.skipUnless(importlib.util.find_spec("PIL"), "needs Pillow (python3-pil), as studio-logos.py does")
     def test_logo_needs_see_through_background(self):
         from PIL import Image
 
