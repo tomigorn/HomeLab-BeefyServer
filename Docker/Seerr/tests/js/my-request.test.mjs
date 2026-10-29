@@ -258,3 +258,13 @@ test("German files warning", async () => {
   assert.equal(d.querySelector("button[data-delete-keep]").textContent, "Nur Anfrage entfernen, Dateien behalten");
   assert.equal(d.querySelector("button[data-delete-files]").textContent, "Dateien auch löschen");
 });
+
+test("signing out and in as someone else without a reload: the user is read again", async () => {
+  const calls = [];
+  const w = page(STATE(), {}, calls);
+  await settle();
+  w.hgMyRequest.attach(w.document, { pathname: "/login" });
+  w.hgMyRequest.attach(w.document, w.location);
+  await settle();
+  assert.equal(calls.filter((c) => c.url === "/api/v1/auth/me").length, 2);
+});

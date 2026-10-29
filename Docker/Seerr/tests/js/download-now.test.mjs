@@ -291,3 +291,13 @@ test("language from night-label's shared detection (sidebar), not from the relab
   await settle();
   assert.match(box(w).textContent, /Jetzt herunterladen/);
 });
+
+test("signing out and in as someone else without a reload: the user is read again", async () => {
+  const calls = [];
+  const w = page(titlePage(), routes(ME.admin, "started"), {}, calls);
+  await settle();
+  w.hgDownloadNow.attach(w.document, { pathname: "/login" });
+  w.hgDownloadNow.attach(w.document, w.location);
+  await settle();
+  assert.equal(calls.filter((c) => c.url === "/api/v1/auth/me").length, 2);
+});

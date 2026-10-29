@@ -189,6 +189,8 @@
   }
 
   function attach(doc, loc) {
+    // Signed out (Seerr's login page): the next title asks who is signed in again.
+    if (/^\/login(\/|$)/.test((loc && loc.pathname) || "")) me = null;
     var title = titleOf(loc);
     if (current && (!title || current.key !== title.key)) {
       if (current.el && current.el.parentNode) current.el.parentNode.removeChild(current.el);
