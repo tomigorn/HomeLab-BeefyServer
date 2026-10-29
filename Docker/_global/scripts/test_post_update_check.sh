@@ -58,9 +58,11 @@ case "$*" in
   info) exit 0 ;;
   "compose config --format json") echo '{"name":"demo","services":{"app":{"image":"img:1"}}}' ;;
   "compose ps -q") echo cid1 ;;
-  "inspect -f {{.Name}} {{.Config.Image}} {{.Id}} {{.RestartCount}} cid1") echo "/demo-app img:1 cid1 0" ;;
+  "inspect -f {{.Name}} {{.Config.Image}} {{.Id}} {{.RestartCount}} "*" cid1") echo "/demo-app img:1 cid1 0 app" ;;
   "inspect -f {{.Image}} demo-app") echo sha:old ;;
+  "tag "*:rollback-*) : ;;
   "tag "*) touch "$FAKE_DIR/rolled" ;;
+  "image ls "*|"image rm "*) : ;;
   inspect\ -f\ \{\{.State.Status\}\}\|*) [[ -e $FAKE_DIR/rolled ]] && echo "running|nohc|sha:old|cid3|0" || echo "running|nohc|sha:new|cid2|0" ;;
   *"com.docker.compose.service"*) echo app ;;
   "inspect -f {{.State.Status}} {{.Image}} demo-app") echo "running sha:old" ;;
