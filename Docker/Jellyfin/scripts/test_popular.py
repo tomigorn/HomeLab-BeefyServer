@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import pathlib
+import stat
 import tempfile
 import unittest
 import urllib.error
@@ -295,6 +296,37 @@ class Main(unittest.TestCase):
             n = len(fake.searches)
             self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=9))
             self.assertTrue([p for p in fake.searches[n:] if "tt101" in p["query"]])
+
+    def test_writes_lists_json(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.assertEqual(self.run_main(fake, sf)[0], 0)
+            lists = sf.with_name("lists.json")
+            got = json.loads(lists.read_text())
+            data = self.data(fake)
+            self.assertEqual(got["updated"], self.NOW.isoformat(timespec="seconds"))
+            self.assertEqual((got["rows"], got["home"]), (data["rows"], data["home"]))
+            self.assertEqual({k: v for k, v in got.items() if k != "updated"}, data)
+            self.assertEqual(stat.S_IMODE(lists.stat().st_mode), 0o644)
+            self.assertFalse(lists.with_name("lists.json.tmp").exists())
+
+    def test_lists_json_not_written_on_dry_run_or_failed_share(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.run_main(fake, sf, ["--dry-run"])
+            self.assertFalse(sf.with_name("lists.json").exists())
+            self.run_main(fake, sf)
+            before = sf.with_name("lists.json").read_text()
+            seerr = fake.seerr
+            fake.seerr = lambda path: (_ for _ in ()).throw(urllib.error.URLError("down")) if path.startswith(("/api/v1/movie/", "/api/v1/tv/", "/api/v1/search")) else seerr(path)
+            state = json.loads(sf.read_text())
+            state["details"], state["matches"] = {}, {}
+            sf.write_text(json.dumps(state))
+            code, _ = self.run_main(fake, sf, now=self.NOW + datetime.timedelta(hours=1))
+            self.assertEqual(code, 1)
+            self.assertEqual(sf.with_name("lists.json").read_text(), before)
 
     def test_details_sidecar_for_every_listed_title_not_owned(self):
         fake = FakeIo()

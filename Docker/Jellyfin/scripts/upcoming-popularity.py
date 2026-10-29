@@ -2,11 +2,12 @@
 """TMDB popularity and details of what is coming soon, for the home row "Coming soon" (home-placeholders/home-layout.js): ranks titles released in the same week, links titles in the library, opens the details overlay of the others.
 Reads the Sonarr and Radarr calendars, asks Seerr (its TMDB access, no own key) for each title's details and writes the JavaScript Injector entry "Home upcoming":
 window.HssUpcomingPop = {"s:<Sonarr series id>" | "m:<Radarr movie id>": popularity}, window.HssUpcomingInfo = {key: {tmdb, tvdb, imdb, d: details id}};
-the details themselves go to coming.json next to the popular allow-list (served by the popular backend by id only, never requestable).
+the details themselves go to coming.json next to the popular allow-list (served by the popular backend by id only, never requestable); coming-list.json beside it lists those titles in the Coming soon order for the trending sync.
 Never prints API keys. Usage: upcoming-popularity.py [--dry-run]"""
 import contextlib
 import datetime
 import json
+import os
 import pathlib
 import re
 import sys
@@ -28,22 +29,33 @@ DAYS = 100
 SIDECAR = pathlib.Path("/srv/appdata/jellyfin-popular/coming.json")
 
 
-def titles(episodes, movies):
-    """{key: (kind, TMDB id, TVDB id, IMDb id)} for the calendar entries; one per series."""
+def release_date(entry, today):
+    """ISO date of the calendar entry: an episode's air date; a movie's earliest release not before today, else its earliest."""
+    if entry.get("airDateUtc"):
+        return entry["airDateUtc"][:10]
+    dates = sorted(v[:10] for v in (entry.get(k) for k in ("inCinemas", "digitalRelease", "physicalRelease")) if v)
+    return next((d for d in dates if d >= today.isoformat()), dates[0] if dates else None)
+
+
+def titles(episodes, movies, today=None):
+    """{key: (kind, TMDB id, TVDB id, IMDb id, date)} for the calendar entries; one per series (its first episode)."""
+    today = today or datetime.date.today()
     out = {}
     for e in episodes or []:
         s = e.get("series") or {}
         if e.get("seriesId") and s.get("tmdbId"):
-            out[f"s:{e['seriesId']}"] = ("tv", s["tmdbId"], s.get("tvdbId"), s.get("imdbId"))
+            key, date = f"s:{e['seriesId']}", release_date(e, today)
+            if key not in out or (date and (not out[key][4] or date < out[key][4])):
+                out[key] = ("tv", s["tmdbId"], s.get("tvdbId"), s.get("imdbId"), date)
     for m in movies or []:
         if m.get("id") and m.get("tmdbId"):
-            out[f"m:{m['id']}"] = ("movie", m["tmdbId"], None, m.get("imdbId"))
+            out[f"m:{m['id']}"] = ("movie", m["tmdbId"], None, m.get("imdbId"), release_date(m, today))
     return out
 
 
 def ids_of(title):
     """The provider ids the browser matches against the library's ProviderIds (strings, like Jellyfin's)."""
-    _, tmdb, tvdb, imdb = title
+    _, tmdb, tvdb, imdb = title[:4]
     out = {"tmdb": str(int(tmdb))}
     if isinstance(tvdb, int) and tvdb > 0:
         out["tvdb"] = str(tvdb)
@@ -83,6 +95,30 @@ def _seerr(path):
         return json.loads(resp.read())
 
 
+def week_key(date):
+    iso = datetime.date.fromisoformat(date).isocalendar()
+    return iso[0], iso[1]
+
+
+def coming_list(wanted, infos, pops):
+    """Titles with details in the order of the web's Coming soon row: ISO week of the date, popularity descending, title."""
+    items = []
+    for key, t in wanted.items():
+        ref = f"{t[0]}/{int(t[1])}"
+        if ref in infos and t[4]:
+            items.append((key, ref, t))
+    items.sort(key=lambda x: (week_key(x[2][4]), -(pops.get(x[0]) if pops.get(x[0]) is not None else -1), (infos[x[1]].get("t") or {}).get("en") or ""))
+    return [{"ref": ref, "kind": t[0], "tmdb": int(t[1]), "d": None, "date": t[4], "pop": pops.get(key)} for key, ref, t in items]
+
+
+def write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":")))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
 def main(argv, api=None, arr=_arr, seerr=_seerr, today=None, out=sys.stdout, sidecar=SIDECAR):
     if any(a != "--dry-run" for a in argv):
         print(__doc__.strip(), file=sys.stderr)
@@ -91,7 +127,7 @@ def main(argv, api=None, arr=_arr, seerr=_seerr, today=None, out=sys.stdout, sid
         api = jellyfin_api.api
     start = today or datetime.date.today()
     window = {"start": start.isoformat(), "end": (start + datetime.timedelta(days=DAYS)).isoformat()}
-    wanted = titles(arr("Sonarr", "calendar", {**window, "includeSeries": "true"}), arr("Radarr", "calendar", window))
+    wanted = titles(arr("Sonarr", "calendar", {**window, "includeSeries": "true"}), arr("Radarr", "calendar", window), start)
     pops, infos, info = {}, {}, {}
     for key, t in wanted.items():
         kind, tmdb = t[:2]
@@ -110,7 +146,12 @@ def main(argv, api=None, arr=_arr, seerr=_seerr, today=None, out=sys.stdout, sid
         if ref in infos:
             info[key]["d"] = tokens[ref]
     if "--dry-run" not in argv:
-        tmdb_details.write_sidecar(sidecar, datetime.datetime.now().isoformat(timespec="seconds"), infos, tokens)
+        stamp = datetime.datetime.now().isoformat(timespec="seconds")
+        tmdb_details.write_sidecar(sidecar, stamp, infos, tokens)
+        items = coming_list(wanted, infos, pops)
+        for i in items:
+            i["d"] = tokens[i["ref"]]
+        write_json(sidecar.with_name("coming-list.json"), {"updated": stamp, "items": items})
     plugin_id = next(p["Id"] for p in api("GET", "/Plugins") if p["Name"] == PLUGIN)
     path = f"/Plugins/{plugin_id}/Configuration"
     script = pop_script(pops, info)

@@ -3,7 +3,7 @@
 Sources: Netflix's official weekly Top 10 for Switzerland (TSV) and TMDB popularity of what streams in Switzerland per service and per genre (Seerr's discover API, watch region CH: Seerr's TMDB access, no own key).
 Every rank is listed; a title not in the library is requestable only when a suitable release exists: Prowlarr searches (never grabs) on NzbPlanet / NZBgeek (by id) and Knaben (by name), throttled, cached (no release: again the next night; found: weekly; owned: never).
 Writes the JavaScript Injector entry "Currently popular" (window.HssPopular), the request allow-list for the popular backend (opaque entry ids; the backend accepts nothing else)
-and details.json next to it (the details overlay of every listed title not owned, by its own opaque id; tmdb_details.py).
+lists.json next to it (the published lists, for the trending sync) and details.json (the details overlay of every listed title not owned, by its own opaque id; tmdb_details.py).
 Never prints API keys. Usage: popular.py [--dry-run] [--tsv FILE]  (FILE: the Netflix TSV downloaded elsewhere, when netflix.com is unreachable from beefy)"""
 import datetime
 import io
@@ -616,6 +616,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             io_.injector_put(upsert(config, source))
             say(f"upserted {NAME}")
     save_json(allow_file, {"updated": stamp, "entries": allow}, 0o644)
+    save_json(allow_file.with_name("lists.json"), {"updated": stamp, **data}, 0o644)
     tmdb_details.write_sidecar(details_file, stamp, infos, dtokens)
     save_json(state_file, state)
     return 0

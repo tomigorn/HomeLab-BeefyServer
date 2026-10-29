@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import pathlib
+import stat
 import tempfile
 import unittest
 
@@ -44,6 +45,25 @@ class Titles(unittest.TestCase):
         self.assertEqual(up.pop_script({"s:2": 1.5, "m:1": 20.0}), 'window.HssUpcomingPop = {"m:1":20.0,"s:2":1.5};\n')
         src = up.pop_script({"s:2": 1.5}, {"s:2": {"tmdb": "9", "d": "</script>"}})
         self.assertEqual(src, 'window.HssUpcomingPop = {"s:2":1.5};\nwindow.HssUpcomingInfo = {"s:2":{"d":"<\\/script>","tmdb":"9"}};\n')
+
+
+class ReleaseDate(unittest.TestCase):
+    TODAY = datetime.date(2026, 10, 29)
+
+    def test_release_date_prefers_future_dates(self):
+        movie = {"inCinemas": "2026-09-01T00:00:00Z", "digitalRelease": "2026-12-05T00:00:00Z", "physicalRelease": "2027-01-10T00:00:00Z"}
+        self.assertEqual(up.release_date(movie, self.TODAY), "2026-12-05")
+        self.assertEqual(up.release_date({"inCinemas": "2026-10-29T00:00:00Z"}, self.TODAY), "2026-10-29")
+        self.assertEqual(up.release_date({"inCinemas": "2026-03-01T00:00:00Z", "digitalRelease": "2026-05-01T00:00:00Z"}, self.TODAY), "2026-03-01")
+        self.assertIsNone(up.release_date({}, self.TODAY))
+
+    def test_episode_date_is_the_air_date(self):
+        self.assertEqual(up.release_date({"airDateUtc": "2026-11-03T02:00:00Z"}, self.TODAY), "2026-11-03")
+
+    def test_titles_carry_the_date(self):
+        eps = [{"seriesId": 1, "airDateUtc": "2026-11-09T01:00:00Z", "series": {"tmdbId": 5}}, {"seriesId": 1, "airDateUtc": "2026-11-02T01:00:00Z", "series": {"tmdbId": 5}}]
+        self.assertEqual(up.titles(eps, [{"id": 2, "tmdbId": 6, "inCinemas": "2026-12-01"}], self.TODAY)["s:1"][4], "2026-11-02")
+        self.assertEqual(up.titles(eps, [{"id": 2, "tmdbId": 6, "inCinemas": "2026-12-01"}], self.TODAY)["m:2"][4], "2026-12-01")
 
 
 class Main(unittest.TestCase):
@@ -100,6 +120,27 @@ class Main(unittest.TestCase):
         self.assertEqual(len(jf.posts), 1, "same ids on the next run: the entry is unchanged")
         self.assertEqual(self.info(jf), first)
         self.assertTrue(text.endswith("unchanged\n"))
+
+    def test_coming_list_order(self):
+        movies = [{"id": 1, "tmdbId": 11, "inCinemas": "2026-11-12"}, {"id": 2, "tmdbId": 12, "inCinemas": "2026-11-13"}, {"id": 3, "tmdbId": 13, "inCinemas": "2026-11-04"},
+                  {"id": 4, "tmdbId": 14, "inCinemas": "2026-11-04"}]
+        pops = {"11": 5, "12": 9, "13": 1, "14": 99}
+        self.arr = lambda name, path, query: [] if name == "Sonarr" else movies
+        self.seerr = lambda path: {} if path.endswith(("ratings", "ratingscombined")) else (_ for _ in ()).throw(OSError("down")) if "/14" in path else \
+            {"popularity": pops[path.split("?")[0].split("/")[4]], "title": "T" + path.split("?")[0].split("/")[4], "overview": "o"}
+        jf = FakeJellyfin()
+        self.assertEqual(self.run_main(jf, [])[0], 0)
+        feed = self.side.with_name("coming-list.json")
+        got = json.loads(feed.read_text())
+        self.assertEqual([i["tmdb"] for i in got["items"]], [13, 12, 11], "week first, then popularity; no details: not listed")
+        self.assertEqual(got["items"][1], {"ref": "movie/12", "kind": "movie", "tmdb": 12, "d": self.info(jf)["m:2"]["d"], "date": "2026-11-13", "pop": 9.0})
+        self.assertEqual(stat.S_IMODE(feed.stat().st_mode), 0o644)
+        self.assertIn("updated", got)
+        self.assertFalse(feed.with_name("coming-list.json.tmp").exists())
+
+    def test_coming_list_not_written_on_dry_run(self):
+        self.run_main(FakeJellyfin(), ["--dry-run"])
+        self.assertFalse(self.side.with_name("coming-list.json").exists())
 
     def test_dry_run_changes_nothing(self):
         jf = FakeJellyfin()
