@@ -170,6 +170,7 @@ Only in `post-update-check.sh all` (no compose project).
 
 | Customization | Where | Reapply | Verify | Update can break |
 |---|---|---|---|---|
+| Memory limit on every container (`_global/docs/container-hardening.md`, Memory limits) | each compose `mem_limit` | `docker compose up -d`, or live `docker update --memory X --memory-swap 2X` | `host.mem-limits`: → none | a new service without `mem_limit` |
 | DOCKER-USER: containers cannot reach the LAN | `_global/scripts/docker-user-guard.sh` | `sudo docker-user-guard.sh --persist` | `host.docker-user-lan`: sonarr → fastpi:22 blocked | docker restart with stale rules |
 | BEEFY-INPUT: containers cannot reach the host | docker-user-guard.sh | same | `host.beefy-input`: sonarr → bridge gateway :22 blocked | |
 | Allowed egress jellyfin subnet → sso | docker-user-guard.sh | same | `host.sso-egress`: jellyfin → sso discovery 200 | |

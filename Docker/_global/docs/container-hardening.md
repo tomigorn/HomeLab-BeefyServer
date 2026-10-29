@@ -55,7 +55,7 @@ Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secre
 | clamav-hostscan | caps DAC_READ_SEARCH, DAC_OVERRIDE, CHOWN: weekly host scan reads everything (`/:/host:ro`); non-root cannot use DAC_READ_SEARCH. Safe because `network_mode: none`, read-only root fs, writes only state + textfile; the always-on `clamav` no longer mounts the host root |
 
 ## Memory limits (2026-10-29)
-Every container has `mem_limit` (swap = same again, Docker default). Sized from `memory.stat` anon + `memory.peak` of the cgroup since the last start, plus headroom: the peak includes page cache (Jellyfin and SABnzbd ~50 GB), which a limit reclaims instead of killing. Applied live with `docker update --memory X --memory-swap 2X`, persisted in compose.
+Every container has `mem_limit` (swap = same again, Docker default). Sized from `memory.stat` anon + `memory.peak` of the cgroup since the last start, plus headroom: the peak includes page cache (Jellyfin and SABnzbd ~50 GB), which a limit reclaims instead of killing. Applied live with `docker update --memory X --memory-swap 2X`, persisted in compose. Check: `host.mem-limits` (no running container without one).
 
 | Container | Limit | Anon at sizing |
 |---|---|---|
@@ -66,6 +66,11 @@ Every container has `mem_limit` (swap = same again, Docker default). Sized from 
 | movie-recyclarr | 512m | 4 MB |
 | movie-vpn-status | 128m | 10 MB |
 | portainer_agent | 256m | 17 MB |
+| movie-radarr, movie-sonarr | 2g | 0.1 / 0.17 GB (ffprobe and MediaInfo on import) |
+| movie-prowlarr | 1g | 0.11 GB |
+| movie-bazarr | 2g | 0.16 GB (peak 1.4 GB with cache) |
+| movie-qbittorrent | 6g | 8 MB (libtorrent 2 maps files: cache, reclaimed under the limit) |
+| movie-sabnzbd | 6g | 0.13 GB (par2 repair and unpack spike) |
 
 ## Images
 - `jellyfin-local`: `Jellyfin/Dockerfile` bakes in the Intel OpenCL runtime (Docker Mods are not used).
