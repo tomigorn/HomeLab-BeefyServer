@@ -1,5 +1,6 @@
 """Request backend for "Currently popular" (Jellyfin README "Currently popular"): any signed-in Jellyfin user may request a listed title.
-POST /hss-popular/request {"id": <opaque list entry id>, "mode": "night" | "now", "check": bool}, GET /hss-popular/state, GET /hss-popular/health.
+POST /hss-popular/request {"id": <opaque list entry id>, "mode": "night" | "now", "check": bool}, GET /hss-popular/state, GET /hss-popular/details?id=<opaque details id>, GET /hss-popular/health.
+Details: only ids of the sidecars details.json (popular.py) and coming.json (upcoming-popularity.py), never a TMDB id, so it is no open TMDB proxy; those ids are never requestable.
 The caller is checked with Jellyfin (/Users/Me with their own token, disabled = refused); only entries of the current allow-list (scripts/popular.py) with a found release can be requested, nothing free-form.
 The request goes to Seerr with its API key as the caller's linked Seerr user, else as the service user "jellyfin-popular". Every decision of a signed-in caller is written to the audit log (rotated);
 unauthenticated and wrong-origin hits are only counted. Limits are counted in a small SQLite file next to the log."""
@@ -17,6 +18,7 @@ import secrets
 import sqlite3
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 import zoneinfo
 
@@ -24,6 +26,7 @@ SERVICE_EMAIL = "jellyfin-popular"
 SERVICE_NAME = "Jellyfin popular"
 SERVICE_PERMISSIONS = 32 | 128  # REQUEST + AUTO_APPROVE
 TOKEN_RE = re.compile(r"^[A-Za-z0-9]{16,128}$")
+DETAILS_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 AUTH_RE = re.compile(r'Token="([^"]*)"')
 ALLOWED_KEYS = {"id", "mode", "check"}
 MAX_BODY = 2048
@@ -41,8 +44,11 @@ class Unauthorized(Exception):
 
 
 class Config:
-    def __init__(self, allow_file, audit_file, request_state, origins, limit=10, days=7, daily_max=30, rate_per_min=10, list_max_age_days=9, tz="Europe/Zurich", state_db=None, audit_max_bytes=AUDIT_MAX_BYTES):
+    def __init__(self, allow_file, audit_file, request_state, origins, limit=10, days=7, daily_max=30, rate_per_min=10, list_max_age_days=9, tz="Europe/Zurich", state_db=None, audit_max_bytes=AUDIT_MAX_BYTES,
+                 details_files=None, details_per_min=60):
         self.allow_file, self.audit_file, self.request_state = pathlib.Path(allow_file), pathlib.Path(audit_file), pathlib.Path(request_state)
+        self.details_files = [pathlib.Path(f) for f in details_files] if details_files else [self.allow_file.with_name("details.json"), self.allow_file.with_name("coming.json")]
+        self.details_per_min = details_per_min
         self.state_db = pathlib.Path(state_db) if state_db else self.audit_file.with_name("state.db")
         self.origins, self.limit, self.days, self.daily_max, self.rate_per_min, self.list_max_age = origins, limit, days, daily_max, rate_per_min, datetime.timedelta(days=list_max_age_days)
         self.tz, self.audit_max_bytes = zoneinfo.ZoneInfo(tz), audit_max_bytes
@@ -136,6 +142,32 @@ class Core:
         if self.clock() - upd > self.cfg.list_max_age:
             return {}
         return {k: v for k, v in (data.get("entries") or {}).items() if v.get("res")}
+
+    def sidecar(self, path):
+        """Entries of one details sidecar (parsed once per change of the file), {} when missing, broken or older than the allow-list may be."""
+        try:
+            st = path.stat()
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            return {}
+        with self.lock:
+            hit = self.cache.get(("sidecar", str(path)))
+        if hit and hit[0] == sig:
+            data = hit[1]
+        else:
+            try:
+                data = json.loads(path.read_text())
+                data["at"] = datetime.datetime.fromisoformat(data["updated"])
+                data["at"] = data["at"] if data["at"].tzinfo else data["at"].astimezone()
+                if not isinstance(data.get("entries"), dict):
+                    raise ValueError
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                data = {"at": None, "entries": {}}
+            with self.lock:
+                self.cache[("sidecar", str(path))] = (sig, data)
+        if data["at"] is None or self.clock() - data["at"] > self.cfg.list_max_age:
+            return {}
+        return data["entries"]
 
     # --- state db: requests (limits) and counters of refused anonymous hits ----------------
     @contextlib.contextmanager
@@ -310,10 +342,13 @@ class Core:
     # --- endpoints ------------------------------------------------------
     def handle(self, method, path, headers, body):
         headers = {str(k).lower(): v for k, v in headers.items()}
+        path, _, query = path.partition("?")
         if path == "/hss-popular/health" and method == "GET":
             return 200, {"ok": True}
         if path == "/hss-popular/state" and method == "GET":
             return self.state(headers)
+        if path == "/hss-popular/details" and method == "GET":
+            return self.details(headers, query)
         if path == "/hss-popular/request" and method == "POST":
             return self.request(headers, body)
         return 404, {"error": "not found"}
@@ -337,17 +372,41 @@ class Core:
             entries[x] = {"state": st, "badge": badge(e["kind"], e["tmdb"], rs, now) if st == "requested" else None}
         return 200, {"limit": self.cfg.limit, "days": self.cfg.days, "left": left, "dailyFull": today >= self.cfg.daily_max, "entries": entries}
 
-    def rate_ok(self, user_id):
+    def rate_ok(self, user_id, bucket="request", per_min=None):
         now = self.clock()
         minute = datetime.timedelta(minutes=1)
+        key = (bucket, user_id)
         with self.lock:
             for k in [k for k, v in self.hits.items() if not v or now - v[-1] >= minute]:
                 del self.hits[k]
-            recent = [t for t in self.hits.get(user_id, []) if now - t < minute]
-            if len(recent) >= self.cfg.rate_per_min:
+            recent = [t for t in self.hits.get(key, []) if now - t < minute]
+            if len(recent) >= (per_min or self.cfg.rate_per_min):
                 return False
-            self.hits[user_id] = recent + [now]
+            self.hits[key] = recent + [now]
             return True
+
+    def details(self, headers, query):
+        try:
+            user = self.user(headers)
+        except Unauthorized:
+            self.reject("unauthenticated")
+            return 401, {"error": "sign in to Jellyfin"}
+        if user["disabled"]:
+            return 403, {"error": "account disabled"}
+        if not self.rate_ok(user["id"], "details", self.cfg.details_per_min):
+            return 429, {"error": "slow down"}
+        try:
+            q = urllib.parse.parse_qs(query, keep_blank_values=True, strict_parsing=bool(query), max_num_fields=2)
+        except ValueError:
+            return 400, {"error": "only ?id="}
+        ids = q.get("id") or []
+        if set(q) != {"id"} or len(ids) != 1 or not DETAILS_ID_RE.match(ids[0]):
+            return 400, {"error": "only ?id="}
+        for f in self.cfg.details_files:
+            entry = self.sidecar(f).get(ids[0])
+            if isinstance(entry, dict):
+                return 200, {"details": {k: v for k, v in entry.items() if k != "ref"}}
+        return 404, {"error": "unknown"}
 
     def request(self, headers, body):
         if (headers.get("origin") or "") not in self.cfg.origins:
@@ -487,7 +546,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             try:
                 body = self.rfile.read(n) if n else b""
-                code, data = self.core.handle(method, self.path.split("?")[0], self.headers, body)
+                code, data = self.core.handle(method, self.path, self.headers, body)
             except TimeoutError:
                 self.close_connection = True
                 return

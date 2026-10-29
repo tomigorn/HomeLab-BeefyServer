@@ -2,7 +2,8 @@
 """Lists for the pages "Popular movies" / "Popular shows" (one row per service and per genre, each only films or only series) and the home rows "Top 10 Shows / Movies in Switzerland" (home-placeholders/empty-sections.js).
 Sources: Netflix's official weekly Top 10 for Switzerland (TSV) and TMDB popularity of what streams in Switzerland per service and per genre (Seerr's discover API, watch region CH: Seerr's TMDB access, no own key).
 Every rank is listed; a title not in the library is requestable only when a suitable release exists: Prowlarr searches (never grabs) on NzbPlanet / NZBgeek (by id) and Knaben (by name), throttled, cached (no release: again the next night; found: weekly; owned: never).
-Writes the JavaScript Injector entry "Currently popular" (window.HssPopular) and the request allow-list for the popular backend (opaque entry ids; the backend accepts nothing else).
+Writes the JavaScript Injector entry "Currently popular" (window.HssPopular), the request allow-list for the popular backend (opaque entry ids; the backend accepts nothing else)
+and details.json next to it (the details overlay of every listed title not owned, by its own opaque id; tmdb_details.py).
 Never prints API keys. Usage: popular.py [--dry-run] [--tsv FILE]  (FILE: the Netflix TSV downloaded elsewhere, when netflix.com is unreachable from beefy)"""
 import datetime
 import io
@@ -21,6 +22,7 @@ import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import tmdb_details  # noqa: E402
 
 NAME = "Currently popular"
 PLUGIN = "JavaScript Injector"
@@ -303,17 +305,17 @@ def fresh(entry, ttl, now):
 def details(io_, state, kind, tmdb, now):
     key = f"{kind}/{tmdb}"
     d = state.setdefault("details", {}).get(key)
-    if fresh(d, DETAILS_TTL, now):
+    if fresh(d, DETAILS_TTL, now) and "info" in d:
         return d
-    en = io_.seerr(f"/api/v1/{kind}/{tmdb}?language=en")
-    de = io_.seerr(f"/api/v1/{kind}/{tmdb}?language=de")
+    en, info = tmdb_details.fetch(io_.seerr, kind, tmdb)
+    de = {"title": info["t"]["de"], "posterPath": info["p"]["de"]}
     ext = en.get("externalIds") or {}
     title = en.get("title") or en.get("name") or ""
     d = {"at": now.isoformat(timespec="seconds"), "title": title, "de": de.get("title") or de.get("name") or title,
          "poster": en.get("posterPath"), "posterDe": de.get("posterPath") or en.get("posterPath"), "lang": en.get("originalLanguage"),
          "year": int((en.get("releaseDate") or en.get("firstAirDate") or "0")[:4] or 0) or None,
          "imdb": en.get("imdbId") or ext.get("imdbId"), "tvdb": ext.get("tvdbId"),
-         "seasons": [{"seasonNumber": s.get("seasonNumber"), "name": s.get("name"), "airDate": s.get("airDate")} for s in en.get("seasons") or []]}
+         "seasons": [{"seasonNumber": s.get("seasonNumber"), "name": s.get("name"), "airDate": s.get("airDate")} for s in en.get("seasons") or []], "info": info}
     state["details"][key] = d
     return d
 
@@ -553,6 +555,12 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
 
     tokens = state.setdefault("tokens", {})
     allow = {}
+    details_file = allow_file.with_name("details.json")
+    infos = {}
+    for c in [c for cs in list(home_cands.values()) + list(row_cands.values()) for c in cs]:
+        if not c.get("unmatched") and status(c["ref"]) != "owned" and c["d"].get("info"):
+            infos[f"{c['kind']}/{c['tmdb']}"] = c["d"]["info"]
+    dtokens = tmdb_details.assign(details_file, infos)
 
     def item(c, rank):
         if c.get("unmatched"):
@@ -565,6 +573,8 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
               "p": {"en": d.get("poster"), "de": d.get("posterDe")}, "o": st == "owned", "f": st if st in ("1080p", "2160p") else None,
               "c": checked[:10] if checked else None}
         it["n"] = not it["o"] and not it["f"]
+        if not it["o"] and f"{c['kind']}/{c['tmdb']}" in dtokens:
+            it["d"] = dtokens[f"{c['kind']}/{c['tmdb']}"]
         if it["f"] and not it["o"]:
             tok = tokens.get(c["ref"]) or secrets.token_urlsafe(18)
             tokens[c["ref"]] = it["x"] = tok
@@ -606,6 +616,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             io_.injector_put(upsert(config, source))
             say(f"upserted {NAME}")
     save_json(allow_file, {"updated": stamp, "entries": allow}, 0o644)
+    tmdb_details.write_sidecar(details_file, stamp, infos, dtokens)
     save_json(state_file, state)
     return 0
 

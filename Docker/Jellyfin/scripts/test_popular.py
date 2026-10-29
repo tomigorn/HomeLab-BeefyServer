@@ -296,6 +296,50 @@ class Main(unittest.TestCase):
             self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=9))
             self.assertTrue([p for p in fake.searches[n:] if "tt101" in p["query"]])
 
+    def test_details_sidecar_for_every_listed_title_not_owned(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.run_main(fake, sf)
+            data = self.data(fake)
+            side = json.loads(sf.with_name("details.json").read_text())
+            items = data["home"]["movies"] + data["home"]["shows"] + [i for r in data["rows"] for i in r["items"]]
+            dids = {i["d"] for i in items if i.get("d")}
+            self.assertEqual(dids, set(side["entries"]))
+            self.assertEqual(sorted(e["ref"] for e in side["entries"].values()), ["movie/101", "movie/103", "tv/202"])
+            self.assertEqual([i.get("d") is None for i in items if i["o"] or i.get("u")], [True] * len([i for i in items if i["o"] or i.get("u")]))
+            film = data["home"]["movies"][0]
+            self.assertNotEqual(film["d"], film["x"], "a details id is never a request id")
+            self.assertNotIn(film["d"], json.loads(sf.with_name("allow.json").read_text())["entries"])
+            info = side["entries"][film["d"]]
+            self.assertEqual((info["k"], info["id"], info["t"]["en"], info["t"]["de"]), ("movie", 101, "Animals", "Tiere"))
+            self.assertEqual(side["updated"], "2026-10-21T04:39:00")
+            self.assertEqual(sf.with_name("details.json").stat().st_mode & 0o777, 0o644)
+            # the next run keeps the ids; cached details are not fetched again
+            asked = []
+            seerr = fake.seerr
+            fake.seerr = lambda path: asked.append(path) or seerr(path)
+            self.run_main(fake, sf, now=self.NOW + datetime.timedelta(hours=1))
+            self.assertEqual(set(json.loads(sf.with_name("details.json").read_text())["entries"]), dids)
+            self.assertEqual([a for a in asked if a.startswith(("/api/v1/movie/", "/api/v1/tv/"))], [])
+
+    def test_details_cached_before_the_overlay_existed_are_fetched_again(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.run_main(fake, sf)
+            state = json.loads(sf.read_text())
+            for v in state["details"].values():
+                del v["info"]
+            sf.write_text(json.dumps(state))
+            asked = []
+            seerr = fake.seerr
+            fake.seerr = lambda path: asked.append(path) or seerr(path)
+            self.run_main(fake, sf, now=self.NOW + datetime.timedelta(hours=1))
+        self.assertIn("/api/v1/movie/101?language=en", asked)
+        self.assertIn("/api/v1/movie/101/ratingscombined", asked)
+        self.assertIn("/api/v1/tv/202/ratings", asked)
+
     def test_rows_list_the_first_ten_whatever_their_state(self):
         fake = FakeIo()
         fake.releases = {}
@@ -351,6 +395,7 @@ class Main(unittest.TestCase):
             code, text = self.run_main(fake, sf, ["--dry-run"])
             self.assertFalse(sf.exists())
             self.assertFalse(sf.with_name("allow.json").exists())
+            self.assertFalse(sf.with_name("details.json").exists())
         self.assertEqual((code, fake.searches, fake.scripts), (0, [], []))
         self.assertIn("Ghost", text)
 

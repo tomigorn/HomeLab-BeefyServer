@@ -334,11 +334,74 @@ class Concurrency(Base):
         self.assertEqual(self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token="b" * 32)[0], 200)
 
 
+
+POP_D = "dPopularxxxxxxxxxxxxxxxx"
+COMING_D = "dComingxxxxxxxxxxxxxxxxx"
+
+
+class Details(Base):
+    def setUp(self):
+        super().setUp()
+        d = pathlib.Path(self.tmp.name)
+        (d / "details.json").write_text(json.dumps({"updated": "2026-10-28T04:39:00", "entries": {POP_D: {"k": "movie", "id": 101, "t": {"en": "Animals"}, "ref": "movie/101"}}}))
+        (d / "coming.json").write_text(json.dumps({"updated": "2026-10-28T04:38:00", "entries": {COMING_D: {"k": "tv", "id": 77, "t": {"en": "Soon"}, "ref": "tv/77"}}}))
+
+    def get(self, query, token=TOKEN):
+        return self.core.handle("GET", "/hss-popular/details" + query, {"X-Emby-Token": token} if token else {}, b"")
+
+    def test_popular_and_coming_soon_ids_answer_with_their_details(self):
+        self.assertEqual(self.get("?id=" + POP_D), (200, {"details": {"k": "movie", "id": 101, "t": {"en": "Animals"}}}))
+        self.assertEqual(self.get("?id=" + COMING_D)[1]["details"]["t"], {"en": "Soon"})
+
+    def test_needs_a_signed_in_enabled_user(self):
+        self.assertEqual(self.get("?id=" + POP_D, token=None)[0], 401)
+        self.assertEqual(self.get("?id=" + POP_D, token="z" * 32)[0], 401)
+        self.assertEqual(self.get("?id=" + POP_D, token="c" * 32)[0], 403)
+
+    def test_raw_tmdb_ids_unknown_ids_and_request_ids_are_refused(self):
+        for q in ("?id=101", "?id=movie/101", "?id=movie%2F101", "?tmdb=101", "?id=" + POP_D + "&tmdb=5", "?id=" + POP_D + "&id=" + COMING_D, "", "?id=" + "x" * 300):
+            self.assertEqual(self.get(q)[0], 400, q)
+        self.assertEqual(self.get("?id=dUnknownxxxxxxxxxxxxxxxx")[0], 404)
+        self.assertEqual(self.get("?id=tok-movie-xxxxxxxxxxxx")[0], 404, "a request id is not a details id")
+
+    def test_coming_soon_ids_cannot_be_requested(self):
+        self.assertEqual(self.post({"id": COMING_D})[0], 403)
+        self.assertEqual(self.post({"id": COMING_D, "check": True})[0], 403)
+        self.assertEqual(self.post({"id": POP_D})[0], 403)
+        self.assertEqual(self.seerr.posts, [])
+
+    def test_stale_or_missing_sidecars_answer_nothing(self):
+        self.now = NOW + datetime.timedelta(days=10)
+        self.assertEqual(self.get("?id=" + POP_D)[0], 404)
+        self.now = NOW
+        pathlib.Path(self.tmp.name, "coming.json").write_text("{broken")
+        self.assertEqual(self.get("?id=" + COMING_D)[0], 404)
+        self.assertEqual(self.get("?id=" + POP_D)[0], 200)
+
+    def test_a_changed_sidecar_is_read_again(self):
+        self.assertEqual(self.get("?id=" + POP_D)[0], 200)
+        f = pathlib.Path(self.tmp.name, "details.json")
+        f.write_text(json.dumps({"updated": "2026-10-28T22:20:00", "entries": {}}))
+        import os
+        os.utime(f, (time.time() + 5, time.time() + 5))
+        self.assertEqual(self.get("?id=" + POP_D)[0], 404)
+
+    def test_rate_limited_per_user_on_its_own_budget(self):
+        for _ in range(self.core.cfg.details_per_min):
+            self.assertEqual(self.get("?id=" + POP_D)[0], 200)
+        self.assertEqual(self.get("?id=" + POP_D)[0], 429)
+        self.assertEqual(self.get("?id=" + POP_D, token="b" * 32)[0], 200)
+        self.assertNotEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx", "check": True})[0], 429, "browsing does not use up the request budget")
+
+    def test_only_get(self):
+        self.assertEqual(self.core.handle("POST", "/hss-popular/details?id=" + POP_D, {"X-Emby-Token": TOKEN}, b"")[0], 404)
+
+
 class Server(unittest.TestCase):
     def setUp(self):
         self.timeout = app.Handler.timeout
         app.Handler.timeout = 0.5
-        app.Handler.core = type("C", (), {"handle": lambda s, m, p, h, b: (200, {"ok": True, "len": len(b)})})()
+        app.Handler.core = type("C", (), {"handle": lambda s, m, p, h, b: (200, {"ok": True, "len": len(b), "path": p})})()
         self.srv = app.make_server(("127.0.0.1", 0), workers=2, backlog=1)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         self.port = self.srv.server_address[1]
@@ -377,6 +440,11 @@ class Server(unittest.TestCase):
             self.assertIn(" 400 ", self.send(f"POST /hss-popular/request HTTP/1.0\r\nContent-Length: {value}\r\n\r\n".encode()).split("\r\n")[0], value)
         self.assertIn('"len": 2', self.send(b"POST /hss-popular/request HTTP/1.0\r\nContent-Length: 2\r\n\r\n{}"))
         self.assertIn('"len": 0', self.send(b"POST /hss-popular/request HTTP/1.0\r\n\r\n"))
+
+    def test_the_query_reaches_the_core_and_answers_are_not_cached(self):
+        out = self.send(b"GET /hss-popular/details?id=abc HTTP/1.0\r\n\r\n")
+        self.assertIn('"path": "/hss-popular/details?id=abc"', out)
+        self.assertIn("Cache-Control: no-store", out)
 
 
 class State(Base):

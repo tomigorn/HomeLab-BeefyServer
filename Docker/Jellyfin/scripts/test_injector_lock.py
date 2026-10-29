@@ -78,7 +78,8 @@ class Lock(unittest.TestCase):
         jf = test_upcoming_popularity.FakeJellyfin()
         t = test_upcoming_popularity.Main()
         t.setUp()
-        self.assertEqual(up.main([], api=self.guarded(jf.api), arr=t.arr, seerr=t.seerr, today=datetime.date(2026, 10, 29), out=io.StringIO()), 0)
+        self.addCleanup(t.tearDown)
+        self.assertEqual(up.main([], api=self.guarded(jf.api), arr=t.arr, seerr=t.seerr, today=datetime.date(2026, 10, 29), out=io.StringIO(), sidecar=t.side), 0)
         self.assertEqual(self.posts, [True])
 
     def test_studio_logos_posts_under_the_lock_and_uploads_outside_it(self):
