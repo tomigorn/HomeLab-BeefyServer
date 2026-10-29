@@ -359,9 +359,9 @@ def count_files(path):
 
 
 def hdd_checks(conf, units):
-    """Only while the mover works (the HDD is awake then): duplicates, staging leftovers, downloads that spilled onto the HDD."""
+    """Only while the mover works (the HDD is awake then): duplicates, staging leftovers (incl. .tier-recovered, kept for a look by hand), downloads that spilled onto the HDD."""
     dups = sum((conf.cold / v.rel).exists() for u in units for v in u.videos)
-    return {"duplicates": dups, "staging_orphans": count_files(conf.cold / ".tier-staging"),
+    return {"duplicates": dups, "staging_orphans": count_files(conf.cold / ".tier-staging") + count_files(conf.cold / ".tier-recovered"),
             "hdd_overflow_files": count_files(conf.cold / "torrents") + count_files(conf.cold / "usenet")}
 
 

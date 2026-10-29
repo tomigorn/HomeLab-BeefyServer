@@ -342,11 +342,12 @@ class Run(Tree):
     def test_hdd_checks_duplicates_staging_and_overflow(self):
         self.file("media/movies/M0/M0.mkv", branch=self.cold)
         self.file(".tier-staging/media/movies/X/X.mkv", branch=self.cold)
+        self.file(".tier-recovered/media/movies/Y/.Y.mkv.Ab12Cd", branch=self.cold)
         self.file("torrents/movies/spilled.mkv", branch=self.cold)
         self.file("usenet/complete/a.rar", branch=self.cold)
         s = Stub(self, 1000, 750)
         res, _ = self.go(s)
-        self.assertEqual((res["duplicates"], res["staging_orphans"], res["hdd_overflow_files"]), (1, 1, 2))
+        self.assertEqual((res["duplicates"], res["staging_orphans"], res["hdd_overflow_files"]), (1, 2, 2))
 
     def test_plan_lists_titles_with_last_played_and_added_even_below_start(self):
         self.snap.played["media/movies/M0"] = ago(60)

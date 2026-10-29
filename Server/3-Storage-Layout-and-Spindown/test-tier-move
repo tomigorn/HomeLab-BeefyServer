@@ -205,6 +205,38 @@ check "$rc" "1" "refuses when no hot branch has room"
 [ -f "$COLD/media/movies/Dune/Dune.mkv" ] && ok "cold copy untouched" || bad "cold copy lost"
 teardown
 
+# ---------------------------------------------------------------------------
+echo "15. power cut after the source was deleted: the only copy in staging is put in place, never wiped"
+setup
+mkdir -p "$COLD/.tier-staging/media/movies/Tenet" "$HOT/media/movies/Tenet"
+head -c 4000 /dev/urandom > "$COLD/.tier-staging/media/movies/Tenet/Tenet.mkv"
+sum=$(md5sum < "$COLD/.tier-staging/media/movies/Tenet/Tenet.mkv")
+out=$(run demote media/movies/Dune --apply); rc=$?
+check "$rc" "0" "the next demote still exits 0"
+[ -f "$COLD/media/movies/Tenet/Tenet.mkv" ] && check "$(md5sum < "$COLD/media/movies/Tenet/Tenet.mkv")" "$sum" "orphaned copy recovered into place, intact" || bad "orphaned copy lost"
+case "$out" in *RECOVERED*) ok "says it recovered" ;; *) bad "no RECOVERED line" ;; esac
+[ -f "$COLD/media/movies/Dune/Dune.mkv" ] && ok "the requested title still moved" || bad "requested title not moved"
+teardown
+
+echo "16. leftovers whose original is still hot are removed; a partial copy without original is kept aside"
+setup
+mkdir -p "$COLD/.tier-staging/media/movies/Dune" "$COLD/.tier-staging/media/movies/Gone"
+head -c 300 /dev/urandom > "$COLD/.tier-staging/media/movies/Dune/Dune.mkv"
+head -c 300 /dev/urandom > "$COLD/.tier-staging/media/movies/Gone/.Gone.mkv.Xy12Zq"
+out=$(run demote media/movies/Dune --apply); rc=$?
+check "$rc" "0" "exits 0"
+[ -f "$COLD/.tier-recovered/media/movies/Gone/.Gone.mkv.Xy12Zq" ] && ok "partial copy without original kept in .tier-recovered" || bad "partial copy deleted"
+check "$(find "$COLD/.tier-staging" -type f 2>/dev/null | wc -l)" "0" "staging holds no files afterwards"
+[ "$(stat -c %s "$COLD/media/movies/Dune/Dune.mkv")" = 300000 ] && ok "the stale leftover did not replace the real move" || bad "wrong file in place"
+teardown
+
+echo "17. a dry run never touches staging"
+setup
+mkdir -p "$COLD/.tier-staging/media/movies/Tenet"; : > "$COLD/.tier-staging/media/movies/Tenet/Tenet.mkv"
+run demote media/movies/Dune >/dev/null
+[ -e "$COLD/.tier-staging/media/movies/Tenet/Tenet.mkv" ] && ok "dry run left staging alone" || bad "dry run touched staging"
+teardown
+
 echo
 echo "passed $PASS, failed $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -123,5 +123,111 @@ class Move(unittest.TestCase):
         self.assertEqual(dup.read_bytes(), self.data)
 
 
+    def test_destination_dir_is_fsynced_before_the_source_is_deleted(self):
+        events, real_fsync, real_unlink = [], th.os.fsync, th.os.unlink
+
+        def fsync(fd):
+            events.append(("fsync", os.readlink(f"/proc/self/fd/{fd}")))
+            return real_fsync(fd)
+
+        def unlink(path, *a, **kw):
+            events.append(("unlink", str(path)))
+            return real_unlink(path, *a, **kw)
+        th.os.fsync, th.os.unlink = fsync, unlink
+        try:
+            self.assertEqual(self.move(), 0)
+        finally:
+            th.os.fsync, th.os.unlink = real_fsync, real_unlink
+        out_dir = str((self.cold / REL).parent)
+        gone = events.index(("unlink", str(self.src)))
+        self.assertIn(("fsync", out_dir), events[:gone])
+        self.assertIn(("fsync", str(self.cold)), events[:gone])
+
+
+class Recover(unittest.TestCase):
+    """Leftovers in <dst>/.tier-staging after a crash: never delete the only copy."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp())
+        self.hot, self.hot2, self.cold = self.tmp / "hot", self.tmp / "hot2", self.tmp / "cold"
+        for b in (self.hot, self.hot2, self.cold):
+            b.mkdir()
+        self.staged = self.cold / th.STAGING / REL
+        self.staged.parent.mkdir(parents=True)
+        self.data = os.urandom(5000)
+        self.staged.write_bytes(self.data)
+        self.logs = []
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def recover(self):
+        return th.recover(self.cold, [self.hot, self.hot2], log=self.logs.append)
+
+    def test_power_cut_after_source_delete_puts_the_only_copy_in_place(self):
+        (self.hot / "media/movies/Dune (2021)").mkdir(parents=True)
+        os.chmod(self.hot / "media/movies/Dune (2021)", 0o2770)
+        self.assertEqual(self.recover(), 0)
+        out = self.cold / REL
+        self.assertEqual(out.read_bytes(), self.data)
+        self.assertFalse(self.staged.exists())
+        self.assertEqual(oct(out.parent.stat().st_mode & 0o7777), "0o2770")
+        self.assertIn("RECOVERED", " ".join(self.logs))
+
+    def test_recovers_without_any_source_dir_left(self):
+        self.assertEqual(self.recover(), 0)
+        self.assertEqual((self.cold / REL).read_bytes(), self.data)
+
+    def test_leftover_whose_original_still_exists_is_removed(self):
+        src = self.hot2 / REL
+        src.parent.mkdir(parents=True)
+        src.write_bytes(b"original")
+        self.assertEqual(self.recover(), 0)
+        self.assertFalse(self.staged.exists())
+        self.assertFalse((self.cold / REL).exists())
+        self.assertEqual(src.read_bytes(), b"original")
+
+    def test_partial_rsync_temp_with_original_is_removed(self):
+        tmpname = self.staged.parent / ".Dune.mkv.Ab12Cd"
+        self.staged.rename(tmpname)
+        src = self.hot / REL
+        src.parent.mkdir(parents=True)
+        src.write_bytes(b"original")
+        self.assertEqual(self.recover(), 0)
+        self.assertFalse(tmpname.exists())
+
+    def test_partial_rsync_temp_without_original_is_kept_aside(self):
+        tmpname = self.staged.parent / ".Dune.mkv.Ab12Cd"
+        self.staged.rename(tmpname)
+        self.assertEqual(self.recover(), 1)
+        kept = self.cold / th.RECOVERED / pathlib.PurePosixPath(REL).parent / ".Dune.mkv.Ab12Cd"
+        self.assertEqual(kept.read_bytes(), self.data)
+        self.assertFalse((self.cold / REL).exists())
+
+    def test_identical_file_already_in_place_drops_the_leftover(self):
+        out = self.cold / REL
+        out.parent.mkdir(parents=True)
+        out.write_bytes(self.data)
+        self.assertEqual(self.recover(), 0)
+        self.assertFalse(self.staged.exists())
+        self.assertEqual(out.read_bytes(), self.data)
+
+    def test_different_file_in_place_keeps_both(self):
+        out = self.cold / REL
+        out.parent.mkdir(parents=True)
+        out.write_bytes(b"other")
+        self.assertEqual(self.recover(), 1)
+        self.assertEqual(out.read_bytes(), b"other")
+        self.assertEqual((self.cold / th.RECOVERED / REL).read_bytes(), self.data)
+        self.assertIn("KEPT", " ".join(self.logs))
+
+    def test_no_staging_dir_is_fine(self):
+        shutil.rmtree(self.cold / th.STAGING)
+        self.assertEqual(self.recover(), 0)
+
+    def test_empty_staging_dirs_are_pruned(self):
+        self.assertEqual(self.recover(), 0)
+        self.assertEqual([p for p in (self.cold / th.STAGING).rglob("*")], [])
+
 if __name__ == "__main__":
     unittest.main()

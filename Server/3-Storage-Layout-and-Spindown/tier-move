@@ -9,6 +9,8 @@
 #     (tier-helper). beefy has no UPS, so a power cut mid-move must leave the original intact.
 #   * one shared media lock (/run/lock/beefy-media.lock) with the mover, promoter and original-audio.
 #   * exit 3 = media lock busy, 4 = source changed/vanished during the copy (nothing lost).
+#   * staging leftovers of a killed run or power cut are never wiped blindly: `tier-helper recover`
+#     removes one only while its original still exists, puts an only copy in place, keeps the rest in <dst>/.tier-recovered.
 #   * never `rename` across branches - mergerfs returns EXDEV for that.
 #   * refuse to touch a file that is open (playing) or hardlinked (seeding).
 #   * leave sidecars on the SSD, so the directory skeleton stays hot and
@@ -211,8 +213,15 @@ fi
 [ -e "$TIER_LOCK" ] || (umask 022; : >> "$TIER_LOCK") 2>/dev/null
 exec 8<"$TIER_LOCK" || die "cannot open the media lock $TIER_LOCK"
 flock -w "$TIER_LOCK_WAIT" 8 || { echo "tier-move: another media job still holds the media lock $TIER_LOCK after ${TIER_LOCK_WAIT}s - nothing moved" >&2; exit 3; }
-# Leftovers of a killed earlier run (we hold the media lock, so nothing else is writing there).
-rm -rf -- "$DSTB/.tier-staging"
+# Leftovers of a killed earlier run or a power cut (we hold the media lock, so nothing else is writing there).
+OTHERS=(); for b in "${HOTS[@]}" "$COLD"; do [ "$b" = "$DSTB" ] || OTHERS+=("$b"); done
+"$TIER_HELPER" recover "$DSTB" "${OTHERS[@]}" | sed 's/^/  staging: /'
+case ${PIPESTATUS[0]} in
+    0) ;;
+    5) echo "  staging: something kept in $DSTB/.tier-recovered - check it by hand" ;;
+    *) die "staging recovery failed on $DSTB - nothing moved" ;;
+esac
+prune_staging() { find "$DSTB/.tier-staging" -depth -type d -empty -delete 2>/dev/null || true; }
 echo
 echo "  copying:"
 moved=0
@@ -222,10 +231,10 @@ for f in "${FILES[@]}"; do
     # copy into .tier-staging, verify read back from disk, check the source is unchanged, rename into place, then delete the source
     "$TIER_HELPER" move "$SRCB" "$DSTB" "$rel" ${TIER_BWLIMIT:+--bwlimit "$TIER_BWLIMIT"} | sed 's/^/    /'
     rc=${PIPESTATUS[0]}
-    [ "$rc" -eq 0 ] || { rm -rf -- "$DSTB/.tier-staging"; echo "tier-move: stopped at $rel, its source left untouched" >&2; exit "$rc"; }
+    [ "$rc" -eq 0 ] || { prune_staging; echo "tier-move: stopped at $rel, its source left untouched" >&2; exit "$rc"; }
     moved=$(( moved + 1 ))
 done
-rm -rf -- "$DSTB/.tier-staging"
+prune_staging
 
 # Prune directories that are now empty on the source branch. Directories holding
 # sidecars are left alone on purpose - that skeleton is what keeps browsing hot.
