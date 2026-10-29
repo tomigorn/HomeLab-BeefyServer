@@ -134,7 +134,7 @@ busy: disk=5300kbps                                            -> reset (downloa
 WOULD power off (idle 15m, dry-run)                            -> stay up
 ```
 
-Since v1.4.0 each cycle also writes `/run/beefy-idle.prom` (atomic, `METRICS_FILE`): `beefy_idle_busy{reason=conns|ssh|vscode|cpu|net|disk|inhibit|probe_error}` 0/1, `beefy_idle_info{detail}` (peer ip:port, "keep-awake file", ...) `beefy_idle_updated_timestamp_seconds` and (since v1.5.0) `beefy_boot_time_seconds` (`btime` from `/proc/stat`). fastpi pulls it every 5 min (`beefy-idle-pull.timer`) for the `BeefyAwakeLong` alert (beefy up 6 h); `inhibit` = the `/run/beefy-keep-awake` file.
+Since v1.4.0 each cycle also writes `/run/beefy-idle.prom` (atomic, `METRICS_FILE`): `beefy_idle_busy{reason=conns|ssh|vscode|cpu|net|disk|inhibit|probe_error}` 0/1, `beefy_idle_info{detail}` (reason words and the peer ip only since v1.6.0: "conn from 192.168.1.50", "keep-awake file", "cpu, disk"; bounded label), `beefy_idle_cpu_percent` / `beefy_idle_net_kbytes_per_second` / `beefy_idle_disk_kbytes_per_second` (the measured values), `beefy_idle_updated_timestamp_seconds` and (since v1.5.0) `beefy_boot_time_seconds` (`btime` from `/proc/stat`). fastpi pulls it every 5 min (`beefy-idle-pull.timer`) for the `BeefyAwakeLong` alert (beefy up 6 h); `inhibit` = the `/run/beefy-keep-awake` file.
 
 So every decision — and every *near* decision — is auditable. This is what makes
 threshold tuning data-driven rather than guesswork.

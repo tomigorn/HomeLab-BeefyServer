@@ -327,10 +327,20 @@ class TestIdleMetrics(unittest.TestCase):
     def test_detail_text_per_reason(self):
         self.assertEqual(biw.idle_detail(["inhibit"], "", {}), "keep-awake file")
         self.assertEqual(biw.idle_detail(["vscode"], "", {}), "VS Code Remote")
-        self.assertEqual(biw.idle_detail(["conns"], "1.2.3.4:5", {}), "conn from 1.2.3.4:5")
+        self.assertEqual(biw.idle_detail(["conns"], "1.2.3.4:5", {}), "conn from 1.2.3.4")
         self.assertEqual(biw.idle_detail(["ssh"], "", {"ssh": 2}), "interactive ssh x2")
-        self.assertEqual(biw.idle_detail(["cpu", "net"], "", {"cpu": 31.4, "net": 512.0}),
-                         "cpu 31%, net 512 kB/s")
+        self.assertEqual(biw.idle_detail(["cpu", "net", "disk"], "", {"cpu": 31.4, "net": 512.0, "disk": 9.0}), "cpu, net, disk")
+
+    def test_detail_label_is_bounded_numbers_go_to_gauges(self):
+        a = biw.idle_detail(["cpu", "conns"], "1.2.3.4:55512", {"cpu": 61.0})
+        b = biw.idle_detail(["cpu", "conns"], "1.2.3.4:40001", {"cpu": 12.0})
+        self.assertEqual(a, b)
+        out = biw.render_idle_metrics(["cpu", "disk"], a, 5, stats={"cpu": 61.04, "net": 3.0, "disk": 224890.4, "ssh": 1})
+        self.assertIn("beefy_idle_cpu_percent 61.0\n", out)
+        self.assertIn("beefy_idle_net_kbytes_per_second 3.0\n", out)
+        self.assertIn("beefy_idle_disk_kbytes_per_second 224890.4\n", out)
+        self.assertIn("# TYPE beefy_idle_cpu_percent gauge", out)
+        self.assertNotIn("beefy_idle_cpu_percent", biw.render_idle_metrics([], "", 5))
         self.assertEqual(biw.idle_detail([], "", {}), "")
 
     def test_write_idle_metrics_is_atomic_and_readable(self):

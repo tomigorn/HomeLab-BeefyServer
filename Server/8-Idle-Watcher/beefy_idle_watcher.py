@@ -248,22 +248,17 @@ def first_inbound_peer(ss_estab_text, listen_ports, exclude_ports, ct_text,
 
 
 def idle_detail(reasons, peer, stats):
-    """Short human text for what keeps beefy awake."""
+    """Short human text for what keeps beefy awake: reason words and the peer ip only (a Prometheus label, so no ports or live numbers: those are gauges)."""
     parts = []
     if "inhibit" in reasons:
         parts.append("keep-awake file")
     if "vscode" in reasons:
         parts.append("VS Code Remote")
     if "conns" in reasons and peer:
-        parts.append("conn from %s" % peer)
+        parts.append("conn from %s" % peer.rsplit(":", 1)[0])
     if "ssh" in reasons:
         parts.append("interactive ssh x%d" % stats.get("ssh", 1))
-    if "cpu" in reasons:
-        parts.append("cpu %.0f%%" % stats.get("cpu", 0))
-    if "net" in reasons:
-        parts.append("net %.0f kB/s" % stats.get("net", 0))
-    if "disk" in reasons:
-        parts.append("disk %.0f kB/s" % stats.get("disk", 0))
+    parts += [r for r in ("cpu", "net", "disk") if r in reasons]
     return ", ".join(parts)
 
 
@@ -276,14 +271,20 @@ def parse_btime(stat_text):
     return None
 
 
-def render_idle_metrics(reasons, detail, ts, boot_time=None):
-    """node-exporter textfile body: one 0/1 per reason, the detail, the write time, the boot time."""
+IDLE_GAUGES = (("cpu", "beefy_idle_cpu_percent"), ("net", "beefy_idle_net_kbytes_per_second"), ("disk", "beefy_idle_disk_kbytes_per_second"))
+
+
+def render_idle_metrics(reasons, detail, ts, boot_time=None, stats=None):
+    """node-exporter textfile body: one 0/1 per reason, the detail, the write time, the boot time, the measured cpu/net/disk."""
     safe = _SAFE.sub("", str(detail))[:80]
     lines = ["# TYPE beefy_idle_busy gauge"]
     lines += ['beefy_idle_busy{reason="%s"} %d' % (r, int(r in reasons)) for r in IDLE_REASONS]
     lines += ["# TYPE beefy_idle_info gauge", 'beefy_idle_info{detail="%s"} 1' % safe,
               "# TYPE beefy_idle_updated_timestamp_seconds gauge",
               "beefy_idle_updated_timestamp_seconds %d" % ts]
+    for key, name in IDLE_GAUGES:
+        if stats and key in stats:
+            lines += ["# TYPE %s gauge" % name, "%s %.1f" % (name, stats[key])]
     if boot_time is not None:
         lines += ["# HELP beefy_boot_time_seconds Boot time of beefy (btime from /proc/stat), epoch seconds.",
                   "# TYPE beefy_boot_time_seconds gauge",
@@ -422,7 +423,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.5.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.6.0"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -495,17 +496,18 @@ def main():
             busy, reasons = evaluate(probes, inhibit)
             peer = first_inbound_peer(estab, listen, cfg["EXCLUDE_PORTS"], ct_text,
                                       local_addrs, published) if conns + ct > 0 else ""
-            detail = idle_detail(reasons, peer, {"ssh": ssh, "cpu": cpu, "net": net, "disk": disk})
+            gauges = {"ssh": ssh, "cpu": cpu, "net": net, "disk": disk}
+            detail = idle_detail(reasons, peer, gauges)
             stats = ("conns=%d+%d ssh=%d vscode=%d cpu=%2.0f%% net=%.0fkB/s "
                      "disk=%.0fkB/s inhibit=%d ignored-vpn-up=%.0fkB/s"
                      % (conns, ct, ssh, int(vscode), cpu, net, disk, int(inhibit), vpn_up))
         except Exception as e:
             log("WARN probe cycle failed (%s) -> treating as BUSY" % e)
             busy, reasons, stats = True, ["probe_error"], "probe error"
-            detail = "probe error"
+            detail, gauges = "probe error", None
 
         write_idle_metrics(cfg["METRICS_FILE"], render_idle_metrics(reasons, detail, int(time.time()),
-                                                                  parse_btime(cur["stat"])))
+                                                                  parse_btime(cur["stat"]), gauges))
         idle_since = update_idle(busy, idle_since, now)
         idle_min = (now - idle_since) / 60.0
         log("idle=%4.1fm %s -> %s%s"
