@@ -1061,3 +1061,23 @@ test("skeleton rows can be paused like Jellyfin's rows", () => {
   assert.equal(typeof row.resume, "function");
 });
 
+test("a burst of DOM changes (sections arriving, other pages rendering) is handled once per frame, not once per change", async () => {
+  const dom = new JSDOM('<html lang="en"><body><div class="homeSectionsContainer"><div class="verticalSection NextUp" data-page="1"></div></div><div class="other"></div></body></html>', { url: "https://jf.example.com/web/", pretendToBeVisual: true });
+  const win = dom.window;
+  let calls = 0;
+  win.HssPageMeta = { Page: 1 };
+  win.ApiClient = { getCurrentUserId: () => { calls++; return "u1"; }, getUrl: (p) => p, getJSON: () => new Promise(() => {}) };
+  es.start(win);
+  await new Promise((r) => win.requestAnimationFrame(() => r()));
+  calls = 0;
+  const other = win.document.querySelector(".other");
+  for (let i = 0; i < 20; i++) {
+    other.appendChild(win.document.createElement("div"));
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+  await new Promise((r) => win.requestAnimationFrame(() => r()));
+  assert.ok(calls > 0, "the change is still handled");
+  assert.ok(calls <= 6, `handled ${calls / 2} times for 20 changes`);
+  win.close();
+});

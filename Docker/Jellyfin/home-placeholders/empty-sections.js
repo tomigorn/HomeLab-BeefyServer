@@ -1172,8 +1172,16 @@
       observer.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
     }
 
+    // Once per frame, still before it is painted: a home load or another page rendering fires hundreds of change batches.
+    var frame = null;
+    function nextFrame() {
+      if (frame) return;
+      var go = function () { frame = null; quick(); };
+      frame = win.requestAnimationFrame ? win.requestAnimationFrame(go) : win.setTimeout(go, 16);
+    }
+
     var observer = new win.MutationObserver(function () {
-      quick();
+      nextFrame();
       var now = Date.now();
       if (!since) since = now;
       if (timer) win.clearTimeout(timer);
