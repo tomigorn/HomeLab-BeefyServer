@@ -43,6 +43,15 @@ def api(method, path, body=None):
     return json.loads(raw) if raw else None
 
 
+def api_raw(method, path, data, content_type):
+    key = KEY_FILE.read_text().strip()
+    req = urllib.request.Request(BASE + path, data=data, method=method)
+    req.add_header("Authorization", f'MediaBrowser Token="{key}"')
+    req.add_header("Content-Type", content_type)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read()
+
+
 def user_id(name):
     for user in api("GET", "/Users"):
         if user["Name"] == name:

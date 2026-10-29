@@ -55,6 +55,17 @@ class PlanTest(unittest.TestCase):
         updates, _ = ud.plan([user("a", SubtitleMode="Always", RememberAudioSelections=False)], {"a"})
         self.assertEqual(updates, [])
 
+    def test_plan_hides_trending_for_all_users(self):
+        updates, _ = ud.plan([user("a")], {"a"}, "t")
+        self.assertEqual(updates, [("a", {**STOCK, "MyMediaExcludes": ["t"]})])
+        done = user("a", MyMediaExcludes=["t"])
+        self.assertEqual(ud.plan([done], {"a"}, "t")[0], [])
+
+    def test_new_user_gets_defaults_and_hiding(self):
+        updates, _ = ud.plan([user("n")], {"a"}, "t")
+        self.assertEqual(updates[0][1]["MyMediaExcludes"], ["t"])
+        self.assertEqual(updates[0][1]["SubtitleMode"], "Smart")
+
     def test_deleted_users_leave_the_state(self):
         _, handled = ud.plan([user("a")], {"a", "gone"})
         self.assertEqual(handled, {"a"})
