@@ -6,17 +6,19 @@
 # project is running (and healthy if it has a healthcheck) with no crash loop;
 # on failure restore compose/.env from the snapshot, re-tag the old images (tag refs) and recreate on the old image ids, pinned when compose still names another ref (automatic rollback).
 # Before any change every old image gets rollback.invalid/<repo>:<date>-<project> (a dangling prune cannot take it; one namespace Cup excludes, sorted after the real tags); the last ROLLBACK_KEEP (3) per repo and project stay.
+# Everything it writes under ~/backups is owner-only (umask 077, dirs 0700, files 0600): the backups hold databases and secrets.
 # Env: SERVICES (pull/build/recreate only these, --no-deps; the verify still covers the whole project), WAIT (45), CHECK (functional check, a shell command; retried CHECK_TRIES=6 times 10 s apart),
 #      POST_CHECK=0 (skip the customization check: post-update-check.sh runs after CHECK whenever _global/post-update.d/<dir name>.sh exists, Docker/CUSTOMIZATIONS.md),
 #      TEST_FORCE_FAIL=1 (the verify fails: rollback drill). Exit 0 ok, 1 rolled back, 3 rollback did not verify.
 set -uo pipefail
+umask 077
 # beefy: buntu is outside the docker group on purpose; by hand it goes through sudo, the auto-update service has the group.
 if ! docker info >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then docker() { sudo -n docker "$@"; }; export -f docker; fi
 dir=$1; mode=$2; shift 2
 here=$(cd "$(dirname "$0")" && pwd)
 cd "$dir" || { echo "FAIL $dir: no such dir"; exit 2; }
 proj=$(docker compose config --format json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
-bk="$HOME/backups/pre-update/$(date +%F)/$proj"; mkdir -p "$bk"
+bk="$HOME/backups/pre-update/$(date +%F)/$proj"; mkdir -p "$bk"; chmod 700 "$HOME/backups/pre-update" "${bk%/*}" "$bk"
 pending="$HOME/backups/pre-update/pending/$proj"
 name=$(basename "$(pwd -P)")
 
@@ -31,7 +33,7 @@ take_snapshot() {  # take_snapshot <dir>: copies the files with their absolute p
   local to=$1 f; rm -rf "$to"; mkdir -p "$to/root"; chmod 700 "$to"
   { compose_files; [[ -f .env ]] && echo "$PWD/.env"; } | sort -u > "$to/files"
   while read -r f; do [[ -f $f ]] && { cp --parents "$f" "$to/root" 2>/dev/null || sudo -n cp --parents "$f" "$to/root"; }; done < "$to/files"
-  touch "$to/taken"
+  touch "$to/taken"; chmod -R go-rwx "$to" 2>/dev/null || sudo -n chmod -R go-rwx "$to"
 }
 restore_snapshot() {
   local f n=0; [[ -f $snap/files ]] || return 0
@@ -84,7 +86,7 @@ done
 # Traefik: the new tag must load the local plugins before it may replace the edge (Traefik README "Updating Traefik").
 if [[ -x scripts/traefik-plugin-test.sh ]]; then
   t=$(docker compose config --format json | python3 -c 'import json,sys; print(json.load(sys.stdin)["services"]["traefik"]["image"].rsplit(":",1)[1])')
-  scripts/traefik-plugin-test.sh "$t" || { echo "FAIL $proj: plugin test failed on traefik:$t, nothing changed"; exit 1; }
+  (umask 022; scripts/traefik-plugin-test.sh "$t") || { echo "FAIL $proj: plugin test failed on traefik:$t, nothing changed"; exit 1; }
 fi
 
 case $mode in
@@ -96,8 +98,8 @@ esac
 # backups: cold (services stopped after the pull), so a live database is never copied mid-write
 if (( $# )); then docker compose stop ${SERVICES:-} 2>&1 | grep -E 'Stopped|Error|error' | head -8; fi
 for b in "$@"; do
-  if [[ $b == vol:* ]]; then v=${b#vol:}; docker run --rm -v "$v":/from:ro -v "$bk":/to alpine tar czf "/to/vol-$v.tgz" -C /from . && echo "  backup: volume $v -> $bk"
-  else [[ -e $b ]] && sudo tar czf "$bk/$(basename "$b").tgz" -C "$(dirname "$b")" "$(basename "$b")" && echo "  backup: $b -> $bk"; fi
+  if [[ $b == vol:* ]]; then v=${b#vol:}; docker run --rm -v "$v":/from:ro alpine tar czf - -C /from . > "$bk/vol-$v.tgz" && echo "  backup: volume $v -> $bk"
+  else [[ -e $b ]] && sudo tar czf - -C "$(dirname "$b")" "$(basename "$b")" > "$bk/$(basename "$b").tgz" && echo "  backup: $b -> $bk"; fi
 done
 
 docker compose up -d --remove-orphans ${SERVICES:+--no-deps $SERVICES} 2>&1 | grep -E 'Recreat|Creat|Error|error' | head -8

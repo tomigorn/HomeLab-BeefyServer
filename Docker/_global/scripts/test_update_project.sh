@@ -54,10 +54,12 @@ case $1 in
            read -r _ _ gen < "$D/ctr"; echo "$id $ref $((gen + 1))" > "$D/ctr"; echo " Container demo-app Recreated" ;;
       *) : ;;
     esac ;;
+  run) echo "tar of ${@: -3:1}" ;;
   *) echo "unexpected: $*" >&2; exit 9 ;;
 esac
 STUB
 chmod +x "$T/bin/docker"
+printf '#!/usr/bin/env bash\n[[ $1 == -n ]] && shift\nexec "$@"\n' > "$T/bin/sudo"; chmod +x "$T/bin/sudo"
 export FAKE_LOG="$T/log" FAKE_DIR="$T" WAIT=0 ROLLBACK_WAIT=0 CHECK_TRIES=1 HOME="$T" POST_UPDATE_DIR="$T/checks" PATH="$T/bin:$PATH"
 # CHECK passes only on the old image: every update below fails and rolls back.
 OLDCHECK='grep -q "^sha:old " "$FAKE_DIR/ctr"'
@@ -119,6 +121,17 @@ echo "rollback tag of a registry ref with a port and a path"
 setup reg.example:5000/team/img:1; printf 'reg.example:5000/team/img:1 sha:old\n' > "$T/tags"
 CHECK=true run recreate
 grep -q "^rollback.invalid/reg.example-5000/team/img:$TODAY-demo sha:old$" "$T/tags" && ok "registry port folded into the path" || bad "registry port folded" "$(cat "$T/tags")"
+
+echo "backups are owner-only"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; mkdir -p "$T/data/db"; echo secret > "$T/data/db/app.db"; chmod 644 "$T/data/db/app.db"
+mkdir -p "$T/backups/pre-update/$TODAY"; chmod 755 "$T/backups" "$T/backups/pre-update" "$T/backups/pre-update/$TODAY"
+um=$(umask); umask 022; CHECK=true run recreate "$T/data/db" vol:demo_data; umask "$um"
+B="$T/backups/pre-update/$TODAY/demo"
+[[ -s $B/db.tgz && -s $B/vol-demo_data.tgz ]] && ok "bind dir and volume backed up" || bad "backups written" "$(ls -la "$B" 2>&1)"
+m=$(stat -c '%a %n' "$T/backups/pre-update" "$T/backups/pre-update/$TODAY" "$B" | awk '$1!="700"')
+[[ -z $m ]] && ok "pre-update, date and project dirs 0700" || bad "backup dirs 0700" "$m"
+m=$(find "$B" \( -type f -o -type d \) -perm /077 -printf '%m %p\n')
+[[ -z $m && -n $(find "$B" -type f) ]] && ok "no backup file or dir readable by group or others" || bad "backups owner-only" "$m"
 
 echo "customization check names the project"
 setup img:1; printf 'img:1 sha:old\n' > "$T/tags"
