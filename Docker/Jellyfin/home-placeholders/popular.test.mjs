@@ -258,3 +258,20 @@ test("reopening within the state TTL builds the page once, no second rebuild", a
   win.close();
 });
 
+test("no release yet: a red diagonal strike over the poster, kept red (grey only underneath), badge readable above it", () => {
+  const d = doc();
+  const c = pp.card(d, { item: NONE, jf: null }, "en", false, null);
+  assert.ok(c.classList.contains("hssTopNone"));
+  assert.ok(c.querySelector(".hssTopPoster"));
+  const css = pp.CSS;
+  const rule = (sel) => (css.split("\n").find((l) => l.startsWith(sel + " {")) || "");
+  assert.match(rule(".hssTopNone .hssTopPoster::after"), /linear-gradient\(to top right, transparent calc\(50% - [\d.]+em\), rgba\(229, 57, 53/);
+  assert.match(rule(".hssTopNone .hssTopPoster::before"), /filter: grayscale\(1\)/);
+  assert.match(rule(".hssTopNone .hssTopPoster::before"), /background: inherit/);
+  assert.doesNotMatch(css, /\.hssTopNone[^{]*\.hssTopPoster \{[^}]*filter: grayscale/, "a filter on the poster itself would grey the red line too");
+  assert.match(rule(".hssTopNone .hssTopPoster > *"), /z-index: 2/);
+  assert.doesNotMatch(rule(".hssTopNone .hssTopPoster > *"), /position/, "badge, season and title stay absolutely placed");
+  const owned = pp.card(d, { item: FOUND, jf: null }, "en", false, null);
+  assert.equal(owned.classList.contains("hssTopNone"), false);
+});
+

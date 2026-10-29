@@ -338,7 +338,10 @@
     ".hssTopCard:hover .hssTopPoster, .hssTopCard:focus .hssTopPoster, .hssTopCard:focus-within .hssTopPoster { transform: scale(1.04); box-shadow: 0 0 0 0.15em #00a4dc, -0.4em 0 1em rgba(0, 0, 0, 0.55); }",
     ".hssTopDim .hssTopPoster { filter: saturate(0.55) brightness(0.62); }",
     ".hssTopDim:hover .hssTopPoster, .hssTopDim:focus-within .hssTopPoster { filter: saturate(0.8) brightness(0.85); }",
-    ".hssTopNone .hssTopPoster, .hssTopNone:hover .hssTopPoster { filter: grayscale(1) brightness(0.45); }",
+    ".hssTopNone .hssTopPoster, .hssTopNone:hover .hssTopPoster, .hssTopNone:focus-within .hssTopPoster { filter: none; }",
+    ".hssTopNone .hssTopPoster::before { content: ''; position: absolute; inset: 0; background: inherit; filter: grayscale(1) brightness(0.45); }",
+    ".hssTopNone .hssTopPoster::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; background: linear-gradient(to top right, transparent calc(50% - 0.2em), rgba(229, 57, 53, 0.85) calc(50% - 0.18em), rgba(229, 57, 53, 0.85) calc(50% + 0.18em), transparent calc(50% + 0.2em)); }",
+    ".hssTopNone .hssTopPoster > * { z-index: 2; }",
     ".hssTopNone .hssTopRank { -webkit-text-stroke-color: rgba(255, 255, 255, 0.4); }",
     ".hssTopRank-2 { width: calc(var(--hss-p) * 0.85); margin-right: calc(var(--hss-p) * -0.05); font-size: calc(var(--hss-p) * 0.8); letter-spacing: -0.1em; }",
     ".hssTopBadge, .hssTopSeason { position: absolute; top: 0.45em; font-size: 0.72em; font-weight: 600; padding: 0.15em 0.5em; border-radius: 1em; background: rgba(0, 0, 0, 0.78); color: #fff; }",
@@ -556,7 +559,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
+    module.exports = { CSS: CSS, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {
