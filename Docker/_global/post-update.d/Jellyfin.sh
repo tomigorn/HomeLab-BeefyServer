@@ -53,10 +53,20 @@ if want jellyfin; then
   check jf.intro-skipper-detect '^\[true,true,true,true,true,true\]$' "$(jf_api /Plugins/c83d86bba1e04c35a113e2101cf4ee6b/Configuration | jq -c '[.ScanIntroduction,.ScanCredits,.ScanRecap,.ScanPreview,.EnableSubtitleRecapDetection,.EnableSubtitlePreviewDetection]' 2>&1)"
   check jf.segment-provider '^true null$' "$(jf_api '/Libraries/AvailableOptions?libraryContentType=tvshows' | jq -c '[.MediaSegmentProviders[] | select(.Name == "Intro Skipper") | .DefaultEnabled] | first' 2>&1) $(jf_api /Library/VirtualFolders | jq -c '[.[] | select(.CollectionType == "tvshows") | .LibraryOptions.DisabledMediaSegmentProviders | index("Intro Skipper")] | first' 2>&1)"
   check jf.intro-skipper-night '^22:05 04:13$' "$(jf_api /ScheduledTasks | jq -r '[.[] | select(.Key == "IntroSkipperDetectSegmentsTask") | .Triggers[] | .TimeOfDayTicks / 600000000 | "\(. / 60 | floor | tostring | if length < 2 then "0" + . else . end):\(. % 60 | tostring | if length < 2 then "0" + . else . end)"] | join(" ")' 2>&1)"
-  check jf.api-keys '^ok$' "$(jf_api /Auth/Keys | jq -r '[.Items[].AppName] as $k | if ($k | index("avatar-sync")) and ($k | index("Seerr")) then "ok" else ($k | join(",")) end' 2>&1)"
+  check jf.api-keys '^ok$' "$(jf_api /Auth/Keys | jq -r '[.Items[].AppName] as $k | if ($k | index("avatar-sync")) and ($k | index("Seerr")) and ($k | index("hss-popular-hook")) then "ok" else ($k | join(",")) end' 2>&1)"
   check jf.extra-hosts '^192\.168\.1\.2$' "$(docker exec jellyfin getent ahostsv4 sso.holy-grail.ch 2>&1 | awk 'NR==1{print $1}')"
   check jf.user-defaults-timer '^active$' "$(jf_user_systemctl is-active jellyfin-user-defaults.timer 2>&1)"
   check jf.user-defaults-config '^\["",true,"Smart"\]$' "$(python3 -c 'import importlib.util as u,json,sys;s=u.spec_from_file_location("m",sys.argv[1]);m=u.module_from_spec(s);s.loader.exec_module(m);d=m.DEFAULTS;print(json.dumps([d["AudioLanguagePreference"],d["PlayDefaultAudioTrack"],d["SubtitleMode"]],separators=(",",":")))' "$DIR/../../Jellyfin/scripts/user-defaults.py" 2>&1)"
+  # Native TV Collections & Trending (Jellyfin README "Native TV")
+  check jf.trending-library '^movies /config/trending/library false false \[\] \["Nfo"\]$' "$(jf_api /Library/VirtualFolders | jq -r '[.[] | select(.Name == "Trending items")][0] | "\(.CollectionType) \(.Locations[0]) \(.LibraryOptions.EnableRealtimeMonitor) \(.LibraryOptions.AutomaticallyAddToCollection) \([.LibraryOptions.TypeOptions[] | select(.Type == "Movie") | .MetadataFetchers][0] | tojson) \(.LibraryOptions.LocalMetadataReaderOrder | tojson)"' 2>&1)"
+  check jf.trending-hidden '^all [1-9][0-9]* users hide Trending items$' "$(python3 "$DIR/../../Jellyfin/scripts/trending-setup.py" --check 2>&1 | tail -1)"
+  check jf.trending-collections '^37 SortName$' "$(jf_api '/Items?Recursive=true&IncludeItemTypes=BoxSet&Tags=hss-trending&Fields=DisplayOrder&CollapseBoxSetItems=false' | jq -r '"\(.Items | length) \([.Items[].DisplayOrder] | unique | join(","))"' 2>&1)"
+  check jf.trending-collections-name '^Collections & Trending$' "$(jf_api /Library/VirtualFolders | jq -r '[.[] | select(.CollectionType == "boxsets") | .Name] | first' 2>&1)"
+  check jf.trending-index '^fresh [1-9]' "$(python3 -c 'import json,sys,datetime as d;a=json.load(open(sys.argv[1]));print(("fresh" if d.datetime.now(d.timezone.utc)-d.datetime.fromisoformat(a["updated"])<d.timedelta(days=9) else "stale"),len(a["items"]))' /srv/appdata/jellyfin-popular/trending-index.json 2>&1)"
+  check jf.trending-dirs '^ok ok$' "$(test -w /srv/appdata/jellyfin/trending/library && echo -n ok || echo -n no; echo -n ' '; test -s /srv/appdata/jellyfin/trending/clips/now.mp4 && echo ok || echo no)"
+  check jf.trending-hide-served '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssTrendingHide = ' 2>&1)"
+  check jf.trending-path '^active$' "$(jf_user_systemctl is-active jellyfin-trending.path 2>&1)"
+  check jf.trending-webhook '^ok$' "$(python3 "$DIR/../../Jellyfin/scripts/trending-webhook.py" check 2>&1)"
 fi
 if want popular jellyfin; then
   POP=http://127.0.0.1:8097/hss-popular
@@ -74,6 +84,10 @@ if want popular jellyfin; then
   check jf.popular-home-slot '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'HssExtraRows' 2>&1)"
   # Jellyfin calls pause() on every .itemsContainer of the home tab: a plain one of ours breaks every route change away from home.
   check jf.home-pause-safe '^[1-9][0-9]* 0$' "$(jf_api /JavaScriptInjector/private.js | grep -c 'function pausable' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'class=\"itemsContainer hssTopScroll' 2>&1)"
+  # the hook listener (8098) is internal only: a wrong secret inside the container gives 403, the public path 404
+  check jf.popular-hook-refusals '^403 404$' "$(docker exec jellyfin-popular python3 -c 'import urllib.request as u,urllib.error as e
+try: u.urlopen(u.Request("http://127.0.0.1:8098/hook/x", b"{}", method="POST"), timeout=5)
+except e.HTTPError as x: print(x.code, end="")' 2>&1) $(curl "${POP_POST[@]}" https://jellyfin.holy-grail.ch/hss-popular/hook/x)"
   check jf.popular-timer '^active$' "$(jf_user_systemctl is-active jellyfin-popular.timer 2>&1)"
   # fastpi Traefik route jellyfin.holy-grail.ch/hss-popular/ (HomeLab-FastPi Docker/Traefik/traefik/dynamic/jellyfin-popular.yml)
   check jf.popular-route '^\{"ok": true\} 200$' "$(curl -s -m 10 -w ' %{http_code}' https://jellyfin.holy-grail.ch/hss-popular/health 2>&1)"
