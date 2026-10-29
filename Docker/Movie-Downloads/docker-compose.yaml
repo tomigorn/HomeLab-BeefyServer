@@ -214,6 +214,8 @@ services:
     image: lscr.io/linuxserver/sabnzbd:5.1.3
     container_name: movie-sabnzbd
     restart: unless-stopped
+    # Time to flush the article cache (up to 1G) and save the queue on stop or poweroff; it normally takes under a second.
+    stop_grace_period: 60s
     mem_limit: 6g
     # linuxserver non-root mode: s6 and the app run as 65106, no root PID1, no capabilities.
     user: "65106:1100"   # primary gid media: /srv/video is mergerfs, and FUSE ignores supplementary groups
