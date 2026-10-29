@@ -1,0 +1,11 @@
+[Unit]
+Description=SMART disk health every 30 minutes while beefy is awake (parked disks are skipped, not woken)
+Documentation=file:///home/buntu/Projects/Server/3-Storage-Layout-and-Spindown.md
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=30min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

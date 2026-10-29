@@ -1,0 +1,23 @@
+[Unit]
+Description=SMART disk health textfile exporter (never wakes a spun-down disk)
+Documentation=file:///home/buntu/Projects/Server/3-Storage-Layout-and-Spindown.md
+
+[Service]
+Type=oneshot
+# Root: SMART needs raw disk ioctls.
+StateDirectory=smart-exporter
+ExecStart=/usr/bin/python3 -I /home/buntu/Projects/Server/3-Storage-Layout-and-Spindown/smart_exporter.py --host beefy --out /var/lib/smart-exporter/smart_beefy.prom
+TimeoutStartSec=5min
+Nice=10
+IOSchedulingClass=idle
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/smart-exporter
+PrivateTmp=true
+PrivateNetwork=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true

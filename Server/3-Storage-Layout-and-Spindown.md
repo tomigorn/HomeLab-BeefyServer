@@ -1095,6 +1095,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313   /srv/.disks/hdd-cold  xfs   noatime,
 | `smartmontools` (smartd) | active (`-n standby` on the HDD) |
 | `fstrim.timer` | enabled (weekly TRIM, all SSDs) |
 | `user_allow_other` in `/etc/fuse.conf` | set |
+| `smart-exporter.timer` | **active + enabled** (2026-10-29) — every 30 min while awake, root: `smart_exporter.py --host beefy` → `/var/lib/smart-exporter/smart_beefy.prom` (`smartctl -n standby`: the parked HDD is skipped, never woken, its last values stay with `smart_standby 1`); fastpi pulls it (`beefy-idle-pull.sh` → `smart_beefy.prom`) for the SMART alerts and dashboard `homelab-morning`. Verbatim copy of HomeLab-FastPi `Docker/grafana/smart-exporter/smart_exporter.py` (change it there, re-copy). Install: `sudo install -m 0644 smart-exporter.{service,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now smart-exporter.timer`; test `python3 test_smart_exporter.py` |
 | `hdd-spinstate.timer` | **active + enabled** (installed 2026-06-18) — 1-min non-waking power-state logger → `/var/log/hdd-spinstate.log`; see §11.1 for how to read it |
 
 ### Scripts (in `~/Projects/Server/3-Storage-Layout-and-Spindown/`)
@@ -1102,6 +1103,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313   /srv/.disks/hdd-cold  xfs   noatime,
 - `setup-storage.sh` — wipe/partition/format/mount + mergerfs + hd-idle/smartd/fstrim (`--configure` = no-wipe).
 - `hdd-spinstate.sh` — one non-waking power-state sample (`hdparm -C` + `/proc/diskstats`).
 - `install-hdd-spinlog.sh` — installs the 1-min spin-state logger timer + `hdd-spinwatch`.
+- `smart_exporter.py` — SMART health of every disk as Prometheus textfile, never wakes a parked disk (copy of the fastpi source, see Services).
 - `hdd-spinwatch` — live view: a constantly-spinning icon + a `checks seen` counter that ticks each minute a check runs (§11.1). Unprivileged.
 
 ### Validation
