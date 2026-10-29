@@ -1,0 +1,10 @@
+[Unit]
+Description=Request, download and indexer figures every 5 min while beefy is awake
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -1268,6 +1268,16 @@ cat ~/.local/state/movie-downloads/media-language.prom    # what fastpi will see
 
 Verified 2026-10-23: *The Ring Thing* (tagged, searched, no file) → `since` 2026-10-23 10:56 (added), `notify` 2026-10-30; fastpi query returns it, rule `AudioLanguageNotFound` healthy and inactive until then.
 
+### Morning dashboard metrics
+
+| | |
+|---|---|
+| What | `scripts/media-metrics.py`: counts for fastpi's Grafana dashboard `homelab-morning` (fastpi `Docker/grafana/README.md`): Seerr `/request/count` → `beefy_requests{state}`, request-state.json → `beefy_request_badges{state}` + `beefy_downloads_queue{state}`, night-downloads.json `pending` → `beefy_downloads_night_pending`, night-waiting.json → `beefy_downloads_night_waiting`, Radarr/Sonarr imports (`/history/since`, eventType 3) of the last 22:00-06:00 window → `beefy_downloads_night_imported{,_bytes}{app}`, usage.json → `indexer_used`/`indexer_limit{host="beefy"}`. Counts and sizes only, no titles or users |
+| Out | `~/.local/state/movie-downloads/media-metrics.prom`; fastpi `beefy-idle-pull.sh` copies it every 5 min to `beefy_media.prom` (kept while beefy sleeps). A failed source is left out, `beefy_media_metrics_errors` counts it |
+| When | `systemd/media-metrics.timer` every 5 min while awake (buntu), never wakes beefy |
+| Install | `sudo install -m 0644 systemd/media-metrics.{service,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now media-metrics.timer` |
+| Test | `python3 tests/test_media_metrics.py` |
+
 ## Completion scan
 
 Every finished download is scanned by ClamAV: SABnzbd post-processing script and qBittorrent "run on torrent finished" call `../Antivirus/hook/clamav-hook.py`, which streams executables, archives and unknown files to `clamav:3310` before the job ends (the `clamav` container from `../Antivirus` joins this bridge) and hands media files to the background queue (`clamav-queue`, 1 file at a time), so SABnzbd post-processing no longer waits ~2 min per episode.
