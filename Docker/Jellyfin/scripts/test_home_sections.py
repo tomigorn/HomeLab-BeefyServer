@@ -35,8 +35,7 @@ class Apply(unittest.TestCase):
     def test_every_home_load_builds_fresh_sections_on_one_page(self):
         cfg = hs.apply(fresh(), TYPES, LIBS, ARR)
         self.assertTrue(cfg["LazyLoadEnabled"])
-        most = sum(hs.LIMITS.get(sid, (1, 1))[1] for sid in hs.ORDER)
-        self.assertGreaterEqual(cfg["NumSectionsPerPage"], most)
+        self.assertGreaterEqual(cfg["NumSectionsPerPage"], len(hs.ORDER))
 
     def test_every_section_is_locked(self):
         cfg = fresh()
@@ -73,18 +72,25 @@ class Apply(unittest.TestCase):
             self.assertFalse(sections[sid]["AllowUserOverride"])
 
     def test_owner_order(self):
-        self.assertEqual(hs.ORDER, ["ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows", "BecauseYouWatched",
-                                    "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection", "Studio",
-                                    "UpcomingShows", "UpcomingMovies"])
+        self.assertEqual(hs.ORDER, ["ContinueWatching", "NextUp", "MyList", "RecentlyAddedMovies", "RecentlyAddedShows",
+                                    "HiddenGems", "FinishTheseCollections", "CollectionsSection"])
 
     def test_settings_are_stored_in_display_order(self):
         cfg = hs.apply(fresh(), TYPES, LIBS, ARR)
         ids = [s["SectionId"] for s in cfg["SectionSettings"]]
         self.assertEqual(ids[:len(hs.ORDER)], hs.ORDER)
 
-    def test_because_you_watched_shows_one_or_two_rows(self):
-        s = by_id(hs.apply(fresh(), TYPES, LIBS, ARR))["BecauseYouWatched"]
-        self.assertEqual((s["LowerLimit"], s["UpperLimit"]), (1, 3))
+    def test_rows_built_in_the_browser_are_off_in_the_plugin(self):
+        sections = by_id(hs.apply(fresh(), TYPES, LIBS, ARR))
+        for sid in ("BecauseYouWatched", "Studio", "UpcomingShows", "UpcomingMovies"):
+            self.assertFalse(sections[sid]["Enabled"], sid)
+            self.assertFalse(sections[sid]["AllowUserOverride"], sid)
+            self.assertEqual((sections[sid]["LowerLimit"], sections[sid]["UpperLimit"]), (1, 1))
+
+    def test_my_list_shows_posters(self):
+        cfg = fresh()
+        cfg["SectionSettings"] = [{"SectionId": "MyList", "ViewMode": "Landscape", "Enabled": True, "PluginConfigurations": []}]
+        self.assertEqual(by_id(hs.apply(cfg, TYPES, LIBS, ARR))["MyList"]["ViewMode"], "Portrait")
 
     def test_new_section_takes_the_view_mode_of_its_type(self):
         self.assertEqual(by_id(hs.apply(fresh(), TYPES, LIBS, ARR))["HiddenGems"]["ViewMode"], "Portrait")

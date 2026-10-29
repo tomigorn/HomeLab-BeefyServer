@@ -11,14 +11,15 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from jellyfin_api import api  # noqa: E402
 
 PLUGIN_ID = "b8298e012697407ab44daa8dc795e850"
+# Because You Watched, Upcoming Shows/Movies (one "Coming soon" row) and the studio rows are built in the browser (home-layout.js, empty-sections.js); By Studio is gone (owner 2026-10-29). The arrs stay configured: Coming soon reads the plugin's Upcoming results.
 ORDER = [
-    "ContinueWatching", "NextUp", "RecentlyAddedMovies", "RecentlyAddedShows",
-    "BecauseYouWatched", "HiddenGems", "FinishTheseCollections", "MyList", "CollectionsSection",
-    "Studio", "UpcomingShows", "UpcomingMovies",
+    "ContinueWatching", "NextUp", "MyList", "RecentlyAddedMovies", "RecentlyAddedShows",
+    "HiddenGems", "FinishTheseCollections", "CollectionsSection",
 ]
-LIMITS = {"BecauseYouWatched": (1, 3)}
 # Pagination makes the web client send a fresh page hash per home load; without it the plugin reuses one section list per user for as long as it is opened within the hour.
 PAGE_SIZE = 30
+# My List is the poster band between the groups (home-layout.js).
+VIEW_MODES = {"MyList": "Portrait"}
 # Jellyfin reaches the arrs through beefy's published ports (hairpin), no shared network.
 # How far ahead Upcoming Shows / Upcoming Movies look (owner 2026-10-27).
 WINDOW = {"Sonarr": (1, "Months"), "Radarr": (3, "Months")}
@@ -47,8 +48,9 @@ def apply(cfg, types, libs, arr):
     for i, t in enumerate(types):
         sid = t["Section"]
         s = existing.pop(sid, None) or {"SectionId": sid, "ViewMode": t.get("ViewMode") or "Landscape", "HideWatchedItems": False, "PluginConfigurations": []}
-        lower, upper = LIMITS.get(sid, (1, 1))
-        s.update(Enabled=sid in ORDER, AllowUserOverride=False, LowerLimit=lower, UpperLimit=upper,
+        if sid in VIEW_MODES:
+            s["ViewMode"] = VIEW_MODES[sid]
+        s.update(Enabled=sid in ORDER, AllowUserOverride=False, LowerLimit=1, UpperLimit=1,
                  OrderIndex=ORDER.index(sid) + 1 if sid in ORDER else len(ORDER) + 1 + i)
         out.append(s)
     for s in existing.values():
