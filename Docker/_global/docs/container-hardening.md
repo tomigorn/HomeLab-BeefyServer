@@ -54,6 +54,19 @@ Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secre
 | floppy | no non-root mode: the entrypoint runs `usermod`/`chown`, supervisord switches to `abc` (65125); root fs writable for the same reason |
 | clamav-hostscan | caps DAC_READ_SEARCH, DAC_OVERRIDE, CHOWN: weekly host scan reads everything (`/:/host:ro`); non-root cannot use DAC_READ_SEARCH. Safe because `network_mode: none`, read-only root fs, writes only state + textfile; the always-on `clamav` no longer mounts the host root |
 
+## Memory limits (2026-10-29)
+Every container has `mem_limit` (swap = same again, Docker default). Sized from `memory.stat` anon + `memory.peak` of the cgroup since the last start, plus headroom: the peak includes page cache (Jellyfin and SABnzbd ~50 GB), which a limit reclaims instead of killing. Applied live with `docker update --memory X --memory-swap 2X`, persisted in compose.
+
+| Container | Limit | Anon at sizing |
+|---|---|---|
+| jellyfin | 8g | 0.4 GB (QuickSync transcodes, .NET sizes its heap from the limit) |
+| seerr | 2g | 0.36 GB |
+| movie-flaresolverr | 2g | 0.1 GB (Chromium per solve) |
+| movie-gluetun | 512m | 28 MB |
+| movie-recyclarr | 512m | 4 MB |
+| movie-vpn-status | 128m | 10 MB |
+| portainer_agent | 256m | 17 MB |
+
 ## Images
 - `jellyfin-local`: `Jellyfin/Dockerfile` bakes in the Intel OpenCL runtime (Docker Mods are not used).
 - `clamav-local`: uid pinned to 65112 (`apk` default 100 is the host's `syslog`).

@@ -13,6 +13,7 @@ services:
     image: qmcgaw/gluetun:v3.41.3
     container_name: movie-gluetun
     restart: unless-stopped
+    mem_limit: 512m
     # Root by design (creates tun0 + iptables rules); everything else dropped.
     security_opt:
       - no-new-privileges:true
@@ -168,6 +169,7 @@ services:
     image: ghcr.io/flaresolverr/flaresolverr:v3.5.2
     container_name: movie-flaresolverr
     restart: unless-stopped
+    mem_limit: 2g
     user: "65119:65119"
     read_only: true
     shm_size: 512m
@@ -372,6 +374,7 @@ services:
     image: ghcr.io/recyclarr/recyclarr:8.8.1
     container_name: movie-recyclarr
     restart: unless-stopped
+    mem_limit: 512m
     user: "65107:65107"
     security_opt:
       - no-new-privileges:true
@@ -407,6 +410,7 @@ services:
     image: python:3.15.2-alpine3.24
     container_name: movie-vpn-status
     restart: unless-stopped
+    mem_limit: 128m
     user: "65111:65111"
     read_only: true
     security_opt:

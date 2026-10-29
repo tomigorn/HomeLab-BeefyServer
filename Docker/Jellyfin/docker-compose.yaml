@@ -13,6 +13,7 @@ services:
     image: jellyfin-local:12.4ubu2604-ls57
     container_name: jellyfin
     restart: unless-stopped
+    mem_limit: 8g
     # This image has no non-root mode (its service always switches user), so s6 starts as root
     # with only the caps it needs to chown /config and drop to PUID 65108; Jellyfin itself runs as 65108.
     security_opt:
