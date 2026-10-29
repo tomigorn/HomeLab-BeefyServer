@@ -347,3 +347,40 @@ test("fitAll answers the size it set, so the page can remember it", () => {
   assert.equal(p, pp.fitPoster(1800, 14, 1920));
   assert.equal(pp.fitAll(doc('<div class="page"></div>').querySelector(".page")), undefined);
 });
+
+test("daily cap used up for everyone: buttons disabled with an honest hint (no silent no-op)", () => {
+  const d = doc();
+  const c = pp.card(d, { item: FOUND, jf: null }, "en", false, { entries: { tokTV: { state: "requestable" } }, left: 4, limit: 10, days: 7, dailyFull: true });
+  assert.ok([...c.querySelectorAll("button")].every((b) => b.disabled));
+  assert.match(c.querySelector(".hssTopHint").textContent, /today/i);
+  const de = pp.card(d, { item: FOUND, jf: null }, "de", false, { entries: {}, left: 4, limit: 10, days: 7, dailyFull: true });
+  assert.match(de.querySelector(".hssTopHint").textContent, /heute/i);
+});
+
+test("a double tap while the first library load is in flight opens one page, not two", async () => {
+  const { win, d, tick, click } = started();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  win.ApiClient.getJSON = () => gate.then(() => ({ Items: [] }));
+  click(d.querySelector(".hssPopularNav"));
+  click(d.querySelector(".hssPopularNav"));
+  release();
+  await tick();
+  await tick();
+  assert.equal(d.querySelectorAll(".hssPopularPage").length, 1);
+  win.close();
+});
+
+test("closing while the first library load is in flight leaves no page behind", async () => {
+  const { win, d, tick, click } = started();
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  win.ApiClient.getJSON = () => gate.then(() => ({ Items: [] }));
+  click(d.querySelector(".hssPopularNav"));
+  click(d.querySelector("a.logo"));
+  release();
+  await tick();
+  await tick();
+  assert.equal(d.querySelectorAll(".hssPopularPage").length, 0);
+  win.close();
+});

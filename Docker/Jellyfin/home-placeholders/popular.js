@@ -12,6 +12,7 @@
       Top10Shows: "Top 10 Shows in Switzerland", Top10Movies: "Top 10 Movies in Switzerland", page: "Currently popular", close: "Close",
       tonight: "\uD83C\uDF19 Tonight", now: "⚡ Now", tonightHint: "Download tonight (cheaper power)", nowHint: "Download now (daytime power price)",
       limit: "Limit reached: {n} requests per {d} days", left: "{n} requests left this week", failed: "Request failed", season: "S",
+      dailyFull: "Today's requests for everyone are used up, again tomorrow",
       night: "\uD83C\uDF19 Tonight", searching: "\uD83D\uDD0D Searching", unreleased: "\uD83D\uDCC5 Not released yet", downloading: "⬇️ Downloading", requested: "✓ Requested", declined: "Declined",
       empty: "Nothing on the list right now.", found: "available",
       none: "No release yet", checked: "checked {d} · rechecked daily", unchecked: "not checked yet · checked tonight", unknown: "Title not identified",
@@ -21,6 +22,7 @@
       Top10Shows: "Top 10 Serien in der Schweiz", Top10Movies: "Top 10 Filme in der Schweiz", page: "Gerade beliebt", close: "Schliessen",
       tonight: "\uD83C\uDF19 Heute Nacht", now: "⚡ Jetzt", tonightHint: "Heute Nacht herunterladen (günstigerer Strom)", nowHint: "Jetzt herunterladen (Tagesstrompreis)",
       limit: "Limite erreicht: {n} Anfragen pro {d} Tage", left: "Noch {n} Anfragen diese Woche", failed: "Anfrage fehlgeschlagen", season: "S",
+      dailyFull: "Die Anfragen für heute sind für alle aufgebraucht, morgen wieder",
       night: "\uD83C\uDF19 Heute Nacht", searching: "\uD83D\uDD0D Wird gesucht", unreleased: "\uD83D\uDCC5 Noch nicht erschienen", downloading: "⬇️ Lädt herunter", requested: "✓ Angefragt", declined: "Abgelehnt",
       empty: "Gerade nichts auf der Liste.", found: "verfügbar",
       none: "Noch kein Release", checked: "geprüft {d} · täglich neu geprüft", unchecked: "noch nicht geprüft · wird heute Nacht geprüft", unknown: "Titel nicht erkannt",
@@ -137,16 +139,18 @@
       return c;
     }
     var full = states && typeof states.left === "number" && states.left <= 0;
+    var capped = !full && !!(states && states.dailyFull);
     ["night", "now"].forEach(function (mode) {
       var b = reqButton(doc, lang, mode, tv);
       b.setAttribute("data-hss-x", it.x);
       b.setAttribute("data-hss-mode", mode);
       b.setAttribute("title", tr(lang, mode === "night" ? "tonightHint" : "nowHint"));
       b.setAttribute("aria-label", name + ": " + tr(lang, mode === "night" ? "tonightHint" : "nowHint"));
-      if (full) b.disabled = true;
+      if (full || capped) b.disabled = true;
       actions.appendChild(b);
     });
     if (full) actions.appendChild(el(doc, "div", "hssTopHint", tr(lang, "limit", { n: states.limit, d: states.days })));
+    else if (capped) actions.appendChild(el(doc, "div", "hssTopHint", tr(lang, "dailyFull")));
     return c;
   }
 
@@ -154,7 +158,7 @@
     return langOf(lang) + "|" + entries.map(function (e) {
       var st = states && states.entries && e.item.x ? states.entries[e.item.x] : null;
       return [e.item.k, e.item.id, e.item.s, e.item.r, e.jf ? e.jf.id : "", st ? st.state + st.badge : ""].join(":");
-    }).join(",") + "|" + (states ? states.left : "");
+    }).join(",") + "|" + (states ? states.left + ":" + !!states.dailyFull : "");
   }
 
   // Card = rank box 0.75 p + poster p, the poster covering 0.25 p of the rank (#10: 0.85 p, 0.05 p): ten cards = 15.3 p + 9 gaps.
@@ -467,11 +471,16 @@
       else if (tv() && next.querySelector("a.hssTopCard, .hssTopBtn")) next.querySelector("a.hssTopCard, .hssTopBtn").focus();
     }
 
+    // A double tap or a close while the library loads: only the latest open still attaches a page.
+    var opening = 0;
+
     function openPage(from) {
       var a = api();
       if (!a) return;
       closePage(false);
+      var mine = ++opening;
       loadLib(a).then(function (l) {
+        if (mine !== opening) return;
         var page = buildPage(doc, data, l, lang(), tv(), states);
         page.hssStates = states;
         page.hssFrom = from;
@@ -485,6 +494,7 @@
     }
 
     function closePage(refocus) {
+      opening++;
       var page = doc.querySelector(".hssPopularPage");
       if (!page) return false;
       page.remove();

@@ -810,6 +810,7 @@
   // Per-user stale-while-revalidate cache: the rows paint at once from the last load, the stale parts reload in the background.
   var CACHE_PREFIX = "hss-home:";
   var RECENT_FRESH_MS = 60000;
+  var RETRY_MS = 30000;
   var RECENT_TTL_MS = 600000;
   var DISCOVER_TTL_MS = 86400000;
   var PARTS = ["base", "recent", "discover"];
@@ -1008,10 +1009,11 @@
       });
     }
 
+    // Jellyfin keeps visited pages in the DOM (class "hide"): only the home page on screen is painted and refreshed.
     function liveContainers() {
       var containers = doc.querySelectorAll(".homeSectionsContainer");
       var live = [];
-      for (var i = 0; i < containers.length; i++) if (containers[i].querySelector(".verticalSection[data-page]")) live.push(containers[i]);
+      for (var i = 0; i < containers.length; i++) if (!containers[i].closest(".hide") && containers[i].querySelector(".verticalSection[data-page]")) live.push(containers[i]);
       return live;
     }
 
@@ -1132,13 +1134,17 @@
       refresh(api, st, lang);
     }
 
+    // A refresh that left parts stale (server or network error) waits RETRY_MS instead of running again on the next DOM change.
+    var retryAt = 0;
     function refresh(api, st, lang) {
-      var parts = staleParts(st, Date.now(), cardsOf(win));
-      if (!parts.length || inflight || !liveContainers().length) return;
+      var now = Date.now();
+      var parts = staleParts(st, now, cardsOf(win));
+      if (!parts.length || inflight || now < retryAt || !liveContainers().length) return;
       inflight = fetchParts(api, api.getCurrentUserId(), lang, parts).then(function (next) {
         inflight = null;
+        if (staleParts(next, Date.now(), cardsOf(win)).length) retryAt = Date.now() + RETRY_MS;
         paint(api, next);
-      }, function () { inflight = null; });
+      }, function () { inflight = null; retryAt = Date.now() + RETRY_MS; });
     }
 
     function soon() {

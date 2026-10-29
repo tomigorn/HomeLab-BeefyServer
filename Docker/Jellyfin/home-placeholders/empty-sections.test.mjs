@@ -1094,3 +1094,41 @@ test("a filled Top 10 row (popular.js, hssTopScroll, no itemsContainer) counts a
   es.render(empty, ["NextUp", "Top10Movies"], { ...NAMES, Top10Movies: "Top 10" }, "en", () => false, {});
   assert.ok(empty.querySelector('[data-hss-placeholder="Top10Movies"]'), "an empty Top 10 row still gets its placeholder");
 });
+
+test("a hidden cached home page (another page on screen) causes no requests and no repaint", async () => {
+  const dom = new JSDOM('<html lang="en"><body><div class="page hide"><div class="homeSectionsContainer"><div class="verticalSection NextUp" data-page="1"></div></div></div><div class="page other"></div></body></html>', { url: "https://jf.example.com/web/", pretendToBeVisual: true });
+  const win = dom.window;
+  const urls = [];
+  win.HssPageMeta = { Page: 1 };
+  win.ApiClient = { getCurrentUserId: () => "u1", getUrl: (p) => { urls.push(p); return p; }, getJSON: () => Promise.resolve({ Items: [] }) };
+  es.start(win);
+  const other = win.document.querySelector(".other");
+  for (let i = 0; i < 5; i++) {
+    other.appendChild(win.document.createElement("div"));
+    await new Promise((r) => setTimeout(r, 30));
+  }
+  await new Promise((r) => setTimeout(r, 1200));
+  assert.deepEqual(urls, []);
+  assert.equal(win.document.querySelector("[data-hss-placeholder]"), null);
+  win.close();
+});
+
+test("a failed refresh is not retried on every DOM change (no refetch loop)", async () => {
+  const dom = new JSDOM('<html lang="en"><body><div class="homeSectionsContainer"><div class="verticalSection NextUp" data-page="1"></div></div><div class="other"></div></body></html>', { url: "https://jf.example.com/web/", pretendToBeVisual: true });
+  const win = dom.window;
+  let calls = 0;
+  win.HssPageMeta = { Page: 1 };
+  win.ApiClient = { getCurrentUserId: () => "u1", getUrl: (p) => p, getJSON: () => { calls++; return Promise.reject(new Error("offline")); } };
+  es.start(win);
+  const other = win.document.querySelector(".other");
+  other.appendChild(win.document.createElement("div"));
+  await new Promise((r) => setTimeout(r, 100));
+  const first = calls;
+  assert.ok(first > 0, "the first refresh still runs");
+  for (let i = 0; i < 10; i++) {
+    other.appendChild(win.document.createElement("div"));
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  assert.equal(calls, first, `refetched ${calls - first} times after a failure`);
+  win.close();
+});
