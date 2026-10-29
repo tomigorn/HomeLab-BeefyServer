@@ -24,6 +24,18 @@ def by_id(cfg):
     return {s["SectionId"]: s for s in cfg["SectionSettings"]}
 
 
+class Libs(unittest.TestCase):
+    def test_second_movies_library_is_not_default(self):
+        folders = [{"Name": "Movies", "CollectionType": "movies", "ItemId": "m1"}, {"Name": "Trending items", "CollectionType": "movies", "ItemId": "x"},
+                   {"Name": "Shows", "CollectionType": "tvshows", "ItemId": "t1"}]
+        self.assertEqual(hs.libraries(folders), {"movies": "m1", "tvshows": "t1"})
+
+
+    def test_folder_without_item_id_is_skipped(self):
+        folders = [{"Name": "Collections & Trending", "CollectionType": "boxsets"}, {"Name": "Movies", "CollectionType": "movies", "ItemId": "m1"}]
+        self.assertEqual(hs.libraries(folders), {"movies": "m1"})
+
+
 class Apply(unittest.TestCase):
     def test_enables_the_plugin_for_everyone(self):
         cfg = hs.apply(fresh(), TYPES, LIBS, ARR)

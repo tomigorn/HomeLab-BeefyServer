@@ -9,6 +9,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from jellyfin_api import api  # noqa: E402
+from trending_model import LIBRARY  # noqa: E402
 
 PLUGIN_ID = "b8298e012697407ab44daa8dc795e850"
 # Because You Watched, Upcoming Shows/Movies (one "Coming soon" row) and the studio rows are built in the browser (home-layout.js, empty-sections.js); By Studio is gone (owner 2026-10-29). The arrs stay configured: Coming soon reads the plugin's Upcoming results.
@@ -28,6 +29,10 @@ ARR = {"Sonarr": ("http://192.168.1.102:8989", "/srv/appdata/sonarr/config.xml")
 
 def arr_key(xml):
     return re.search(r"<ApiKey>([^<]+)</ApiKey>", xml).group(1)
+
+
+def libraries(folders):
+    return {v["CollectionType"]: v["ItemId"] for v in folders if v["Name"] != LIBRARY and v.get("ItemId")}
 
 
 def apply(cfg, types, libs, arr):
@@ -113,7 +118,7 @@ def main(argv):
         print("\n".join(lines))
         return 0 if ok else 1
     arr = {name: (url, arr_key(pathlib.Path(path).read_text())) for name, (url, path) in ARR.items()}
-    libs = {v["CollectionType"]: v["ItemId"] for v in api("GET", "/Library/VirtualFolders")}
+    libs = libraries(api("GET", "/Library/VirtualFolders"))
     types = api("GET", "/ModularHomeViews/Sections")["Items"]
     current = api("GET", f"/Plugins/{PLUGIN_ID}/Configuration")
     wanted = apply(current, types, libs, arr)

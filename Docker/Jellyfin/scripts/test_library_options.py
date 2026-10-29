@@ -21,6 +21,10 @@ class LibraryOptionsTest(unittest.TestCase):
         folders = [{**FOLDERS[0], "LibraryOptions": {"AutomaticallyAddToCollection": True}}, FOLDERS[1]]
         self.assertEqual(lo.wanted(folders), [])
 
+    def test_trending_library_not_changed(self):
+        trending = {"Name": "Trending items", "CollectionType": "movies", "ItemId": "x", "LibraryOptions": {"AutomaticallyAddToCollection": False}}
+        self.assertEqual(lo.wanted([trending]), [])
+
     def test_input_is_not_mutated(self):
         lo.wanted(FOLDERS)
         self.assertFalse(FOLDERS[0]["LibraryOptions"]["AutomaticallyAddToCollection"])
