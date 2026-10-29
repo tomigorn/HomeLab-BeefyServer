@@ -571,6 +571,7 @@ Any signed-in Jellyfin user may press a button; no Seerr login or `streaming-req
 | Audit | `/srv/appdata/jellyfin-popular-state/audit.jsonl` (uid 65128, rotated at 1 MiB, 3 old files `.1`–`.3`): signed-in callers only: time, Jellyfin user + id, entry id, title, mode, decision, Seerr user, `via` (`linked Seerr user` / `service user: no Seerr account` / `service user: linked Seerr user may not request`), request id. Unauthenticated, wrong-origin, non-JSON and oversized hits get no line: counted per day and reason in `state.db` (`rejects`) and one stdout line `refused …` per minute at most (`docker logs jellyfin-popular`). Tokens are never logged |
 | Server | 16 worker threads + 32 queued connections (more are closed at once; `pids_limit` 64), 10 s socket timeout (slow or silent clients are dropped), Content-Length checked (invalid → 400), Seerr/Jellyfin calls 8 s; a request holds only its own user's lock, so a slow Seerr blocks nobody else |
 | Accepted | the backend is reachable from the internet (no Authentik on `/hss-popular/`, Jellyfin apps have no SSO) and holds Seerr's admin API key (Seerr has no scoped keys): high-value, so the pre-auth surface is health + refusals only. A user can spend their own 10 requests on listed titles; an admin removes or declines in Seerr as usual (declined titles stay refused). `POST request` needs the browser Origin `https://jellyfin.holy-grail.ch` (`POP_ORIGINS` = `PUBLISHED_SERVER_URL`); `GET state` / `details` check only the token. `/hss-popular/` exists only on the public path, so a client on LAN-direct `:8096` gets Jellyfin's 404 there. The Samsung Tizen app bundles its own web client (no injected scripts, and its page origin is not the server: a request would get 403) |
+| TV hook | second listener `0.0.0.0:8098` in the same container (`HookHandler`, POST only, 4 workers), published to nobody (compose publishes 8097 only; the host cannot reach 8098), path `/hook/<secret>` (`secrets/popular/hook.secret`, never logged, wrong secret 403; the public path has no such route: 404). The Webhooks plugin (inside the Jellyfin container) posts Play/Progress/Pause/Resume/Stop; the hook trusts only that secret, takes the user from the event, and the request path is the same `send()` (allow-list, limits, audit with `via: tv`). A stop at runtime − 2 s or later within runtime + 30 s requests; earlier, stale or unknown items only reset. Needs the API key `hss-popular-hook` (`secrets/popular/jellyfin.apikey`) to reset the placeholder's play state. Dry-run flag `/state/hook-dry-run` audits without requesting (testing only) |
 | Edge | CrowdSec already covers the route: `real-ip@file` + `crowdsec@file` sit on the `websecure` entrypoint (HomeLab-FastPi `Traefik/traefik/traefik.yml`), the router adds `default-rate-limit@file`. Prepared, not applied (edge change, attended): a tighter limit for `/hss-popular/request` only (own `rateLimit` middleware, e.g. average 10/min, burst 5, per real client IP) in `jellyfin-popular.yml`. The backend counts refusals instead of logging them, so a flood costs no disk |
 | Verified 2026-10-29 | public path → `{"ok": true}`; real browser button press (owner session, Quick Connect test device, request rewritten to `check`) → 200 requestable with the browser's Origin; tampered id 403, extra `season` 400, no token 401, API key as token 401. A real Seerr request was not made in the test (it would have downloaded at once in the low tariff) |
 
@@ -581,7 +582,58 @@ Any signed-in Jellyfin user may press a button; no Seerr login or `streaming-req
 | Backend | `sudo docker compose up -d --no-deps popular` (an `app.py` change: `sudo docker restart jellyfin-popular`, the code is mounted); `curl -s localhost:8097/hss-popular/health` |
 | Timer | `cp systemd/jellyfin-popular.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now jellyfin-popular.timer` |
 | Audit | `sudo tail /srv/appdata/jellyfin-popular-state/audit.jsonl`; refusal counters `sudo docker exec jellyfin-popular python3 -c 'import sqlite3; print(sqlite3.connect("/state/state.db").execute("select * from rejects").fetchall())'` |
-| Tests | `cd scripts && python3 -m unittest test_popular test_popular_ui test_tmdb_details test_upcoming_popularity test_injector_lock`; `cd popular && python3 -m unittest test_app`; JS: `node --test popular.test.mjs details.test.mjs home-layout.test.mjs` in `home-placeholders/` (same docker command as above). `test_studio_logos` needs Pillow (`python3-pil`, installed on beefy), else that test is skipped |
+| Tests | `cd scripts && python3 -m unittest test_popular test_popular_ui test_tmdb_details test_upcoming_popularity test_injector_lock`; `cd popular && python3 -m unittest test_app`; JS: `node --test popular.test.mjs details.test.mjs home-layout.test.mjs` in `home-placeholders/` (same docker command as above). Trending: `python3 -m unittest test_trending test_trending_model test_trending_art test_trending_setup test_trending_webhook test_jellyfin_quickconnect`. `test_studio_logos` needs Pillow (`python3-pil`, installed on beefy), else that test is skipped |
+
+## Native TV: Collections & Trending (2026-10-29)
+The Popular lists on the TV apps, which cannot run the injected page. Same lists as Popular movies and shows, as normal Jellyfin collections with placeholder titles.
+
+| Where | What |
+|---|---|
+| TV, phone apps | Media / My media → **Collections & Trending** → a list (`Top 10 Switzerland · Movies`, `· Shows`, `Coming soon`, then one per service and genre) → title → **Version** → Play |
+| Versions | `⬇ Download movie now` (listed first) and `🌙 Download movie tonight · lower power cost`; shows: `series` instead of `movie`. Not downloadable yet: one clip, no download versions |
+| Clip | 10 s, plays to the end → request. Back or stop earlier cancels. Requested titles show `✓ Requested` until they arrive |
+| Rule | request only when position ≥ runtime − 2 s (a stop up to runtime + 30 s counts); same allow-list, limits (10 per user per 7 days, 30 per day for all), audit log and Seerr code as the Popular page |
+| Library | `Trending items` (hidden for every user, never ticked in Seerr). A film already in the library is the real item inside the collection, sorted after the placeholders |
+
+| What | Where |
+|---|---|
+| Placeholders, clips, cache | `/srv/appdata/jellyfin/trending/{library,clips,cache}` (library = `/config/trending/library`) |
+| Request index | `/srv/appdata/jellyfin-popular/trending-index.json` (placeholder and version ids → entry) |
+| Hook | Webhooks destination "Trending requests" → `jellyfin-popular:8098` (internal), secret `secrets/popular/hook.secret`, key `hss-popular-hook` |
+| Sync | `jellyfin-trending.service`: after `popular.py` (04:39, 22:20) and, via `jellyfin-trending.path`, after each request |
+
+| Task | Command (in `Docker/Jellyfin/`) |
+|---|---|
+| Library, hiding, rename | `python3 scripts/trending-setup.py` (`--check`, `--dry-run`; `--force-tile` replaces Jellyfin's auto-collage tile of Collections & Trending) |
+| Sync | `python3 scripts/trending.py` (`--dry-run`) or `systemctl --user start jellyfin-trending.service` |
+| Clips | `python3 scripts/trending-clips.py` (`--force` rebuilds) |
+| Webhook | `python3 scripts/trending-webhook.py add\|remove\|check\|list` |
+| Device view check | `scripts/trending-device-views.py` (planned, Task 10) |
+| Backup before any change | `bash scripts/backup-config.sh <label>` |
+| Tests | `cd scripts && python3 -m unittest discover`; `cd popular && python3 -m unittest test_app` |
+
+### Traps
+- Item queries that must see films inside the sets need `CollapseBoxSetItems=false` (`popular.py`, `studio-logos.py`, `trending.py`), else a BoxSet replaces its films.
+- Renaming Collections needs one full "Scan Media Library" run to resolve; the same run is needed when the Trending library was emptied (rollback) and scans ran: the per-library refresh may stop working until then.
+- Jellyfin auto-generates a collage tile for collection folders: `trending-setup.py` replaces it only with `--force-tile`.
+- Stored sort names are normalized (no the/a/an, accents, punctuation; numbers padded): compare with `sort_key`.
+- `lsiown` stays non-recursive on `/srv/appdata/jellyfin/trending` (the clips are hard links shared by all placeholders).
+- `MinResumeDurationSeconds` is 300: any stop past 5 % of a 10 s clip marks it Played, so `Played` means nothing; the hook uses the tracked position.
+- Jellyfin clears `Session.PlayState` before the Stop event: the hook works from the tracked Play/Progress data.
+- The hook resets the placeholder's Played and position for that user after every Stop (`POST /UserItems/{id}/UserData`).
+- Folder collision: a film and a series with the same name and year get distinct, stable folders.
+- Local-path `.strm` files are blocked: placeholders are real `.mp4` hard links.
+- `jellyfin_quickconnect.logout` never deletes devices (owner rule): only `POST /Sessions/Logout`. `GET /Devices?userId=` ignores its filter, never bulk-delete.
+- Never `POST /Users/New` (401 but creates), never `DELETE /Library/VirtualFolders`.
+
+### Rollback
+| Piece | How |
+|---|---|
+| Requests from the TV | `python3 scripts/trending-webhook.py remove` |
+| Sync | `systemctl --user disable --now jellyfin-trending.path`; remove the second ExecStart from `jellyfin-popular.service` |
+| Placeholders | empty `/srv/appdata/jellyfin/trending/library`, run a full Scan Media Library, keep the library hidden |
+| Rename | `POST /Library/VirtualFolders/Name?name=Collections%20%26%20Trending&newName=Collections&refreshLibrary=false`, then scan |
+| Library removal | only with a DB restore from `backup-config.sh` (attended, Jellyfin stopped) |
 
 ## Skip intro / credits buttons: Intro Skipper (2026-10-27)
 Episodes and films get **"Skip intro" / "Skip credits"** buttons. Buttons only, nothing is skipped automatically.
