@@ -275,3 +275,12 @@ test("no release yet: a red diagonal strike over the poster, kept red (grey only
   assert.equal(owned.classList.contains("hssTopNone"), false);
 });
 
+test("the source has no characters outside the BMP: the injector config drops them (🌙 became ' Tonight'), escapes survive", async () => {
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("./popular.js", import.meta.url), "utf8");
+  assert.equal(/[\u{10000}-\u{10FFFF}]/u.test(src), false);
+  const d = doc();
+  const c = pp.card(d, { item: FOUND, jf: null }, "en", false, { entries: {}, left: 5 });
+  assert.equal(c.querySelector(".hssTopBtn-night").textContent, "🌙 Tonight");
+});
+
