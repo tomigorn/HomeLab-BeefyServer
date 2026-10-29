@@ -43,6 +43,8 @@ class H(http.server.BaseHTTPRequestHandler):
             take, skip = int(q.get("take", 20)), int(q.get("skip", 0))
             return self.reply(200, {"pageInfo": {"results": total}, "results": media[skip:skip + take]})
         if u.path.startswith("/api/v1/movie/") or u.path.startswith("/api/v1/tv/"):
+            if state.get("details_error"):
+                return self.reply(500) if state["details_error"] == 500 else self.reply(200, "")
             t = state.get("tmdb", {}).get(u.path.rsplit("/", 1)[1])
             return self.reply(200, t) if t else self.reply(404)
         self.reply(404)
@@ -137,6 +139,18 @@ assert_eq "more rows gone than CW_MAX (5): nothing wiped, exit non-zero" "|1" "$
 grep -q 'CW_MAX' "$T/log" && ok "  logged with the override" || bad "  logged with the override" "$(cat "$T/log")"
 run "{\"media\": [$(m 7 movie 7)]}" CW_MAX=10
 assert_eq "  CW_MAX=10 by hand: all six wiped" 6 "$(wc -l < "$T/hooks")"
+
+reset; run "{\"media\": [$NOTLD, $BAD]}"
+run "{\"media\": [$(m 30 movie 10331), $BAD], \"details_error\": 500}"
+assert_eq "re-requested while Seerr's title details fail (500): nothing wiped, exit non-zero" "|1" "$(cat "$T/hooks")|$(nonzero)"
+grep -q '^movie:10331	' "$T/snap.pending" && ok "  key kept pending" || bad "  key kept pending" "$(cat "$T/snap.pending")"
+run "{\"media\": [$(m 30 movie 10331), $BAD], $REQUESTED}"
+assert_eq "  next run sees the request: no wipe, pending dropped" "|" "$(cat "$T/hooks")|$(cat "$T/snap.pending")"
+reset; run "{\"media\": [$NOTLD, $BAD]}"
+run "{\"media\": [$BAD], \"details_error\": \"empty\"}"
+assert_eq "empty details reply: nothing wiped" "|1" "$(cat "$T/hooks")|$(nonzero)"
+run "{\"media\": [$BAD], $TMDB}"
+assert_eq "  wiped on the next run once Seerr answers" "wipe radarr 10331 Night of the Living Dead 1968|radarr.xml" "$(cat "$T/hooks")"
 
 echo "Skipped rows"
 reset; run "{\"media\": [$BLOCK, $NOTVDB, $BAD]}"

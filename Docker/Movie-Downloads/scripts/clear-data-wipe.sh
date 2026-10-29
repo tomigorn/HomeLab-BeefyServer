@@ -2,7 +2,7 @@
 # Seerr "Clear Data" (DELETE /api/v1/media/<id>) has no event: this compares Seerr's media list with the last run and wipes every title whose row is gone, via title-wipe-hook.sh wipe (Radarr/Sonarr + files, qBittorrent, SABnzbd, Jellyfin; README "Delete a title"). Run by systemd/clear-data-wipe.timer.
 # A row that is back with a new id and no request was re-created by Seerr's own Jellyfin/Radarr/Sonarr sync: also cleared, and that row is removed after the wipe. A new row with a request (requested again) is left alone.
 # Wipes nothing on the first run (no snapshot), when Seerr's list is unreadable, empty or incomplete, when a row is back in a second listing, or when more than CW_MAX rows are gone at once (run once by hand with CW_MAX=<n> if that was intended).
-# Skips blocklisted rows (status 6: un-blocklisting deletes the row) and series without a tvdb id. A failed wipe is retried on the next runs (CW_TRIES).
+# Skips blocklisted rows (status 6: un-blocklisting deletes the row) and series without a tvdb id. A failed wipe is retried on the next runs (CW_TRIES); unreadable title details (Seerr error, timeout, empty reply; not 404) keep the key pending without a wipe.
 # Also run by systemd/clear-data-wipe-added.path a few seconds after Radarr/Sonarr add a title (language-policy-hook.sh writes the stamp): a title requested and cleared within one timer interval is in the snapshot too. One run at a time (flock, CW_LOCK_WAIT seconds).
 set -uo pipefail
 
@@ -23,7 +23,15 @@ exec 9> "$SNAP.lock"
 flock -w "${CW_LOCK_WAIT:-300}" 9 || { echo "another run still busy after ${CW_LOCK_WAIT:-300} s, nothing done" | log; exit 0; }
 key=$(tr -d '[:space:]' < "$SEERR_KEY") || { echo "no Seerr API key at $SEERR_KEY" | log; exit 1; }
 seerr() { curl -sf -m 30 -H "X-Api-Key: $key" "$SEERR/api/v1$1" "${@:2}" </dev/null; }
-details() { seerr "/${1%%:*}/${1#*:}"; } # details <movie|tv>:<tmdbId>: Seerr's page of the title, with .mediaInfo while a row exists
+# details <movie|tv>:<tmdbId>: Seerr's page of the title, with .mediaInfo while a row exists; returns 1 on 404 (Seerr knows no such title), 2 on any other failure or a reply that is no JSON object
+details() {
+  local out code
+  out=$(curl -s -m 30 -H "X-Api-Key: $key" -w '\n%{http_code}' "$SEERR/api/v1/${1%%:*}/${1#*:}" </dev/null) || return 2
+  code=${out##*$'\n'}; out=${out%$'\n'*}
+  [ "$code" = 404 ] && return 1
+  [ "$code" = 200 ] && jq -e 'type == "object"' >/dev/null 2>&1 <<<"$out" || return 2
+  printf '%s' "$out"
+}
 requests() { jq '.mediaInfo.requests // [] | length' <<<"${1:-null}" 2>/dev/null || echo 0; }
 
 # listing: every media row as "<movie|tv>:<tmdbId>	<tvdbId or ->	<status>	<row id>", sorted; fails unless the pages add up to Seerr's own total.
@@ -78,7 +86,11 @@ done
 rc=0; removed=""; : > "$PENDING.new"
 while IFS=$'\t' read -r k tvdb tries; do
   [ -n "$k" ] || continue
-  info=$(details "$k")
+  info=$(details "$k"); drc=$?
+  if [ "$drc" -eq 2 ]; then
+    echo "$k: Seerr title details unreadable, kept for the next run" | log; rc=1
+    printf '%s\t%s\t%s\n' "$k" "$tvdb" "$tries" >> "$PENDING.new"; continue
+  fi
   if [ "$(requests "$info")" -gt 0 ]; then echo "$k: requested again in Seerr, nothing wiped" | log; continue; fi
   case ${k%%:*} in
     movie) app=radarr; id=${k#*:}; ty=$(jq -r '"\(.title // "")\u001f\(.releaseDate // "" | .[0:4])"' <<<"${info:-null}" 2>/dev/null);;
