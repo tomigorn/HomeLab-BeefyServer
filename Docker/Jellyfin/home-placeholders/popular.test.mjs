@@ -624,3 +624,14 @@ test("a nav link closes page and overlay alike (route change pattern)", async ()
   assert.equal(d.querySelector(".hssPopularPage"), null);
   win.close();
 });
+
+test("rank digits: opaque page-colour fill under a doubled outer stroke, so overlapping glyph contours draw no inner lines", () => {
+  const rule = pp.CSS.split("\n").find((l) => l.startsWith(".hssTopRank {")) || "";
+  assert.match(rule, /paint-order: stroke fill/);
+  assert.match(rule, /(^|[ ;])color: var\(--hss-rank-bg, #101010\)/);
+  assert.match(rule, /-webkit-text-stroke: 0\.06em/);
+  assert.doesNotMatch(rule, /color: transparent/);
+  assert.match(rule, /z-index: 0/);
+  assert.match(pp.CSS, /\.hssTopPoster \{[^}]*z-index: 1/);
+  assert.match(pp.CSS, /\.hssTopRank-2 \{[^}]*font-size/);
+});
