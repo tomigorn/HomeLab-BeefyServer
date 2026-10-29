@@ -410,6 +410,70 @@ class RequestState(unittest.TestCase):
         self.assertEqual(out["canWait"], ["movie/100"])
 
 
+def sreq(rid, type_, tmdb, ext, seasons=(), is4k=False, mstatus=5, status=2):
+    return {"id": rid, **req(type_, tmdb, ext, status=status, mstatus=mstatus, seasons=seasons, is4k=is4k)}
+
+
+def season(n, files, count, size):
+    return {"seasonNumber": n, "statistics": {"episodeFileCount": files, "episodeCount": count, "totalEpisodeCount": count + 2, "sizeOnDisk": size}}
+
+
+FELLOWSHIP = {"id": 59, "hasFile": True, "movieFile": {"size": 45327147274}, "sizeOnDisk": 45327147274}
+SHOW = {"id": 11, "seasons": [season(0, 0, 0, 0), season(1, 8, 8, 82003416606), season(2, 5, 8, 40000000000), season(3, 0, 0, 0)]}
+
+
+class Sizes(unittest.TestCase):
+    def test_movie_size_is_its_file_size(self):
+        out = nd.request_sizes([sreq(62, "movie", 120, 59)], {59: FELLOWSHIP}, {}, {})
+        self.assertEqual(out, {"62": {"size": 45327147274}})
+
+    def test_series_sums_only_the_requested_seasons(self):
+        out = nd.request_sizes([sreq(31, "tv", 84773, 11, seasons=[1])], {}, {11: SHOW}, {})
+        self.assertEqual(out, {"31": {"size": 82003416606}})
+
+    def test_series_with_missing_episodes_counts_them(self):
+        out = nd.request_sizes([sreq(31, "tv", 84773, 11, seasons=[1, 2, 3])], {}, {11: SHOW}, {})
+        self.assertEqual(out, {"31": {"size": 122003416606, "files": 13, "of": 16}})
+
+    def test_not_downloaded_yet_shows_the_queued_size_once_per_download(self):
+        queues = {"radarr": {"records": [{"movieId": 54, "downloadId": "A", "size": 5378662671}, {"movieId": 7, "downloadId": "B", "size": 9}]},
+                  "sonarr": {"records": [{"seriesId": 4, "seasonNumber": 1, "downloadId": "P", "size": 52587106587},
+                                         {"seriesId": 4, "seasonNumber": 1, "downloadId": "p", "size": 52587106587},
+                                         {"seriesId": 4, "episode": {"seasonNumber": 2}, "downloadId": "Q", "size": 1000},
+                                         {"seriesId": 4, "seasonNumber": 3, "downloadId": "R", "size": 7}]}}
+        out = nd.request_sizes([sreq(57, "movie", 1480613, 54, mstatus=3), sreq(54, "tv", 213375, 4, seasons=[1, 2], mstatus=3)],
+                               {54: {"id": 54, "hasFile": False, "sizeOnDisk": 0}}, {4: {"id": 4, "seasons": [season(1, 0, 8, 0), season(2, 0, 8, 0)]}}, queues)
+        self.assertEqual(out, {"57": {"queued": 5378662671}, "54": {"queued": 52587107587}})
+
+    def test_unknown_title_4k_and_nothing_on_disk_or_queued_are_left_out(self):
+        out = nd.request_sizes([sreq(1, "movie", 1, None), sreq(2, "movie", 2, 99), sreq(3, "movie", 3, 59, is4k=True), sreq(4, "movie", 4, 54, mstatus=3)],
+                               {59: FELLOWSHIP, 54: {"id": 54, "hasFile": False, "sizeOnDisk": 0}}, {}, {"radarr": {"records": []}})
+        self.assertEqual(out, {})
+
+    def test_collect_adds_the_sizes_of_every_request_when_given_the_queues(self):
+        calls = []
+        def seerr(path):
+            return {"results": [sreq(62, "movie", 120, 59), sreq(31, "tv", 84773, 11, seasons=[1])]}
+        def arr(app):
+            def call(path):
+                calls.append((app, path))
+                return {"/tag": [], "/movie": [FELLOWSHIP], "/series": [SHOW]}[path]
+            return call
+        apps = {"radarr": arr("radarr"), "sonarr": arr("sonarr")}
+        out = nd.collect_request_state(MON_DAY, seerr, apps, queues={"radarr": {"records": []}, "sonarr": {"records": []}})
+        self.assertEqual(out["sizes"], {"62": {"size": 45327147274}, "31": {"size": 82003416606}})
+        self.assertNotIn("sizes", nd.collect_request_state(MON_DAY, seerr, apps))
+        self.assertEqual(calls.count(("radarr", "/movie")), 1)
+
+    def test_collect_sizes_unreadable_leaves_them_out(self):
+        def arr(path):
+            if path == "/tag":
+                return []
+            raise nd.ApiError("down")
+        out = nd.collect_request_state(MON_DAY, lambda p: {"results": [sreq(62, "movie", 120, 59)]}, {"radarr": arr, "sonarr": arr}, queues={})
+        self.assertNotIn("sizes", out)
+
+
 NOW_UTC = datetime.datetime(2026, 10, 28, 12, 25, tzinfo=datetime.timezone.utc)
 CMDS = [{"name": "MoviesSearch", "status": "started", "queued": "2026-10-28T12:24:03Z", "started": "2026-10-28T12:24:03Z", "body": {"movieIds": [59]}},
         {"name": "MoviesSearch", "status": "queued", "queued": "2026-10-28T12:24:18Z", "body": {"movieIds": [60]}},
@@ -563,6 +627,15 @@ class Fast(unittest.TestCase):
             calls = []
             self.assertEqual(nd.run_fast(NOW_UTC, self.apps({"radarr": CMDS}, calls), self.seerr([req("movie", 120, 59)], calls), self.public, self.lock), 0)
         self.assertFalse(self.rs.exists())
+
+    def test_a_fast_write_keeps_the_sizes_of_the_last_full_run(self):
+        self.rs.parent.mkdir(parents=True)
+        self.rs.write_text(json.dumps({"sizes": {"62": {"size": 45327147274}}}))
+        calls = []
+        nd.run_fast(NOW_UTC, self.apps({"radarr": CMDS}, calls), self.seerr([req("movie", 120, 59)], calls), self.public, self.lock)
+        out = json.loads(self.rs.read_text())
+        self.assertEqual(out["sizes"], {"62": {"size": 45327147274}})
+        self.assertNotIn(("radarr", "/movie"), calls)
 
     def test_arr_down_fails_without_writing(self):
         def down(path):
@@ -764,6 +837,31 @@ class Run(unittest.TestCase):
         self.go(f, MON_2205)
         self.assertIn(("sonarr", "/queue?page=1&pageSize=1000"), f.calls)
         self.assertEqual(nd.APPS["sonarr"], "includeSeries=true&includeEpisode=true")
+
+    def test_full_run_writes_the_sizes_from_the_queue(self):
+        f = Fake([])
+        arr = f.arr
+        def sized(app):
+            call = arr(app)
+            def inner(path):
+                if path == "/movie":
+                    return [{"id": 54, "hasFile": False, "sizeOnDisk": 0}]
+                if path == "/series":
+                    return []
+                if app == "radarr" and path.startswith("/queue"):
+                    return {"records": [{"movieId": 54, "downloadId": "A", "size": 5378662671}]}
+                return call(path)
+            return inner
+        f.arr = sized
+        self.assertEqual(self.go(f, MON_DAY, seerr=lambda p: {"results": [sreq(57, "movie", 1480613, 54, mstatus=3)]}), 0)
+        self.assertEqual(json.loads((self.public.parent / "request-state.json").read_text())["sizes"], {"57": {"queued": 5378662671}})
+
+    def test_sizes_unreadable_keep_the_old_sizes(self):
+        rs = self.public.parent / "request-state.json"
+        rs.parent.mkdir(parents=True)
+        rs.write_text(json.dumps({"sizes": {"62": {"size": 1}}}))
+        self.assertEqual(self.go(Fake([]), MON_DAY, seerr=lambda p: {"results": []}), 0)
+        self.assertEqual(json.loads(rs.read_text())["sizes"], {"62": {"size": 1}})
 
     def test_arr_down_still_resumes_at_night(self):
         f = Fake([T_NIGHT], [], fail={"radarr", "sonarr"})

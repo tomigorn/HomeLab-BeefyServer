@@ -6,7 +6,7 @@ Download now whose search found nothing (searched, nothing queued, no search run
 Low pool space (under MIN_FREE_GIB free): every downloading torrent is stopped and restarted after recovery (qBittorrent has no own low-space pause).
 Writes ~/.local/state/movie-downloads/night-downloads.json ({"pending": n, "stalled": {hash: since}, "disk_held": [hash]}), which fastpi reads to decide its 22:05 wake.
 Writes the download ids waiting for the night (outside the low tariff) to /srv/appdata/indexer-bar/night-waiting.json for Seerr's night label (../Seerr/README.md "Night label"; env ND_PUBLIC, empty = off), and beside it request-state.json: the open Seerr requests that are "Can wait" and those not released yet (Seerr ids only).
-request-state.json also carries the live state of each open request (running search, just requested, waiting for approval, queue state, imported), so every requested title has a badge.
+request-state.json also carries the live state of each open request (running search, just requested, waiting for approval, queue state, imported), so every requested title has a badge, and "sizes": every request's size on disk by Seerr request id (2-min run only, the 15 s run keeps them; ../Seerr/README.md "Request sizes").
 Run by systemd/night-downloads.timer (every 2 min while awake, and at boot). --request-state (systemd/request-state.timer, every 15 s): rewrites only request-state.json, and only while a search runs or a request is from the last minutes.
 Usage: scripts/night-downloads.py [--dry-run | --request-state]; ND_NOW=2026-10-27T22:10 simulates a clock (with --dry-run)."""
 import fcntl
@@ -463,8 +463,54 @@ def revert_unfound(apps, queued, searching, dry_run=False, now=None):
     return out
 
 
-def collect_request_state(now, seerr, apps, queued=frozenset(), searching=None, commands=None, queue=None):
-    requests = [q for q in seerr("/request?take=1000&skip=0&filter=all&sort=added").get("results") or [] if q.get("status") in OPEN_REQUEST | {FAILED}]
+def _queued(records, match):
+    sizes = {}
+    for rec in records:
+        if rec.get("downloadId") and match(rec):
+            sizes[rec["downloadId"].lower()] = rec.get("size") or 0
+    return sum(sizes.values())
+
+
+def request_sizes(requests, movies, series, queues):
+    """Seerr request id -> {"size": bytes on disk} (a series: its requested seasons, plus "files"/"of" while episodes are missing), else {"queued": bytes of its downloads in the queue}; unknown, 4K and nothing at all are left out."""
+    out = {}
+    for q in requests:
+        media, tv = q.get("media") or {}, q.get("type") == "tv"
+        ext = media.get("externalServiceId")
+        title = (series if tv else movies).get(ext) if ext and not q.get("is4k") and q.get("id") is not None else None
+        if title is None:
+            continue
+        queue = queues.get("sonarr" if tv else "radarr")
+        records = (queue.get("records") or []) if isinstance(queue, dict) else []
+        if tv:
+            wanted = {x.get("seasonNumber") for x in q.get("seasons") or []}
+            stats = [x.get("statistics") or {} for x in title.get("seasons") or [] if not wanted or x.get("seasonNumber") in wanted]
+            size = sum(x.get("sizeOnDisk") or 0 for x in stats)
+            files, of = sum(x.get("episodeFileCount") or 0 for x in stats), sum(x.get("episodeCount") or 0 for x in stats)
+            entry = {"size": size} | ({"files": files, "of": of} if files < of else {})
+            queued = _queued(records, lambda r: r.get("seriesId") == ext and (not wanted or (r.get("episode") or {}).get("seasonNumber", r.get("seasonNumber")) in wanted))
+        else:
+            size = (title.get("movieFile") or {}).get("size") or title.get("sizeOnDisk") or 0
+            entry = {"size": size}
+            queued = _queued(records, lambda r: r.get("movieId") == ext)
+        if size:
+            out[str(q["id"])] = entry
+        elif queued:
+            out[str(q["id"])] = {"queued": queued}
+    return out
+
+
+def _all(api, path):
+    items = api(path)
+    if not isinstance(items, list):
+        raise ApiError(f"{path}: not a list")
+    return {x["id"]: x for x in items if isinstance(x, dict) and "id" in x}
+
+
+def collect_request_state(now, seerr, apps, queued=frozenset(), searching=None, commands=None, queue=None, queues=None):
+    """queues (the full run's raw Radarr/Sonarr queues): also every request's size ("sizes"), left out when the arrs cannot be read."""
+    every = seerr("/request?take=1000&skip=0&filter=all&sort=added").get("results") or []
+    requests = [q for q in every if q.get("status") in OPEN_REQUEST | {FAILED}]
     dn, titles, episodes = {}, {"radarr": {}, "sonarr": {}}, {}
     for app, api in apps.items():
         dn[app] = next((t["id"] for t in api("/tag") or [] if t.get("label") == TAG), None)
@@ -483,7 +529,13 @@ def collect_request_state(now, seerr, apps, queued=frozenset(), searching=None, 
         except NotFound:
             titles[app][ext] = None
     clean = lambda d: {k: v for k, v in d.items() if v is not None}
-    return request_state(now, requests, dn, clean(titles["radarr"]), clean(titles["sonarr"]), episodes, queued, searching, commands, queue)
+    out = request_state(now, requests, dn, clean(titles["radarr"]), clean(titles["sonarr"]), episodes, queued, searching, commands, queue)
+    if queues is not None:
+        try:
+            out["sizes"] = request_sizes(every, _all(apps["radarr"], "/movie"), _all(apps["sonarr"], "/series"), queues)
+        except (ApiError, KeyError, TypeError) as e:
+            print(f"request sizes not read, the last ones kept: {e}", file=sys.stderr)
+    return out
 
 
 def write_json(path, data):
@@ -495,8 +547,8 @@ def write_json(path, data):
     tmp.replace(path)
 
 
-def write_request_state(now, seerr, apps, public_path, lock_path, queued, searching, commands, queue, wait=True):
-    """request-state.json under a lock shared with --request-state; False = the other run holds it."""
+def write_request_state(now, seerr, apps, public_path, lock_path, queued, searching, commands, queue, wait=True, queues=None):
+    """request-state.json under a lock shared with --request-state; False = the other run holds it. Without new sizes the file's last ones stay."""
     lock_path = pathlib.Path(lock_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_path, "w") as lock:
@@ -504,8 +556,16 @@ def write_request_state(now, seerr, apps, public_path, lock_path, queued, search
             fcntl.flock(lock, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return False
-        data = collect_request_state(now, seerr, apps, queued, searching, commands, queue)
-        write_json(pathlib.Path(public_path).parent / "request-state.json", data | {"updated": now.astimezone().isoformat(timespec="seconds")})
+        data = collect_request_state(now, seerr, apps, queued, searching, commands, queue, queues)
+        path = pathlib.Path(public_path).parent / "request-state.json"
+        if "sizes" not in data:
+            try:
+                old = json.loads(path.read_text()).get("sizes")
+            except (OSError, ValueError, AttributeError):
+                old = None
+            if isinstance(old, dict):
+                data["sizes"] = old
+        write_json(path, data | {"updated": now.astimezone().isoformat(timespec="seconds")})
     return True
 
 
@@ -562,10 +622,10 @@ def disk_hold(p, torrents, free, held):
 
 
 def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr=None, free=None):
-    rc, urgent, titles, positions, searching, commands, qstates = 0, set(), {}, {}, {}, {}, {}
+    rc, urgent, titles, positions, searching, commands, qstates, queues = 0, set(), {}, {}, {}, {}, {}, {}
     for app, api in apps.items():
         try:
-            queue = api("/queue?page=1&pageSize=1000")
+            queue = queues[app] = api("/queue?page=1&pageSize=1000")
             urgent |= urgent_ids(api("/tag"), queue)
             titles |= title_ids(app, queue)
             positions |= episode_positions(queue)
@@ -643,7 +703,7 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr
             rc = 1
         if seerr:
             try:
-                write_request_state(now, seerr, apps, public_path, state_path.parent / "request-state.lock", queued, searching, commands, qstates)
+                write_request_state(now, seerr, apps, public_path, state_path.parent / "request-state.lock", queued, searching, commands, qstates, queues=queues)
             except (ApiError, OSError, KeyError, TypeError, ValueError) as e:
                 print(f"Seerr request state not written: {e}", file=sys.stderr)
                 rc = 1
