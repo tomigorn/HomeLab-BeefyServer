@@ -67,6 +67,8 @@ if want popular jellyfin; then
   check jf.popular-allow-list '^fresh [1-9]' "$(python3 -c 'import json,sys,datetime as d;a=json.load(open(sys.argv[1]));print(("fresh" if d.datetime.now()-d.datetime.fromisoformat(a["updated"])<d.timedelta(days=9) else "stale"),len(a["entries"]))' /srv/appdata/jellyfin-popular/allow.json 2>&1)"
   check jf.popular-served '^[1-9][0-9]* [1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssPopular = ' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'hssPopularNav' 2>&1)"
   check jf.popular-home-slot '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'HssExtraRows' 2>&1)"
+  # Jellyfin calls pause() on every .itemsContainer of the home tab: a plain one of ours breaks every route change away from home.
+  check jf.home-pause-safe '^[1-9][0-9]* 0$' "$(jf_api /JavaScriptInjector/private.js | grep -c 'function pausable' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'class=\"itemsContainer hssTopScroll' 2>&1)"
   check jf.popular-timer '^active$' "$(jf_user_systemctl is-active jellyfin-popular.timer 2>&1)"
   # fastpi Traefik route jellyfin.holy-grail.ch/hss-popular/ (HomeLab-FastPi Docker/Traefik/traefik/dynamic/jellyfin-popular.yml)
   check jf.popular-route '^\{"ok": true\} 200$' "$(curl -s -m 10 -w ' %{http_code}' https://jellyfin.holy-grail.ch/hss-popular/health 2>&1)"

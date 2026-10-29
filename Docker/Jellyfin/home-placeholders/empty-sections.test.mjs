@@ -1038,3 +1038,26 @@ test("rows of other injector scripts get their slot after their anchor", () => {
   assert.deepEqual(enabled, ["NextUp", "RecentlyAddedShows", "Top10Shows", "RecentlyWatchedMovies", "RecentlyWatchedSeries", "Top10Movies", "BecauseYouWatched"]);
   assert.deepEqual(es.extraRows({}), []);
 });
+
+test("leaving home: Jellyfin's pause() on every .itemsContainer of the tab does not throw on our rows", () => {
+  const c = home(section("NextUp", 3, 1));
+  c.insertAdjacentHTML("beforeend", '<div class="verticalSection Other"><div class="itemsContainer"></div></div><div class="verticalSection Real"><div is="emby-itemscontainer" class="itemsContainer"></div></div>');
+  es.render(c, ["NextUp", "HiddenGems", "MyList"], NAMES, "en", (id) => id !== "NextUp", { HiddenGems: "Portrait" });
+  assert.ok(c.querySelector(".hssSkeleton"));
+  es.pausable(c);
+  for (const el of c.querySelectorAll(".itemsContainer:not([is])")) {
+    assert.equal(typeof el.pause, "function");
+    el.pause();
+    el.resume();
+  }
+  assert.equal(c.querySelector(".Real .itemsContainer").pause, undefined, "a Jellyfin element keeps its own prototype methods");
+});
+
+test("skeleton rows can be paused like Jellyfin's rows", () => {
+  const c = home("");
+  es.render(c, ["HiddenGems"], NAMES, "en", () => true, {});
+  const row = c.querySelector(".hssSkeleton");
+  assert.equal(typeof row.pause, "function");
+  assert.equal(typeof row.resume, "function");
+});
+

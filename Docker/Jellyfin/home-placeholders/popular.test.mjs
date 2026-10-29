@@ -115,7 +115,8 @@ test("home rows: Top 10 sections built inside the home container, empty ones rem
   pp.syncHome(c, DATA, LIB, "en", null);
   const shows = c.querySelector(".verticalSection.Top10Shows[data-hss-client]");
   assert.equal(shows.querySelector("h2").textContent, "Top 10 Shows in Switzerland");
-  assert.equal(shows.querySelectorAll(".itemsContainer > .hssTopCard").length, 1);
+  assert.equal(shows.querySelectorAll(".hssTopScroll > .hssTopCard").length, 1);
+  assert.equal(c.querySelectorAll(".itemsContainer").length, 0, "Jellyfin calls pause() on every .itemsContainer of the home tab");
   assert.equal(c.querySelectorAll(".verticalSection.Top10Movies .hssTopCard").length, 1);
   const key = shows.getAttribute("data-hss-client");
   pp.syncHome(c, DATA, LIB, "en", null);

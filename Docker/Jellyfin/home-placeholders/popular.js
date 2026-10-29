@@ -176,14 +176,14 @@
   }
 
   function fillRow(sec, entries, lang, tv, states) {
-    var list = sec.querySelector(".itemsContainer");
+    var list = sec.querySelector(".hssTopScroll");
     while (list.firstChild) list.removeChild(list.firstChild);
     for (var i = 0; i < entries.length; i++) list.appendChild(card(sec.ownerDocument, entries[i], lang, tv, states));
     if (sec.isConnected) fitRow(list);
   }
 
   var ROW = '<div class="sectionTitleContainer sectionTitleContainer-cards padded-left"><h2 class="sectionTitle sectionTitle-cards"></h2></div>' +
-    '<div class="itemsContainer hssTopScroll focuscontainer-x"></div>';
+    '<div class="hssTopScroll focuscontainer-x"></div>';
 
   function syncHome(container, data, lib, lang, states) {
     var doc = container.ownerDocument;

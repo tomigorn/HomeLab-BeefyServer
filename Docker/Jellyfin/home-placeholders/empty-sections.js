@@ -664,6 +664,20 @@
 
   var SKELETON_CARDS = 6;
 
+  function noop() {}
+
+  // Jellyfin calls pause() on every .itemsContainer of the home tab when it is left, unguarded: one plain div throws and breaks the route change.
+  function inert(el) {
+    if (typeof el.pause !== "function") el.pause = noop;
+    if (typeof el.resume !== "function") el.resume = noop;
+    return el;
+  }
+
+  function pausable(container) {
+    var rows = container.querySelectorAll(".itemsContainer:not([is])");
+    for (var i = 0; i < rows.length; i++) inert(rows[i]);
+  }
+
   function skeleton(doc, mode) {
     var shape = mode === "Portrait" ? "overflowPortrait" : "overflowBackdrop";
     var row = doc.createElement("div");
@@ -673,7 +687,7 @@
     var html = "";
     for (var i = 0; i < SKELETON_CARDS; i++) html += card;
     row.innerHTML = html;
-    return row;
+    return inert(row);
   }
 
   function setLoading(ph, on, mode) {
@@ -1103,6 +1117,7 @@
       observer.disconnect();
       try {
         for (var i = 0; i < containers.length; i++) {
+          pausable(containers[i]);
           endPaging(win.HssPageMeta, containers[i]);
           upcomingNow(containers[i], lang);
         }
@@ -1169,7 +1184,7 @@
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = {
-      LOCKED_SELECTOR: LOCKED_SELECTOR, lockHomeSettings: lockHomeSettings, homeStyles: homeStyles, render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, upcomingNow: upcomingNow,
+      pausable: pausable, LOCKED_SELECTOR: LOCKED_SELECTOR, lockHomeSettings: lockHomeSettings, homeStyles: homeStyles, render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, upcomingNow: upcomingNow,
       hintFor: hintFor, namesOf: namesOf, modesOf: modesOf, enabledOf: enabledOf, start: start, pickMovies: pickMovies, seriesCandidates: seriesCandidates, pickSeries: pickSeries,
       completeCollection: completeCollection, loadRecent: loadRecent, withRecent: withRecent, recentName: recentName, syncRecent: syncRecent, RECENT_DAYS: RECENT_DAYS, RECENT_LIMIT: RECENT_LIMIT,
       withDiscover: withDiscover, withExtra: withExtra, extraRows: extraRows, homeExts: homeExts, withExts: withExts, discoverName: discoverName, countBy: countBy, pickBackdrops: pickBackdrops, genreColors: genreColors, loadDiscover: loadDiscover, syncDiscover: syncDiscover, DISCOVER_LIMIT: DISCOVER_LIMIT,
