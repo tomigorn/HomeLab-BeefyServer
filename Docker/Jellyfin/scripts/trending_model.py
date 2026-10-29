@@ -19,6 +19,7 @@ CLIPS = ("now", "night", "unavailable", "requested", "coming")
 HOME = (("home-movies", "movies", "Top 10 Switzerland · Movies"), ("home-shows", "shows", "Top 10 Switzerland · Shows"))
 COMING = ("coming", "Coming soon")
 KIND_NAME = {"movie": "Movies", "tv": "Shows"}
+ART_MEMBERS = 4
 # The longest clip name adds 54 bytes to the folder name; ext4 allows 255.
 FOLDER_MAX_BYTES = 150
 UNSAFE = re.compile(r'[/\\:*?"<>|\x00-\x1f\x7f]')
@@ -50,6 +51,7 @@ class Ph:
 class Plan:
     placeholders: dict
     collections: list
+    art: dict = dataclasses.field(default_factory=dict)
 
 
 def collection_specs(lists):
@@ -111,7 +113,7 @@ def _state(entry, request):
 
 
 def plan(lists, coming, details, owned, states):
-    """Plan of placeholders {folder: Ph} and collections [(spec, [("ph", folder) | ("real", item id)])] in rank order.
+    """Plan of placeholders {folder: Ph}, collections [(spec, [("ph", folder) | ("real", item id)])] in rank order and art {spec key: [{"p": poster, "b": backdrop}] of the first members}.
     details: {details token: tmdb_details projection} (details.json and coming.json entries); owned: {"kind/tmdb": Jellyfin item id}; states: {"kind/tmdb": (request status, mode)}.
     One placeholder per title (kind/tmdb): its sort title "LL-RR <title>" comes from the first collection it appears in; a popular entry wins over a Coming soon one."""
     specs = collection_specs(lists)
@@ -166,14 +168,22 @@ def plan(lists, coming, details, owned, states):
             return ("ph", folders[key])
         return None
 
-    collections = []
+    def art_ref(key):
+        t = titles[key]
+        p = (t["entry"] or {}).get("p") or (t["info"] or {}).get("p")
+        if isinstance(p, dict):
+            p = p.get("en") or p.get("de")
+        return {"p": p, "b": (t["info"] or {}).get("b")}
+
+    collections, art = [], {}
     for spec in specs:
         if spec["key"] == COMING[0]:
             keys = [k for k, t in sorted(titles.items(), key=lambda kv: kv[1].get("coming_rank", 0)) if "coming_rank" in t]
         else:
             keys = [f"{e['k']}/{e['id']}" for e in entries[spec["key"]]]
         collections.append((spec, [m for m in map(member, keys) if m]))
-    return Plan(placeholders, collections)
+        art[spec["key"]] = [art_ref(k) for k in keys if member(k)][:ART_MEMBERS]
+    return Plan(placeholders, collections, art)
 
 
 def _prefix(ph):

@@ -79,6 +79,13 @@ class Plan(unittest.TestCase):
         self.assertEqual(p.placeholders, {})
         self.assertEqual(dict((s["key"], m) for s, m in p.collections)["home-movies"], [("real", "jf121")])
 
+    def test_art_refs_first_members_posters_and_backdrops(self):
+        l = lists(movies=[item("movie", 1, 1, "One", d="d1"), item("movie", 2, 2, "Two", o=True), item("movie", 3, 3, "Three"), item("movie", 4, 4, "Four"), item("movie", 5, 5, "Five")])
+        details = {"d1": info("movie", 1, "One", 2026, b="/b1.jpg")}
+        p = tm.plan(l, coming(), details, {"movie/3": "jf3"}, {})
+        self.assertEqual(p.art["home-movies"], [{"p": "/p.jpg", "b": "/b1.jpg"}, {"p": "/p.jpg", "b": None}, {"p": "/p.jpg", "b": None}, {"p": "/p.jpg", "b": None}])
+        self.assertEqual(p.art["home-shows"], [])
+
     def test_title_in_two_lists_one_placeholder_sorted_by_first_list(self):
         l = lists(movies=[item("movie", 5, 3, "Shared Film", f="2160p", x="tok5")],
                   rows=[row("service-8-movie", "movie", "Netflix", [item("movie", 9, 1, "Other"), item("movie", 5, 7, "Shared Film", f="2160p", x="tok5")])])

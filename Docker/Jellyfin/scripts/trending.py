@@ -413,7 +413,7 @@ class Collections:
         items = self.io.jf("GET", f"/Items?Recursive=true&IncludeItemTypes=BoxSet&Tags={tm.TAG}&Fields=Tags,SortName&EnableImages=false&EnableUserData=false")["Items"]
         return {i["Id"]: i for i in items if tm.TAG in (i.get("Tags") or [])}
 
-    def sync(self, collections, ids_of):
+    def sync(self, collections, ids_of, art_refs=None):
         tagged = self.tagged()
         sets, arts = self.state.setdefault("sets", {}), self.state.setdefault("art", {})
         used = set()
@@ -443,7 +443,7 @@ class Collections:
             self.metadata(sid, spec, created or own)
             if not created:
                 self.members(sid, want)
-            self.artwork(sid, spec, arts)
+            self.artwork(sid, spec, arts, (art_refs or {}).get(key) or [])
         return sorted(set(tagged) | used)
 
     def metadata(self, sid, spec, untagged_ok):
@@ -476,12 +476,18 @@ class Collections:
         if drop:
             self.io.jf("DELETE", f"/Collections/{sid}/Items?ids={','.join(drop)}")
 
-    def artwork(self, sid, spec, arts):
+    def artwork(self, sid, spec, arts, refs):
+        """Primary poster and Backdrop of a list, uploaded when either changed; a failed download leaves the old art for the next run."""
         logo = self.images.get("w500", spec.get("logo"))
-        if logo is Images.FAILED:
+        posters = [self.images.get("w780", r.get("p")) for r in refs]
+        back_path = next((r["b"] for r in refs if r.get("b")), None)
+        back = self.images.get("w1280", back_path)
+        if any(x is Images.FAILED for x in (logo, back, *posters)):
             return
-        data = art.collection_poster(spec["name"], logo)
-        digest = hashlib.sha256(data).hexdigest()
+        posters = [x for x in posters if x]
+        data = art.collection_poster(spec["key"], spec["name"], logo, posters)
+        backdrop = art.collection_backdrop(spec["key"], spec["name"], logo, back, posters)
+        digest = hashlib.sha256(data + backdrop).hexdigest()
         if arts.get(spec["key"]) == digest:
             return
         self.changed += 1
@@ -489,6 +495,7 @@ class Collections:
             self.log(f"would upload art for {spec['name']}")
             return
         self.io.jf_raw("POST", f"/Items/{sid}/Images/Primary", base64.b64encode(data), "image/jpeg")
+        self.io.jf_raw("POST", f"/Items/{sid}/Images/Backdrop/0", base64.b64encode(backdrop), "image/jpeg")
         arts[spec["key"]] = digest
 
 
@@ -605,7 +612,7 @@ def sync(io, paths, now, dry_run, log):
         kind, ref = m
         return ref if kind == "real" else (ids.get(ref) or {}).get("Id")
 
-    set_ids = cols.sync(plan.collections, member_id)
+    set_ids = cols.sync(plan.collections, member_id, plan.art)
     index_changed, n_index = write_index(paths, lib_id, items, plan.placeholders, now, dry_run)
     placeholder_ids = sorted(k for k in index_items(plan.placeholders, items))
     hide_changed = upsert_hide(io, hide_script({"lib": lib_id, "sets": set_ids, "items": placeholder_ids}), dry_run)

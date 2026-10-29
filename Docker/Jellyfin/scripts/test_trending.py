@@ -154,7 +154,8 @@ class FakeIo:
         return self.media
 
     def fetch(self, url):
-        return jpeg()
+        h = hashlib.md5(url.encode()).digest()
+        return jpeg((h[0], h[1], h[2]))
 
     def injector_lock(self):
         import contextlib
@@ -301,6 +302,7 @@ class SyncTest(Base):
             s = tagged[spec["name"]]
             self.assertEqual((s["ForcedSortName"], s["DisplayOrder"], s["LockData"]), (spec["sort"], "SortName", True))
             self.assertIn(f"/Items/{s['Id']}/Images/Primary", self.io.images)
+            self.assertIn(f"/Items/{s['Id']}/Images/Backdrop/0", self.io.images)
         hp = self.io.sets["hp"]
         self.assertEqual((hp["Tags"], hp["children"], hp["DisplayOrder"]), ([], ["real9"], "PremiereDate"))
         self.assertFalse(any("/hp" in c[1] or "=hp" in c[1] for c in self.io.calls))
@@ -315,7 +317,8 @@ class SyncTest(Base):
         self.assertEqual({c[0] for c in changes}, {"POST", "DELETE"})
         self.assertIn(("POST", f"/Collections/{home}/Items?ids={self.item('Gamma')['Id']}"), changes)
         self.assertEqual(sorted(self.io.sets[home]["children"]), sorted([self.item("Alpha")["Id"], "real9", self.item("Gamma")["Id"]]))
-        self.assertFalse(any(c[1].startswith("/Items/") and c[1].endswith("/Images/Primary") for c in self.io.calls))
+        uploads = sorted(c[1] for c in self.io.calls if c[1].startswith("/Items/") and "/Images/" in c[1])
+        self.assertEqual(uploads, [f"/Items/{home}/Images/Backdrop/0", f"/Items/{home}/Images/Primary"])
 
         self.paths.state.unlink()
         self.assertEqual(self.run_sync(), 0, self.out)
