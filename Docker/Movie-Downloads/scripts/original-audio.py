@@ -152,7 +152,22 @@ def claim_queue(path):
 
 
 def host_path(app_path):
-    return str(pathlib.Path(DATA_HOST) / pathlib.Path(app_path).relative_to("/data"))
+    """Host path of an app path under /data; ValueError when it (after .. and symlinks) leaves DATA_HOST."""
+    if not app_path.startswith("/"):
+        raise ValueError(f"not absolute: {app_path}")
+    root = pathlib.Path(DATA_HOST).resolve()
+    host = (root / pathlib.PurePosixPath(os.path.normpath(app_path)).relative_to("/data")).resolve()
+    if not host.is_relative_to(root):
+        raise ValueError(f"outside {DATA_HOST}: {app_path}")
+    return str(host)
+
+
+def checked(app, label, lang, app_path):
+    try:
+        return label, lang, host_path(app_path)
+    except ValueError as e:
+        print(f"{app}: {label}: skipped: {e}", file=sys.stderr)
+        return None
 
 
 def media_files(app, api):
@@ -160,12 +175,16 @@ def media_files(app, api):
     if app == "radarr":
         for m in api("/movie"):
             if m.get("movieFile"):
-                yield m["title"], (m.get("originalLanguage") or {}).get("name"), host_path(m["movieFile"]["path"])
+                item = checked(app, m["title"], (m.get("originalLanguage") or {}).get("name"), m["movieFile"]["path"])
+                if item:
+                    yield item
     else:
         for s in api("/series"):
             lang = (s.get("originalLanguage") or {}).get("name")
             for f in api("/episodefile", {"seriesId": s["id"]}):
-                yield s["title"], lang, host_path(f["path"])
+                item = checked(app, s["title"], lang, f["path"])
+                if item:
+                    yield item
 
 
 def mkvmerge_info(path):
@@ -246,7 +265,9 @@ def queued_files(app, api, config_dir):
         except ToolError as e:
             print(f"{app}: queued {app_path}: {e}", file=sys.stderr)
             continue
-        yield title["title"], (title.get("originalLanguage") or {}).get("name"), host_path(app_path)
+        item = checked(app, title["title"], (title.get("originalLanguage") or {}).get("name"), app_path)
+        if item:
+            yield item
 
 
 def main(argv):

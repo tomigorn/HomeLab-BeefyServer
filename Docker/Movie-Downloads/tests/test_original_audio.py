@@ -185,6 +185,38 @@ class Queue(unittest.TestCase):
             self.assertEqual(oa.claim_queue(str(q)), [("3", "/data/c.mkv"), ("4", "/data/d.mkv")])
 
 
+class HostPath(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.real, oa.DATA_HOST = oa.DATA_HOST, self.dir.name
+        (pathlib.Path(self.dir.name) / "media").mkdir()
+
+    def tearDown(self):
+        oa.DATA_HOST = self.real
+        self.dir.cleanup()
+
+    def test_maps_data_to_host(self):
+        self.assertEqual(oa.host_path("/data/media/A.mkv"), str(pathlib.Path(self.dir.name).resolve() / "media" / "A.mkv"))
+
+    def test_dotdot_escape_rejected(self):
+        for p in ("/data/../etc/passwd", "/data/media/../../etc/x.mkv", "/etc/x.mkv", "data/media/A.mkv"):
+            with self.assertRaises(ValueError, msg=p):
+                oa.host_path(p)
+
+    def test_symlink_escape_rejected(self):
+        with tempfile.TemporaryDirectory() as outside:
+            (pathlib.Path(self.dir.name) / "media" / "link").symlink_to(outside)
+            with self.assertRaises(ValueError):
+                oa.host_path("/data/media/link/x.mkv")
+
+    def test_queue_skips_escaping_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            (pathlib.Path(d) / "original-audio.queue").write_text("1\t/data/../etc/x.mkv\n2\t/data/media/B.mkv\n")
+            api = lambda path, query=None: {"title": path}
+            got = list(oa.queued_files("radarr", api, d))
+            self.assertEqual([g[2] for g in got], [str(pathlib.Path(self.dir.name).resolve() / "media" / "B.mkv")])
+
+
 class RestoreMtime(unittest.TestCase):
     def setUp(self):
         self.calls, self.real_utime, self.real_getxattr, self.real_run = [], oa.os.utime, oa.os.getxattr, oa.subprocess.run
