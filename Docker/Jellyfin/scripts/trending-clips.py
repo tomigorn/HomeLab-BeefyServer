@@ -84,7 +84,7 @@ def jellyfin_image():
 
 
 def encode(image, tmp):
-    subprocess.run(["sudo", "docker", "run", "--rm", "--entrypoint", "/usr/lib/jellyfin-ffmpeg/ffmpeg", "-u", f"{os.getuid()}:{os.getgid()}", "-v", f"{tmp}:/w", image,
+    subprocess.run(["sudo", "docker", "run", "--rm", "--pull", "never", "--network", "none", "--entrypoint", "/usr/lib/jellyfin-ffmpeg/ffmpeg", "-u", f"{os.getuid()}:{os.getgid()}", "-v", f"{tmp}:/w", image,
                     "-y", "-loglevel", "error", "-framerate", "1", "-i", "/w/f%02d.png", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", str(SECONDS), "-r", "30",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", "-movflags", "+faststart", "/w/out.mp4"], check=True)
 
