@@ -56,6 +56,10 @@ class JellyfinError(Exception):
     pass
 
 
+class Refused(Exception):
+    pass
+
+
 @dataclasses.dataclass
 class Paths:
     feeds: pathlib.Path = pathlib.Path("/srv/appdata/jellyfin-popular")
@@ -63,6 +67,7 @@ class Paths:
     state: pathlib.Path = STATE_DIR / "jellyfin-trending.json"
     lock: pathlib.Path = STATE_DIR / "jellyfin-trending.lock"
     request_state: pathlib.Path = pathlib.Path("/srv/appdata/indexer-bar/request-state.json")
+    signal: pathlib.Path = pathlib.Path("/srv/appdata/jellyfin-popular-signal/requested")
 
     @property
     def library(self):
@@ -390,9 +395,19 @@ def q(value):
 
 
 class Collections:
-    def __init__(self, io, state, admin, images, dry_run, log):
-        self.io, self.state, self.admin, self.images, self.dry_run, self.log = io, state, admin, images, dry_run, log
+    def __init__(self, io, state, admin, images, dry_run, log, save):
+        self.io, self.state, self.admin, self.images, self.dry_run, self.log, self.save = io, state, admin, images, dry_run, log, save
         self.changed = 0
+
+    def own_untagged(self, sid, spec):
+        """A BoxSet this script created (its id is in the state file) whose tag update failed: same name, still there."""
+        try:
+            item = self.io.jf("GET", f"/Items/{sid}?userId={self.admin}")
+        except urllib.error.HTTPError as e:
+            if e.code in (400, 404):
+                return False
+            raise
+        return item.get("Type", "BoxSet") == "BoxSet" and item.get("Name") == spec["name"]
 
     def tagged(self):
         items = self.io.jf("GET", f"/Items?Recursive=true&IncludeItemTypes=BoxSet&Tags={tm.TAG}&Fields=Tags,SortName&EnableImages=false&EnableUserData=false")["Items"]
@@ -405,7 +420,12 @@ class Collections:
         for spec, members in collections:
             key = spec["key"]
             want = [i for i in map(ids_of, members) if i]
-            sid = sets.get(key) if sets.get(key) in tagged else next((i for i, s in tagged.items() if s.get("Name") == spec["name"] and i not in used and i not in sets.values()), None)
+            sid, own = sets.get(key), False
+            if sid and sid not in tagged:
+                own = self.own_untagged(sid, spec)
+                sid = sid if own else None
+            if sid is None:
+                sid = next((i for i, s in tagged.items() if s.get("Name") == spec["name"] and i not in used and i not in sets.values()), None)
             created = False
             if sid is None:
                 self.changed += 1
@@ -415,21 +435,23 @@ class Collections:
                 sid = self.io.jf("POST", f"/Collections?name={q(spec['name'])}&ids={','.join(want)}&isLocked=true")["Id"]
                 created = True
                 arts.pop(key, None)
+                sets[key] = sid
+                self.save()
                 self.log(f"created collection {spec['name']}")
             used.add(sid)
             sets[key] = sid
-            self.metadata(sid, spec, created)
+            self.metadata(sid, spec, created or own)
             if not created:
                 self.members(sid, want)
             self.artwork(sid, spec, arts)
         return sorted(set(tagged) | used)
 
-    def metadata(self, sid, spec, created):
+    def metadata(self, sid, spec, untagged_ok):
         item = self.io.jf("GET", f"/Items/{sid}?userId={self.admin}")
         tags = list(item.get("Tags") or [])
         if tm.TAG in tags and item.get("ForcedSortName") == spec["sort"] and item.get("DisplayOrder") == "SortName" and item.get("LockData") is True and item.get("Name") == spec["name"]:
             return
-        if not created and tm.TAG not in tags:
+        if not untagged_ok and tm.TAG not in tags:
             raise JellyfinError(f"collection {sid} lost its tag")
         self.changed += 1
         if self.dry_run:
@@ -511,19 +533,37 @@ def sync(io, paths, now, dry_run, log):
     rs = read_json(paths.request_state)
     st = states(io.seerr_media(), rs, lists, now)
     plan = tm.plan(lists, coming, details, have, st)
+    if not plan.placeholders:
+        raise Refused("the feeds give 0 placeholders")
     clips = clip_stats(paths)
     images = Images(io, paths.cache, dry_run, log)
+    state = read_json(paths.state)
+
+    def save():
+        if not dry_run:
+            paths.state.parent.mkdir(parents=True, exist_ok=True)
+            write_atomic(paths.state, json.dumps(state, indent=1, sort_keys=True).encode(), 0o600)
 
     added, restructured, touched = [], [], []
+    files = {folder: desired(ph, images) for folder, ph in plan.placeholders.items()}
     for folder, ph in plan.placeholders.items():
-        new, structure, content = sync_folder(paths.library / folder, ph, desired(ph, images), clips, dry_run)
+        new, structure, content = sync_folder(paths.library / folder, ph, files[folder], clips, True)
         if new:
             added.append(folder)
         elif structure:
             restructured.append(folder)
         elif content:
             touched.append(folder)
-    removed = remove_stale(paths.library, set(plan.placeholders), dry_run, log)
+    removed = remove_stale(paths.library, set(plan.placeholders), True, lambda m: None)
+    pending = state.get("pending") or {}
+    lib_pending = bool(added or restructured or removed or pending.get("library"))
+    refresh_items = sorted(set(touched) | set(pending.get("items") or []))
+    if lib_pending or refresh_items:
+        state["pending"] = {"library": lib_pending, "items": refresh_items}
+        save()
+    for folder, ph in plan.placeholders.items():
+        sync_folder(paths.library / folder, ph, files[folder], clips, dry_run)
+    remove_stale(paths.library, set(plan.placeholders), dry_run, log)
     verb = "would " if dry_run else ""
     log(f"{len(plan.placeholders)} placeholders: {verb}add {len(added)}, {verb}restructure {len(restructured)}, {verb}update {len(touched)}, {verb}remove {len(removed)}")
 
@@ -531,11 +571,11 @@ def sync(io, paths, now, dry_run, log):
     want_sig = wanted_signature(plan.placeholders)
     refreshed = 0
     if dry_run:
-        if added or restructured or removed or signature(items) != want_sig:
+        if lib_pending or signature(items) != want_sig:
             log("would refresh the library")
-        log(f"would refresh {len(touched)} items")
+        log(f"would refresh {len(refresh_items)} items")
     else:
-        if added or restructured or removed or signature(items) != want_sig:
+        if lib_pending or signature(items) != want_sig:
             io.jf("POST", f"/Items/{lib_id}/Refresh?{LIB_REFRESH}")
             refreshed += 1
             deadline = time.monotonic() + POLL_TIMEOUT
@@ -547,18 +587,19 @@ def sync(io, paths, now, dry_run, log):
                     raise JellyfinError(f"library refresh did not settle in {POLL_TIMEOUT} s")
                 io.sleep(POLL_EVERY)
         ids = by_folder(items)
-        for folder in touched:
+        for folder in refresh_items:
             if folder in ids:
                 io.jf("POST", f"/Items/{ids[folder]['Id']}/Refresh?{ITEM_REFRESH}")
                 refreshed += 1
+        if state.pop("pending", None) is not None:
+            save()
     ids = by_folder(items)
     for folder, ph in plan.placeholders.items():
         sn = (ids.get(folder) or {}).get("SortName")
-        if sn is not None and folder not in touched and sort_key(sn) != sort_key(ph.sort_title):
+        if sn is not None and folder not in refresh_items and sort_key(sn) != sort_key(ph.sort_title):
             log(f"sort title not applied: {folder}")
 
-    state = read_json(paths.state)
-    cols = Collections(io, state, admin_id(io), images, dry_run, log)
+    cols = Collections(io, state, admin_id(io), images, dry_run, log, save)
 
     def member_id(m):
         kind, ref = m
@@ -568,9 +609,8 @@ def sync(io, paths, now, dry_run, log):
     index_changed, n_index = write_index(paths, lib_id, items, plan.placeholders, now, dry_run)
     placeholder_ids = sorted(k for k in index_items(plan.placeholders, items))
     hide_changed = upsert_hide(io, hide_script({"lib": lib_id, "sets": set_ids, "items": placeholder_ids}), dry_run)
-    if not dry_run and state != read_json(paths.state):
-        paths.state.parent.mkdir(parents=True, exist_ok=True)
-        write_atomic(paths.state, json.dumps(state, indent=1, sort_keys=True).encode(), 0o600)
+    if state != read_json(paths.state):
+        save()
 
     changes = len(added) + len(restructured) + len(touched) + len(removed) + refreshed + cols.changed + hide_changed
     if dry_run:
@@ -579,6 +619,13 @@ def sync(io, paths, now, dry_run, log):
         log(f"{refreshed} refreshes, {cols.changed} collection changes, index {n_index} ids, hide entry {'updated' if hide_changed else 'unchanged'}")
     else:
         log(f"nothing changed ({len(plan.placeholders)} placeholders, {len(plan.collections)} collections, index {n_index} ids)")
+
+
+def signalled(path, since):
+    try:
+        return os.stat(path).st_mtime > since
+    except OSError:
+        return False
 
 
 def main(argv=None, io=None, paths=None, now=None, out=None):
@@ -590,16 +637,24 @@ def main(argv=None, io=None, paths=None, now=None, out=None):
     except SystemExit as e:
         return 2 if e.code else 0
     io, paths = io or Io(), paths or Paths()
-    now = now or datetime.datetime.now(datetime.timezone.utc)
+    clock = (lambda: now) if now else (lambda: datetime.datetime.now(datetime.timezone.utc))
 
     def log(msg):
         print(msg, file=out, flush=True)
 
     try:
         with run_lock(paths.lock):
-            sync(io, paths, now, args.dry_run, log)
+            for extra in (False, True):
+                start = time.time()
+                sync(io, paths, clock(), args.dry_run, log)
+                if extra or args.dry_run or not signalled(paths.signal, start):
+                    break
+                log("request signal during the run, syncing once more")
     except Stale as e:
         log(f"inputs stale, nothing changed: {e}")
+        return 1
+    except Refused as e:
+        log(f"refused, nothing changed: {e}")
         return 1
     except (JellyfinError, *FAILURES) as e:
         log(f"error: {type(e).__name__}: {e}")

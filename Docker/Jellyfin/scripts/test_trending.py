@@ -8,6 +8,7 @@ import pathlib
 import re
 import tempfile
 import unittest
+import urllib.error
 import urllib.parse
 
 from PIL import Image
@@ -61,6 +62,9 @@ class FakeIo:
         self.injector = {"CustomJavaScripts": [{"Name": "Other", "Script": "x", "Enabled": True, "RequiresAuthentication": True}]}
         self.images = {}
         self.n = 0
+        self.fail = set()
+        self.on_seerr = None
+        self.seerr_calls = 0
 
     def scan(self):
         items = []
@@ -81,6 +85,9 @@ class FakeIo:
 
     def jf(self, method, path, body=None):
         self.calls.append((method, path))
+        for pattern in self.fail:
+            if re.fullmatch(pattern, f"{method} {path}"):
+                raise urllib.error.HTTPError(path, 500, "boom", {}, None)
         u = urllib.parse.urlsplit(path)
         q = dict(urllib.parse.parse_qsl(u.query))
         p = u.path
@@ -131,6 +138,8 @@ class FakeIo:
                 return {k: v for k, v in s.items() if k != "children"} | {"Overview": None}
             s.update({k: v for k, v in body.items() if k in ("Name", "Tags", "ForcedSortName", "DisplayOrder", "LockData")})
             return None
+        if m and method == "GET":
+            raise urllib.error.HTTPError(path, 404, "not found", {}, None)
         raise AssertionError(f"unexpected {method} {path}")
 
     def jf_raw(self, method, path, data, content_type):
@@ -139,6 +148,9 @@ class FakeIo:
         return b""
 
     def seerr_media(self):
+        self.seerr_calls += 1
+        if self.on_seerr:
+            self.on_seerr(self.seerr_calls)
         return self.media
 
     def fetch(self, url):
@@ -157,7 +169,7 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         root = pathlib.Path(self.tmp.name)
         self.paths = tr.Paths(feeds=root / "feeds", root=root / "trending", state=root / "state" / "trending.json", lock=root / "state" / "trending.lock",
-                              request_state=root / "request-state.json")
+                              request_state=root / "request-state.json", signal=root / "signal" / "requested")
         for d in ("library", "clips", "cache"):
             (self.paths.root / d).mkdir(parents=True)
         self.paths.feeds.mkdir()
@@ -364,6 +376,70 @@ class SyncTest(Base):
         self.assertEqual(tr.sort_key("01-01 Animals"), tr.sort_key("0000000101 animals"))
         self.assertEqual(tr.sort_key("12-03 Opération Commando"), tr.sort_key("0000001203 operation commando"))
         self.assertNotEqual(tr.sort_key("01-02 Animals"), tr.sort_key("0000000101 animals"))
+
+    def test_failed_tag_update_keeps_the_new_collection(self):
+        self.io.fail = {r"POST /Items/set1"}
+        self.assertEqual(self.run_sync(), 1, self.out)
+        self.assertEqual(json.loads(self.paths.state.read_text())["sets"], {"home-movies": "set1"})
+        self.io.fail = set()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(len([c for c in self.io.calls if c[1].startswith("/Collections?")]), 3)
+        self.assertEqual(len([s for s in self.io.sets.values() if tm.TAG in s["Tags"]]), 4)
+        self.assertEqual(len(self.io.sets), 5)
+        hide = next(s for s in self.io.injector["CustomJavaScripts"] if s["Name"] == "Trending hidden")["Script"]
+        self.assertIn('"set1"', hide)
+
+    def test_pending_item_refresh_survives_a_failed_run(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        lists, coming, details, comingd = feeds()
+        details["entries"]["d1"]["o"]["en"] = "A new plot"
+        self.write_feeds(lists, coming, details, comingd)
+        self.io.fail = {r"POST /Items/\w+/Refresh\?Metadata.*"}
+        self.assertEqual(self.run_sync(), 1, self.out)
+        self.io.fail = set()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertIn(("POST", f"/Items/{self.item('Alpha')['Id']}/Refresh?{tr.ITEM_REFRESH}"), self.io.calls)
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.writes(), [])
+
+    def test_pending_library_refresh_survives_a_failed_run(self):
+        self.io.fail = {rf"POST /Items/{LIB}/Refresh\?.*"}
+        self.assertEqual(self.run_sync(), 1, self.out)
+        self.assertTrue(json.loads(self.paths.state.read_text())["pending"]["library"])
+        self.io.fail = set()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(len([c for c in self.io.calls if c[1].startswith(f"/Items/{LIB}/Refresh")]), 1)
+        self.assertNotIn("pending", json.loads(self.paths.state.read_text()))
+
+    def test_no_placeholders_refuses_and_keeps_folders(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        lists, coming, details, comingd = feeds()
+        lists["home"] = {"movies": [], "shows": []}
+        lists["rows"][0]["items"] = []
+        coming["items"] = []
+        self.write_feeds(lists, coming, details, comingd)
+        self.assertEqual(self.run_sync(), 1, self.out)
+        self.assertTrue(self.folder("Alpha").is_dir())
+        self.assertEqual(self.writes(), [])
+
+    def test_signal_during_run_runs_once_more(self):
+        self.paths.signal.parent.mkdir()
+        self.paths.signal.write_text("")
+
+        def touch(n):
+            t = __import__("time").time() + 5
+            os.utime(self.paths.signal, (t, t))
+
+        self.io.on_seerr = touch
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.io.seerr_calls, 2)
+
+    def test_old_signal_runs_once(self):
+        self.paths.signal.parent.mkdir()
+        self.paths.signal.write_text("")
+        os.utime(self.paths.signal, (1, 1))
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.io.seerr_calls, 1)
 
     def test_usage(self):
         self.assertEqual(self.run_sync("--bogus"), 2)
