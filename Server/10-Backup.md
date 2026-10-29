@@ -5,10 +5,11 @@ restic, encrypted, deduplicated, to fastpi's **append-only** REST server: beefy 
 | What | Detail |
 |---|---|
 | Job | `beefy-backup.sh` as root via `beefy-backup.timer` 04:26 (after original-audio 04:20, own lock `/run/lock/beefy-backup.lock`, not the media lock); never wakes beefy; the maintenance window waits for it; hard stop 18 min |
+| Sandbox | `beefy-backup.service`: ProtectSystem=strict, home read-only, writes only staging, `/var/cache/restic`, `/run/lock`, `/srv/appdata` (SQLite `-shm`); a second run exits on the lock before it can touch the running one's staging |
 | Repo | `rest:https://192.168.1.2:8009/beefy/` (fastpi NVMe `/var/lib/beefy-backup/beefy`); fastpi accepts only beefy's IP, TLS cert pinned (`RESTIC_CACERT`), own login |
 | Credentials | `/root/.config/restic/` (700): `beefy.pass` (repo key), `fastpi-rest.pass` (REST login), `fastpi-rest.crt`; written by fastpi `setup-beefy-repo.sh`, never printed |
 | Retention | on fastpi 05:07: 7 daily, 4 weekly, 6 monthly; prune Sunday, check 10 % Wednesday |
-| Failure | Telegram at once from beefy (`Docker/_global/scripts/oob-alert.sh`); fastpi alerts `BeefyBackupStale` (> 36 h) from the repo itself |
+| Failure | Telegram at once from beefy (root-owned copy `/usr/local/lib/beefy-oob/scripts/oob-alert.sh` of `Docker/_global/scripts/oob-alert.sh`, installed by `install.sh`); fastpi alerts `BeefyBackupStale` (> 36 h) from the repo itself |
 | Restore test | fastpi's monthly `restore-test.sh` (first Tuesday 04:33) also checks this repo: check 5 %, restore a sample, `quick_check` of every dump, DT5 dump `pg_restore -l`, KEK valid |
 | Install | `Server/10-Backup/install.sh` (restic 0.19.1 by sha256, script to `/usr/local/sbin/beefy-backup`, timer). Tests: `./test_beefy_backup.sh` |
 

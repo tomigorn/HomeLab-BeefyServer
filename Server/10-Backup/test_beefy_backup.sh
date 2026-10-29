@@ -52,7 +52,7 @@ grep -q "repo=rest:https://192.168.1.2:8009/beefy/ user=beefy cacert=$T/conf/fas
 ! grep -q "restpw-not-on-cmdline" "$T/log" && ok "REST password never on the command line" || bad "REST password never on the command line"
 grep -q -- "--host beefy --tag nightly" "$T/log" && ok "snapshot tagged nightly for host beefy" || bad "snapshot tagged nightly for host beefy"
 ! grep -qE "restic .*(forget|prune)" "$T/log" && ok "never forgets or prunes (append-only, fastpi does it)" || bad "never forgets or prunes"
-[[ ! -e $T/stage ]] && ok "staging removed" || bad "staging removed"
+[[ -z $(ls -A "$T/stage" 2>/dev/null) ]] && ok "staging emptied" || bad "staging emptied"
 
 setup; rm "$T/up"; run; rc=$?
 [[ $rc != 0 ]] && grep -q "fastpi" "$T/msg" && ! grep -qs "restic" "$T/log" && ok "fastpi unreachable: alert, no restic" || bad "fastpi unreachable: alert, no restic" "rc=$rc $(cat "$T/msg")"
@@ -68,6 +68,14 @@ setup; rm "$T/app/sonarr/sonarr.db"; run; rc=$?
 
 setup; run FAKE_RESTIC_RC=3; rc=$?
 [[ $rc != 0 ]] && grep -q "unreadable" "$T/msg" && ok "rc 3 (unreadable files) reported" || bad "rc 3 (unreadable files) reported" "$(cat "$T/msg")"
+
+setup; mkdir -p "$T/stage"; echo running > "$T/stage/marker"
+flock "$T/lock" sleep 5 & holder=$!; sleep 0.5
+run; rc=$?
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+[[ $rc == 0 && -f $T/stage/marker ]] && grep -q "already running" "$T/out" && ok "a second run while one holds the lock leaves its staging alone" || bad "second run leaves staging alone" "rc=$rc $(cat "$T/out") $(ls "$T/stage" 2>&1)"
+[[ ! -s $T/msg ]] && ok "a second run does not alert" || bad "second run does not alert" "$(cat "$T/msg")"
+grep -q "^OOB=\${OOB:-/usr/local/lib/beefy-oob/scripts/oob-alert.sh}$" "$S" && ok "alerts through the root-owned oob-alert copy" || bad "alerts through the root-owned oob-alert copy" "$(grep ^OOB= "$S")"
 
 L=$(env CONF="$T/conf" "$S" --list)
 for want in "sqlite /srv/appdata/jellyfin/data/data/jellyfin.db" "sqlite /srv/appdata/seerr/db/db.sqlite3" "sqlite /srv/appdata/floppy/db/db.sqlite3" \

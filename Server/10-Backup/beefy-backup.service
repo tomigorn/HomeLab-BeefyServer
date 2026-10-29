@@ -13,3 +13,17 @@ Nice=10
 IOSchedulingClass=idle
 CacheDirectory=restic
 StateDirectory=beefy-backup-staging
+# Sandbox: reads everything, writes only its staging, the restic cache, the lock and the SQLite -shm/-wal files a .backup touches.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/beefy-backup-staging /var/cache/restic /run/lock /srv/appdata
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true

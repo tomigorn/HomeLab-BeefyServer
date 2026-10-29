@@ -14,6 +14,12 @@ if [ "$(restic version 2>/dev/null | awk '{print $2}')" != "$V" ]; then
 fi
 for f in beefy.pass fastpi-rest.pass fastpi-rest.crt; do sudo test -s "/root/.config/restic/$f" || { echo "missing /root/.config/restic/$f (run setup-beefy-repo.sh on fastpi)"; exit 1; }; done
 sudo install -m 0750 -o root -g root "$HERE/beefy-backup.sh" /usr/local/sbin/beefy-backup
+# root-owned copy of the OOB alert and its config (root never runs or sources a buntu-writable file); the token itself stays where it is
+G="$HERE/../../Docker/_global"
+sudo install -d -m 0755 -o root -g root /usr/local/lib/beefy-oob /usr/local/lib/beefy-oob/scripts
+sudo install -d -m 0700 -o root -g root /usr/local/lib/beefy-oob/secrets
+sudo install -m 0755 -o root -g root "$G/scripts/oob-alert.sh" /usr/local/lib/beefy-oob/scripts/oob-alert.sh
+sudo install -m 0600 -o root -g root "$G/secrets/oob-alert.env" /usr/local/lib/beefy-oob/secrets/oob-alert.env
 sudo install -m 0644 "$HERE/beefy-backup.service" "$HERE/beefy-backup.timer" /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now beefy-backup.timer

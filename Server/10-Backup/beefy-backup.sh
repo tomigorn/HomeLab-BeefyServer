@@ -7,7 +7,8 @@ STAGE=${STAGE:-/var/lib/beefy-backup-staging}
 APP=${APP:-/srv/appdata}
 FASTPI_TCP=${FASTPI_TCP:-/dev/tcp/192.168.1.2/8009}
 LOCK=${LOCK:-/run/lock/beefy-backup.lock}
-OOB=${OOB:-/home/buntu/Projects/Docker/_global/scripts/oob-alert.sh}
+# root-owned copy (install.sh): root never runs a file buntu can write
+OOB=${OOB:-/usr/local/lib/beefy-oob/scripts/oob-alert.sh}
 H=/home/buntu
 
 SQLITE_DBS=(
@@ -49,14 +50,15 @@ export RESTIC_REST_USERNAME=beefy
 export RESTIC_CACERT=$CONF/fastpi-rest.crt
 export RESTIC_PASSWORD_FILE=$CONF/beefy.pass
 export RESTIC_CACHE_DIR=${RESTIC_CACHE_DIR:-/var/cache/restic}
-ERRF=$(mktemp)
 
 log() { echo "beefy-backup: $*"; }
 esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$*"; }
 FAILS=()
 fail() { FAILS+=("$(esc "$*")"); log "FAIL $*"; }
+# STAGE is the unit's StateDirectory (a read-only-root mount point): empty it, never remove it
+clear_stage() { [ -d "$STAGE" ] && find "$STAGE" -mindepth 1 -delete; }
 finish() {
-    rm -rf "$STAGE" "$ERRF"
+    clear_stage; rm -f "$ERRF"
     if [ ${#FAILS[@]} -gt 0 ]; then
         local msg="❌ <b>beefy backup to fastpi failed</b>"
         for f in "${FAILS[@]}"; do msg+="
@@ -66,18 +68,19 @@ journalctl -u beefy-backup on beefy; restore: Server/10-Backup.md"
         "$OOB" "$msg" >/dev/null || log "Telegram alert not sent"
     fi
 }
-trap finish EXIT
-trap 'fail "terminated (time limit?)"; exit 1' TERM INT
-
+# the lock first: a second instance must exit before it owns the EXIT trap, or it deletes the running one's staging
 exec 9>"$LOCK"
 flock -n 9 || { log "already running"; exit 0; }
+ERRF=$(mktemp)
+trap finish EXIT
+trap 'fail "terminated (time limit?)"; exit 1' TERM INT
 
 if ! timeout 5 bash -c "< $FASTPI_TCP" 2>/dev/null; then
     fail "fastpi backup server 192.168.1.2:8009 unreachable"; exit 1
 fi
 
 umask 077
-rm -rf "$STAGE"; install -d -m 700 "$STAGE" "$STAGE/sqlite" "$STAGE/dumps"
+clear_stage; install -d -m 700 "$STAGE" "$STAGE/sqlite" "$STAGE/dumps"
 EXCL=(--exclude-caches)
 for e in "${EXCLUDES[@]}"; do EXCL+=(--exclude "$e"); done
 for d in "${SQLITE_DBS[@]}"; do
