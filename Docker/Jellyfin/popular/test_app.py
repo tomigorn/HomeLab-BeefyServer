@@ -1,8 +1,11 @@
 import datetime
 import json
 import pathlib
+import socket
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -157,6 +160,12 @@ class Refusals(Base):
         self.assertEqual(codes[-1], 429)
         self.assertIn(403, codes)
 
+    def test_lowercase_header_names(self):
+        raw = json.dumps({"id": "tok-movie-xxxxxxxxxxxx"}).encode()
+        code, _ = self.core.handle("POST", "/hss-popular/request", {"origin": ORIGIN, "content-type": "application/json", "x-emby-token": TOKEN}, raw)
+        self.assertEqual(code, 200)
+        self.assertEqual(self.core.handle("GET", "/hss-popular/state", {"authorization": f'MediaBrowser Token="{TOKEN}"'}, b"")[0], 200)
+
     def test_refusals_are_audited(self):
         self.post({"id": "tok-movie-xxxxxxxxxxxy"})
         a = self.audit()[-1]
@@ -187,12 +196,187 @@ class Requests(Base):
         self.seerr.users[0]["permissions"] = 0
         self.post({"id": "tok-movie-xxxxxxxxxxxx"})
         self.assertEqual(self.seerr.posts[-1][2], 20)
+        self.assertEqual(self.audit()[-1]["via"], "service user: linked Seerr user may not request")
+
+    def test_audit_says_which_seerr_user_and_why(self):
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.assertEqual(self.audit()[-1]["via"], "linked Seerr user")
+        self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token="b" * 32)
+        self.assertEqual(self.audit()[-1]["via"], "service user: no Seerr account")
 
     def test_check_only_sends_nothing(self):
         code, body = self.post({"id": "tok-movie-xxxxxxxxxxxx", "check": True})
         self.assertEqual((code, body["state"]), (200, "requestable"))
         self.assertEqual([p for p in self.seerr.posts if p[0] == "request"], [])
         self.assertEqual(body["left"], 10)
+
+
+class Noise(Base):
+    def test_unauthenticated_and_wrong_origin_hits_are_counted_not_logged(self):
+        for _ in range(5):
+            self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=None)
+        for _ in range(3):
+            self.post({"id": "tok-movie-xxxxxxxxxxxx"}, origin="https://evil.example.com")
+        self.core.handle("GET", "/hss-popular/state", {}, b"")
+        self.assertFalse(pathlib.Path(self.tmp.name, "audit.jsonl").exists())
+        self.assertEqual(self.core.rejected(), {"unauthenticated": 6, "bad origin": 3})
+
+    def test_counters_are_flushed_to_the_state_db_at_most_once_a_minute(self):
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=None)
+        self.assertEqual(self.core.db_rejects(), {"unauthenticated": 1})
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=None)
+        self.assertEqual(self.core.db_rejects(), {"unauthenticated": 1})
+        self.now = NOW + datetime.timedelta(seconds=61)
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=None)
+        self.assertEqual(self.core.db_rejects(), {"unauthenticated": 3})
+
+    def test_audit_log_is_rotated(self):
+        self.core.cfg.audit_max_bytes = 600
+        for _ in range(40):
+            self.post({"id": "tok-movie-xxxxxxxxxxxy"})
+            self.core.hits.clear()
+        d = pathlib.Path(self.tmp.name)
+        self.assertLessEqual((d / "audit.jsonl").stat().st_size, 600)
+        self.assertTrue((d / "audit.jsonl.1").exists())
+        self.assertFalse((d / f"audit.jsonl.{app.AUDIT_KEEP + 1}").exists())
+
+    def test_limits_come_from_the_state_db_not_the_log(self):
+        self.core.cfg.limit = 1
+        self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"})[0], 200)
+        pathlib.Path(self.tmp.name, "audit.jsonl").unlink()
+        self.seerr.media = {}
+        self.assertEqual(self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"})[0], 429)
+
+    def test_existing_requested_rows_are_imported_once(self):
+        d = pathlib.Path(self.tmp.name)
+        fresh = d / "fresh"
+        fresh.mkdir()
+        (fresh / "audit.jsonl").write_text(json.dumps({"at": "2026-10-28T20:00:00+00:00", "decision": "requested", "userId": "70d44a367988405d8792444c1c716d9a", "ref": "movie/101"}) + "\n" +
+                                           json.dumps({"at": "2026-10-28T20:00:00+00:00", "decision": "unknown entry", "userId": "70d44a367988405d8792444c1c716d9a"}) + "\n")
+        core = app.Core(app.Config(allow_file=self.allow, audit_file=fresh / "audit.jsonl", request_state=d / "rs.json", origins=[ORIGIN]), seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now)
+        self.assertEqual(core.handle("GET", "/hss-popular/state", {"X-Emby-Token": TOKEN}, b"")[1]["left"], 9)
+
+    def test_caches_are_pruned(self):
+        for i in range(5):
+            self.core.handle("GET", "/hss-popular/state", {"X-Emby-Token": TOKEN}, b"")
+            self.post({"id": "tok-movie-xxxxxxxxxxxy"}, token="b" * 32)
+        self.now = NOW + datetime.timedelta(minutes=5)
+        self.core.handle("GET", "/hss-popular/state", {"X-Emby-Token": "b" * 32}, b"")
+        self.post({"id": "tok-movie-xxxxxxxxxxxy"}, token="b" * 32)
+        self.assertEqual(len(self.core.auth_cache), 1)
+        self.assertEqual(sum(len(v) for v in self.core.hits.values()), 1)
+
+
+class Days(Base):
+    def test_daily_cap_counts_days_in_zurich(self):
+        self.core.cfg.daily_max = 1
+        self.allow.write_text(self.allow.read_text().replace("2026-10-28T04:39:00", "2026-10-28T04:39:00+01:00"))
+        self.now = datetime.datetime(2026, 10, 28, 22, 30, tzinfo=datetime.timezone.utc)
+        self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"})[0], 200)
+        self.now = datetime.datetime(2026, 10, 28, 23, 30, tzinfo=datetime.timezone.utc)
+        self.assertEqual(self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token="b" * 32)[0], 200)
+
+    def test_state_says_when_the_daily_cap_is_used_up(self):
+        self.core.cfg.daily_max = 1
+        self.assertFalse(self.core.handle("GET", "/hss-popular/state", {"X-Emby-Token": TOKEN}, b"")[1]["dailyFull"])
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.assertTrue(self.core.handle("GET", "/hss-popular/state", {"X-Emby-Token": "b" * 32}, b"")[1]["dailyFull"])
+
+
+class Concurrency(Base):
+    def slow_seerr(self, uid):
+        gate, inside = threading.Event(), threading.Event()
+        real = self.seerr
+
+        def seerr(method, path, body=None, user=None):
+            if method == "POST" and path == "/api/v1/request" and user == uid:
+                inside.set()
+                gate.wait(5)
+            return real(method, path, body, user)
+        self.core.seerr = seerr
+        return gate, inside
+
+    def test_a_slow_seerr_call_blocks_only_that_user(self):
+        gate, inside = self.slow_seerr(7)
+        out = {}
+        t = threading.Thread(target=lambda: out.setdefault("a", self.post({"id": "tok-movie-xxxxxxxxxxxx"})))
+        t.start()
+        self.assertTrue(inside.wait(2))
+        started = time.monotonic()
+        self.assertEqual(self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token="b" * 32)[0], 200)
+        self.assertLess(time.monotonic() - started, 1)
+        gate.set()
+        t.join(5)
+        self.assertEqual(out["a"][0], 200)
+
+    def test_the_daily_cap_holds_while_a_request_is_in_flight(self):
+        self.core.cfg.daily_max = 1
+        gate, inside = self.slow_seerr(7)
+        out = {}
+        t = threading.Thread(target=lambda: out.setdefault("a", self.post({"id": "tok-movie-xxxxxxxxxxxx"})))
+        t.start()
+        self.assertTrue(inside.wait(2))
+        self.assertEqual(self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token="b" * 32)[0], 429)
+        gate.set()
+        t.join(5)
+        self.assertEqual(out["a"][0], 200)
+
+    def test_a_failed_seerr_call_gives_the_slot_back(self):
+        self.core.cfg.daily_max = 1
+        real = self.seerr
+
+        def seerr(method, path, body=None, user=None):
+            if method == "POST" and path == "/api/v1/request" and user == 7:
+                raise app.urllib.error.HTTPError(path, 500, "boom", None, None)
+            return real(method, path, body, user)
+        self.core.seerr = seerr
+        self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"})[0], 502)
+        self.assertEqual(self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token="b" * 32)[0], 200)
+
+
+class Server(unittest.TestCase):
+    def setUp(self):
+        self.timeout = app.Handler.timeout
+        app.Handler.timeout = 0.5
+        app.Handler.core = type("C", (), {"handle": lambda s, m, p, h, b: (200, {"ok": True, "len": len(b)})})()
+        self.srv = app.make_server(("127.0.0.1", 0), workers=2, backlog=1)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.port = self.srv.server_address[1]
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        app.Handler.timeout = self.timeout
+
+    def send(self, raw):
+        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
+            s.sendall(raw)
+            out = b""
+            while chunk := s.recv(4096):
+                out += chunk
+            return out.decode(errors="replace")
+
+    def test_production_timeouts(self):
+        self.assertEqual(self.timeout, 10)
+        self.assertLessEqual(app.UPSTREAM_TIMEOUT, 10)
+
+    def test_a_silent_client_is_dropped_and_does_not_block_others(self):
+        idle = [socket.create_connection(("127.0.0.1", self.port)) for _ in range(2)]
+        try:
+            started = time.monotonic()
+            self.assertIn("200", self.send(b"GET /hss-popular/health HTTP/1.0\r\n\r\n").split("\r\n")[0])
+            self.assertLess(time.monotonic() - started, 2.5)
+            idle[0].settimeout(3)
+            self.assertEqual(idle[0].recv(10), b"")
+        finally:
+            for s in idle:
+                s.close()
+
+    def test_content_length_is_validated(self):
+        for value in ("-1", "abc", "1e9"):
+            self.assertIn(" 400 ", self.send(f"POST /hss-popular/request HTTP/1.0\r\nContent-Length: {value}\r\n\r\n".encode()).split("\r\n")[0], value)
+        self.assertIn('"len": 2', self.send(b"POST /hss-popular/request HTTP/1.0\r\nContent-Length: 2\r\n\r\n{}"))
+        self.assertIn('"len": 0', self.send(b"POST /hss-popular/request HTTP/1.0\r\n\r\n"))
 
 
 class State(Base):
@@ -204,6 +388,16 @@ class State(Base):
         self.assertEqual(body["entries"]["tok-movie-xxxxxxxxxxxx"]["state"], "requested")
         self.assertEqual(body["entries"]["tok-tv-xxxxxxxxxxxxxxx"]["state"], "requestable")
         self.assertNotIn("tok-nores-xxxxxxxxxxxx", body["entries"])
+
+    def test_old_request_state_gives_no_searching_badge(self):
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        rs = pathlib.Path(self.tmp.name, "rs.json")
+        rs.write_text(json.dumps({"updated": (NOW - datetime.timedelta(minutes=30)).isoformat(), "canWait": ["movie/101"]}))
+        body = self.core.handle("GET", "/hss-popular/state", {"X-Emby-Token": TOKEN}, b"")[1]
+        self.assertEqual(body["entries"]["tok-movie-xxxxxxxxxxxx"], {"state": "requested", "badge": None})
+        rs.write_text(json.dumps({"updated": NOW.isoformat(), "canWait": ["movie/101"]}))
+        body = self.core.handle("GET", "/hss-popular/state", {"X-Emby-Token": TOKEN}, b"")[1]
+        self.assertEqual(body["entries"]["tok-movie-xxxxxxxxxxxx"]["badge"], "night")
 
     def test_state_needs_a_user(self):
         self.assertEqual(self.core.handle("GET", "/hss-popular/state", {}, b"")[0], 401)
