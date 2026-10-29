@@ -141,10 +141,16 @@ class Release(unittest.TestCase):
 
 
 class Lists(unittest.TestCase):
-    def test_merge_by_popularity(self):
-        movies = [{"id": 1, "popularity": 50}, {"id": 2, "popularity": 10}]
-        shows = [{"id": 3, "popularity": 30}, {"id": 1, "popularity": 5}]
-        self.assertEqual(pop.merge(movies, shows, 3), [("movie", 1), ("tv", 3), ("movie", 2)])
+    def test_ranked_by_popularity_one_kind_deduped(self):
+        found = [{"id": 2, "popularity": 10}, {"id": 1, "popularity": 50}, {"id": 3, "popularity": 30}, {"id": 1, "popularity": 50}]
+        self.assertEqual(pop.ranked("tv", found, 2), [("tv", 1), ("tv", 3)])
+        self.assertEqual(pop.ranked("movie", found, 5), [("movie", 1), ("movie", 3), ("movie", 2)])
+
+    def test_row_ids_split_by_kind(self):
+        genres = [("drama", "Drama", "Drama", "18", "18"), ("horror", "Horror", "Horror", "27", None)]
+        self.assertEqual([(r, k) for r, k, _ in pop.row_ids([(8, "Netflix"), (119, "Prime Video")], genres)],
+                         [("service-8-movie", "movie"), ("service-8-tv", "tv"), ("service-119-movie", "movie"), ("service-119-tv", "tv"),
+                          ("genre-drama-movie", "movie"), ("genre-drama-tv", "tv"), ("genre-horror-movie", "movie")])
 
     def test_refs(self):
         self.assertEqual(pop.ref("movie", 5, None), "movie/5")
@@ -253,16 +259,19 @@ class Main(unittest.TestCase):
             self.assertEqual(data["home"]["movies"][1]["t"], {"en": "Ghost", "de": "Ghost"})
             self.assertNotIn("x", data["home"]["movies"][2])
             self.assertEqual([(i["r"], i["id"], i["s"], i["f"], i["t"]["de"]) for i in data["home"]["shows"]], [(1, 202, 4, "2160p", "Diplomatische Beziehungen")])
-            row = data["rows"][0]
-            self.assertEqual((row["id"], row["name"]["en"], row["logo"]), ("service-8", "Netflix", "/nf.png"))
-            self.assertEqual([(i["r"], i["k"], i["id"], i["o"], i["f"]) for i in row["items"]], [(1, "movie", 104, True, None), (2, "tv", 202, False, "2160p"), (3, "movie", 101, False, "1080p")])
-            self.assertEqual(data["rows"][1]["name"], {"en": "Drama", "de": "Drama"})
+            self.assertEqual([(r["id"], r["kind"], r["type"]) for r in data["rows"]],
+                             [("service-8-movie", "movie", "service"), ("service-8-tv", "tv", "service"), ("genre-drama-movie", "movie", "genre"), ("genre-drama-tv", "tv", "genre")])
+            row, shows = data["rows"][0], data["rows"][1]
+            self.assertEqual((row["name"]["en"], row["logo"], shows["name"]["en"], shows["logo"]), ("Netflix", "/nf.png", "Netflix", "/nf.png"))
+            self.assertEqual([(i["r"], i["k"], i["id"], i["o"], i["f"]) for i in row["items"]], [(1, "movie", 104, True, None), (2, "movie", 101, False, "1080p")])
+            self.assertEqual([(i["r"], i["k"], i["id"], i["o"], i["f"]) for i in shows["items"]], [(1, "tv", 202, False, "2160p")])
+            self.assertEqual(data["rows"][2]["name"], {"en": "Drama", "de": "Drama"})
             allow = json.loads(sf.with_name("allow.json").read_text())
-            ids = {i["x"] for i in row["items"] if i.get("x")}
+            ids = {i["x"] for r in data["rows"] for i in r["items"] if i.get("x")}
             self.assertEqual(ids, set(allow["entries"]))
             self.assertNotIn("x", row["items"][0])
             self.assertEqual(sorted((e["kind"], e["tmdb"], e["season"], e["res"]) for e in allow["entries"].values()), [("movie", 101, None, "1080p"), ("tv", 202, 4, "2160p")])
-            self.assertEqual(data["home"]["movies"][0]["x"], row["items"][2]["x"])
+            self.assertEqual(data["home"]["movies"][0]["x"], row["items"][1]["x"])
             self.assertGreaterEqual(len(next(iter(ids))), 16)
             n = len(fake.searches)
             self.assertNotIn("movie/104", json.dumps(fake.searches))
@@ -292,8 +301,26 @@ class Main(unittest.TestCase):
         fake.releases = {}
         with tempfile.TemporaryDirectory() as d:
             self.run_main(fake, pathlib.Path(d) / "s.json")
-            row = self.data(fake)["rows"][0]
-        self.assertEqual([(i["r"], i["id"], i["o"], i["n"]) for i in row["items"]], [(1, 104, True, False), (2, 202, False, True), (3, 101, False, True)])
+            rows = self.data(fake)["rows"]
+        self.assertEqual([(i["r"], i["id"], i["o"], i["n"]) for i in rows[0]["items"]], [(1, 104, True, False), (2, 101, False, True)])
+        self.assertEqual([(i["r"], i["id"], i["o"], i["n"]) for i in rows[1]["items"]], [(1, 202, False, True)])
+
+    def test_lists_cached_with_the_old_mixed_ids_are_rebuilt(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            sf.write_text(json.dumps({"lists": {"at": self.NOW.isoformat(), "logos": {}, "rows": {"service-8": [["tv", 202]], "genre-drama": [["movie", 101]]}}}))
+            self.run_main(fake, sf)
+            rows = json.loads(sf.read_text())["lists"]["rows"]
+        self.assertEqual(sorted(rows), ["genre-drama-movie", "genre-drama-tv", "service-8-movie", "service-8-tv"])
+        self.assertEqual(rows["service-8-movie"], [["movie", 104], ["movie", 101]])
+
+    def test_a_title_in_several_rows_is_searched_once(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            self.run_main(fake, pathlib.Path(d) / "s.json")
+        # movie/101: Netflix Top 10, Netflix movie row and Drama movie row; found on the first indexer
+        self.assertEqual([p["query"] for p in fake.searches].count("{ImdbId:tt101}"), 1)
 
     def test_search_budget(self):
         fake = FakeIo()
@@ -344,10 +371,13 @@ class Main(unittest.TestCase):
             self.assertFalse(sf.with_name("p.prom.tmp").exists())
         self.assertEqual(m["jf_popular_last_run_timestamp_seconds"], self.NOW.timestamp())
         self.assertEqual(m["jf_popular_last_run_success"], 1)
-        self.assertEqual(m['jf_popular_items{list="service-8"}'], 3)
-        self.assertEqual(m['jf_popular_items_available{list="service-8"}'], 3)
+        self.assertEqual(m['jf_popular_items{list="service-8-movie"}'], 2)
+        self.assertEqual(m['jf_popular_items_available{list="service-8-movie"}'], 2)
+        self.assertEqual(m['jf_popular_items{list="service-8-tv"}'], 1)
         self.assertEqual(m['jf_popular_items_available{list="home-movies"}'], 1)
-        self.assertIn('jf_popular_items{list="genre-drama"}', m)
+        self.assertIn('jf_popular_items{list="genre-drama-movie"}', m)
+        self.assertIn('jf_popular_items{list="genre-drama-tv"}', m)
+        self.assertNotIn('jf_popular_items{list="service-8"}', m)
         self.assertIn('jf_popular_items{list="home-shows"}', m)
         self.assertEqual(m["jf_popular_searches_total"], len(fake.searches))
 

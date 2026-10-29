@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lists for "Currently popular" and the home rows "Top 10 Shows / Movies in Switzerland" (home-placeholders/empty-sections.js).
+"""Lists for the pages "Popular movies" / "Popular shows" (one row per service and per genre, each only films or only series) and the home rows "Top 10 Shows / Movies in Switzerland" (home-placeholders/empty-sections.js).
 Sources: Netflix's official weekly Top 10 for Switzerland (TSV) and TMDB popularity of what streams in Switzerland per service and per genre (Seerr's discover API, watch region CH: Seerr's TMDB access, no own key).
 Every rank is listed; a title not in the library is requestable only when a suitable release exists: Prowlarr searches (never grabs) on NzbPlanet / NZBgeek (by id) and Knaben (by name), throttled, cached (no release: again the next night; found: weekly; owned: never).
 Writes the JavaScript Injector entry "Currently popular" (window.HssPopular) and the request allow-list for the popular backend (opaque entry ids; the backend accepts nothing else).
@@ -187,13 +187,23 @@ def best(results, kind, lang, title, year, season, text):
     return "2160p" if "2160p" in found else "1080p" if found else None
 
 
-def merge(movies, shows, n):
+def ranked(kind, results, n):
     seen, out = set(), []
-    for pop_, kind, tmdb in sorted([(m.get("popularity") or 0, "movie", m["id"]) for m in movies] + [(s.get("popularity") or 0, "tv", s["id"]) for s in shows], key=lambda x: -x[0]):
-        if (kind, tmdb) not in seen:
-            seen.add((kind, tmdb))
-            out.append((kind, tmdb))
+    for r in sorted(results, key=lambda r: -(r.get("popularity") or 0)):
+        if r["id"] not in seen:
+            seen.add(r["id"])
+            out.append((kind, r["id"]))
     return out[:n]
+
+
+def row_ids(services, genres):
+    """(row id, kind, service id or genre) in page order: per service its movie row, then its tv row; then the genres (tv only with TV genres)."""
+    out = []
+    for p, _ in services:
+        out += [(f"service-{p}-{k}", k, p) for k in ("movie", "tv")]
+    for g in genres:
+        out += [(f"genre-{g[0]}-{k}", k, g) for k in ("movie", "tv") if k == "movie" or g[4]]
+    return out
 
 
 def check_due(cache, now):
@@ -389,6 +399,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
     io_ = io_ or Io()
     services = SERVICES if services is None else services
     genres = GENRES if genres is None else genres
+    layout = row_ids(services, genres)
     stamp = now.isoformat(timespec="seconds")
     today = now.date().isoformat()
 
@@ -420,15 +431,13 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             say(f"{key}: skipped this run ({type(e).__name__})")
 
     def refresh_lists(lists):
-        if fresh(lists, LISTS_TTL, now) and sorted(lists.get("rows", {})) == sorted([f"service-{p}" for p, _ in services] + [f"genre-{g[0]}" for g in genres]):
+        if fresh(lists, LISTS_TTL, now) and sorted(lists.get("rows", {})) == sorted(r for r, _, _ in layout):
             return lists
         logos = {p["id"]: p.get("logoPath") for p in io_.seerr(f"/api/v1/watchproviders/movies?watchRegion={COUNTRY}")}
         union = urllib.parse.quote("|".join(str(p) for p, _ in services), safe="")
 
         def discover(kind, provider, genre):
             res = []
-            if kind == "tv" and genre is None and provider is None:
-                return res
             for page in (1, 2):
                 q = f"page={page}&watchRegion={COUNTRY}&watchProviders={provider}&sortBy=popularity.desc&language=en"
                 if genre:
@@ -436,10 +445,11 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
                 res += io_.seerr(f"/api/v1/discover/{'movies' if kind == 'movie' else 'tv'}?{q}").get("results") or []
             return res
         rows = {}
-        for p, _ in services:
-            rows[f"service-{p}"] = merge(discover("movie", p, None), discover("tv", p, None), CANDIDATES)
-        for g in genres:
-            rows[f"genre-{g[0]}"] = merge(discover("movie", union, g[3]), discover("tv", union, g[4]) if g[4] else [], CANDIDATES)
+        for rid, kind, src in layout:
+            if rid.startswith("service-"):
+                rows[rid] = ranked(kind, discover(kind, src, None), CANDIDATES)
+            else:
+                rows[rid] = ranked(kind, discover(kind, union, src[3] if kind == "movie" else src[4]), CANDIDATES)
         say(f"lists refreshed: {len(rows)} rows")
         return {"at": stamp, "rows": rows, "logos": {str(k): v for k, v in logos.items()}}
 
@@ -564,12 +574,15 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
     for key, cands in home_cands.items():
         home[key] = [item(c, c["rank"]) for c in cands]
     rows = []
-    names = {f"service-{p}": (n, n, "service", (lists.get("logos") or {}).get(str(p))) for p, n in services}
-    names.update({f"genre-{g[0]}": (g[1], g[2], "genre", None) for g in genres})
-    for rid in [f"service-{p}" for p, _ in services] + [f"genre-{g[0]}" for g in genres]:
-        en, de, typ, logo = names[rid]
+    service_names = dict(services)
+    for rid, kind, src in layout:
+        if rid.startswith("service-"):
+            en = de = service_names[src]
+            typ, logo = "service", (lists.get("logos") or {}).get(str(src))
+        else:
+            en, de, typ, logo = src[1], src[2], "genre", None
         shown = row_cands.get(rid, [])
-        rows.append({"id": rid, "type": typ, "name": {"en": en, "de": de}, "logo": logo, "items": [item(c, i) for i, c in enumerate(shown, 1)]})
+        rows.append({"id": rid, "kind": kind, "type": typ, "name": {"en": en, "de": de}, "logo": logo, "items": [item(c, i) for i, c in enumerate(shown, 1)]})
     data = {"week": state["top"].get("week"), "lists": lists["at"], "home": home, "rows": rows}
     say(f"home: {len(home['shows'])} shows, {len(home['movies'])} films; rows: " + ", ".join(f"{r['id']} {len(r['items'])}" for r in rows) + f"; searches {SEARCH_MAX - budget[0]}")
     stats["errors"] = len(failed)
