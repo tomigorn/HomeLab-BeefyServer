@@ -24,6 +24,7 @@ if want seerr; then
   check seerr.night-jobs '^0 job\(s\) would change' "$(python3 "$DIR/../../Seerr/scripts/night-jobs.py" --dry-run 2>&1 | tail -1)"
   check seerr.webhook-floppy '^True 142 http://192\.168\.1\.102:8012/webhook/seerr/global/$' "$(jq -r '.notifications.agents.webhook | "\(if .enabled then "True" else "False" end) \(.types) \(.options.webhookUrl)"' "$SEERR_DIR/settings.json" 2>&1)"
   check seerr.avatar-db '^65109 2 [0-9]+$' "$(stat -c %u "$SEERR_DIR/db/db.sqlite3") $(sqlite3 "file:$SEERR_DIR/db/db.sqlite3?immutable=1" "SELECT count(*) FROM pragma_table_info('user') WHERE name IN ('avatar','avatarVersion'); SELECT count(*) FROM linked_accounts;" 2>&1 | xargs)"
+  check seerr.trending-unticked '^0$' "$(jq '[.jellyfin.libraries[] | select(.name == "Trending items" and .enabled)] | length' "$SEERR_DIR/settings.json" 2>&1)"
   check seerr.sso-reach '"issuer": ?"https://sso.holy-grail.ch/application/o/requests-login/"' "$(docker exec seerr wget -q -T 8 -O- https://sso.holy-grail.ch/application/o/requests-login/.well-known/openid-configuration 2>&1 | jq -c '{issuer}' 2>&1)"
   check seerr.extra-hosts '^192\.168\.1\.2$' "$(docker exec seerr getent ahostsv4 sso.holy-grail.ch 2>&1 | awk 'NR==1{print $1}')"
 fi
