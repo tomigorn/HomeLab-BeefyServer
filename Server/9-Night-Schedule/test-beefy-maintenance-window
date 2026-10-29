@@ -33,5 +33,7 @@ assert_eq "unit stuck active: gives up with 0 (release must follow)" "0" "$rc"
 [ "$el" -le 6 ] && ok "drain is capped ($el s)" || bad "drain is capped" "took $el s"
 grep -q "still active" "$T/err" && ok "names the units it gave up on" || bad "names the units it gave up on" "$(cat "$T/err")"
 
+grep -q "^UNITS=.*beefy-backup.service" "$W" && ok "default list waits for the nightly backup" || bad "default list waits for the nightly backup"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

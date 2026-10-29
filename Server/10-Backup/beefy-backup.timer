@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly beefy backup inside the maintenance window
+Documentation=file:///home/buntu/Projects/Server/10-Backup.md
+
+[Timer]
+# 04:26 after the 04:20 original-audio start, before the 04:45 window end; never wakes beefy
+OnCalendar=*-*-* 04:26:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target

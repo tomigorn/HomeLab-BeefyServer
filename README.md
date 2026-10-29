@@ -1,6 +1,10 @@
 # MediaServer
 This git folder is located in ~/Projects
 
+## Backup
+
+Nightly 04:26 to fastpi's append-only restic server (beefy cannot delete snapshots), monthly restore test on fastpi: `Server/10-Backup.md`.
+
 ## Image auto-update
 
 Nightly, by tier, with a functional check and automatic rollback. `Docker/_global/scripts/{auto_update.py,test_auto_update.py,update-project.sh}` are verbatim copies of fastpi's (single source: HomeLab-FastPi `Docker/_global/scripts/`, doc `Server/4-Security-Monitoring/auto-updates.md` "beefy"): change them there, then copy.

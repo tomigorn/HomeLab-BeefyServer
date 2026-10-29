@@ -176,6 +176,7 @@ Only in `post-update-check.sh all` (no compose project).
 | mergerfs branches with per-branch minfreespace: ssd-hot 1479G : ssd-hot2 1479G : hdd-cold 2800G (each SSD keeps 20 %, HDD 10 %), ssd-hot2 mounted by UUID | `/etc/fstab` (`Server/3-Storage-Layout-and-Spindown/setup-storage.sh --configure`) | runtime: `sudo setfattr -n user.mergerfs.branches -v <list> /srv/video/.mergerfs`; boot: fstab | `host.mergerfs-branches`: live and fstab → the list | an fstab rewrite without the options = SSD fills to 50G, downloads stop landing on ssd-hot2 |
 | hd-idle parks the HDD after 20 min (1200 s) | `/etc/default/hd-idle` | setup-storage.sh `--configure` | `host.hd-idle`: → -i 1200 | package update rewriting the default file |
 | SSD->HDD mover (`beefy-mover` + `tier-move` + `tier-helper`), 04:00 timer, metrics `/var/lib/beefy-mover/mover.prom` | `Server/3-Storage-Layout-and-Spindown` | `sudo bash install-mover.sh` | `host.mover`: → enabled 1 (timer, last run ok) | python3 update breaking the script (run fails, fastpi alert BeefyMoverFailed) |
+| Nightly backup to fastpi: restic 0.19.1, `beefy-backup.timer` 04:26, the maintenance window waits for it | `Server/10-Backup`, `/root/.config/restic` (from fastpi `Server/5-Backup/setup-beefy-repo.sh`) | `Server/10-Backup/install.sh` | `host.backup`: → enabled success waited | restic flag changes; fastpi's REST cert or login replaced (re-run setup-beefy-repo.sh on fastpi) |
 
 ## Drift found 2026-10-27 (docs vs live, not changed)
 

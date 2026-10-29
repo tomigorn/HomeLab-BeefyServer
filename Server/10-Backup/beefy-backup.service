@@ -1,0 +1,15 @@
+[Unit]
+Description=Nightly encrypted restic backup of beefy to fastpi (append-only)
+Documentation=file:///home/buntu/Projects/Server/10-Backup.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/beefy-backup
+# the window ends 04:45: hard stop before it
+TimeoutStartSec=1080
+Nice=10
+IOSchedulingClass=idle
+CacheDirectory=restic
+StateDirectory=beefy-backup-staging

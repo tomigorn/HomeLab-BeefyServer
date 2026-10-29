@@ -9,3 +9,4 @@ check host.idle-disks '^ok$' "$(for d in /srv/.disks/*; do p=$(findmnt -no SOURC
 check host.mergerfs-branches '^live=/srv/.disks/ssd-hot=RW,1479G:/srv/.disks/ssd-hot2=RW,1479G:/srv/.disks/hdd-cold=RW,2800G fstab=1$' "live=$(getfattr --only-values -n user.mergerfs.branches /srv/video/.mergerfs 2>/dev/null) fstab=$(grep -c '^/srv/.disks/ssd-hot=RW,1479G:/srv/.disks/ssd-hot2=RW,1479G:/srv/.disks/hdd-cold=RW,2800G ' /etc/fstab)"
 check host.hd-idle '^-i 1200$' "$(ps -o args= -C hd-idle | grep -o 'K1S05Y9M -i [0-9]*' | cut -d' ' -f2-)"
 check host.mover '^enabled 1$' "$(systemctl is-enabled beefy-mover.timer 2>&1) $(sed -n 's/^beefy_mover_last_run_success //p' /var/lib/beefy-mover/mover.prom 2>&1)"
+check host.backup '^enabled success waited$' "$(systemctl is-enabled beefy-backup.timer 2>&1) $(systemctl show -p Result --value beefy-backup.service 2>&1) $(grep -q '^UNITS=.*beefy-backup.service' /usr/local/sbin/beefy-maintenance-window && echo waited || echo missing)"
