@@ -104,15 +104,21 @@ CHECK=$OLDCHECK run recreate
 [[ $(cat "$T/Demo/.env") == "APP_IMAGE=img@sha256:d1" ]] && ok ".env restored" || bad ".env restored" "$(cat "$T/Demo/.env")"
 ! grep -q "^tag sha:old img@" "$T/log" && ok "never tags a digest ref" || bad "never tags a digest ref"
 
-echo "rollback tags: one per run, last ROLLBACK_KEEP per project kept"
-setup img:1; printf 'img:1 sha:old\nimg:rollback-2026-10-01-demo sha:a\nimg:rollback-2026-10-02-demo sha:b\nimg:rollback-2026-10-03-demo sha:c\nimg:rollback-2026-10-01-other sha:d\n' > "$T/tags"
+echo "rollback tags: one per run under rollback.invalid/, last ROLLBACK_KEEP per project kept"
+setup img:1; printf 'img:1 sha:old\nrollback.invalid/img:2026-10-01-demo sha:a\nrollback.invalid/img:2026-10-02-demo sha:b\nrollback.invalid/img:2026-10-03-demo sha:c\nrollback.invalid/img:2026-10-01-other sha:d\n' > "$T/tags"
 echo "img:1 sha:new" > "$T/pullmap"
 CHECK=true ROLLBACK_KEEP=3 run pull
 [[ $rc == 0 ]] && ok "update kept" || bad "update kept" "rc=$rc $out"
-grep -q "^img:rollback-$TODAY-demo sha:old$" "$T/tags" && ok "old image tagged <repo>:rollback-<date>-<project>" || bad "rollback tag" "$(cat "$T/tags")"
-[[ $(grep -c ':rollback-.*-demo ' "$T/tags") == 3 ]] && ! grep -q 'rollback-2026-10-01-demo' "$T/tags" && ok "oldest beyond ROLLBACK_KEEP untagged" || bad "keep last N" "$(cat "$T/tags")"
-grep -q 'rollback-2026-10-01-other' "$T/tags" && ok "other projects' rollback tags untouched" || bad "other project untouched"
-grep -n "^tag sha:old img:rollback" "$T/log" | head -1 | grep -q . && [[ $(grep -n "^tag sha:old img:rollback" "$T/log" | cut -d: -f1) -lt $(grep -n "^compose pull" "$T/log" | cut -d: -f1) ]] && ok "tagged before the pull" || bad "tagged before the pull" "$(cat "$T/log")"
+grep -q "^rollback.invalid/img:$TODAY-demo sha:old$" "$T/tags" && ok "old image tagged rollback.invalid/<repo>:<date>-<project>" || bad "rollback tag" "$(cat "$T/tags")"
+! grep -q ':rollback-' "$T/tags" && ok "no <repo>:rollback-* tag (Cup crash-loops on those)" || bad "no legacy rollback tag" "$(cat "$T/tags")"
+[[ $(grep -c '^rollback.invalid/img:.*-demo ' "$T/tags") == 3 ]] && ! grep -q '2026-10-01-demo' "$T/tags" && ok "oldest beyond ROLLBACK_KEEP untagged" || bad "keep last N" "$(cat "$T/tags")"
+grep -q 'rollback.invalid/img:2026-10-01-other' "$T/tags" && ok "other projects' rollback tags untouched" || bad "other project untouched"
+grep -n "^tag sha:old rollback.invalid/img:" "$T/log" | head -1 | grep -q . && [[ $(grep -n "^tag sha:old rollback.invalid/img:" "$T/log" | cut -d: -f1) -lt $(grep -n "^compose pull" "$T/log" | cut -d: -f1) ]] && ok "tagged before the pull" || bad "tagged before the pull" "$(cat "$T/log")"
+
+echo "rollback tag of a registry ref with a port and a path"
+setup reg.example:5000/team/img:1; printf 'reg.example:5000/team/img:1 sha:old\n' > "$T/tags"
+CHECK=true run recreate
+grep -q "^rollback.invalid/reg.example-5000/team/img:$TODAY-demo sha:old$" "$T/tags" && ok "registry port folded into the path" || bad "registry port folded" "$(cat "$T/tags")"
 
 echo "customization check names the project"
 setup img:1; printf 'img:1 sha:old\n' > "$T/tags"

@@ -5,7 +5,7 @@
 # (bind dirs or "vol:<name>"), start/recreate, wait, verify every container of the
 # project is running (and healthy if it has a healthcheck) with no crash loop;
 # on failure restore compose/.env from the snapshot, re-tag the old images (tag refs) and recreate on the old image ids, pinned when compose still names another ref (automatic rollback).
-# Before any change every old image gets <repo>:rollback-<date>-<project> (a dangling prune cannot take it); the last ROLLBACK_KEEP (3) per repo and project stay.
+# Before any change every old image gets rollback.invalid/<repo>:<date>-<project> (a dangling prune cannot take it; one namespace Cup excludes, sorted after the real tags); the last ROLLBACK_KEEP (3) per repo and project stay.
 # Env: SERVICES (pull/build/recreate only these, --no-deps; the verify still covers the whole project), WAIT (45), CHECK (functional check, a shell command; retried CHECK_TRIES=6 times 10 s apart),
 #      POST_CHECK=0 (skip the customization check: post-update-check.sh runs after CHECK whenever _global/post-update.d/<dir name>.sh exists, Docker/CUSTOMIZATIONS.md),
 #      TEST_FORCE_FAIL=1 (the verify fails: rollback drill). Exit 0 ok, 1 rolled back, 3 rollback did not verify.
@@ -71,14 +71,14 @@ declare -A oldid rbid
 while read -r cname ref id rc svc _; do
   iid=$(docker inspect -f '{{.Image}}' "$cname")
   repo=${ref%%@*}; [[ ${repo##*/} == *:* ]] && repo=${repo%:*}
-  rb="$repo:rollback-$(date +%F)-$proj"; [[ -n ${rbid[$rb]:-} && ${rbid[$rb]} != "$iid" ]] && rb+="-$cname"
+  rb="rollback.invalid/${repo//:/-}:$(date +%F)-$proj"; [[ -n ${rbid[$rb]:-} && ${rbid[$rb]} != "$iid" ]] && rb+="-$cname"
   if [[ -n $iid && $ref != sha256:* ]] && docker tag "$iid" "$rb" 2>/dev/null; then rbid[$rb]=$iid; else rb=""; fi
   oldid[$cname]="$ref|$iid|$id|$rc|$svc|$rb"
 done < <(ids=$(docker compose ps -q); [[ -n $ids ]] && docker inspect -f '{{.Name}} {{.Config.Image}} {{.Id}} {{.RestartCount}} {{index .Config.Labels "com.docker.compose.service"}} {{index .Config.Labels "com.docker.compose.project.config_files"}}' $ids | sed 's|^/||')
 for n in "${!oldid[@]}"; do echo "  before: $n ${oldid[$n]}"; done
 # keep the newest ROLLBACK_KEEP rollback tags per repo for this project
 for rb in "${!rbid[@]}"; do
-  docker image ls --format '{{.Repository}}:{{.Tag}}' "${rb%:*}" 2>/dev/null | grep -E ":rollback-[0-9]{4}-[0-9]{2}-[0-9]{2}-$proj\$" | sort -r | tail -n +$(( ${ROLLBACK_KEEP:-3} + 1 )) | xargs -r docker image rm >/dev/null 2>&1
+  docker image ls --format '{{.Repository}}:{{.Tag}}' "${rb%:*}" 2>/dev/null | grep -E ":[0-9]{4}-[0-9]{2}-[0-9]{2}-$proj\$" | sort -r | tail -n +$(( ${ROLLBACK_KEEP:-3} + 1 )) | xargs -r docker image rm >/dev/null 2>&1
 done
 
 # Traefik: the new tag must load the local plugins before it may replace the edge (Traefik README "Updating Traefik").

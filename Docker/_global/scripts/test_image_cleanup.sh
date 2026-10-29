@@ -100,6 +100,22 @@ hasnt "referenced tag of that image kept" 'rm keep/me:3' "$T/log"
 hasnt "undated rollback tag kept while its tag time is recent" 'cf/x' "$T/log"
 has "undated rollback tag removed once its tag time is old" '^image rm cf/y:rollback-2026.9.1$' "$T/log"
 grep -q 'sha256:rbyoung' "$IMAGE_CLEANUP_STATE/first-seen" && [[ $(awk '$1=="sha256:rbyoung"{print $2}' "$IMAGE_CLEANUP_STATE/first-seen") -lt $((NOW - 80*86400)) ]] && ok "unused clock keeps running under a rollback tag" || bad "unused clock keeps running under a rollback tag"
+echo "rollback.invalid/<repo>:<date>-<project> tags: kept for KEEP_DAYS, then cleaned; manual rollback tags kept"
+printf '%s\n' sha256:used sha256:nsyoung sha256:nsold sha256:nsref sha256:manual | sort > "$T/ids"
+cat > "$T/inspect" <<EOF2
+sha256:used|$old|0001-01-01T00:00:00Z|100|app:1
+sha256:nsyoung|$old|0001-01-01T00:00:00Z|100|rollback.invalid/lscr.io/x/img:$d3-demo
+sha256:nsold|$old|0001-01-01T00:00:00Z|100|rollback.invalid/lscr.io/x/img:$d40-demo
+sha256:nsref|$old|0001-01-01T00:00:00Z|100|keep/me:3,rollback.invalid/keep/me:$d40-demo
+sha256:manual|$old|0001-01-01T00:00:00Z|100|avatar-picker:v1.13.0-rollback,traefik-rollback:v3.7.16-20261027
+EOF2
+printf 'sha256:%s %s\n' nsyoung $((NOW - 90*86400)) nsold $((NOW - 90*86400)) nsref $((NOW - 90*86400)) manual $((NOW - 90*86400)) > "$IMAGE_CLEANUP_STATE/first-seen"
+: > "$T/log"; bash "$HERE/image-cleanup.sh" > "$T/out" 2>&1
+hasnt "namespaced rollback tag younger than KEEP_DAYS kept" "img:$d3" "$T/log"
+has "namespaced rollback tag older than KEEP_DAYS removed" "^image rm rollback.invalid/lscr.io/x/img:$d40-demo$" "$T/log"
+has "expired namespaced tag of a referenced image only untagged" "^image rm rollback.invalid/keep/me:$d40-demo$" "$T/log"
+hasnt "referenced tag of that image kept" 'rm keep/me:3' "$T/log"
+hasnt "manual tags with rollback in them never removed" 'avatar-picker\|traefik-rollback' "$T/log"
 printf '%s\n' sha256:used sha256:kp | sort > "$T/ids"
 printf 'sha256:used|%s|0001-01-01T00:00:00Z|100|app:1\nsha256:kp|%s|0001-01-01T00:00:00Z|100|scan/tool:latest\n' "$old" "$old" > "$T/inspect"
 echo "sha256:kp $((NOW - 90*86400))" > "$IMAGE_CLEANUP_STATE/first-seen"

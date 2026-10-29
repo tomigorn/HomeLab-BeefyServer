@@ -4,7 +4,7 @@
 # Rollback safety: update-project.sh rolls back by re-tagging the previous image ID, so a superseded image must stay until the update is long verified.
 # First run (no state yet): only images of repositories no container uses are dated by build/pull time; dangling images and older tags of a repository in use (the likely previous versions) start their window now.
 # A plain "image prune --filter until" dates by image build time, not by when it became unused, so this keeps its own first-seen-unused clock per image ID.
-# A ":rollback-*" tag (update-project.sh tags every old image <repo>:rollback-<date>-<project>) keeps its image for KEEP_DAYS from the date in the tag (else the tag time), then the tag is cleaned like any other.
+# A rollback tag (update-project.sh tags every old image rollback.invalid/<repo>:<date>-<project>; the older <repo>:rollback-<date>-<project> form too) keeps its image for KEEP_DAYS from the date in the tag (else the tag time), then the tag is cleaned like any other.
 # Any other tag with "rollback" in it (deliberate manual rollback tags) is never removed.
 # Images whose reference appears in the repo's compose files or scripts (REPO_DIR) are kept as well: they are something the stack pulls or runs on demand (scanners, parked projects).
 # IMAGE_CLEANUP_KEEP: space-separated repositories to always keep (images another host's scheduled job runs here).
@@ -22,7 +22,8 @@ now=$(date +%s); keep=$((KEEP_DAYS * 86400)); seen="$STATE/first-seen"
 REPO_DIR=${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}
 corpus=$(mktemp)
 find "$REPO_DIR" -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.sh' -o -name '*.py' -o -name 'Dockerfile*' -o -name '*.service' \) ! -path '*/.git/*' ! -path '*/www/*' ! -path '*/tests/*' ! -name 'test_*' -exec cat {} + > "$corpus" 2>/dev/null
-protected() { local r tag; for r in ${1//,/ }; do [[ ${r##*:} == rollback-* ]] && continue; [[ $r == *rollback* ]] && return 0; for k in ${IMAGE_CLEANUP_KEEP:-}; do [[ ${r%:*} == "$k" ]] && return 0; done; tag=${r##*:}; [[ $tag == "$r" || $r == */*:* && $tag == */* ]] && tag=latest
+isrb() { [[ $1 == rollback.invalid/* || $1 == *:* && ${1##*:} == rollback-* ]]; }
+protected() { local r tag; for r in ${1//,/ }; do isrb "$r" && continue; [[ $r == *rollback* ]] && return 0; for k in ${IMAGE_CLEANUP_KEEP:-}; do [[ ${r%:*} == "$k" ]] && return 0; done; tag=${r##*:}; [[ $tag == "$r" || $r == */*:* && $tag == */* ]] && tag=latest
   grep -qF -- "$r" "$corpus" && return 0; grep -qF -- "${r%:*}:\${" "$corpus" && return 0; [[ $tag == latest ]] && grep -qF -- "${r%:*}" "$corpus" && return 0; done; return 1; }
 bootstrap=0; [[ -f $seen ]] || bootstrap=1
 log() { echo "$(date '+%F %T') $*"; }
@@ -47,8 +48,8 @@ if ((${#ids[@]})); then
     young=0; rest=""; expired=()
     for r in ${tags//,/ }; do
       tg=${r##*:}
-      if [[ $r == *:* && $tg == rollback-* ]]; then
-        if [[ $tg =~ ^rollback-([0-9]{4})-?([0-9]{2})-?([0-9]{2}) ]] && at=$(date -d "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}" +%s 2>/dev/null); then :
+      if isrb "$r"; then
+        if [[ ${tg#rollback-} =~ ^([0-9]{4})-?([0-9]{2})-?([0-9]{2}) ]] && at=$(date -d "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}" +%s 2>/dev/null); then :
         elif ((t > 0)); then at=$t; else at=${first[$id]:-$now}; fi
         if ((now - at < keep)); then young=1; else expired+=("$r"); fi
       else rest+=",$r"; fi
