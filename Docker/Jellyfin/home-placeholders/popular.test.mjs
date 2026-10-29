@@ -284,3 +284,9 @@ test("the source has no characters outside the BMP: the injector config drops th
   assert.equal(c.querySelector(".hssTopBtn-night").textContent, "🌙 Tonight");
 });
 
+test("phone/tablet (no fitted width): the default poster width is not in em, the rank's big font would multiply it (cards 520 px wide on a 390 px phone)", () => {
+  const def = /\.hssTopScroll \{[^}]*--hss-p: ([^;]+);/.exec(pp.CSS);
+  assert.ok(def);
+  assert.doesNotMatch(def[1], /\d(em|%)$/);
+  assert.match(def[1], /^\d+(\.\d+)?(rem|px)$/);
+});

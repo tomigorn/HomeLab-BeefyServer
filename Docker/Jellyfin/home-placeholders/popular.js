@@ -331,7 +331,7 @@
   }
 
   var CSS = [
-    ".hssTopScroll { --hss-p: 7em; display: flex; flex-wrap: nowrap; align-items: flex-start; overflow-x: auto; overflow-y: hidden; gap: 0.9em; padding: 0.6em 3.3% 1.6em max(3.3%, 1.2em); scroll-snap-type: x proximity; scrollbar-width: thin; }",
+    ".hssTopScroll { --hss-p: 7rem; display: flex; flex-wrap: nowrap; align-items: flex-start; overflow-x: auto; overflow-y: hidden; gap: 0.9em; padding: 0.6em 3.3% 1.6em max(3.3%, 1.2em); scroll-snap-type: x proximity; scrollbar-width: thin; }",
     ".hssTopCard { position: relative; flex: 0 0 auto; display: grid; grid-template-columns: auto var(--hss-p); align-items: end; color: inherit; text-decoration: none; scroll-snap-align: start; outline: none; }",
     ".hssTopRank { grid-column: 1; grid-row: 1; width: calc(var(--hss-p) * 0.75); margin-right: calc(var(--hss-p) * -0.25); text-align: right; white-space: nowrap; font: 900 calc(var(--hss-p) * 1.15)/0.8 'Arial Black', 'Helvetica Neue', Arial, sans-serif; letter-spacing: -0.06em; color: transparent; -webkit-text-stroke: 0.03em rgba(255, 255, 255, 0.78); position: relative; z-index: 0; user-select: none; }",
     ".hssTopPoster { grid-column: 2; grid-row: 1; position: relative; z-index: 1; width: var(--hss-p); aspect-ratio: 2 / 3; border-radius: 0.35em; background: #22252c center / cover no-repeat; box-shadow: -0.4em 0 1em rgba(0, 0, 0, 0.55); overflow: hidden; transition: transform 0.15s; }",
