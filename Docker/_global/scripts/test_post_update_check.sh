@@ -60,7 +60,7 @@ case "$*" in
   "compose ps -q") echo cid1 ;;
   "inspect -f {{.Name}} {{.Config.Image}} {{.Id}} {{.RestartCount}} "*" cid1") echo "/demo-app img:1 cid1 0 app" ;;
   "inspect -f {{.Image}} demo-app") echo sha:old ;;
-  "tag "*:rollback-*) : ;;
+  "tag "*" rollback.invalid/"*|"tag "*:rollback-*) : ;;
   "tag "*) touch "$FAKE_DIR/rolled" ;;
   "image ls "*|"image rm "*) : ;;
   inspect\ -f\ \{\{.State.Status\}\}\|*) [[ -e $FAKE_DIR/rolled ]] && echo "running|nohc|sha:old|cid3|0" || echo "running|nohc|sha:new|cid2|0" ;;
@@ -103,19 +103,22 @@ if [[ -d $REPO_D && -f $REG ]]; then
 import pathlib, re, sys
 d, reg = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]).read_text()
 checks = {m for f in d.glob("*.sh") for m in re.findall(r"^\s*check ([a-z0-9][a-z0-9.-]*) ", f.read_text(), re.M)}
-listed, col = set(), None
-for line in reg.splitlines():
-    cells = [c.strip() for c in line.strip().strip("|").split("|")] if line.startswith("|") else None
+listed, col, width, ragged = set(), None, 0, []
+for n, line in enumerate(reg.splitlines(), 1):
+    cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))] if line.startswith("|") else None
     if not cells:
         col = None
     elif any(c.startswith("Verify") for c in cells):
-        col = next(i for i, c in enumerate(cells) if c.startswith("Verify"))
-    elif col is not None and len(cells) > col:
-        listed |= set(re.findall(r"`([a-z0-9][a-z0-9-]*\.[a-z0-9.-]+)`", cells[col]))
-print(" ".join(sorted(f"+{x}" for x in checks - listed) + sorted(f"-{x}" for x in listed - checks)))
+        col, width = next(i for i, c in enumerate(cells) if c.startswith("Verify")), len(cells)
+    elif col is not None and not set("".join(cells)) <= set("-: "):
+        if len(cells) != width:
+            ragged.append(f"line{n}:{len(cells)}/{width}")
+        if len(cells) > col:
+            listed |= set(re.findall(r"`([a-z0-9][a-z0-9-]*\.[a-z0-9.-]+)`", cells[col]))
+print(" ".join(sorted(f"+{x}" for x in checks - listed) + sorted(f"-{x}" for x in listed - checks) + [f"ragged:{r}" for r in ragged]))
 PY
 )
-  [[ -z $diffs ]] && ok "registry and checks name the same ids" || bad "registry and checks name the same ids" "(+ check without registry row, - row without check): $diffs"
+  [[ -z $diffs ]] && ok "registry and checks name the same ids" || bad "registry and checks name the same ids" "(+ check without registry row, - row without check, ragged: a row whose cell count differs from the header, e.g. an unescaped |): $diffs"
   dup=$(grep -hoE '^\s*check [a-z0-9.-]+ ' "$REPO_D"/*.sh | awk '{print $2}' | sort | uniq -d | xargs)
   [[ -z $dup ]] && ok "check ids are unique" || bad "check ids are unique" "$dup"
   for f in "$REPO_D"/*.sh; do bash -n "$f" || bad "syntax $(basename "$f")"; done
