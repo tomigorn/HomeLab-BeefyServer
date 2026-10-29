@@ -104,12 +104,13 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | qBittorrent auth bypass subnets (4: vpn-status .203, clamav-queue, Seerr download-now, fastpi; not the gateway .1, not Radarr/Sonarr: their qBittorrent clients log in, `night-downloads-setup.sh`) | `qBittorrent.conf` | Web UI → Options; .205: `Seerr/scripts/download-now-setup.sh`; rollback `Movie-Downloads/backups/pre-qbit-arr-creds-2026-10-28/rollback.sh` (then `pre-qbit-password-2026-10-28`) | `md.qbit-auth-bypass`: → true 4 no-gateway …; `md.radarr-qbit-login`, `md.sonarr-qbit-login`: → true 4 | auth reset locks out the pinned callers |
 | qBittorrent WebUI password (user `admin`), host scripts log in (S-01) | `qBittorrent.conf` `Password_PBKDF2`; `Movie-Downloads/secrets/qbit-webui.password`; `scripts/qbit-api.sh`, `night-downloads.py` `qbit_client` | `setPreferences` `web_ui_password` from the host, read from the file (`--data-urlencode json@file`) | `md.qbit-webui-login`: → 403 ok (host without login 403, with login ok) | config reset = no password: callers still work, host open again; new login API / cookie |
 | qBittorrent categories incl. night | qBittorrent | night-downloads-setup.sh | `md.qbit-categories`: → radarr, radarr-night, sonarr, sonarr-night paths | |
-| qBittorrent ClamAV autorun | qBittorrent | `scripts/clamav-hooks.sh` | `md.qbit-clamav-autorun`: → true /clamav-hook/clamav-hook.py --qbit … ok | |
+| qBittorrent completion: recheck pieces on disk, then autorun `download-integrity.py` (zero/header check, then ClamAV hook); corrupt = recheck + tag `corrupt` (README "Download integrity") | qBittorrent | `scripts/clamav-hooks.sh` | `md.qbit-integrity-autorun`: → true /clamav-hook/download-integrity.py --qbit … true ok | qBit renames `recheck_completed_torrents` / autorun keys |
 | qBittorrent bound to tun0, ratio 2, 30 days | qBittorrent | UI | `md.qbit-tun0-seeding`: → tun0 2 43200 | leak outside the VPN |
 | qBittorrent queueing on (max 3 active downloads): the night TV torrent goes to the top of the queue | qBittorrent | Web UI → Options → BitTorrent | `md.qbit-queueing`: → true n | queueing off = no limit and topPrio fails (logged, not fatal) |
 | SABnzbd host whitelist | `sabnzbd.ini` | Config → Special | `md.sab-host-whitelist`: → sabnzbd,gluetun,sabnzbd.holy-grail.ch,192.168.1.102 | |
 | SABnzbd unwanted extensions (22, abort), permissions 775 | `sabnzbd.ini` | Config → Switches | `md.sab-unwanted-ext`: → 22 2 775 | |
-| SABnzbd ClamAV post-processing script | `sabnzbd.ini` | clamav-hooks.sh | `md.sab-clamav-script`: → /clamav-hook *=clamav-hook.py ok; `md.sab-clamd-reach`: zPING to clamav:3310 → PONG | |
+| SABnzbd post-processing script `download-integrity.py` (par2 verify on disk, else zero/header check; corrupt = job failed → blocklist + new search; then the ClamAV hook) | `sabnzbd.ini` | clamav-hooks.sh | `md.sab-integrity-script`: → /clamav-hook *=download-integrity.py ok (par2 in the image); `md.sab-clamd-reach`: zPING to clamav:3310 → PONG | image drops `par2` (check falls back to the zero scan; check fails) |
+| SABnzbd `direct_write` off, `enable_par_cleanup` off (par2 index kept for the on-disk verify; the hook removes it) | `sabnzbd.ini` | clamav-hooks.sh | `md.sab-no-direct-write`: → false false | an update resetting Special options |
 | SABnzbd categories incl. night (priority on the Radarr/Sonarr night client) | `sabnzbd.ini` | night-downloads-setup.sh | `md.sab-categories`: → movies, movies-night, tv, tv-night dirs | |
 | Bazarr post-processing subtitle-check.py | Bazarr config | `scripts/subtitle-check-setup.sh` | `md.bazarr-postprocessing`: → true /scripts/subtitle-check.py ok | image drops python3 |
 | Bazarr mod common only, utf8, ffsubsync on original audio | Bazarr config | subtitle-check-setup.sh, language-policy.sh | `md.bazarr-mod-common`: → common; `md.bazarr-utf8`: → true; `md.bazarr-subsync`: → true true false | settings keys renamed |
@@ -145,7 +146,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Scan timers | `Antivirus/systemd/` | install.sh | `av.timers`: → active active | |
 | Scan units sandboxed (docker client only: `ProtectSystem=strict`, `PrivateNetwork`, AF_UNIX, no caps / hostscan `CAP_DAC_READ_SEARCH`, syscall filter) | `Antivirus/systemd/*.service` | install.sh | `av.unit-sandbox`: → installed installed ProtectSystem=strict ×2 | a new ExecStart needing network or writes |
 
-Hooks in SABnzbd / qBittorrent: Movie-Downloads `md.sab-clamav-script`, `md.qbit-clamav-autorun`.
+Hooks in SABnzbd / qBittorrent (`hook/download-integrity.py` runs first, then `hook/clamav-hook.py`): Movie-Downloads `md.sab-integrity-script`, `md.qbit-integrity-autorun`.
 
 ## Dependency-Track
 

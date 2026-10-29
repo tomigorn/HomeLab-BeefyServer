@@ -1280,9 +1280,32 @@ Verified 2026-10-23: *The Ring Thing* (tagged, searched, no file) → `since` 20
 | Install | `sudo install -m 0644 systemd/media-metrics.{service,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now media-metrics.timer` |
 | Test | `python3 tests/test_media_metrics.py` |
 
+## Download integrity
+
+Every finished download is checked **on disk** before Sonarr/Radarr can import it: `../Antivirus/hook/download-integrity.py` runs first (SABnzbd post-processing script, qBittorrent "run on torrent finished"), then hands over to the ClamAV hook. Why: on 2026-10-28 two SABnzbd episodes came out 42 % / 99 % zeros in 8 MiB-aligned blocks although SABnzbd's quick-check said OK (it compares CRCs of the articles in memory, not the file on disk); one was imported.
+
+| Step | What |
+|---|---|
+| Flush | every video file: `fsync` + drop from the page cache, so the check reads the disk, not memory |
+| SABnzbd | par2 index of the set present (`enable_par_cleanup = 0`): `par2 verify` against the files; a `damaged` target = corrupt; OK = trusted, par2 files removed. No par2, or no verdict (target missing/misnamed): zero/header check |
+| qBittorrent | "Recheck torrents on completion" on (pieces hashed from disk), then the zero/header check |
+| Zero/header check | video files (mkv, mp4, ts, avi, ...): container magic at the start (EBML, `ftyp`/`moov`/..., `RIFF AVI`, TS sync) and no 1 MiB-aligned block of zeros (`INTEGRITY_ZERO_MIB`, default 1). Library scan 2026-10-29: 629 video files, 2.9 TiB on the SSDs, not one such block, so no false positive at 1 MiB |
+| Corrupt, SABnzbd | exit 1, job failed: Sonarr/Radarr blocklist the release and search again (`autoRedownloadFailed`, remove failed on); ClamAV not run |
+| Corrupt, qBittorrent | recheck (bad pieces download again, the hardlinked library file is repaired in place) + tag `corrupt`; the hook runs again when it finishes |
+| Not readable | job goes through, `download_integrity_errors_total` +1 (never blocks on its own error) |
+| SABnzbd write mode | `direct_write = 0` since 2026-10-29: articles are appended in order, no sparse file written from several threads (the corrupt files were direct-write) |
+| Out | `/var/lib/clamav-scan/textfile/download-integrity.prom`: `download_integrity_{checked,corrupt,errors}_total{client}`, `download_integrity_last_{run,corrupt}_timestamp_seconds{client}`; `download-integrity-hits.tsv`: date TAB client TAB title TAB path TAB reason |
+| Setup | `scripts/clamav-hooks.sh` (idempotent) |
+| Tests | `python3 ../Antivirus/tests/test_integrity.py` |
+
+```bash
+# check files or folders by hand (report only, exit 1 = corrupt), unprivileged inside the container; a title on hdd-cold wakes the HDD
+sudo docker exec movie-sabnzbd /clamav-hook/download-integrity.py --check "/data/media/tv/<Series>"
+```
+
 ## Completion scan
 
-Every finished download is scanned by ClamAV: SABnzbd post-processing script and qBittorrent "run on torrent finished" call `../Antivirus/hook/clamav-hook.py`, which streams executables, archives and unknown files to `clamav:3310` before the job ends (the `clamav` container from `../Antivirus` joins this bridge) and hands media files to the background queue (`clamav-queue`, 1 file at a time), so SABnzbd post-processing no longer waits ~2 min per episode.
+Every finished download is scanned by ClamAV: after the [integrity check](#download-integrity), SABnzbd post-processing and qBittorrent "run on torrent finished" run `../Antivirus/hook/clamav-hook.py`, which streams executables, archives and unknown files to `clamav:3310` before the job ends (the `clamav` container from `../Antivirus` joins this bridge) and hands media files to the background queue (`clamav-queue`, 1 file at a time), so SABnzbd post-processing no longer waits ~2 min per episode.
 
 | | |
 |---|---|
