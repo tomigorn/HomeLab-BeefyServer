@@ -68,7 +68,6 @@ if want popular jellyfin; then
   check jf.popular-served '^[1-9][0-9]* [1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssPopular = ' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'hssPopularNav' 2>&1)"
   check jf.popular-home-slot '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'HssExtraRows' 2>&1)"
   check jf.popular-timer '^active$' "$(jf_user_systemctl is-active jellyfin-popular.timer 2>&1)"
-  # fastpi Traefik route jellyfin.holy-grail.ch/hss-popular/ (HomeLab-FastPi jellyfin-popular.yml): "absent" passes until it is applied, the buttons then answer 404
-  r=$(curl -s -m 10 -w ' %{http_code}' https://jellyfin.holy-grail.ch/hss-popular/health 2>&1); [[ $r == *' 404' ]] && r="absent (route not applied)"
-  check jf.popular-route '^(\{"ok": true\} 200|absent)' "$r"
+  # fastpi Traefik route jellyfin.holy-grail.ch/hss-popular/ (HomeLab-FastPi Docker/Traefik/traefik/dynamic/jellyfin-popular.yml)
+  check jf.popular-route '^\{"ok": true\} 200$' "$(curl -s -m 10 -w ' %{http_code}' https://jellyfin.holy-grail.ch/hss-popular/health 2>&1)"
 fi

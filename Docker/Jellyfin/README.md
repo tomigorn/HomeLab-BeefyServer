@@ -505,14 +505,15 @@ Groups (owner 2026-10-29): the wide-card rows and the My List band divide the ho
 | Rollback | stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/{Home Screen Sections,Plugin Pages,File Transformation}_*`, start. Pre-change backup: `/srv/appdata/jellyfin-pre-hss-2026-10-27.tgz` (root, 600) |
 
 ## Currently popular (2026-10-29)
-What streams in Switzerland right now, browse-only: a title is listed only when it is already in the library or a suitable release exists. Nothing is downloaded automatically; a user's button press makes a normal Seerr request.
+What streams in Switzerland right now. Every rank is shown; a title not in the library can be requested only when a suitable release exists. Nothing is downloaded automatically; a user's button press makes a normal Seerr request.
 
 | Where | What |
 |---|---|
-| Top bar + side menu (desktop drawer, TV, phone) | **Currently popular** / **Gerade beliebt** → full-screen page (injector overlay, Escape / TV back / × closes) |
-| Page | Top 10 Shows + Top 10 Movies in Switzerland (Netflix), one row per service (`SERVICES` in `scripts/popular.py`: Netflix, Prime Video, Disney+, Apple TV+, Sky, Play Suisse, Paramount+, blue TV), one row per genre (`GENRES`: Action, Comedy, Drama, Thriller & Crime, Sci-Fi & Fantasy, Animation, Documentaries, Kids & Family, Horror, Romance); max 10 each, empty rows hidden |
+| Top bar (desktop), app drawer (phone), 📈 header button next to search (TV layout) | **Currently popular** / **Gerade beliebt** → page under the header (injector overlay, Escape / TV back / × / any nav link closes) |
+| Page | Top 10 Shows + Top 10 Movies in Switzerland (Netflix), one row per service (`SERVICES` in `scripts/popular.py`: Netflix, Prime Video, Disney+, Apple TV+, Sky, Play Suisse, Paramount+, blue TV), one row per genre (`GENRES`: Action, Comedy, Drama, Thriller & Crime, Sci-Fi & Fantasy, Animation, Documentaries, Kids & Family, Horror, Romance); the first 10 of each |
 | Home | **Top 10 Shows in Switzerland** after Recently Added Shows, **Top 10 Movies in Switzerland** after Recently Watched TV Series & Collections (slots via `window.HssExtraRows` in `empty-sections.js`) |
-| Card | Netflix look: big outlined rank number, poster overlapping it (TMDB poster, German poster/title in a German UI). In the library = normal card, opens the Jellyfin item. Not in the library = dimmed, `1080p`/`2160p available`, buttons **🌙 Tonight** (Can wait, night download) and **⚡ Now** (`download-now` tag); after the request the state (🌙 / 🔍 / 📅 / ⬇️ from `request-state.json`). Rank: Netflix rows keep Netflix's rank (gaps where a title is hidden), other rows are numbered 1-10 |
+| Card | Netflix look: big outlined rank number, the poster covering a quarter of it (#10 almost not), TMDB poster, German poster/title in a German UI. In the library = normal card, opens the Jellyfin item. Release found = dimmed, `1080p`/`2160p`, buttons **🌙 Tonight** (Can wait, night download) and **⚡ Now** (`download-now` tag); after the request the state (🌙 / 🔍 / 📅 / ⬇️ from `request-state.json`). No release = greyscale, **No release yet** / **Noch kein Release**, buttons disabled, hint "checked 29 Oct · rechecked daily" (not in the allow-list, so the backend refuses it too); Netflix title without a TMDB match: name only, "Title not identified" |
+| Size | ≥ 1280 px wide (desktop 1920/2560, TV 1920): the poster width is computed from the row width so all 10 fit without scrolling (`fitPoster`: 10 cards = 15.3 posters + 9 gaps, posters ≥ 90 px); narrower (phone, tablet): the row scrolls |
 
 ### Sources
 
@@ -528,8 +529,8 @@ What streams in Switzerland right now, browse-only: a title is listed only when 
 |---|---|
 | How | Prowlarr search only (no Radarr/Sonarr entry, no download): NzbPlanet, NZBgeek by IMDb id / TVDB id + season, then Knaben by name; first suitable release wins. Treasure Maps is not used (night-search budget) |
 | Suitable | 1080p or 2160p; no CAM/TS/TC/screener; ≥ 1.5 GB film, ≥ 0.3 GB episode, ≥ 1 GB season pack; a dub without the original audio is refused (a language tag other than the original without DL/DUAL/MULTI); torrents ≥ 1 seeder; name search: name must start with the title + year (±1) / season |
-| Throttle | ≤ `POP_SEARCH_MAX` (300) searches per run, `POP_SEARCH_DELAY` 2 s apart; a row stops searching once 10 titles show |
-| Cache | `~/.local/state/jellyfin-popular.json`: no release → again after 7 days, found → after 90 days, owned → never; lists and TMDB details rebuilt weekly |
+| Throttle | ≤ `POP_SEARCH_MAX` (300) searches per run, `POP_SEARCH_DELAY` 2 s apart; only the 10 listed titles of each row are checked |
+| Cache | `~/.local/state/jellyfin-popular.json`: no release → again the next night (20 h), found → weekly, owned → never; a title whose release shows up flips to the buttons on that run; lists and TMDB details rebuilt weekly |
 | Schedule | user timer `jellyfin-popular.timer` 04:39 (maintenance window) and 22:20 (only when beefy is awake for night downloads; never wakes it). Netflix list fetched only when a new week is due (Tuesday) |
 
 ### Requests: backend and threat model
@@ -545,6 +546,7 @@ Any signed-in Jellyfin user may press a button; no Seerr login or `streaming-req
 | As whom | Seerr API key (`secrets/popular/seerr.apikey`, buntu:65128 0640) with `X-Api-User`: the Seerr user linked to the caller's Jellyfin id when it may request, else the local Seerr user **Jellyfin popular** (`jellyfin-popular`, permissions 160 = REQUEST + AUTO_APPROVE, random unused password, local login is off; created on first use). Tags: only `download-now` for ⚡ |
 | Audit | `/srv/appdata/jellyfin-popular-state/audit.jsonl` (uid 65128): time, Jellyfin user + id, entry id, title, mode, decision, Seerr user, request id. Tokens are never logged |
 | Not covered | a user can spend their own 10 requests on listed titles; an admin removes or declines in Seerr as usual (declined titles stay refused) |
+| Verified 2026-10-29 | public path → `{"ok": true}`; real browser button press (owner session, Quick Connect test device, request rewritten to `check`) → 200 requestable with the browser's Origin; tampered id 403, extra `season` 400, no token 401, API key as token 401. A real Seerr request was not made in the test (it would have downloaded at once in the low tariff) |
 
 | Task | Command (in `Docker/Jellyfin/`) |
 |---|---|
