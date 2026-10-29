@@ -51,8 +51,8 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 
 | Client | Setting | Call |
 |---|---|---|
-| SABnzbd | script folder `/clamav-hook`, default category script `clamav-hook.py`, "User script can flag job as failed" on | `clamav-hook.py <final dir> …` |
-| qBittorrent | Run external program on torrent finished | `/clamav-hook/clamav-hook.py --qbit "%I" "%F"` |
+| SABnzbd | script folder `/clamav-hook`, default category script `download-integrity.py` (checks the data on disk, then runs `clamav-hook.py`), "User script can flag job as failed" on | `download-integrity.py <final dir> …` |
+| qBittorrent | Run external program on torrent finished | `/clamav-hook/download-integrity.py --qbit "%I" "%F"` (then `clamav-hook.py`) |
 
 - Set by `../Movie-Downloads/scripts/clamav-hooks.sh` (idempotent). The hook is mounted read-only from `hook/`: a change is live at once.
 - Streams each file to clamd (`INSTREAM`, Python stdlib, no clamdscan or docker socket in the clients). Files over 2 GiB are skipped; the nightly scan has the same limit.
@@ -112,6 +112,7 @@ beefy has no node-exporter: fastpi pulls both files (and `clamav-hits.tsv`, `ind
 ```sh
 Docker/Antivirus/tests/test_scan.sh
 python3 Docker/Antivirus/tests/test_hook.py
+python3 Docker/Antivirus/tests/test_integrity.py   # download-integrity.py, Movie-Downloads README "Download integrity"
 sudo docker run --rm --entrypoint sh -v "$PWD/Docker/Antivirus:/src:ro" clamav-local:latest /src/tests/test_scan.sh   # busybox
 ```
 
