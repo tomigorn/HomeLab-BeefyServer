@@ -58,6 +58,57 @@ services:
     networks:
       - jellyfin
 
+# #########################################################
+# POPULAR #################################################
+# #########################################################
+# Request backend of "Currently popular" (README): checks the caller with Jellyfin
+# (/Users/Me, their own token) and requests only titles of the current published
+# lists in Seerr. fastpi Traefik routes jellyfin.holy-grail.ch/hss-popular/ here;
+# the published port only answers fastpi (DOCKER-USER guard).
+  popular:
+    image: python:3.15.2-alpine3.24
+    container_name: jellyfin-popular
+    restart: unless-stopped
+    user: "65128:65128"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["python3", "/app/app.py"]
+    environment:
+      - TZ=${TZ}
+      - PYTHONDONTWRITEBYTECODE=1
+      - POP_ORIGINS=${PUBLISHED_SERVER_URL}
+      - POP_LIMIT=${POPULAR_LIMIT}
+      - POP_DAYS=${POPULAR_DAYS}
+      - POP_DAILY_MAX=${POPULAR_DAILY_MAX}
+    volumes:
+      - ./popular:/app:ro
+      - ./secrets/popular:/run/secrets/popular:ro
+      # allow.json, written by scripts/popular.py
+      - ${APPDATA_ROOT}/jellyfin-popular:/data:ro
+      # audit.jsonl, the only writable path
+      - ${APPDATA_ROOT}/jellyfin-popular-state:/state
+      # request-state.json of the night run (badges)
+      - ${APPDATA_ROOT}/indexer-bar:/indexer-bar:ro
+    ports:
+      - "${POPULAR_PORT}:8097"
+    networks:
+      - jellyfin
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8097/hss-popular/health"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    mem_limit: 64m
+    pids_limit: 64
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 # =========================================================
 # Networks ================================================
 # =========================================================
