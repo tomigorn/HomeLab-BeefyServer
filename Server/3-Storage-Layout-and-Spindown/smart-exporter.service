@@ -4,16 +4,16 @@ Documentation=file:///home/buntu/Projects/Server/3-Storage-Layout-and-Spindown.m
 
 [Service]
 Type=oneshot
-# Root: SMART needs raw disk ioctls.
+# Root: SMART needs raw disk ioctls. Runs the root-owned copy install-smart-exporter.sh puts in /usr/local/lib, never the repo file.
 StateDirectory=smart-exporter
-ExecStart=/usr/bin/python3 -I /home/buntu/Projects/Server/3-Storage-Layout-and-Spindown/smart_exporter.py --host beefy --out /var/lib/smart-exporter/smart_beefy.prom
+ExecStart=/usr/bin/python3 -I /usr/local/lib/smart-exporter/smart_exporter.py --host beefy --out /var/lib/smart-exporter/smart_beefy.prom
 TimeoutStartSec=5min
 Nice=10
 IOSchedulingClass=idle
 
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=read-only
+ProtectHome=yes
 ReadWritePaths=/var/lib/smart-exporter
 PrivateTmp=true
 PrivateNetwork=true
@@ -21,3 +21,18 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
+CapabilityBoundingSet=CAP_SYS_RAWIO CAP_SYS_ADMIN
+DevicePolicy=closed
+DeviceAllow=block-sd r
+DeviceAllow=block-blkext r
+DeviceAllow=char-nvme r
+ProtectKernelLogs=true
+ProtectClock=true
+ProtectHostname=true
+RestrictNamespaces=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

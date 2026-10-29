@@ -1103,7 +1103,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313   /srv/.disks/hdd-cold  xfs   noatime,
 - `setup-storage.sh` — wipe/partition/format/mount + mergerfs + hd-idle/smartd/fstrim (`--configure` = no-wipe).
 - `hdd-spinstate.sh` — one non-waking power-state sample (`hdparm -C` + `/proc/diskstats`).
 - `install-hdd-spinlog.sh` — installs the 1-min spin-state logger timer + `hdd-spinwatch`.
-- `smart_exporter.py` — SMART health of every disk as Prometheus textfile, never wakes a parked disk (copy of the fastpi source, see Services).
+- `smart_exporter.py` — SMART health of every disk as Prometheus textfile, never wakes a parked disk (copy of the fastpi source, see Services); `install-smart-exporter.sh` installs the root copy `/usr/local/lib/smart-exporter/` and the hardened unit (caps SYS_RAWIO + SYS_ADMIN only, disks read-only, no network).
 - `hdd-spinwatch` — live view: a constantly-spinning icon + a `checks seen` counter that ticks each minute a check runs (§11.1). Unprivileged.
 
 ### Validation
