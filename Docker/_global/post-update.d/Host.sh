@@ -10,4 +10,28 @@ check host.mergerfs-branches '^live=/srv/.disks/ssd-hot=RW,1479G:/srv/.disks/ssd
 check host.hd-idle '^-i 1200$' "$(ps -o args= -C hd-idle | grep -o 'K1S05Y9M -i [0-9]*' | cut -d' ' -f2-)"
 check host.mover '^enabled 1$' "$(systemctl is-enabled beefy-mover.timer 2>&1) $(sed -n 's/^beefy_mover_last_run_success //p' /var/lib/beefy-mover/mover.prom 2>&1)"
 check host.backup '^enabled success waited$' "$(systemctl is-enabled beefy-backup.timer 2>&1) $(systemctl show -p Result --value beefy-backup.service 2>&1) $(grep -q '^UNITS=.*beefy-backup.service' /usr/local/sbin/beefy-maintenance-window && echo waited || echo missing)"
+# Root runs only root-owned copies (S-10/S-11): each copy equals its repo file, and no root unit of ours executes from /home.
+root_copies() {
+  local r m="" src dst; r=$(cd "$DIR/../../.." && pwd)
+  while read -r src dst; do sudo -n cmp -s "$r/$src" "$dst" 2>/dev/null || m+=" ${dst##*/}"; done <<EOF
+Server/3-Storage-Layout-and-Spindown/tier-move /usr/local/sbin/tier-move
+Server/3-Storage-Layout-and-Spindown/tier_helper.py /usr/local/sbin/tier-helper
+Server/3-Storage-Layout-and-Spindown/beefy_mover.py /usr/local/sbin/beefy-mover
+Server/3-Storage-Layout-and-Spindown/tier-report /usr/local/sbin/tier-report
+Server/3-Storage-Layout-and-Spindown/beefy_promoter.py /usr/local/sbin/beefy_promoter.py
+Server/3-Storage-Layout-and-Spindown/hdd-spinstate.sh /usr/local/sbin/hdd-spinstate
+Server/3-Storage-Layout-and-Spindown/smart_exporter.py /usr/local/lib/smart-exporter/smart_exporter.py
+Server/3-Storage-Layout-and-Spindown/smart-exporter.service /etc/systemd/system/smart-exporter.service
+Server/8-Idle-Watcher/beefy_idle_watcher.py /usr/local/sbin/beefy_idle_watcher.py
+Server/9-Night-Schedule/beefy-maintenance-window /usr/local/sbin/beefy-maintenance-window
+Server/10-Backup/beefy-backup.sh /usr/local/sbin/beefy-backup
+Server/10-Backup/beefy-backup.service /etc/systemd/system/beefy-backup.service
+Docker/_global/scripts/oob-alert.sh /usr/local/lib/beefy-oob/scripts/oob-alert.sh
+Docker/Floppy/scripts/abs-push.py /usr/local/lib/floppy-abs-push/abs-push.py
+Docker/Floppy/scripts/abs-push-apply.py /usr/local/lib/floppy-abs-push/abs-push-apply.py
+EOF
+  for f in /etc/systemd/system/*.service; do grep -q "^User=" "$f" && continue; grep -qE "^Exec[A-Za-z]*=[-+!@]*/[^ ]*/home/|^Exec[A-Za-z]*=.* -I /home/|^Exec[A-Za-z]*=.*/usr/bin/(python3|bash|sh) [^ ]*/home/" "$f" && m+=" home:${f##*/}"; done
+  echo "${m:-ok}"
+}
+check host.root-copies "^ok$" "$(root_copies)"
 check host.mem-limits '^none$' "$(docker ps --format '{{.Names}}' | while read -r c; do [ "$(docker inspect -f '{{.HostConfig.Memory}}' "$c")" = 0 ] && echo "$c"; done | xargs | sed 's/^$/none/')"
