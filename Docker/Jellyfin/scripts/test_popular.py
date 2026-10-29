@@ -144,12 +144,6 @@ class Lists(unittest.TestCase):
         shows = [{"id": 3, "popularity": 30}, {"id": 1, "popularity": 5}]
         self.assertEqual(pop.merge(movies, shows, 3), [("movie", 1), ("tv", 3), ("movie", 2)])
 
-    def test_select_shows_owned_or_found_in_order(self):
-        cands = [{"ref": r} for r in ("movie/1", "movie/2", "tv/3/s1", "movie/4", "movie/5")]
-        status = {"movie/1": "owned", "movie/2": "none", "tv/3/s1": "1080p", "movie/4": None, "movie/5": "2160p"}
-        self.assertEqual([c["ref"] for c in pop.select(cands, status.get, 2)], ["movie/1", "tv/3/s1"])
-        self.assertEqual([c["ref"] for c in pop.select(cands, status.get, 9)], ["movie/1", "tv/3/s1", "movie/5"])
-
     def test_refs(self):
         self.assertEqual(pop.ref("movie", 5, None), "movie/5")
         self.assertEqual(pop.ref("tv", 5, 3), "tv/5/s3")
@@ -157,10 +151,12 @@ class Lists(unittest.TestCase):
     def test_due(self):
         now = datetime.datetime(2026, 10, 29, 4, 39)
         self.assertTrue(pop.check_due(None, now))
-        self.assertFalse(pop.check_due({"res": None, "at": "2026-10-25T04:39:00"}, now))
-        self.assertTrue(pop.check_due({"res": None, "at": "2026-10-21T04:39:00"}, now))
-        self.assertFalse(pop.check_due({"res": "1080p", "at": "2026-09-01T04:39:00"}, now))
-        self.assertTrue(pop.check_due({"res": "1080p", "at": "2026-07-01T04:39:00"}, now))
+        # no release: again the next night (also 04:39 after 22:20 the evening before); found: weekly
+        self.assertFalse(pop.check_due({"res": None, "at": "2026-10-29T00:39:00"}, now))
+        self.assertTrue(pop.check_due({"res": None, "at": "2026-10-28T04:39:00"}, now))
+        self.assertTrue(pop.check_due({"res": None, "at": "2026-10-28T22:20:00"}, datetime.datetime(2026, 10, 29, 22, 20)))
+        self.assertFalse(pop.check_due({"res": "1080p", "at": "2026-10-25T04:39:00"}, now))
+        self.assertTrue(pop.check_due({"res": "1080p", "at": "2026-10-21T04:39:00"}, now))
 
 
 class Script(unittest.TestCase):
@@ -246,7 +242,11 @@ class Main(unittest.TestCase):
             data = self.data(fake)
             entry = fake.injector["CustomJavaScripts"][0]
             self.assertTrue(entry["RequiresAuthentication"])
-            self.assertEqual([(i["r"], i["id"], i["f"]) for i in data["home"]["movies"]], [(1, 101, "1080p")])
+            # every Netflix rank is listed: no release yet (n, checked date c) and not identified (u) included
+            self.assertEqual([(i["r"], i["id"], i["f"], i.get("n"), i.get("c"), i.get("u")) for i in data["home"]["movies"]],
+                             [(1, 101, "1080p", False, "2026-10-21", None), (2, None, None, True, None, True), (3, 103, None, True, "2026-10-21", None)])
+            self.assertEqual(data["home"]["movies"][1]["t"], {"en": "Ghost", "de": "Ghost"})
+            self.assertNotIn("x", data["home"]["movies"][2])
             self.assertEqual([(i["r"], i["id"], i["s"], i["f"], i["t"]["de"]) for i in data["home"]["shows"]], [(1, 202, 4, "2160p", "Diplomatische Beziehungen")])
             row = data["rows"][0]
             self.assertEqual((row["id"], row["name"]["en"], row["logo"]), ("service-8", "Netflix", "/nf.png"))
@@ -266,11 +266,29 @@ class Main(unittest.TestCase):
             self.assertEqual(len(fake.searches), n)
             self.assertEqual(len(fake.scripts), 1)
             self.assertEqual(set(json.loads(sf.with_name("allow.json").read_text())["entries"]), ids)
-            # a week later the titles without a release are searched again, found ones are not
-            self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=8))
+            # the next night the titles without a release are searched again, found ones are not
+            self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=1))
             again = fake.searches[n:]
-            self.assertTrue(again)
+            self.assertTrue([p for p in again if "tt103" in p["query"]])
             self.assertFalse([p for p in again if "tt101" in p["query"] or "TvdbId:2020" in p["query"]])
+            # a release shows up: the title flips to requestable
+            fake.releases["movie/103"] = [rel("Nothing.Found.2026.1080p.WEB.x264", 4)]
+            self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=2))
+            nf = self.data(fake)["home"]["movies"][2]
+            self.assertEqual((nf["f"], nf["n"]), ("1080p", False))
+            self.assertIn(nf["x"], json.loads(sf.with_name("allow.json").read_text())["entries"])
+            # a week later the found ones are checked again
+            n = len(fake.searches)
+            self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=9))
+            self.assertTrue([p for p in fake.searches[n:] if "tt101" in p["query"]])
+
+    def test_rows_list_the_first_ten_whatever_their_state(self):
+        fake = FakeIo()
+        fake.releases = {}
+        with tempfile.TemporaryDirectory() as d:
+            self.run_main(fake, pathlib.Path(d) / "s.json")
+            row = self.data(fake)["rows"][0]
+        self.assertEqual([(i["r"], i["id"], i["o"], i["n"]) for i in row["items"]], [(1, 104, True, False), (2, 202, False, True), (3, 101, False, True)])
 
     def test_search_budget(self):
         fake = FakeIo()

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lists for "Currently popular" and the home rows "Top 10 Shows / Movies in Switzerland" (home-placeholders/empty-sections.js).
 Sources: Netflix's official weekly Top 10 for Switzerland (TSV) and TMDB popularity of what streams in Switzerland per service and per genre (Seerr's discover API, watch region CH: Seerr's TMDB access, no own key).
-A title is listed only when it is in the library or a suitable release exists: Prowlarr searches (never grabs) on NzbPlanet / NZBgeek (by id) and Knaben (by name), throttled, cached (no release: again after 7 days; found: after 90 days; owned: never).
+Every rank is listed; a title not in the library is requestable only when a suitable release exists: Prowlarr searches (never grabs) on NzbPlanet / NZBgeek (by id) and Knaben (by name), throttled, cached (no release: again the next night; found: weekly; owned: never).
 Writes the JavaScript Injector entry "Currently popular" (window.HssPopular) and the request allow-list for the popular backend (opaque entry ids; the backend accepts nothing else).
 Never prints API keys. Usage: popular.py [--dry-run] [--tsv FILE]  (FILE: the Netflix TSV downloaded elsewhere, when netflix.com is unreachable from beefy)"""
 import datetime
@@ -51,8 +51,9 @@ CANDIDATES = 30
 SEARCH_MAX = int(os.environ.get("POP_SEARCH_MAX", "300"))
 SEARCH_DELAY = float(os.environ.get("POP_SEARCH_DELAY", "2"))
 INDEXERS = ["NzbPlanet", "NZBgeek", "Knaben"]
-RECHECK_NONE = datetime.timedelta(days=7)
-RECHECK_FOUND = datetime.timedelta(days=90)
+# Runs at 04:39 and 22:20: a title without a release is searched once per night, a found one once a week.
+RECHECK_NONE = datetime.timedelta(hours=20)
+RECHECK_FOUND = datetime.timedelta(days=7)
 LISTS_TTL = datetime.timedelta(days=7)
 DETAILS_TTL = datetime.timedelta(days=7)
 MIN_GB = {"movie": 1.5, "episode": 0.3, "pack": 1.0}
@@ -185,10 +186,6 @@ def merge(movies, shows, n):
             seen.add((kind, tmdb))
             out.append((kind, tmdb))
     return out[:n]
-
-
-def select(cands, status, n):
-    return [c for c in cands if status(c["ref"]) in ("owned", "1080p", "2160p")][:n]
 
 
 def check_due(cache, now):
@@ -416,11 +413,10 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
         return {"kind": kind, "tmdb": tmdb, "season": season, "ref": ref(kind, tmdb, season), "d": d, "rank": rank}
 
     def fill(cands, label):
-        """Checks candidates in order until ROW_SIZE are shown (owned or found)."""
-        shown = 0
+        """Checks the release of every candidate that is due."""
         for c in cands:
-            if shown >= ROW_SIZE:
-                break
+            if c.get("unmatched"):
+                continue
             st = status(c["ref"])
             if st is None or (st == "none" and check_due(cache.get(c["ref"]), now)) or (st in ("1080p", "2160p") and check_due(cache.get(c["ref"]), now)):
                 if dry:
@@ -435,8 +431,6 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
                 cache[c["ref"]] = {"res": res, "at": stamp}
                 st = status(c["ref"])
                 say(f"{label}: {c['ref']} {c['d']['title']!r}: {res or 'no suitable release'}")
-            if st in ("owned", "1080p", "2160p"):
-                shown += 1
 
     home = {"shows": [], "movies": []}
     home_cands = {}
@@ -454,7 +448,7 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
             c = candidate(kind, tmdb, e.get("season"), e["title"], e["rank"]) if tmdb else None
             if c is None:
                 say(f"Netflix {kind} {e['rank']} {e['title']!r}: no match")
-                continue
+                c = {"unmatched": True, "kind": kind, "rank": e["rank"], "title": e["title"]}
             cands.append(c)
         fill(cands, f"Netflix {kind}")
         home_cands[key] = cands
@@ -463,7 +457,7 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
 
     row_cands = {}
     for rid, pairs in lists["rows"].items():
-        cands = [c for c in (candidate(k, t) for k, t in pairs) if c]
+        cands = [c for c in (candidate(k, t) for k, t in pairs) if c][:ROW_SIZE]
         fill(cands, rid)
         row_cands[rid] = cands
         if not dry:
@@ -473,10 +467,16 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
     allow = {}
 
     def item(c, rank):
+        if c.get("unmatched"):
+            return {"k": c["kind"], "id": None, "s": None, "r": rank, "y": None, "t": {"en": c["title"], "de": c["title"]}, "p": {"en": None, "de": None},
+                    "o": False, "f": None, "n": True, "c": None, "u": True}
         st = status(c["ref"])
         d = c["d"]
+        checked = (cache.get(c["ref"]) or {}).get("at")
         it = {"k": c["kind"], "id": c["tmdb"], "s": c["season"], "r": rank, "y": d.get("year"), "t": {"en": d["title"], "de": d["de"]},
-              "p": {"en": d.get("poster"), "de": d.get("posterDe")}, "o": st == "owned", "f": st if st in ("1080p", "2160p") else None}
+              "p": {"en": d.get("poster"), "de": d.get("posterDe")}, "o": st == "owned", "f": st if st in ("1080p", "2160p") else None,
+              "c": checked[:10] if checked else None}
+        it["n"] = not it["o"] and not it["f"]
         if it["f"] and not it["o"]:
             tok = tokens.get(c["ref"]) or secrets.token_urlsafe(18)
             tokens[c["ref"]] = it["x"] = tok
@@ -484,13 +484,13 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
         return it
 
     for key, cands in home_cands.items():
-        home[key] = [item(c, c["rank"]) for c in select(cands, status, ROW_SIZE)]
+        home[key] = [item(c, c["rank"]) for c in cands]
     rows = []
     names = {f"service-{p}": (n, n, "service", (lists.get("logos") or {}).get(str(p))) for p, n in services}
     names.update({f"genre-{g[0]}": (g[1], g[2], "genre", None) for g in genres})
     for rid in [f"service-{p}" for p, _ in services] + [f"genre-{g[0]}" for g in genres]:
         en, de, typ, logo = names[rid]
-        shown = select(row_cands.get(rid, []), status, ROW_SIZE)
+        shown = row_cands.get(rid, [])
         rows.append({"id": rid, "type": typ, "name": {"en": en, "de": de}, "logo": logo, "items": [item(c, i) for i, c in enumerate(shown, 1)]})
     data = {"week": state["top"].get("week"), "lists": lists["at"], "home": home, "rows": rows}
     say(f"home: {len(home['shows'])} shows, {len(home['movies'])} films; rows: " + ", ".join(f"{r['id']} {len(r['items'])}" for r in rows) + f"; searches {SEARCH_MAX - budget[0]}")
