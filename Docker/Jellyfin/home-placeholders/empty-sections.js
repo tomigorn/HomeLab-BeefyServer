@@ -217,6 +217,28 @@
     return insertAfter(enabled, DISCOVER_ROWS, DISCOVER_AFTER);
   }
 
+  // Layout and rows from other injector scripts (home-layout.js): window.HssHomeExt = [{ids, layout(ids), name(id, lang, container), hint(id, lang), loading(id, container), sync(container, api, lang, tools: {syncRow, syncRecent, repaint})}].
+  function homeExts(win) {
+    var list = win && win.HssHomeExt;
+    return Array.isArray(list) ? list.filter(function (e) { return e && Array.isArray(e.ids); }) : [];
+  }
+
+  function extCall(fn, fallback) {
+    try {
+      return fn();
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function withExts(enabled, exts) {
+    for (var i = 0; i < exts.length; i++) {
+      var e = exts[i];
+      if (e.layout) enabled = extCall(function () { return e.layout(enabled.slice()); }, enabled) || enabled;
+    }
+    return enabled;
+  }
+
   // Rows built by other injector scripts (popular.js): window.HssExtraRows = [{id, after, name: {en, de}}].
   function extraRows(win) {
     var rows = win && win.HssExtraRows;
@@ -682,7 +704,7 @@
   }
 
   // loading(id): the section has not answered yet, so its slot shows a skeleton row; modes: section id -> "Portrait" | "Landscape".
-  function render(container, enabled, names, lang, loading, modes) {
+  function render(container, enabled, names, lang, loading, modes, hints) {
     var doc = container.ownerDocument;
     var anchor = null;
     var wanted = {};
@@ -701,7 +723,7 @@
         continue;
       }
       var name = (names && names[id]) || id;
-      var hint = hintFor(id, lang);
+      var hint = (hints && hints[id]) || hintFor(id, lang);
       if (!ph) ph = build(doc, id, name, hint);
       else {
         if (ph.querySelector("h2").textContent !== name) ph.querySelector("h2").textContent = name;
@@ -1026,6 +1048,9 @@
       var lang = st.lang;
       var extra = extraRows(win);
       var enabled = withExtra(withDiscover(withRecent(st.base.enabled)), extra);
+      var exts = homeExts(win);
+      enabled = withExts(enabled, exts);
+      var tools = { syncRow: syncRow, syncRecent: syncRecent, repaint: repaint };
       var names = {};
       for (var k in st.base.names) names[k] = st.base.names[k];
       for (var n = 0; n < RECENT_ROWS.length; n++) names[RECENT_ROWS[n]] = recentName(RECENT_ROWS[n], lang);
@@ -1038,14 +1063,38 @@
         for (var j = 0; j < live.length; j++) {
           var loading = loadingFor(live[j], st);
           var modes = st.base.modes || {};
-          render(live[j], enabled, names, lang, loading, modes);
+          var hints = {};
+          exts.forEach(function (e) {
+            e.ids.forEach(function (id) {
+              names[id] = extCall(function () { return e.name(id, lang, live[j]); }, null) || id;
+              hints[id] = extCall(function () { return e.hint(id, lang); }, null);
+            });
+          });
+          loading = extLoading(loading, exts, live[j]);
+          render(live[j], enabled, names, lang, loading, modes, hints);
           for (var r = 0; r < RECENT_ROWS.length; r++) syncRecent(live[j], RECENT_ROWS[r], recent[RECENT_ROWS[r]] || [], names[RECENT_ROWS[r]], api);
           for (var s = 0; s < DISCOVER_ROWS.length; s++) syncDiscover(live[j], DISCOVER_ROWS[s], discover[DISCOVER_ROWS[s]] || [], names[DISCOVER_ROWS[s]], api);
-          render(live[j], enabled, names, lang, loading, modes);
+          exts.forEach(function (e) { if (e.sync) extCall(function () { e.sync(live[j], api, lang, tools); }); });
+          render(live[j], enabled, names, lang, loading, modes, hints);
         }
       } finally {
         watch();
       }
+    }
+
+    function extLoading(base, exts, container) {
+      return function (id) {
+        for (var i = 0; i < exts.length; i++) {
+          if (exts[i].ids.indexOf(id) !== -1 && exts[i].loading) return extCall(function () { return !!exts[i].loading(id, container); }, false);
+        }
+        return base(id);
+      };
+    }
+
+    function repaint() {
+      var api = win.ApiClient;
+      if (!api || !api.getCurrentUserId || !api.getCurrentUserId()) return;
+      paint(api, state(api.getCurrentUserId(), langNow()));
     }
 
     function quick() {
@@ -1123,7 +1172,7 @@
       LOCKED_SELECTOR: LOCKED_SELECTOR, lockHomeSettings: lockHomeSettings, homeStyles: homeStyles, render: render, upcomingDates: upcomingDates, upcomingSeries: upcomingSeries, upcomingNow: upcomingNow,
       hintFor: hintFor, namesOf: namesOf, modesOf: modesOf, enabledOf: enabledOf, start: start, pickMovies: pickMovies, seriesCandidates: seriesCandidates, pickSeries: pickSeries,
       completeCollection: completeCollection, loadRecent: loadRecent, withRecent: withRecent, recentName: recentName, syncRecent: syncRecent, RECENT_DAYS: RECENT_DAYS, RECENT_LIMIT: RECENT_LIMIT,
-      withDiscover: withDiscover, withExtra: withExtra, extraRows: extraRows, discoverName: discoverName, countBy: countBy, pickBackdrops: pickBackdrops, genreColors: genreColors, loadDiscover: loadDiscover, syncDiscover: syncDiscover, DISCOVER_LIMIT: DISCOVER_LIMIT,
+      withDiscover: withDiscover, withExtra: withExtra, extraRows: extraRows, homeExts: homeExts, withExts: withExts, discoverName: discoverName, countBy: countBy, pickBackdrops: pickBackdrops, genreColors: genreColors, loadDiscover: loadDiscover, syncDiscover: syncDiscover, DISCOVER_LIMIT: DISCOVER_LIMIT,
       readCache: readCache, writeCache: writeCache, staleParts: staleParts, netsKey: netsKey, assignCards: assignCards, usable: usable, RECENT_TTL_MS: RECENT_TTL_MS, DISCOVER_TTL_MS: DISCOVER_TTL_MS
     };
   } else if (window.MutationObserver && document.body) {
