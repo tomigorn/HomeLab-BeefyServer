@@ -117,3 +117,4 @@ check md.network-ip-range '^172\.28\.10\.0/24 172\.28\.10\.0/25$' "$(docker netw
 if want autoheal; then
   check md.autoheal-label '^[8-9] labelled$' "$(echo "$(docker ps -q --filter label=autoheal-movie=true | wc -l) labelled")"
 fi
+check md.api-unit-sandbox '^6 installed strict$' "$(n=0; for u in clear-data-wipe clear-data-wipe-added seerr-sync request-state night-downloads media-metrics; do cmp -s "$MD_DIR/systemd/$u.service" "/etc/systemd/system/$u.service" && [ "$(systemctl show -p ProtectSystem --value $u.service)" = strict ] && n=$((n+1)); done; echo "$n installed strict")"
