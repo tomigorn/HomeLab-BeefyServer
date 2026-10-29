@@ -140,6 +140,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Queue + quarantine dirs on both hot SSDs (`ssd-hot`, `ssd-hot2`), group media 2770 | `Antivirus/install.sh` | install.sh | `av.queue-perms`: → 65112:1100 2770 n:1100 2770, twice | uid change |
 | Scan both hot SSD branches (`/scan/ssd-hot`, `/scan/ssd-hot2`), hook `PATH_MAP` with several branches | compose clamav `SCAN_ROOTS` + mounts, `Antivirus/hook/clamav-hook.py` | compose up -d | `av.scan-branches`: → /scan/ssd-hot /scan/ssd-hot2 ok ok | a new pool branch needs a mount, `SCAN_ROOTS`, `PATH_MAP`, install.sh |
 | Scan timers | `Antivirus/systemd/` | install.sh | `av.timers`: → active active | |
+| Scan units sandboxed (docker client only: `ProtectSystem=strict`, `PrivateNetwork`, AF_UNIX, no caps / hostscan `CAP_DAC_READ_SEARCH`, syscall filter) | `Antivirus/systemd/*.service` | install.sh | `av.unit-sandbox`: → installed installed ProtectSystem=strict ×2 | a new ExecStart needing network or writes |
 
 Hooks in SABnzbd / qBittorrent: Movie-Downloads `md.sab-clamav-script`, `md.qbit-clamav-autorun`.
 

@@ -10,4 +10,5 @@ if want clamav-queue; then
 fi
 if want clamav clamav-hostscan; then
   check av.timers '^active active$' "$(systemctl is-active clamav-scan.timer clamav-hostscan.timer | xargs)"
+  check av.unit-sandbox '^installed installed ProtectSystem=strict ProtectSystem=strict$' "$(for u in clamav-scan clamav-hostscan; do cmp -s "$DIR/../../Antivirus/systemd/$u.service" /etc/systemd/system/$u.service && echo installed || echo differs; done | xargs) $(systemctl show -p ProtectSystem clamav-scan.service clamav-hostscan.service | xargs)"
 fi

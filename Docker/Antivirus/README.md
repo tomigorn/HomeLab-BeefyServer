@@ -41,6 +41,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | User / caps | 65112, no caps | root, `DAC_READ_SEARCH` + `DAC_OVERRIDE` + `CHOWN`, read-only root fs, tmpfs `/tmp` |
 | Writes | quarantine, state, textfile | state, textfile only |
 
+- The two units only run the docker client (root, for the socket) and are sandboxed: `ProtectSystem=strict`, no network but the socket, no caps (hostscan: `CAP_DAC_READ_SEARCH` to read the project in `~buntu`), syscall filter; `systemd-analyze security` 0.9 / 1.1. The scanning runs in the containers above.
 - A container with internet egress and attacker-supplied downloads must not see the host: the part that reads host files has no network. Root because a non-root uid gets no effective caps in Docker.
 - Scope: `/host/home /root /etc /opt /usr/local /tmp /var/tmp /srv/appdata`, not all of `/` (~630k files incl. Docker layers: a scan would outlast the 04:00 to 04:25 window). Change `SCAN_ROOTS` in `docker-compose.yaml`; the run takes ~11 min, the unit is stopped after 18 min.
 - `hostscan.sh` hands state back to `STATE_OWNER` and `clamav.prom` to `TEXTFILE_OWNER` (env in compose), leaving the textfile dir (hook files) alone. Writes `mode="all"` into the same `clamav.prom`.
