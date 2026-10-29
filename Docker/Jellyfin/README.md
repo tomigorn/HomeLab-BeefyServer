@@ -504,6 +504,57 @@ Groups (owner 2026-10-29): the wide-card rows and the My List band divide the ho
 | Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-home-sections`, `jf.home-sections-*`; `../CUSTOMIZATIONS.md`) |
 | Rollback | stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/{Home Screen Sections,Plugin Pages,File Transformation}_*`, start. Pre-change backup: `/srv/appdata/jellyfin-pre-hss-2026-10-27.tgz` (root, 600) |
 
+## Currently popular (2026-10-29)
+What streams in Switzerland right now, browse-only: a title is listed only when it is already in the library or a suitable release exists. Nothing is downloaded automatically; a user's button press makes a normal Seerr request.
+
+| Where | What |
+|---|---|
+| Top bar + side menu (desktop drawer, TV, phone) | **Currently popular** / **Gerade beliebt** → full-screen page (injector overlay, Escape / TV back / × closes) |
+| Page | Top 10 Shows + Top 10 Movies in Switzerland (Netflix), one row per service (`SERVICES` in `scripts/popular.py`: Netflix, Prime Video, Disney+, Apple TV+, Sky, Play Suisse, Paramount+, blue TV), one row per genre (`GENRES`: Action, Comedy, Drama, Thriller & Crime, Sci-Fi & Fantasy, Animation, Documentaries, Kids & Family, Horror, Romance); max 10 each, empty rows hidden |
+| Home | **Top 10 Shows in Switzerland** after Recently Added Shows, **Top 10 Movies in Switzerland** after Recently Watched TV Series & Collections (slots via `window.HssExtraRows` in `empty-sections.js`) |
+| Card | Netflix look: big outlined rank number, poster overlapping it (TMDB poster, German poster/title in a German UI). In the library = normal card, opens the Jellyfin item. Not in the library = dimmed, `1080p`/`2160p available`, buttons **🌙 Tonight** (Can wait, night download) and **⚡ Now** (`download-now` tag); after the request the state (🌙 / 🔍 / 📅 / ⬇️ from `request-state.json`). Rank: Netflix rows keep Netflix's rank (gaps where a title is hidden), other rows are numbered 1-10 |
+
+### Sources
+
+| Rows | Source | Terms |
+|---|---|---|
+| Top 10 Shows / Movies | Netflix Top 10, official weekly per-country list, `https://www.netflix.com/tudum/top10/data/all-weeks-countries.tsv` (country `CH`, published Tuesdays) | public download offered on top10.netflix.com |
+| Services, genres | TMDB discover via Seerr (`/api/v1/discover/movies|tv`, `watchRegion=CH`, `watchProviders`, `genre`, `sortBy=popularity.desc`; Seerr's TMDB access, no own key) | TMDB API; streaming availability is JustWatch data via TMDB: credited on the page |
+| Netflix title → TMDB id | Seerr search, exact title (also original title), most popular of the type; series season from Netflix's season name (`Season 4`, a TMDB season name, `Limited Series` = the only season, else the latest aired). Wrong or missing match: `scripts/popular-overrides.tsv` (`kind<TAB>Netflix title<TAB>TMDB id`) | |
+
+### Release check (never grabs)
+
+| | |
+|---|---|
+| How | Prowlarr search only (no Radarr/Sonarr entry, no download): NzbPlanet, NZBgeek by IMDb id / TVDB id + season, then Knaben by name; first suitable release wins. Treasure Maps is not used (night-search budget) |
+| Suitable | 1080p or 2160p; no CAM/TS/TC/screener; ≥ 1.5 GB film, ≥ 0.3 GB episode, ≥ 1 GB season pack; a dub without the original audio is refused (a language tag other than the original without DL/DUAL/MULTI); torrents ≥ 1 seeder; name search: name must start with the title + year (±1) / season |
+| Throttle | ≤ `POP_SEARCH_MAX` (300) searches per run, `POP_SEARCH_DELAY` 2 s apart; a row stops searching once 10 titles show |
+| Cache | `~/.local/state/jellyfin-popular.json`: no release → again after 7 days, found → after 90 days, owned → never; lists and TMDB details rebuilt weekly |
+| Schedule | user timer `jellyfin-popular.timer` 04:39 (maintenance window) and 22:20 (only when beefy is awake for night downloads; never wakes it). Netflix list fetched only when a new week is due (Tuesday) |
+
+### Requests: backend and threat model
+
+Any signed-in Jellyfin user may press a button; no Seerr login or `streaming-requesters` group needed.
+
+| | |
+|---|---|
+| Path | `https://jellyfin.holy-grail.ch/hss-popular/` → fastpi Traefik (`HomeLab-FastPi` `Docker/Traefik/traefik/dynamic/jellyfin-popular.yml`: jellyfin-wake, rate limit, secure headers) → container `jellyfin-popular` (`popular/app.py`, python alpine, uid 65128, read-only, no caps, 64 MB, port 8097 answers only fastpi: DOCKER-USER) |
+| Who | the caller's own Jellyfin token (`X-Emby-Token`) checked with Jellyfin `/Users/Me` (cached 30 s); invalid, an API key (no user) → 401, disabled user → 403 |
+| What | body `{"id", "mode": night|now, "check"}` only. `id` = opaque random entry id from the current allow-list `/srv/appdata/jellyfin-popular/allow.json` (written by `popular.py`: kind, TMDB id, the season shown, the found resolution). Unknown/tampered id → 403; any other field (tmdb, season, title …) → 400; list older than 9 days → 403; entry without a found release → 403; owned / requested / declined in Seerr → 409 |
+| Limits | 10 requests per user per 7 days (`POPULAR_LIMIT`, `POPULAR_DAYS` in `.env`; the button shows "Limit reached"), 30 per day for everyone (`POPULAR_DAILY_MAX`), 10 POSTs per user per minute, body ≤ 2 KB, JSON only, `Origin` must be `https://jellyfin.holy-grail.ch` |
+| As whom | Seerr API key (`secrets/popular/seerr.apikey`, buntu:65128 0640) with `X-Api-User`: the Seerr user linked to the caller's Jellyfin id when it may request, else the local Seerr user **Jellyfin popular** (`jellyfin-popular`, permissions 160 = REQUEST + AUTO_APPROVE, random unused password, local login is off; created on first use). Tags: only `download-now` for ⚡ |
+| Audit | `/srv/appdata/jellyfin-popular-state/audit.jsonl` (uid 65128): time, Jellyfin user + id, entry id, title, mode, decision, Seerr user, request id. Tokens are never logged |
+| Not covered | a user can spend their own 10 requests on listed titles; an admin removes or declines in Seerr as usual (declined titles stay refused) |
+
+| Task | Command (in `Docker/Jellyfin/`) |
+|---|---|
+| Lists now | `scripts/popular.py` (`--dry-run`: no searches, no writes; `--tsv FILE`: Netflix TSV downloaded elsewhere when netflix.com is unreachable) |
+| UI script | `python3 scripts/popular-ui.py` → `upserted Currently popular UI` (injector entry, signed-in users); data entry "Currently popular" (`window.HssPopular`) is written by `popular.py` |
+| Backend | `sudo docker compose up -d --no-deps popular`; `curl -s localhost:8097/hss-popular/health` |
+| Timer | `cp systemd/jellyfin-popular.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now jellyfin-popular.timer` |
+| Audit | `sudo tail /srv/appdata/jellyfin-popular-state/audit.jsonl` |
+| Tests | `cd scripts && python3 -m unittest test_popular test_popular_ui`; `cd popular && python3 -m unittest test_app`; JS: `node --test popular.test.mjs` in `home-placeholders/` (same docker command as above) |
+
 ## Skip intro / credits buttons: Intro Skipper (2026-10-27)
 Episodes and films get **"Skip intro" / "Skip credits"** buttons. Buttons only, nothing is skipped automatically.
 

@@ -58,3 +58,17 @@ if want jellyfin; then
   check jf.user-defaults-timer '^active$' "$(jf_user_systemctl is-active jellyfin-user-defaults.timer 2>&1)"
   check jf.user-defaults-config '^\["",true,"Smart"\]$' "$(python3 -c 'import importlib.util as u,json,sys;s=u.spec_from_file_location("m",sys.argv[1]);m=u.module_from_spec(s);s.loader.exec_module(m);d=m.DEFAULTS;print(json.dumps([d["AudioLanguagePreference"],d["PlayDefaultAudioTrack"],d["SubtitleMode"]],separators=(",",":")))' "$DIR/../../Jellyfin/scripts/user-defaults.py" 2>&1)"
 fi
+if want popular jellyfin; then
+  POP=http://127.0.0.1:8097/hss-popular
+  POP_POST=(-s -o /dev/null -w '%{http_code}' -m 8 -X POST -H 'Content-Type: application/json' -d '{"id":"x"}')
+  check jf.popular-health '^\{"ok": true\}$' "$(curl -s -m 5 "$POP/health" 2>&1)"
+  check jf.popular-hardening '^65128:65128 true \[ALL\]$' "$(docker inspect -f '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}} {{.HostConfig.CapDrop}}' jellyfin-popular 2>&1)"
+  check jf.popular-refusals '^401 403 401$' "$(curl "${POP_POST[@]}" -H 'Origin: https://jellyfin.holy-grail.ch' "$POP/request") $(curl "${POP_POST[@]}" -H 'Origin: https://evil.example.com' "$POP/request") $(curl "${POP_POST[@]}" -H 'Origin: https://jellyfin.holy-grail.ch' -H "X-Emby-Token: $(cat "$DIR/../../Jellyfin/secrets/api-key")" "$POP/request")"
+  check jf.popular-allow-list '^fresh [1-9]' "$(python3 -c 'import json,sys,datetime as d;a=json.load(open(sys.argv[1]));print(("fresh" if d.datetime.now()-d.datetime.fromisoformat(a["updated"])<d.timedelta(days=9) else "stale"),len(a["entries"]))' /srv/appdata/jellyfin-popular/allow.json 2>&1)"
+  check jf.popular-served '^[1-9][0-9]* [1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssPopular = ' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'hssPopularNav' 2>&1)"
+  check jf.popular-home-slot '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'HssExtraRows' 2>&1)"
+  check jf.popular-timer '^active$' "$(jf_user_systemctl is-active jellyfin-popular.timer 2>&1)"
+  # fastpi Traefik route jellyfin.holy-grail.ch/hss-popular/ (HomeLab-FastPi jellyfin-popular.yml): "absent" passes until it is applied, the buttons then answer 404
+  r=$(curl -s -m 10 -w ' %{http_code}' https://jellyfin.holy-grail.ch/hss-popular/health 2>&1); [[ $r == *' 404' ]] && r="absent (route not applied)"
+  check jf.popular-route '^(\{"ok": true\} 200|absent)' "$r"
+fi
