@@ -531,6 +531,7 @@ What streams in Switzerland right now. Every rank is shown; a title not in the l
 | Suitable | 1080p or 2160p; no CAM/TS/TC/screener; ≥ 1.5 GB film, ≥ 0.3 GB episode, ≥ 1 GB season pack; a dub without the original audio is refused (a language tag other than the original without DL/DUAL/MULTI); torrents ≥ 1 seeder; name search: name must start with the title + year (±1) / season |
 | Throttle | ≤ `POP_SEARCH_MAX` (300) searches per run, `POP_SEARCH_DELAY` 2 s apart; only the 10 listed titles of each row are checked |
 | Cache | `~/.local/state/jellyfin-popular.json`: no release → again the next night (20 h), found → weekly, owned → never; a title whose release shows up flips to the buttons on that run; lists and TMDB details rebuilt weekly |
+| Metrics | `~/.local/state/jellyfin-popular.prom` (atomic, every run incl. failure, not `--dry-run`): `jf_popular_last_run_timestamp_seconds`, `jf_popular_last_run_success` (1/0), `jf_popular_items{list}`, `jf_popular_items_available{list}` (release found or owned; lists `home-shows`, `home-movies`, `service-*`, `genre-*`), `jf_popular_searches_total`; fastpi `beefy-idle-pull` copies it |
 | Schedule | user timer `jellyfin-popular.timer` 04:39 (maintenance window) and 22:20 (only when beefy is awake for night downloads; never wakes it). Netflix list fetched only when a new week is due (Tuesday) |
 
 ### Requests: backend and threat model

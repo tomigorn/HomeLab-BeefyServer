@@ -227,7 +227,7 @@ class Main(unittest.TestCase):
     def run_main(self, fake, sf, argv=(), now=None):
         out = io.StringIO()
         code = pop.main(list(argv), io_=fake, now=now or self.NOW, state_file=sf, overrides_file=pathlib.Path("/nonexistent"), out=out, sleep=lambda s: None,
-                        services=[(8, "Netflix")], genres=[("drama", "Drama", "Drama", "18", "18")], allow_file=sf.with_name("allow.json"))
+                        services=[(8, "Netflix")], genres=[("drama", "Drama", "Drama", "18", "18")], allow_file=sf.with_name("allow.json"), prom_file=sf.with_name("p.prom"))
         return code, out.getvalue()
 
     def data(self, fake):
@@ -321,6 +321,47 @@ class Main(unittest.TestCase):
             self.assertFalse(sf.with_name("allow.json").exists())
         self.assertEqual((code, fake.searches, fake.scripts), (0, [], []))
         self.assertIn("Ghost", text)
+
+    def prom(self, sf):
+        out = {}
+        for line in sf.with_name("p.prom").read_text().splitlines():
+            if line and not line.startswith("#"):
+                k, v = line.rsplit(" ", 1)
+                out[k] = float(v)
+        return out
+
+    def test_prom_file_after_a_run(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.run_main(fake, sf)
+            m = self.prom(sf)
+            self.assertFalse(sf.with_name("p.prom.tmp").exists())
+        self.assertEqual(m["jf_popular_last_run_timestamp_seconds"], self.NOW.timestamp())
+        self.assertEqual(m["jf_popular_last_run_success"], 1)
+        self.assertEqual(m['jf_popular_items{list="service-8"}'], 3)
+        self.assertEqual(m['jf_popular_items_available{list="service-8"}'], 3)
+        self.assertEqual(m['jf_popular_items_available{list="home-movies"}'], 1)
+        self.assertIn('jf_popular_items{list="genre-drama"}', m)
+        self.assertIn('jf_popular_items{list="home-shows"}', m)
+        self.assertEqual(m["jf_popular_searches_total"], len(fake.searches))
+
+    def test_prom_file_on_failure(self):
+        fake = FakeIo()
+        fake.owned = lambda: 1 / 0
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            with self.assertRaises(ZeroDivisionError):
+                self.run_main(fake, sf)
+            m = self.prom(sf)
+        self.assertEqual(m["jf_popular_last_run_success"], 0)
+        self.assertIn("jf_popular_last_run_timestamp_seconds", m)
+
+    def test_dry_run_writes_no_prom_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.run_main(FakeIo(), sf, ["--dry-run"])
+            self.assertFalse(sf.with_name("p.prom").exists())
 
 
 if __name__ == "__main__":

@@ -30,6 +30,7 @@ SEERR_KEY = HERE.parent.parent / "Seerr" / "secrets" / "api-key"
 PROWLARR = ("http://127.0.0.1:9696", "/srv/appdata/prowlarr/config.xml")
 STATE_FILE = pathlib.Path.home() / ".local" / "state" / "jellyfin-popular.json"
 ALLOW_FILE = pathlib.Path("/srv/appdata/jellyfin-popular/allow.json")
+PROM_FILE = pathlib.Path.home() / ".local" / "state" / "jellyfin-popular.prom"
 OVERRIDES = HERE / "popular-overrides.tsv"
 # Streaming services in Switzerland (TMDB watch provider ids, region CH), one row each, in this order.
 SERVICES = [(8, "Netflix"), (119, "Prime Video"), (337, "Disney+"), (350, "Apple TV+"), (210, "Sky"), (691, "Play Suisse"), (531, "Paramount+"), (150, "blue TV")]
@@ -329,7 +330,35 @@ def check(io_, kind, d, season, ix, budget, sleep):
     return None
 
 
-def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRIDES, out=sys.stdout, sleep=time.sleep, services=None, genres=None, allow_file=ALLOW_FILE):
+def write_prom(path, now, ok, stats):
+    lines = ["# TYPE jf_popular_last_run_timestamp_seconds gauge", f"jf_popular_last_run_timestamp_seconds {now.timestamp():.0f}",
+             "# TYPE jf_popular_last_run_success gauge", f"jf_popular_last_run_success {1 if ok else 0}"]
+    if ok:
+        lines += ["# TYPE jf_popular_items gauge"] + [f'jf_popular_items{{list="{k}"}} {n}' for k, (n, _) in stats["lists"].items()]
+        lines += ["# TYPE jf_popular_items_available gauge"] + [f'jf_popular_items_available{{list="{k}"}} {a}' for k, (_, a) in stats["lists"].items()]
+        lines += ["# TYPE jf_popular_searches_total gauge", f"jf_popular_searches_total {stats['searches']}"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text("\n".join(lines) + "\n")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRIDES, out=sys.stdout, sleep=time.sleep, services=None, genres=None, allow_file=ALLOW_FILE, prom_file=PROM_FILE):
+    now = now or datetime.datetime.now()
+    stats = {}
+    try:
+        code = run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres, allow_file, stats)
+    except BaseException:
+        if "--dry-run" not in argv:
+            write_prom(prom_file, now, False, stats)
+        raise
+    if code == 0 and "lists" in stats:
+        write_prom(prom_file, now, True, stats)
+    return code
+
+
+def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres, allow_file, stats):
     args = list(argv)
     tsv_file = None
     if "--tsv" in args:
@@ -344,7 +373,6 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
         return 2
     dry = "--dry-run" in args
     io_ = io_ or Io()
-    now = now or datetime.datetime.now()
     services = SERVICES if services is None else services
     genres = GENRES if genres is None else genres
     stamp = now.isoformat(timespec="seconds")
@@ -496,6 +524,10 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
     say(f"home: {len(home['shows'])} shows, {len(home['movies'])} films; rows: " + ", ".join(f"{r['id']} {len(r['items'])}" for r in rows) + f"; searches {SEARCH_MAX - budget[0]}")
     if dry:
         return 0
+    avail = lambda items: sum(1 for i in items if i["o"] or i["f"])
+    stats["lists"] = {"home-shows": (len(home["shows"]), avail(home["shows"])), "home-movies": (len(home["movies"]), avail(home["movies"]))}
+    stats["lists"].update({r["id"]: (len(r["items"]), avail(r["items"])) for r in rows})
+    stats["searches"] = SEARCH_MAX - budget[0]
     for r in [r for r in list(tokens) if r not in {e["ref"] for e in allow.values()}]:
         del tokens[r]
     source = script(data)
