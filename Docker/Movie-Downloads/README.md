@@ -477,6 +477,7 @@ Seerr has no event for Clear Data (it only deletes its media row), so `scripts/c
 | Seerr | a row its sync re-created meanwhile (no request) is removed |
 | No record (grabbed before 2026-10-23, history gone) | name match in the app's category: film `<title> <year> …` only if exactly one torrent/job matches; series `<title> S01…`/`<title> <year>`/`Season`/`Complete`; skipped (logged) when ambiguous or another library title has the same name |
 | Failures | retried on the next runs, given up after 5 tries (logged) |
+| State prune | after a clean wipe the title's lines leave `title-wipe.tsv`; the live files belong to the app uids (65101/65102, 0644), so as buntu this is skipped and logged (`state not pruned`); stale lines are harmless (a re-request only adds new ones), ownership kept on purpose |
 | Log | `~/.local/state/movie-downloads/clear-data-wipe.log`, `journalctl -u clear-data-wipe` |
 | Keys | Seerr `../Seerr/secrets/api-key`, SABnzbd `secrets/hook/sabnzbd.apikey` (640, group `hook-secret`, written by `scripts/language-policy.sh` via `sudo -n`), Jellyfin `../Jellyfin/secrets/api-key` |
 | Registered by | `scripts/language-policy.sh` (Connect script, both apps, idempotent) |

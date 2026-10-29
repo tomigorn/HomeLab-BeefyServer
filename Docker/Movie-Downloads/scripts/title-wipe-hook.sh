@@ -177,7 +177,11 @@ else
   echo "$kind $key: no Jellyfin API key at $JF_KEY" >&2; failed=1
 fi
 
-if [ "$failed" = 0 ] && [ "$recorded" -gt 0 ] && [ -w "$STATE" ] && [ -w "$(dirname "$STATE")" ]; then
-  ( flock 9; awk -F'\t' -v k="$key" '$1 != k' "$STATE" > "$STATE.new"; cat "$STATE.new" > "$STATE"; rm -f "$STATE.new" ) 9>>"$STATE.lock"
+if [ "$failed" = 0 ] && [ "$recorded" -gt 0 ]; then
+  if [ -w "$STATE" ] && [ -w "$(dirname "$STATE")" ]; then
+    ( flock 9; awk -F'\t' -v k="$key" '$1 != k' "$STATE" > "$STATE.new"; cat "$STATE.new" > "$STATE"; rm -f "$STATE.new" ) 9>>"$STATE.lock"
+  else
+    echo "$kind $key: state not pruned, $STATE or its directory not writable as uid $(id -u) (lines stay; harmless)" >&2
+  fi
 fi
 exit $failed
