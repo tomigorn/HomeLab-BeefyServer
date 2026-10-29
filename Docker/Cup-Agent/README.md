@@ -57,8 +57,8 @@ server.
 
 ## Local rollback images
 
-Tags like `rollback-4.0.20-20261021` are not versions: Cup logs "no remote version tags" and the agent restarts in a loop. List each such image under `images.exclude` in `cup.json` (and remove it there once the image is deleted).
+Tags like `rollback-4.0.20-20261021` are not versions: Cup logs "no remote version tags" and the agent restarts in a loop. List each such image under `images.exclude` in `cup.json` (and remove it there once the image is deleted). `update-project.sh` creates `<repo>:rollback-<date>-<project>` on every update, so exclude `<repo>:rollback` (Cup matches the start of the reference) for each repo it tagged, else the next agent restart loops (2026-10-29: bazarr).
 
 ## Locally built images
 
-`jellyfin-local` and `clamav-local` have no registry copy, so they sit in `images.exclude` (no "Unauthorized" errors) and their bases are in `images.extra` (`lscr.io/linuxserver/jellyfin:12.2ubu2604-ls55`). An `extra` entry must be a versioned tag or already on the host: `alpine:latest` is refused and crash-loops the agent, so clamav's base is covered by the Trivy scan on fastpi only. Rebuild routine: the `Rebuild` line in each image's README. After editing `cup.json`: `sudo docker restart cup-agent`.
+`jellyfin-local` and `clamav-local` have no registry copy, so they sit in `images.exclude` (no "Unauthorized" errors) and their bases are in `images.extra` (`lscr.io/linuxserver/jellyfin:12.4ubu2604-ls57`). An `extra` entry must be a versioned tag or already on the host: `alpine:latest` is refused and crash-loops the agent, so clamav's base is covered by the Trivy scan on fastpi only. Rebuild routine: the `Rebuild` line in each image's README. After editing `cup.json`: `sudo docker restart cup-agent`.
