@@ -27,6 +27,7 @@
       source: "Quellen: Netflix Top 10 Schweiz (wöchentlich), TMDB-Beliebtheit, Streaming-Angebot in der Schweiz von JustWatch (über TMDB). Nur Titel aus der Bibliothek oder mit gefundenem Release."
     }
   };
+  var ICON = { night: "\uD83C\uDF19", now: "\u26A1" };
   var TRENDING_PATH = "M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z";
 
   function langOf(lang) {
@@ -84,6 +85,13 @@
     return e;
   }
 
+  // TV: icon only, the labels do not fit the poster width there; fillRow adds a legend.
+  function reqButton(doc, lang, mode, tv) {
+    var b = el(doc, "button", "hssTopBtn hssTopBtn-" + mode + (tv ? " hssTopBtn-icon" : ""), tv ? ICON[mode] : tr(lang, mode === "night" ? "tonight" : "now"));
+    b.setAttribute("type", "button");
+    return b;
+  }
+
   // states: answer of GET hss-popular/state ({entries: {id: {state, badge}}, left, limit, days}) or null while unknown.
   function card(doc, entry, lang, tv, states) {
     var it = entry.item;
@@ -112,8 +120,7 @@
     if (!it.x) {
       poster.appendChild(el(doc, "div", "hssTopBadge", tr(lang, "none")));
       ["night", "now"].forEach(function (mode) {
-        var off = el(doc, "button", "hssTopBtn hssTopBtn-" + mode, tr(lang, mode === "night" ? "tonight" : "now"));
-        off.setAttribute("type", "button");
+        var off = reqButton(doc, lang, mode, tv);
         off.disabled = true;
         actions.appendChild(off);
       });
@@ -131,8 +138,7 @@
     }
     var full = states && typeof states.left === "number" && states.left <= 0;
     ["night", "now"].forEach(function (mode) {
-      var b = el(doc, "button", "hssTopBtn hssTopBtn-" + mode, tr(lang, mode === "night" ? "tonight" : "now"));
-      b.setAttribute("type", "button");
+      var b = reqButton(doc, lang, mode, tv);
       b.setAttribute("data-hss-x", it.x);
       b.setAttribute("data-hss-mode", mode);
       b.setAttribute("title", tr(lang, mode === "night" ? "tonightHint" : "nowHint"));
@@ -190,6 +196,12 @@
     var list = sec.querySelector(".hssTopScroll");
     while (list.firstChild) list.removeChild(list.firstChild);
     for (var i = 0; i < entries.length; i++) list.appendChild(card(sec.ownerDocument, entries[i], lang, tv, states));
+    var title = sec.querySelector(".sectionTitleContainer");
+    var legend = title && title.querySelector(".hssTopLegend");
+    if (tv && title && list.querySelector(".hssTopBtn")) {
+      if (!legend) legend = title.appendChild(el(sec.ownerDocument, "div", "hssTopLegend"));
+      legend.textContent = ICON.night + " " + tr(lang, "tonightHint") + " \u00B7 " + ICON.now + " " + tr(lang, "nowHint");
+    } else if (legend) legend.remove();
     if (sec.isConnected) fitRow(list);
   }
 
@@ -360,7 +372,9 @@
     ".hssPopularHead { display: flex; align-items: center; justify-content: space-between; }",
     ".hssPopularHead h1 { margin: 0.3em 0; font-size: 1.8em; }",
     ".hssPopularSource { margin-top: 2em; font-size: 0.8em; opacity: 0.55; }",
-    ".hssTopBtn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }"
+    ".hssTopBtn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }",
+    ".hssTopBtn-icon { flex: 1 1 0; font-size: 1.05em; padding: 0.3em 0; text-align: center; }",
+    ".hssTopLegend { margin-left: 1.2em; font-size: 0.9em; opacity: 0.7; }"
   ].join("\n");
 
   function styles(doc) {
@@ -559,7 +573,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { CSS: CSS, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
+    module.exports = { CSS: CSS, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {

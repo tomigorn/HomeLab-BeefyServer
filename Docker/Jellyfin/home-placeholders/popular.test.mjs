@@ -290,3 +290,37 @@ test("phone/tablet (no fitted width): the default poster width is not in em, the
   assert.doesNotMatch(def[1], /\d(em|%)$/);
   assert.match(def[1], /^\d+(\.\d+)?(rem|px)$/);
 });
+
+test("TV layout: icon-only request buttons side by side (labels were cut to 'To…'), the full hint stays in aria-label/title", () => {
+  const d = doc();
+  const c = pp.card(d, { item: FOUND, jf: null }, "en", true, { entries: {}, left: 5 });
+  const night = c.querySelector(".hssTopBtn-night"), now = c.querySelector(".hssTopBtn-now");
+  assert.equal(night.textContent, "🌙");
+  assert.equal(now.textContent, "⚡");
+  assert.ok(night.classList.contains("hssTopBtn-icon"));
+  assert.equal(night.getAttribute("aria-label"), "The Diplomat: Download tonight (cheaper power)");
+  assert.equal(night.getAttribute("title"), "Download tonight (cheaper power)");
+  const off = pp.card(d, { item: NONE, jf: null }, "de", true, null);
+  assert.equal(off.querySelector(".hssTopBtn-night").textContent, "🌙");
+  const desk = pp.card(d, { item: FOUND, jf: null }, "de", false, { entries: {}, left: 5 });
+  assert.equal(desk.querySelector(".hssTopBtn-night").textContent, "🌙 Heute Nacht");
+  assert.equal(desk.querySelector(".hssTopBtn-now").textContent, "⚡ Jetzt");
+  const rule = pp.CSS.split("\n").find((l) => l.startsWith(".hssTopBtn-icon {")) || "";
+  assert.match(rule, /flex: 1 1 0/);
+});
+
+test("TV layout: a row with request buttons explains the icons next to its title (no hover tooltips on a TV)", () => {
+  const d = doc();
+  const sec = d.createElement("div");
+  sec.innerHTML = '<div class="sectionTitleContainer"><h2></h2></div><div class="hssTopScroll"></div>';
+  pp.fillRow(sec, [{ item: FOUND, jf: null }], "en", true, { entries: {}, left: 5 });
+  const lg = sec.querySelector(".sectionTitleContainer .hssTopLegend");
+  assert.ok(lg);
+  assert.equal(lg.textContent, "🌙 Download tonight (cheaper power) · ⚡ Download now (daytime power price)");
+  pp.fillRow(sec, [{ item: FOUND, jf: null }], "en", true, { entries: {}, left: 5 });
+  assert.equal(sec.querySelectorAll(".hssTopLegend").length, 1);
+  pp.fillRow(sec, [{ item: OWNED, jf: { id: "x", server: "s" } }], "en", true, null);
+  assert.equal(sec.querySelector(".hssTopLegend"), null, "no buttons, no legend");
+  pp.fillRow(sec, [{ item: FOUND, jf: null }], "en", false, { entries: {}, left: 5 });
+  assert.equal(sec.querySelector(".hssTopLegend"), null, "desktop keeps its labels");
+});
