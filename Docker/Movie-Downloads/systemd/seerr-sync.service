@@ -7,7 +7,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=oneshot
 User=buntu
-TimeoutStartSec=1800
+TimeoutStartSec=4h
 ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/seerr-sync.sh
 NoNewPrivileges=true
 PrivateTmp=true

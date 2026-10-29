@@ -1214,6 +1214,7 @@ Seerr's 5-min "Recently Added Scan" only sees items by Jellyfin's `DateCreated`,
 | Debounce | waits until 120 s after the last import, at most 600 s after the first, at least 600 s after the previous run: one run per burst, at most one per 10 min (`SS_QUIET`, `SS_CAP`, `SS_MIN_GAP`) |
 | Jellyfin | only for files Jellyfin does not list yet (`/Items` by path): `POST /Library/Media/Updated`, waits up to 90 s |
 | Seerr | `POST /api/v1/settings/jobs/jellyfin-full-scan/run`, waits for it to finish (about 15 s for 3.5k films). Media Availability Sync alone does not flip these titles (tested 2026-10-28) |
+| Queue safety | claimed files (`seerr-sync.queue.claimed.<pid>`) are deleted only after the Seerr scan request succeeded; on failure they go back into the queue (exit 1); a killed run's leftovers are taken by the next run. Imports during a round → another round (systemd ignores `PathChanged` while the service runs), up to 3.5 h (`SS_BUDGET`, unit timeout 4 h) |
 
 - Log: `~/.local/state/movie-downloads/seerr-sync.log`; keys from `Seerr/secrets/api-key` and `Jellyfin/secrets/api-key` (never printed).
 - Install: `cd systemd && sudo install -m 0644 seerr-sync.path seerr-sync.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now seerr-sync.path`; register the hook: `scripts/language-policy.sh`.

@@ -48,6 +48,10 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/v1/settings/jobs/jellyfin-full-scan/run":
             if self.headers.get("X-Api-Key") != "seerrkey": return self.reply(401)
             log("SEERR-SCAN")
+            if os.path.exists(os.path.join(T, "seerr-down")): return self.reply(500)
+            if os.path.exists(os.path.join(T, "import-during-scan")):
+                os.remove(os.path.join(T, "import-during-scan"))
+                open(os.path.join(T, "radarr", "seerr-sync.queue"), "a").write("/data/media/movies/D/D.mkv\n")
             open(os.path.join(T, "started"), "w").write("1"); open(os.path.join(T, "polls"), "w").write("0")
             return self.reply(200, {})
         self.reply(404)
@@ -61,7 +65,7 @@ echo seerrkey > "$T/seerr.key"; echo jfkey > "$T/jf.key"
 for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT/System/Info/Public" >/dev/null && break; sleep 0.1; done
 
 mkdir -p "$T/radarr" "$T/sonarr"
-reset() { rm -f "$T/calls" "$T/started" "$T/polls" "$T/jf-stuck" "$T/last" "$T/radarr/"* "$T/sonarr/"*; echo '[]' > "$T/jf.json"; : > "$T/calls"; }
+reset() { rm -f "$T/calls" "$T/started" "$T/polls" "$T/jf-stuck" "$T/seerr-down" "$T/import-during-scan" "$T/log" "$T/last" "$T/radarr/"* "$T/sonarr/"*; echo '[]' > "$T/jf.json"; : > "$T/calls"; }
 run() { # run [env...]: runs the script with test settings, prints its exit code
   env XDG_STATE_HOME="$T/state" SS_QUEUES="$T/radarr/seerr-sync.queue $T/sonarr/seerr-sync.queue" SS_LASTRUN="$T/last" SS_LOG="$T/log" \
     SS_SEERR_URL="http://127.0.0.1:$PORT" SS_SEERR_KEY="$T/seerr.key" SS_JF_URL="http://127.0.0.1:$PORT" SS_JF_KEY="$T/jf.key" \
@@ -93,14 +97,16 @@ start=$(date +%s); run >/dev/null; el=$(( $(date +%s) - start ))
 
 reset; echo '["/media/movies/A/A.mkv"]' > "$T/jf.json"; echo /data/media/movies/A/A.mkv > "$T/radarr/seerr-sync.queue"
 ( sleep 2; echo /data/media/movies/A/A.mkv >> "$T/radarr/seerr-sync.queue" ) &
-start=$(date +%s); run >/dev/null; el=$(( $(date +%s) - start ))
-[ "$el" -ge 3 ] && ok "a later import extends the wait (${el}s)" || bad "a later import extends the wait" "${el}s"
+start=$(date +%s); run SS_QUIET=3 SS_CAP=20 >/dev/null
+el=$(( $(date -d "$(grep -m1 ' start: ' "$T/log" | cut -c1-19)" +%s) - start ))
+[ "$el" -ge 4 ] && ok "a later import extends the wait (${el}s)" || bad "a later import extends the wait" "${el}s"
 assert_eq "both imports, one Seerr scan" "SEERR-SCAN" "$(calls)"
 
 reset; echo '["/media/movies/A/A.mkv"]' > "$T/jf.json"; echo /data/media/movies/A/A.mkv > "$T/radarr/seerr-sync.queue"
 ( for i in 1 2 3 4 5 6 7 8; do sleep 1; echo /data/media/movies/A/A.mkv >> "$T/radarr/seerr-sync.queue"; done ) & FEED=$!
-start=$(date +%s); run SS_QUIET=3 >/dev/null; el=$(( $(date +%s) - start ))
-[ "$el" -le 9 ] && ok "a steady stream still runs at the cap (${el}s)" || bad "cap" "${el}s"
+start=$(date +%s); run SS_QUIET=3 >/dev/null
+el=$(( $(date -d "$(grep -m1 ' start: ' "$T/log" | cut -c1-19)" +%s) - start ))
+[ "$el" -le 6 ] && ok "a steady stream still runs at the cap (${el}s)" || bad "cap" "${el}s"
 wait $FEED
 
 reset; echo '["/media/movies/A/A.mkv"]' > "$T/jf.json"; echo /data/media/movies/A/A.mkv > "$T/radarr/seerr-sync.queue"; date +%s > "$T/last"
@@ -109,6 +115,22 @@ start=$(date +%s); run SS_MIN_GAP=3 >/dev/null; el=$(( $(date +%s) - start ))
 
 reset; echo /data/media/movies/A/A.mkv > "$T/radarr/seerr-sync.queue"
 assert_eq "no Seerr key exits 1" "1" "$(run SS_SEERR_KEY=/nonexistent SS_JF_WAIT=0)"
+assert_eq "  the claimed file is back in the queue" "/data/media/movies/A/A.mkv" "$(cat "$T/radarr/seerr-sync.queue" 2>/dev/null)"
+
+reset; echo '["/media/movies/A/A.mkv"]' > "$T/jf.json"; echo /data/media/movies/A/A.mkv > "$T/radarr/seerr-sync.queue"; touch "$T/seerr-down"
+assert_eq "Seerr scan request fails: exits 1" "1" "$(run)"
+assert_eq "  the claimed file is back in the queue" "/data/media/movies/A/A.mkv" "$(cat "$T/radarr/seerr-sync.queue" 2>/dev/null)"
+assert_eq "  no claimed leftovers" "" "$(ls "$T/radarr" | grep claimed)"
+
+reset; echo '["/media/movies/A/A.mkv", "/media/movies/D/D.mkv"]' > "$T/jf.json"; echo /data/media/movies/A/A.mkv > "$T/radarr/seerr-sync.queue"; touch "$T/import-during-scan"
+assert_eq "an import lands during the Seerr scan: exits 0" "0" "$(run)"
+assert_eq "  a second round scans Seerr again" "SEERR-SCAN SEERR-SCAN" "$(calls)"
+assert_eq "  queue empty afterwards" "" "$(cat "$T/radarr/seerr-sync.queue" 2>/dev/null; ls "$T/radarr" | grep claimed)"
+
+reset; echo /data/media/movies/E/E.mkv > "$T/radarr/seerr-sync.queue.claimed.99999"; echo '["/media/movies/E/E.mkv"]' > "$T/jf.json"; touch "$T/radarr/seerr-sync.queue"
+echo /data/media/movies/A/A.mkv > "$T/sonarr/seerr-sync.queue"
+assert_eq "a claimed file left by a killed run is taken too" "0" "$(run)"
+assert_eq "  and removed after success" "" "$(ls "$T/radarr" | grep claimed)"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
