@@ -500,6 +500,8 @@
       }
       if (t.closest(".hssPopularClose")) closePage(true);
       else if (t.closest(".hssPopularPage a.hssTopCard")) win.setTimeout(function () { closePage(false); }, 0);
+      // The logo leads to the route that is already open (#/ redirects to #/home): no route change to close on.
+      else if (!t.closest(".hssPopularPage") && t.closest("a[href], .headerHomeButton, .headerBackButton, .emby-tab-button")) closePage(false);
     }, true);
     win.addEventListener("keydown", function (e) {
       if (!doc.querySelector(".hssPopularPage")) return;

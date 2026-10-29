@@ -215,3 +215,34 @@ test("fitting the rows measures every row before it changes any (one layout, not
   assert.match(d.querySelector(".hssTopScroll").style.getPropertyValue("--hss-p"), /^1\d\dpx$/);
 });
 
+function started() {
+  const dom = new JSDOM('<html lang="en"><body><header><a class="logo" href="#/">Holy Grail</a><a class="hssPopularNav" href="#/home">Currently popular</a></header></body></html>', { url: "https://jellyfin.holy-grail.ch/web/#/home" });
+  const win = dom.window;
+  let stateCalls = 0;
+  win.HssPopular = DATA;
+  win.ApiClient = {
+    getCurrentUserId: () => "u1", accessToken: () => "tok", getUrl: (p) => p,
+    getJSON: () => Promise.resolve({ Items: [{ Type: "Movie", Id: "jf121", ServerId: "srv", ProviderIds: { Tmdb: "121" } }] })
+  };
+  win.fetch = () => { stateCalls++; return Promise.resolve({ status: 200, json: () => Promise.resolve({ entries: {}, left: 5, limit: 5, days: 7 }) }); };
+  win.document.addEventListener("click", (e) => {
+    const a = e.target.closest("a[href]");
+    if (a && !e.defaultPrevented) { e.preventDefault(); win.history.pushState({}, "", "#/home"); }
+  });
+  pp.start(win);
+  const tick = () => new Promise((r) => setTimeout(r, 20));
+  const click = (el) => el.dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
+  return { win, d: win.document, tick, click, calls: () => stateCalls };
+}
+
+test("the logo (or any nav link) closes the page even when the route stays the same", async () => {
+  const { win, d, tick, click } = started();
+  click(d.querySelector(".hssPopularNav"));
+  await tick();
+  assert.ok(d.querySelector(".hssPopularPage"));
+  click(d.querySelector("a.logo"));
+  await tick();
+  assert.equal(d.querySelector(".hssPopularPage"), null);
+  win.close();
+});
+
