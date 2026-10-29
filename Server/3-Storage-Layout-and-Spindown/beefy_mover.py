@@ -5,7 +5,7 @@ Policy: only when the hot SSD is at START_USED_PCT or more, move whole titles (a
 Last use = max(last play by any Jellyfin user over the title's movie/episodes, newest Radarr movieFile / Sonarr episodeFile dateAdded). A title moves only when its last use is older than IDLE_DAYS; from FALLBACK_USED_PCT on, older than FALLBACK_DAYS is enough. atime and file dates are no use (scans, trickplay, original-audio read and touch the files). A title the arrs do not know counts as added today.
 Fails closed: Jellyfin, Radarr or Sonarr unreadable, no Jellyfin user, or under 90 % of the SSD videos known to Jellyfin -> nothing moves. The data is read once at the start (auto-update may restart the apps mid-run).
 Never moves a title with a hardlinked file (still seeding), an open file, a change in the last SETTLE_HOURS (import in progress) or a pinned path.
-The bytes are moved by tier-move -> tier-helper (staging copy, verify read back from disk, source unchanged check, atomic rename, then delete; sidecars stay hot; shared media lock). Bounded per run: MAX_MOVE_GIB, DEADLINE (no title starts that cannot finish by then at 1.5 x size / RATE_MIB_S), HDD_RESERVE_PCT free kept on the HDD.
+The bytes are moved by tier-move -> tier-helper (staging copy, verify read back from disk, source unchanged check, atomic rename, then delete; sidecars stay hot; shared media lock). Bounded per run: MAX_MOVE_GIB, DEADLINE (no title starts that cannot finish by then at 1.5 x size / RATE_MIB_S plus TIER_LOCK_WAIT (60 s) per branch for the media lock), HDD_RESERVE_PCT free kept on the HDD.
 Writes PROM (fastpi alerts + morning digest): run result, duplicates, staging orphans, downloads that spilled onto the HDD, SMART counters. Safe to re-run: a title already on the HDD is no candidate, a killed copy leaves the source intact.
 Usage: beefy-mover [--dry-run] [--plan] [--only REL] [--no-deadline]
 """
@@ -57,6 +57,7 @@ class Conf:
     jf_url: str
     jf_key_file: str
     jf_prefix: str
+    lock_wait: int
 
     @classmethod
     def from_env(cls, env):
@@ -75,7 +76,8 @@ class Conf:
                    pins=pathlib.Path(g("PINS", "/etc/beefy-mover-pins")), tier_move=g("TIER_MOVE", "/usr/local/sbin/tier-move"),
                    keep_awake=pathlib.Path(g("KEEP_AWAKE_FILE", "/run/beefy-keep-awake")),
                    prom=pathlib.Path(g("PROM", "/var/lib/beefy-mover/mover.prom")), jf_url=g("JF_URL", "http://127.0.0.1:8096"),
-                   jf_key_file=g("JF_KEY_FILE", "/home/buntu/Projects/Docker/Jellyfin/secrets/api-key"), jf_prefix=g("JF_PREFIX", "/media/"))
+                   jf_key_file=g("JF_KEY_FILE", "/home/buntu/Projects/Docker/Jellyfin/secrets/api-key"), jf_prefix=g("JF_PREFIX", "/media/"),
+                   lock_wait=int(g("TIER_LOCK_WAIT", "60")))
 
 
 @dataclasses.dataclass
@@ -365,6 +367,11 @@ def hdd_checks(conf, units):
             "hdd_overflow_files": count_files(conf.cold / "torrents") + count_files(conf.cold / "usenet")}
 
 
+def tier_env(conf, branch):
+    """tier-move environment for one branch; the media lock wait is short (TIER_LOCK_WAIT), so a busy promoter or original-audio costs at most that per branch, counted in the deadline."""
+    return dict(os.environ, HOT=str(branch), COLD=str(conf.cold), TIER_LOCK_WAIT=str(conf.lock_wait))
+
+
 def classify(rc, out):
     """tier-move result -> (kind, line): moved, skip (lock busy, source changed, guard refused) or failed."""
     first = next((l.strip() for l in out.splitlines() if l.strip()), "no output")
@@ -417,7 +424,7 @@ def run(conf, now, statvfs, tier_move, is_open, snap, log, only=None, use_deadli
         if only is None and res["moved_bytes"] + u.size > conf.max_move:
             log(f"beefy-mover: per-run data cap of {human(conf.max_move)} reached - stopping")
             break
-        if end and now + dt.timedelta(seconds=time.monotonic() - t0 + 1.5 * u.size / conf.rate) > end:
+        if end and now + dt.timedelta(seconds=time.monotonic() - t0 + conf.lock_wait * len(u.branches) + 1.5 * u.size / conf.rate) > end:
             log(f"beefy-mover: time limit {conf.deadline}: {u.rel} ({human(u.size)}) would not finish - stopping, the rest goes next night")
             break
         if only is None:
@@ -440,21 +447,23 @@ def run(conf, now, statvfs, tier_move, is_open, snap, log, only=None, use_deadli
             ssd_used -= u.size
             hdd_used += u.size
         else:
-            kind, line, out = "moved", "", ""
+            kind, line, out, done = "moved", "", "", 0
             for branch in u.branches:
                 rc, out = tier_move(u.rel, branch)
                 kind, line = classify(rc, out)
                 if kind != "moved":
                     break
+                done += 1
+            part = f" (partially moved: {done} of {len(u.branches)} branches, still served by mergerfs, finished next night)" if done and kind != "moved" else ""
             if kind == "failed":
                 res["failed_titles"] += 1
                 res["verify_failures"] += "VERIFY FAILED" in out
                 res["success"] = False
-                log(f"  FAILED: {u.rel}: {line}")
+                log(f"  FAILED: {u.rel}: {line}{part}")
                 continue
             if kind == "skip":
                 res["skipped_titles"] += 1
-                log(f"  skip ({line}): {u.rel}")
+                log(f"  skip ({line}): {u.rel}{part}")
                 continue
             log(f"  moved ({human(u.size)}){tag}: {u.rel}")
             ssd_total, ssd_used = usage(statvfs, conf.hots)
@@ -564,7 +573,7 @@ def main(argv=None):
         return 0
 
     def tier_move(rel, branch):
-        r = subprocess.run([conf.tier_move, "demote", rel, "--apply", "--any-time"], capture_output=True, text=True, env=dict(os.environ, HOT=str(branch), COLD=str(conf.cold)))
+        r = subprocess.run([conf.tier_move, "demote", rel, "--apply", "--any-time"], capture_output=True, text=True, env=tier_env(conf, branch))
         out = r.stdout + r.stderr
         keys = ("REFUS", "FAIL", "in use", "could not", "SOURCE", "media lock", "stopped at")
         return r.returncode, "\n".join(l for l in out.splitlines() if any(k in l for k in keys)) or out

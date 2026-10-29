@@ -284,8 +284,19 @@ class Run(Tree):
         s = Stub(self, 1000, 900)
         res, logs = self.go(s, now=dt.datetime(2026, 10, 29, 4, 38, tzinfo=TZ), RATE_MIB_S=100 / MIB / 100)
         self.assertEqual(s.moved, [])
-        res, logs = self.go(s, now=dt.datetime(2026, 10, 29, 4, 38, tzinfo=TZ), RATE_MIB_S=100 / MIB / 70)
+        res, logs = self.go(s, now=dt.datetime(2026, 10, 29, 4, 38, tzinfo=TZ), RATE_MIB_S=100 / MIB / 70, TIER_LOCK_WAIT=0)
         self.assertEqual(s.moved[:1], ["media/movies/M0"])
+
+    def test_deadline_counts_the_media_lock_wait(self):
+        s = Stub(self, 1000, 900)
+        res, logs = self.go(s, now=dt.datetime(2026, 10, 29, 4, 38, tzinfo=TZ), RATE_MIB_S=100 / MIB / 70, TIER_LOCK_WAIT=60)
+        self.assertEqual(s.moved, [])
+        self.assertTrue(any("time limit" in l for l in logs))
+
+    def test_tier_move_waits_only_the_configured_time_for_the_media_lock(self):
+        env = bm.tier_env(self.conf(), self.hot)
+        self.assertEqual((env["TIER_LOCK_WAIT"], env["HOT"], env["COLD"]), ("60", str(self.hot), str(self.cold)))
+        self.assertEqual(bm.tier_env(self.conf(TIER_LOCK_WAIT=15), self.hot)["TIER_LOCK_WAIT"], "15")
 
     def test_hdd_reserve_stops(self):
         s = Stub(self, 1000, 900, hdd_total=1000, hdd_used=750)
@@ -376,6 +387,18 @@ class TwoSsds(Tree):
         res = bm.run(conf, NOW, lambda p: st[str(p)], lambda rel, b: calls.append((rel, b)) or (0, ""), lambda p: False, sn, lambda l: None)
         self.assertEqual(calls, [("media/tv/S", self.hot), ("media/tv/S", hot2)])
         self.assertEqual(res["moved_titles"], 1)
+
+    def test_a_failed_second_branch_logs_the_title_as_partially_moved(self):
+        hot2 = self.tmp / "hot2"
+        self.file("media/tv/S/Season 01/E1.mkv", size=100)
+        self.file("media/tv/S/Season 02/E1.mkv", size=50, branch=hot2)
+        st = {str(self.hot): FakeStat(1000, 100), str(hot2): FakeStat(1000, 900), str(self.cold): FakeStat(10 ** 9, 10 ** 9)}
+        sn = snap({}, {"media/tv/S": ago(100)}, {"media/tv/S/Season 01/E1.mkv", "media/tv/S/Season 02/E1.mkv"})
+        conf = self.conf(HOT=f"{self.hot} {hot2}", START_USED_PCT=40, TARGET_USED_PCT=10)
+        logs = []
+        res = bm.run(conf, NOW, lambda p: st[str(p)], lambda rel, b: (0, "") if b == self.hot else (1, "VERIFY FAILED for x"), lambda p: False, sn, logs.append)
+        self.assertEqual(res["failed_titles"], 1)
+        self.assertTrue(any("partially moved" in l and "media/tv/S" in l for l in logs), logs)
 
     def test_default_hot_tier_is_both_ssds(self):
         self.assertEqual([str(h) for h in bm.Conf.from_env({}).hots], ["/srv/.disks/ssd-hot", "/srv/.disks/ssd-hot2"])
