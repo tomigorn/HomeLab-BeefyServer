@@ -21,9 +21,11 @@
 ## not TRaSH ones, hence the `except`/`except_patterns` on every reset_unmatched_scores.
 ## Every reject is -50000000: the best possible positive sum (~33000000) must stay below the minimum score of 0.
 ## 2160p SDR is allowed (owner 2026-10-26: 4K SDR beats 1080p HDR); HDR still beats SDR inside one quality.
-## Upgrades stop at 4K HDR + original + English (25000000; English-original twins: HDR + original/English 20000000, German DL is taken at grab time but not chased); the 1080p-only
+## Upgrades stop at 4K HDR + original + English (25000000, Radarr + a longer cut 26000000; English-original twins: HDR + original/English 20000000, German DL is taken at grab time but not chased); the 1080p-only
 ## HD and anime profiles at original + English (5000000). An upgrade at the
 ## same quality needs +1 (min_upgrade_format_score, Radarr's default): below the cutoff better audio, group, repack, a season pack or an extra language upgrades (owner 2026-10-26).
+## Radarr (owner 2026-10-30): `Edition: longer cut` 1000000 between the language rungs and audio/group; cutoffs +1000000 (26000000 / 21000000 / 6000000),
+## minimum upgrade step 100000 (only a cut, a language rung or HDR re-downloads at the same quality). Sonarr unchanged.
 ## Exception: the profile `Swiss German (Mundart) only - any quality`, Radarr and
 ## Sonarr (Swiss German mandatory, see its comment and README "Swiss German").
 ################################################################################
@@ -72,10 +74,10 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
-          # 4K HDR + original + English reached = done. A release that also carries German
-          # wins at grab time (27000000) but is not chased afterwards.
-          until_score: 25000000
-        min_upgrade_format_score: 1
+          # 4K HDR + original + English + a longer cut (`Edition: longer cut`) reached = done. A release that also carries German
+          # wins at grab time (27000000) but is not chased afterwards; such a file counts as done without the cut too.
+          until_score: 26000000
+        min_upgrade_format_score: 100000
         min_format_score: 0
         qualities:
           - name: Bluray-2160p
@@ -96,8 +98,8 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
-          until_score: 20000000
-        min_upgrade_format_score: 1
+          until_score: 21000000
+        min_upgrade_format_score: 100000
         min_format_score: 0
         qualities:
           - name: Bluray-2160p
@@ -123,8 +125,8 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
-          until_score: 25000000
-        min_upgrade_format_score: 1
+          until_score: 26000000
+        min_upgrade_format_score: 100000
         min_format_score: 0
         qualities:
           - name: Bluray-2160p
@@ -156,8 +158,8 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-2160p
-          until_score: 20000000
-        min_upgrade_format_score: 1
+          until_score: 21000000
+        min_upgrade_format_score: 100000
         min_format_score: 0
         qualities:
           - name: Bluray-2160p
@@ -210,8 +212,8 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Bluray-1080p
-          until_score: 5000000
-        min_upgrade_format_score: 1
+          until_score: 6000000
+        min_upgrade_format_score: 100000
 
       # Anime films, picked by hand (Seerr has no anime profile for movies): TRaSH
       # "[Anime] Remux-1080p" - Remux/Bluray 1080p first, WEB 1080p below. No
@@ -228,13 +230,84 @@ radarr:
         upgrade:
           allowed: true
           until_quality: Remux 1080p
-          until_score: 5000000
-        min_upgrade_format_score: 1
+          until_score: 6000000
+        min_upgrade_format_score: 100000
 
     # The 1080p fallback tier needs the HD group-tier scores that the plain UHD
     # profile has no use for, so a good 1080p Bluray encode beats a poor one.
     # (Quality always ranks first in Radarr: any allowed 2160p beats any 1080p.)
     custom_formats:
+      # Editions (owner 2026-10-30): a longer cut (own `Edition: longer cut`, recyclarr/custom-formats/radarr: Extended, Director's Cut, Uncut, Unrated, Final Cut, Redux,
+      # Special/Ultimate Edition; TRaSH `Special Edition` also hits Anniversary/Collector's/Remastered Editions and TV versions, the same cut) ranks below HDR and every
+      # language rung (smallest gap 2000000) and above audio, group, streaming and extras (< 10000), so it wins whenever it exists in the same quality and languages.
+      # The cutoffs above add it, so a file at the old cutoff upgrades once to the cut; min_upgrade_format_score 100000 lets only a cut, a language rung or HDR
+      # re-download at the same quality (no churn for audio, group, repack or extras). Swiss German keeps its own scale (2000, below its 50000 resolution steps).
+      - trash_ids:
+          - 33c3e4c7b642e3e85815cbffefceaeb0  # Edition: longer cut
+        assign_scores_to:
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            score: 1000000
+          - name: 4K preferred · older versions allowed
+            score: 1000000
+          - name: 4K preferred · older versions allowed - English original
+            score: 1000000
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
+            score: 1000000
+          - name: HD Bluray + WEB
+            score: 1000000
+          - name: Anime - Remux + WEB 1080p
+            score: 1000000
+          - name: Swiss German (Mundart) only - any quality
+            score: 2000
+      # Versions, not cuts: TRaSH default scores, tie-breakers in the audio/group tier, never an upgrade on their own (below the minimum upgrade step). Theatrical neutral.
+      - trash_ids:
+          - eecf3a857724171f968a66cb5719e152  # IMAX
+          - 9f6cbff8cfe4ebbc1bde14c7b7bec0de  # IMAX Enhanced
+        assign_scores_to:
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            score: 800
+          - name: 4K preferred · older versions allowed
+            score: 800
+          - name: 4K preferred · older versions allowed - English original
+            score: 800
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
+            score: 800
+          - name: HD Bluray + WEB
+            score: 800
+          - name: Anime - Remux + WEB 1080p
+            score: 800
+      - trash_ids:
+          - 570bc9ebecd92723d2d21500f4be314c  # Remaster
+          - eca37840c13c6ef2dd0262b141a5482f  # 4K Remaster
+          - e0c07d59beb37348e975a930d5e50319  # Criterion Collection
+        assign_scores_to:
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            score: 25
+          - name: 4K preferred · older versions allowed
+            score: 25
+          - name: 4K preferred · older versions allowed - English original
+            score: 25
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
+            score: 25
+          - name: HD Bluray + WEB
+            score: 25
+          - name: Anime - Remux + WEB 1080p
+            score: 25
+      - trash_ids:
+          - e9001909a4c88013a359d0b9920d7bea  # Theatrical Cut
+        assign_scores_to:
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback)
+            score: 0
+          - name: 4K preferred · older versions allowed
+            score: 0
+          - name: 4K preferred · older versions allowed - English original
+            score: 0
+          - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
+            score: 0
+          - name: HD Bluray + WEB
+            score: 0
+          - name: Anime - Remux + WEB 1080p
+            score: 0
       - trash_ids:
           - ed27ebfef2f323e964fb1f61391bcb35  # HD Bluray Tier 01
           - c20c8647f2746a1f4c4262b0fbbeeeae  # HD Bluray Tier 02

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Release ranking order (README "Release scoring") from recyclarr/recyclarr.yml + scripts/language_formats.py, both apps, every profile: HDR > language tier > Sonarr season pack > audio/group/streaming > extra languages (tie-breaker); 2160p SDR allowed; rejects stay rejected; upgrades stop at 4K HDR + original + English; Swiss German unchanged.
+"""Release ranking order (README "Release scoring") from recyclarr/recyclarr.yml + scripts/language_formats.py, both apps, every profile: HDR > language tier > Radarr longer cut > Sonarr season pack > audio/group/streaming > extra languages (tie-breaker); 2160p SDR allowed; rejects stay rejected; upgrades stop at 4K HDR + original + English (Radarr: + a longer cut); Swiss German unchanged.
 Custom formats are matched by a model: the native language formats are evaluated from their real definitions (Radarr's LanguageSpecification), TRaSH ones by their documented conditions.
 Usage: python3 tests/test_scoring_order.py   (needs python3-yaml)"""
 import json
@@ -36,6 +36,13 @@ ANIME_MINOR = {"group": {"Anime BD Tier 01": 1400, "Remux Tier 01": 975, None: 0
 MILD_NEGATIVES = {"v0"}  # TRaSH ranking penalty (-51), not a reject
 SEASON_PACK = "Season Pack"
 SEASON_PACK_SCORE = 2000
+# Radarr only (owner 2026-10-30): longer cuts rank below HDR and every language rung, above audio/group/streaming; versions are tie-breakers.
+EDITION = "Edition: longer cut"
+EDITION_SCORE = 1000000
+SWISS_EDITION_SCORE = 2000
+VERSIONS = {"IMAX": 800, "IMAX Enhanced": 800, "Remaster": 25, "4K Remaster": 25, "Criterion Collection": 25}
+THEATRICAL = "Theatrical Cut"
+RADARR_MIN_UPGRADE = 100000
 
 
 def load_yaml():
@@ -125,6 +132,8 @@ class Base(unittest.TestCase):
             orig = "English" if twin else ("Italian" if app == "radarr" else "Spanish")
             # The TRaSH HD and anime templates score no audio formats.
             minor = ANIME_MINOR | {"audio": {None: 0}} if kind == "anime" else MINOR[app] | ({"audio": {None: 0}} if kind == "hd" else {})
+            if app == "radarr":
+                minor = minor | {"small": minor["small"] | VERSIONS}
             resolutions = (1080, 2160) if kind in ("4k", "any") else (1080,)
             prof = profile(app, name)
             prof["scores"] = {k: v for group in minor.values() for k, v in group.items() if k} | prof["scores"]
@@ -258,41 +267,67 @@ class Order(Base):
 
 class Upgrades(Base):
     def test_cutoff_values(self):
-        want = {"4k": (25000000, 20000000), "any": (25000000, 20000000), "hd": (5000000, None), "anime": (5000000, None)}
+        want = {"sonarr": {"4k": (25000000, 20000000), "any": (25000000, 20000000), "hd": (5000000, None), "anime": (5000000, None)},
+                "radarr": {"4k": (26000000, 21000000), "any": (26000000, 21000000), "hd": (6000000, None), "anime": (6000000, None)}}
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             with self.subTest(app=app, profile=name):
-                self.assertEqual(p["cutoff"], want[kind][twin])
+                self.assertEqual(p["cutoff"], want[app][kind][twin])
 
     def test_j_4k_cutoff_at_hdr_plus_original_plus_english(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             if 2160 not in resolutions:
                 continue
             top_tier, below = ([orig], None) if twin else (self.tiers(twin, orig)[1], self.tiers(twin, orig)[2])
+            ed = (EDITION,) if app == "radarr" else ()
             with self.subTest(app=app, profile=name):
-                self.assertGreaterEqual(score(p, matched(app, orig, top_tier, 2160, hdr=True)), p["cutoff"])
+                self.assertGreaterEqual(score(p, matched(app, orig, top_tier, 2160, hdr=True, extra=ed)), p["cutoff"])
+                if ed:
+                    self.assertLess(score(p, matched(app, orig, top_tier + self.extras(app, orig), 2160, hdr=True, **self.best_single(minor))), p["cutoff"])
                 if twin:
-                    self.assertEqual(p["cutoff"], 20000000)
+                    self.assertEqual(p["cutoff"], 21000000 if ed else 20000000)
                     self.assertGreater(score(p, matched(app, orig, [orig, "German"], 2160, hdr=True)), score(p, matched(app, orig, [orig], 2160, hdr=True)))
                     self.assertGreaterEqual(score(p, matched(app, orig, [orig, "German"], 2160, hdr=True)), p["cutoff"])
                 else:
-                  self.assertLess(score(p, matched(app, orig, below + self.extras(app, orig), 2160, hdr=True, **self.best(minor))), p["cutoff"])
+                    self.assertLess(score(p, matched(app, orig, below + self.extras(app, orig), 2160, hdr=True, **self.best_single(minor) | {"extra": ed})), p["cutoff"])
                 richest_sdr = [orig, "English", "German"] + self.extras(app, orig)
-                self.assertLess(score(p, matched(app, orig, richest_sdr, 2160, hdr=False, **self.best(minor))), p["cutoff"])
+                self.assertLess(score(p, matched(app, orig, richest_sdr, 2160, hdr=False, **self.best_single(minor) | {"extra": ed})), p["cutoff"])
 
     def test_1080p_profiles_cutoff_at_original_plus_english(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             if 2160 in resolutions:
                 continue
+            ed = (EDITION,) if app == "radarr" else ()
             with self.subTest(app=app, profile=name):
-                self.assertGreaterEqual(score(p, matched(app, orig, [orig, "English"])), p["cutoff"])
-                self.assertLess(score(p, matched(app, orig, [orig, "German"] + self.extras(app, orig), **self.best(minor))), p["cutoff"])
+                self.assertGreaterEqual(score(p, matched(app, orig, [orig, "English"], extra=ed)), p["cutoff"])
+                if ed:
+                    self.assertLess(score(p, matched(app, orig, [orig, "English"] + self.extras(app, orig), **self.best_single(minor))), p["cutoff"])
+                self.assertLess(score(p, matched(app, orig, [orig, "German"] + self.extras(app, orig), **self.best(minor) | {"extra": ed + self.best(minor)["extra"]})), p["cutoff"])
 
-    def test_extras_and_audio_upgrade_below_cutoff(self):
+    def test_sonarr_extras_and_audio_upgrade_below_cutoff(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if app != "sonarr":
+                continue
             with self.subTest(app=app, profile=name):
                 self.assertEqual(p["min_upgrade"], 1)
                 gain = score(p, matched(app, orig, [orig] + self.extras(app, orig), **self.best(minor))) - score(p, matched(app, orig, [orig]))
                 self.assertGreaterEqual(gain, p["min_upgrade"])
+
+    def test_radarr_only_edition_language_and_hdr_upgrade(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if app != "radarr":
+                continue
+            tiers = self.tiers(twin, orig)
+            with self.subTest(app=app, profile=name):
+                self.assertEqual(p["min_upgrade"], RADARR_MIN_UPGRADE)
+                small = score(p, matched(app, orig, [orig] + self.extras(app, orig), **self.best_single(minor))) - score(p, matched(app, orig, [orig]))
+                self.assertLess(small, p["min_upgrade"])
+                for tier in tiers:
+                    edition = score(p, matched(app, orig, tier, extra=(EDITION,))) - score(p, matched(app, orig, tier + self.extras(app, orig), **self.best_single(minor)))
+                    self.assertGreaterEqual(edition, p["min_upgrade"])
+                for hi, lo in zip(tiers, tiers[1:]):
+                    self.assertGreaterEqual(score(p, matched(app, orig, hi)) - score(p, matched(app, orig, lo + self.extras(app, orig), **self.best_single(minor) | {"extra": (EDITION,)})), p["min_upgrade"])
+                for res in resolutions:
+                    self.assertGreaterEqual(score(p, matched(app, orig, [orig], res, hdr=True)) - score(p, matched(app, orig, [orig, "English", "German"] + self.extras(app, orig), res, **self.best_single(minor) | {"extra": (EDITION,)})), p["min_upgrade"])
 
     def test_extra_scores_survive_the_recyclarr_reset(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
@@ -300,6 +335,84 @@ class Upgrades(Base):
                 self.assertTrue(any(re.match(pat, lf.EXTRA_PREFIX + "Spanish", re.I) for pat in p["except"].get("except_patterns") or []))
                 if not twin:
                     self.assertIn(lf.ORIGINAL_ENGLISH, p["except"].get("except") or [])
+
+
+class Editions(Base):
+    def radarr(self):
+        return [c for c in self.cases if c[0] == "radarr"]
+
+    def test_edition_and_version_scores(self):
+        self.assertIn(THEATRICAL, cf_names("radarr").values())
+        self.assertNotIn("Special Edition", cf_names("radarr").values())
+        for app, kind, name, twin, orig, minor, resolutions, p in self.radarr():
+            with self.subTest(profile=name):
+                raw = profile(app, name)["scores"]
+                self.assertEqual({c: raw.get(c) for c in [EDITION, THEATRICAL, *VERSIONS]}, {EDITION: EDITION_SCORE, THEATRICAL: 0, **VERSIONS})
+        self.assertEqual(profile("radarr", SWISS)["scores"].get(EDITION), SWISS_EDITION_SCORE)
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if app == "sonarr":
+                self.assertNotIn(EDITION, p["scores"])
+
+    def test_edition_beats_the_best_theatrical_of_the_same_languages(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.radarr():
+            for tier in self.tiers(twin, orig):
+                for res in resolutions:
+                    with self.subTest(profile=name, tier=tier, res=res):
+                        self.assertGreater(score(p, matched(app, orig, tier, res, hdr=True, extra=(EDITION,))),
+                                           score(p, matched(app, orig, tier + self.extras(app, orig), res, hdr=True, **self.best_single(minor))))
+
+    def test_edition_never_beats_a_better_language_tier(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.radarr():
+            tiers = self.tiers(twin, orig)
+            for hi, lo in zip(tiers, tiers[1:]):
+                with self.subTest(profile=name, higher=hi, lower=lo):
+                    self.assertGreater(score(p, matched(app, orig, hi)), score(p, matched(app, orig, lo + self.extras(app, orig), **self.best_single(minor) | {"extra": (EDITION,)})))
+
+    def test_edition_never_beats_hdr(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.radarr():
+            for res in resolutions:
+                with self.subTest(profile=name, res=res):
+                    self.assertGreater(score(p, matched(app, orig, [orig], res, hdr=True)),
+                                       score(p, matched(app, orig, [orig, "English", "German"] + self.extras(app, orig), res, **self.best_single(minor) | {"extra": (EDITION,)})))
+
+    def test_swiss_edition_stays_below_resolution_and_language(self):
+        s = profile("radarr", SWISS)["scores"]
+        rest = s["German DL"] + s[lf.ORIGINAL_ENGLISH] + max(MINOR["radarr"]["audio"].values()) + max(MINOR["radarr"]["group"].values()) + sum(MINOR["radarr"]["small"].values())
+        self.assertLess(rest + s[EDITION], s["Resolution: 2160p"] - s["Resolution: 1080p"])
+        self.assertLess(s[EDITION] + max(MINOR["radarr"]["audio"].values()) + max(MINOR["radarr"]["group"].values()), s["German DL"])
+
+
+class LongerCut(unittest.TestCase):
+    """Own `Edition: longer cut` (recyclarr/custom-formats/radarr/edition-longer-cut.json): TRaSH `Special Edition` also hits anniversary, collector's, remastered editions and TV versions (same cut, one more download)."""
+
+    def rx(self):
+        d = next(json.loads(f.read_text()) for f in (ROOT / "recyclarr" / "custom-formats" / "radarr").glob("*.json") if json.loads(f.read_text())["name"] == EDITION)
+        self.assertRegex(d["trash_id"], r"^[0-9a-f]{32}$")
+        self.assertFalse(d["includeCustomFormatWhenRenaming"])
+        specs = d["specifications"]
+        self.assertTrue(all(x["implementation"] == "ReleaseTitleSpecification" and x["required"] for x in specs))
+        return [(re.compile(x["fields"]["value"], re.I), x["negate"]) for x in specs]
+
+    def hit(self, title):
+        return all(bool(rx.search(title)) != neg for rx, neg in self.rx())
+
+    def test_longer_cuts_match(self):
+        for t in ("A.Movie.2001.Extended.2160p.UHD.BluRay.x265-GRP", "A.Movie.2001.EXTENDED.EDITION.1080p.BluRay.x264-GRP", "A.Movie.1979.Directors.Cut.1080p.BluRay.x264-GRP",
+                  "A.Movie.1979.Director's.Cut.1080p", "A.Movie.2004.Uncut.1080p.BluRay.x264-GRP", "A.Movie.2004.UNRATED.1080p.WEB-DL-GRP",
+                  "A.Movie.1977.Special.Edition.1080p.BluRay-GRP", "A.Movie.2003.Ultimate.Edition.1080p.BluRay-GRP", "A.Movie.2016.Ultimate.Cut.2160p-GRP",
+                  "A.Movie.1982.Final.Cut.2160p.UHD.BluRay-GRP", "A.Movie.1979.Redux.1080p.BluRay-GRP", "A Movie (2001) [tmdbid-1] - {Extended} [Bluray-2160p]-GRP",
+                  "A.Movie.2001.Extended.Cut.1080p-GRP", "A.Movie.2005.Uncensored.1080p-GRP"):
+            with self.subTest(t=t):
+                self.assertTrue(self.hit(t))
+
+    def test_same_cut_versions_do_not_match(self):
+        for t in ("A.Movie.1994.25th.Anniversary.Edition.1080p.BluRay-GRP", "A.Movie.1994.Collectors.Edition.1080p-GRP", "A.Movie.1994.Remastered.Edition.2160p-GRP",
+                  "A.Movie.1994.Limited.Edition.1080p-GRP", "A.Movie.2012.TV.Version.720p-GRP", "A.Movie.2012.IMAX.Version.2160p-GRP", "A.Movie.2012.IMAX.Edition.2160p-GRP",
+                  "A.Movie.2012.Special.Features.1080p-GRP", "A.Movie.2001.Theatrical.Cut.1080p-GRP", "A.Movie.2001.Extended.and.Theatrical.1080p-GRP",
+                  "A.Movie.2001.Extended.Clip.1080p-GRP", "A.Movie.2001.Open.Matte.1080p-GRP", "A.Movie.2001.1080p.BluRay.DDP5.1.x264-GRP",
+                  "A Movie (2001) [tmdbid-1] - {edition-Remastered} [Bluray-2160p]-GRP", "Extended.2001.1080p.BluRay-GRP"):
+            with self.subTest(t=t):
+                self.assertFalse(self.hit(t))
 
 
 class SeasonPack(Base):
