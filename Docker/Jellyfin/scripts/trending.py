@@ -437,14 +437,14 @@ def covers(have, want):
 
 
 def index_items(placeholders, placed):
-    """{playable id: {x, t, modes {version or episode id: now | night}}}: a film's item and version ids, a series' episode ids."""
+    """{playable id: {x, t, modes {version or episode id: now | night}, rt}}: a film's item and version ids, a series' episode ids; rt is the shortest clip runtime of that placeholder."""
     out = {}
     for folder, pl in placed.items():
         ph = placeholders.get(folder)
         if ph is None:
             continue
         modes = {fid: MODE[ph.files[name]] for name, fid in pl.files.items() if ph.files.get(name) in MODE}
-        rec = {"x": ph.x, "t": ph.title, "modes": modes}
+        rec = {"x": ph.x, "t": ph.title, "modes": modes, "rt": min(pl.ticks, default=TICKS)}
         if ph.kind != "tv":
             out[pl.item["Id"]] = rec
         for fid in pl.files.values():
@@ -582,9 +582,8 @@ def upsert_hide(io, source, dry_run):
     return True
 
 
-def write_index(paths, lib_id, placed, placeholders, now, dry_run):
-    ticks = sorted(t for f, pl in placed.items() if f in placeholders for t in pl.ticks)
-    data = {"library": lib_id, "runtimeTicks": ticks[0] if ticks else TICKS, "items": index_items(placeholders, placed)}
+def write_index(paths, placed, placeholders, now, dry_run):
+    data = {"items": index_items(placeholders, placed)}
     old = read_json(paths.index)
     try:
         recent = now - aware(old["updated"]) < INDEX_MAX_AGE
@@ -691,7 +690,7 @@ def sync(io, paths, now, dry_run, log):
 
     set_ids = cols.sync(plan.collections, member_id, plan.art)
     all_placed = {f: pl for k in KINDS for f, pl in placed[k].items() if f in by_kind[k]}
-    index_changed, n_index = write_index(paths, lib_id, all_placed, plan.placeholders, now, dry_run)
+    index_changed, n_index = write_index(paths, all_placed, plan.placeholders, now, dry_run)
     hidden_ids = set(index_items(plan.placeholders, all_placed)) | {pl.item["Id"] for pl in all_placed.values()}
     hide_changed = upsert_hide(io, hide_script({"lib": [lib_ids[k] for k in KINDS], "sets": set_ids, "items": sorted(hidden_ids)}), dry_run)
 

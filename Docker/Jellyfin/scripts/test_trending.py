@@ -91,7 +91,7 @@ class FakeIo:
             items.append(series)
             for f in sorted(d.rglob("*.mp4")):
                 ep = f"{path}/{f.relative_to(d).as_posix()}"
-                items.append({"Id": sid(ep), "Type": "Episode", "Name": f.stem, "Path": ep, "SeriesId": series["Id"], "ParentId": sid(path, "season"), "RunTimeTicks": 100000000, "ProviderIds": {}})
+                items.append({"Id": sid(ep), "Type": "Episode", "Name": f.stem, "Path": ep, "SeriesId": series["Id"], "ParentId": sid(path, "season"), "RunTimeTicks": 120000000, "ProviderIds": {}})
         self.tv = items
 
     def scan_movies(self):
@@ -384,16 +384,18 @@ class SyncTest(Base):
         self.assertEqual(self.run_sync(), 0, self.out)
         idx = json.loads(self.paths.index.read_text())
         self.assertEqual(oct(self.paths.index.stat().st_mode & 0o777), "0o644")
-        self.assertEqual((idx["library"], idx["runtimeTicks"]), (LIB, 100000000))
+        self.assertNotIn("library", idx)
+        self.assertNotIn("runtimeTicks", idx)
         a = self.item("Alpha")
         rec = idx["items"][a["Id"]]
         by_name = {ms["Path"].rsplit("/", 1)[1]: ms["Id"] for ms in a["MediaSources"]}
         self.assertEqual(rec["x"], "x1")
         self.assertEqual(rec["t"], "Alpha")
+        self.assertEqual(rec["rt"], 100000000)
         self.assertEqual(rec["modes"], {by_name["Alpha (2026) - ⬇ Download movie now.mp4"]: "now", by_name["Alpha (2026) - 🌙 Download movie tonight · lower power cost.mp4"]: "night"})
         for ms in a["MediaSources"]:
             self.assertEqual(idx["items"][ms["Id"]], rec)
-        self.assertEqual(idx["items"][self.item("Beta")["Id"]], {"x": None, "t": "Beta", "modes": {}})
+        self.assertEqual(idx["items"][self.item("Beta")["Id"]], {"x": None, "t": "Beta", "modes": {}, "rt": 100000000})
 
     def test_stale_inputs_keep_published_state(self):
         self.write_feeds(*feeds(updated=NOW - datetime.timedelta(days=10)))
@@ -524,11 +526,11 @@ class SyncTest(Base):
         idx = json.loads(self.paths.index.read_text())
         eps = self.episodes("Delta")
         now, night = eps["S00E01 - ⬇ Download series now.mp4"], eps["S00E02 - 🌙 Download series tonight · lower power cost.mp4"]
-        rec = {"x": "x7", "t": "Delta", "modes": {now: "now", night: "night"}}
+        rec = {"x": "x7", "t": "Delta", "modes": {now: "now", night: "night"}, "rt": 120000000}
         self.assertEqual((idx["items"][now], idx["items"][night]), (rec, rec))
         self.assertNotIn(self.series("Delta")["Id"], idx["items"])
         (single,) = self.episodes("Epsilon").values()
-        self.assertEqual(idx["items"][single], {"x": None, "t": "Epsilon", "modes": {}})
+        self.assertEqual(idx["items"][single], {"x": None, "t": "Epsilon", "modes": {}, "rt": 120000000})
 
     def test_series_collections_hide_and_owned(self):
         self.assertEqual(self.run_sync(), 0, self.out)
@@ -582,6 +584,59 @@ class SyncTest(Base):
         self.assertGreater(lib_refreshes[-1], add)
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(self.writes(), [])
+
+    def with_unmatched(self, entry=None):
+        lists, coming, details, comingd = feeds()
+        lists["home"]["shows"].append(entry or {"k": "tv", "id": None, "r": 3, "u": True, "s": None, "f": None, "o": False, "n": True, "y": None,
+                                                 "t": {"en": "Instadocs: AI Gone Wild", "de": "Instadocs: AI Gone Wild"}, "p": {"en": None, "de": None}})
+        self.write_feeds(lists, coming, details, comingd)
+
+    def unmatched_item(self):
+        return next(i for i in self.io.library if i["Name"] == "Instadocs AI Gone Wild")
+
+    def home_shows(self):
+        return next(s for s in self.io.sets.values() if s["Name"] == "Top 10 Switzerland · Shows")["children"]
+
+    def test_unmatched_entry_is_a_title_only_film_placeholder_at_its_rank(self):
+        self.with_unmatched()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        d = self.paths.library / "Instadocs AI Gone Wild"
+        self.assertEqual(sorted(p.name for p in d.iterdir()), ["Instadocs AI Gone Wild.mp4", "movie.nfo", "poster.jpg"])
+        self.assertEqual(os.stat(d / "Instadocs AI Gone Wild.mp4").st_ino, os.stat(self.paths.clips / "unavailable.mp4").st_ino)
+        self.assertEqual((d / "poster.jpg").read_bytes(), tr.art.poster(None, "none", "Instadocs: AI Gone Wild"))
+        nfo = (d / "movie.nfo").read_text()
+        self.assertIn("<title>Instadocs: AI Gone Wild</title>", nfo)
+        self.assertIn(f"<plot>{tm.PREFIX['none']}</plot>", nfo)
+        self.assertNotIn("<uniqueid", nfo)
+        u = self.unmatched_item()
+        self.assertEqual(self.home_shows(), [self.series("Delta")["Id"], self.series("Epsilon")["Id"], u["Id"]])
+        idx = json.loads(self.paths.index.read_text())
+        self.assertEqual(idx["items"][u["Id"]], {"x": None, "t": "Instadocs: AI Gone Wild", "modes": {}, "rt": 100000000})
+        hide = next(s for s in self.io.injector["CustomJavaScripts"] if s["Name"] == "Trending hidden")["Script"]
+        self.assertIn(f'"{u["Id"]}"', hide)
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.writes(), [])
+
+    def test_unmatched_entry_matched_later_replaces_its_placeholder(self):
+        self.with_unmatched()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        old = self.unmatched_item()["Id"]
+        self.with_unmatched({**show(70, 3, "Instadocs: AI Gone Wild", found=False), "d": "none"})
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse((self.paths.library / "Instadocs AI Gone Wild").exists())
+        self.assertTrue(self.show_dir("Instadocs AI Gone Wild").is_dir())
+        self.assertNotIn(old, [i["Id"] for i in self.io.library])
+        self.assertEqual(self.home_shows(), [self.series("Delta")["Id"], self.series("Epsilon")["Id"], self.series("Instadocs AI Gone Wild")["Id"]])
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.writes(), [])
+
+    def test_unmatched_entry_gone_removes_its_placeholder(self):
+        self.with_unmatched()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.write_feeds(*feeds())
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse((self.paths.library / "Instadocs AI Gone Wild").exists())
+        self.assertEqual(self.home_shows(), [self.series("Delta")["Id"], self.series("Epsilon")["Id"]])
 
     def test_unresolved_shows_library_raises_before_writing_any_folder(self):
         self.io.shows_id = None

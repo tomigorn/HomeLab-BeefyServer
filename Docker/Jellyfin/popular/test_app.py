@@ -624,10 +624,10 @@ class HookBase(Base):
         self.core = app.Core(app.Config(allow_file=self.allow, audit_file=d / "audit.jsonl", request_state=d / "rs.json", origins=[ORIGIN], hook_secret=SECRET, signal_file=self.signal, dry_flag=self.dry),
                              seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now, jellyfin_admin=lambda m, p, b=None: self.admin.append((m, p, b)))
 
-    def event(self, event, at, item="ph1", ms=None, pos=None, paused=False, user="u1", disabled=False, played=False, session="s1", secret=SECRET):
+    def event(self, event, at, item="ph1", ms=None, pos=None, paused=False, user="u1", disabled=False, played=False, session="s1", secret=SECRET, runtime=10 * SEC):
         self.now = T0 + datetime.timedelta(seconds=at)
         ps = dict(CLEARED) if ms is None and pos is None else {"MediaSourceId": ms, "PositionTicks": pos, "IsPaused": paused, "CanSeek": True}
-        body = {"Event": event, "Item": {"Id": item, "Type": "Movie", "RunTimeTicks": 10 * SEC, "UserData": {"Played": played}},
+        body = {"Event": event, "Item": {"Id": item, "Type": "Movie", "RunTimeTicks": runtime, "UserData": {"Played": played}},
                 "User": {"Id": user, "Name": "anna", "Policy": {"IsDisabled": disabled}},
                 "Session": {"Id": session, "Client": "Android TV", "PlayState": ps}, "Server": {"Id": "srv"}}
         return self.core.hook("/hook/" + secret, {"Content-Type": "application/json"}, json.dumps(body).encode())
@@ -712,6 +712,15 @@ class Hook(HookBase):
         self.event("Stop", 0, ms="ms_night", pos=int(9.9 * SEC))
         self.assertEqual(len(self.requests()), 1)
         self.assertEqual(self.audits()[-1]["mode"], "night")
+
+    def test_hook_runtime_of_the_record_when_the_event_has_none(self):
+        rec = {"x": "tok-movie-xxxxxxxxxxxx", "t": "Animals", "modes": {"ms_night": "night"}, "rt": 60 * SEC}
+        self.index.write_text(json.dumps({"updated": "2026-10-28T04:39:00+00:00", "items": {"ph1": rec, "ms_night": rec}}))
+        self.event("Stop", 0, ms="ms_night", pos=int(9.9 * SEC), runtime=None)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.audits()[-1]["decision"], "tv: stopped early")
+        self.event("Stop", 1, ms="ms_night", pos=int(59.5 * SEC), runtime=None)
+        self.assertEqual(len(self.requests()), 1)
 
     def test_hook_late_session_end_does_not_request(self):
         self.event("Play", 0, ms="ms_night", pos=0)

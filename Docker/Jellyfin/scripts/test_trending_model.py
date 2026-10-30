@@ -158,11 +158,45 @@ class Plan(unittest.TestCase):
         self.assertEqual(p.placeholders, {})
         self.assertEqual(dict((s["key"], m) for s, m in p.collections)["coming"], [("real", "jf30")])
 
-    def test_unmatched_items_skipped(self):
-        l = lists(shows=[unmatched("tv", 1, "Mystery"), item("tv", 2, 2, "Known")])
+    def test_unmatched_entry_gets_title_only_placeholder_at_its_rank(self):
+        l = lists(shows=[item("tv", 1, 1, "Known"), unmatched("tv", 2, "Instadocs: AI Gone Wild"), item("tv", 3, 3, "Later")])
         p = tm.plan(l, coming(), {}, {}, {})
-        self.assertEqual([ph.title for ph in p.placeholders.values()], ["Known"])
-        self.assertEqual(len(dict((s["key"], m) for s, m in p.collections)["home-shows"]), 1)
+        ph = p.placeholders["Instadocs AI Gone Wild"]
+        self.assertEqual((ph.key, ph.kind, ph.tmdb, ph.state, ph.x, ph.badge, ph.info), ("u/instadocs-ai-gone-wild", "movie", None, "none", None, "none", None))
+        self.assertEqual(ph.files, {"Instadocs AI Gone Wild.mp4": "unavailable"})
+        self.assertEqual(ph.sort_title, "02-02 Instadocs: AI Gone Wild")
+        members = dict((s["key"], m) for s, m in p.collections)["home-shows"]
+        self.assertEqual(members, [("ph", "Known (2026)"), ("ph", "Instadocs AI Gone Wild"), ("ph", "Later (2026)")])
+        root = ET.fromstring(tm.nfo(ph).encode())
+        self.assertEqual(root.tag, "movie")
+        self.assertEqual([c.tag for c in root], ["title", "sorttitle", "plot", "dateadded"])
+        self.assertEqual(root.findtext("title"), "Instadocs: AI Gone Wild")
+        self.assertEqual(root.findtext("plot"), tm.PREFIX["none"])
+        self.assertEqual(tm.episode_nfos(ph), {})
+
+    def test_unmatched_title_in_two_lists_is_one_placeholder(self):
+        l = lists(shows=[unmatched("tv", 1, "Mystery")], rows=[row("service-8-tv", "tv", "Netflix", [unmatched("tv", 4, "Mystery")])])
+        p = tm.plan(l, coming(), {}, {}, {})
+        self.assertEqual(list(p.placeholders), ["Mystery"])
+        members = dict((s["key"], m) for s, m in p.collections)
+        self.assertEqual((members["home-shows"], members["service-8-tv"]), ([("ph", "Mystery")], [("ph", "Mystery")]))
+
+    def test_unmatched_entry_once_matched_becomes_the_normal_placeholder(self):
+        before = tm.plan(lists(shows=[unmatched("tv", 1, "Mystery")]), coming(), {}, {}, {})
+        after = tm.plan(lists(shows=[item("tv", 77, 1, "Mystery")]), coming(), {}, {}, {})
+        self.assertEqual([ph.key for ph in before.placeholders.values()], ["u/mystery"])
+        self.assertEqual([ph.key for ph in after.placeholders.values()], ["tv/77"])
+
+    def test_unmatched_without_title_or_with_id_flag_is_skipped(self):
+        odd = {**item("tv", 5, 2, "Flagged"), "u": True}
+        l = lists(shows=[unmatched("tv", 1, " : "), odd])
+        p = tm.plan(l, coming(), {}, {}, {})
+        self.assertEqual(p.placeholders, {})
+
+    def test_slug_is_stable_and_plain(self):
+        self.assertEqual(tm.slug("Instadocs: AI Gone Wild"), "instadocs-ai-gone-wild")
+        self.assertEqual(tm.slug("Café  Société!"), "cafe-societe")
+        self.assertEqual(tm.slug("?!"), "")
 
     def test_collections_cover_every_spec_in_order(self):
         l = lists(rows=[row("genre-drama-movie", "movie", "Drama", [], typ="genre")])

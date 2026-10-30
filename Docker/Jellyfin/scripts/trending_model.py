@@ -4,6 +4,7 @@ import dataclasses
 import datetime
 import copy
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 
 LIBRARY = "Trending items"
@@ -27,6 +28,7 @@ EPISODES = {
 CLIPS = ("now", "night", "unavailable", "requested", "coming")
 HOME = (("home-movies", "movies", "Top 10 Switzerland · Movies"), ("home-shows", "shows", "Top 10 Switzerland · Shows"))
 COMING = ("coming", "Coming soon")
+UNMATCHED = "u"
 KIND_NAME = {"movie": "Movies", "tv": "Shows"}
 ART_MEMBERS = 4
 # The longest clip name adds 54 bytes to the folder name; ext4 allows 255.
@@ -43,7 +45,7 @@ DATE_ADDED = "2000-01-01 00:00:00"
 class Ph:
     key: str
     kind: str
-    tmdb: int
+    tmdb: int | None
     season: int | None
     folder: str
     title: str
@@ -74,6 +76,21 @@ def collection_specs(lists):
     for i, s in enumerate(out, 1):
         s["sort"] = f"{i:02d} {s['name']}"
     return out
+
+
+def slug(title):
+    plain = "".join(c for c in unicodedata.normalize("NFKD", str(title or "").casefold()) if not unicodedata.combining(c))
+    return "-".join(re.findall(r"[a-z0-9]+", plain))
+
+
+def entry_key(e):
+    """"kind/tmdb" of a matched list entry, "u/<slug of its title>" of one TMDB did not match, None when neither."""
+    if e.get("id") and not e.get("u"):
+        return f"{e['k']}/{e['id']}"
+    if e.get("u") and not e.get("id"):
+        s = slug((e.get("t") or {}).get("en") or (e.get("t") or {}).get("de"))
+        return f"{UNMATCHED}/{s}" if s else None
+    return None
 
 
 def folder_name(title, year, taken, kind="movie"):
@@ -133,14 +150,14 @@ def _state(entry, request):
 def plan(lists, coming, details, owned, states):
     """Plan of placeholders {folder: Ph}, collections [(spec, [("ph", folder) | ("real", item id)])] in rank order and art {spec key: [{"p": poster, "b": backdrop}] of the first members}.
     details: {details token: tmdb_details projection} (details.json and coming.json entries); owned: {"kind/tmdb": Jellyfin item id}; states: {"kind/tmdb": (request status, mode)}.
-    One placeholder per title (kind/tmdb): its sort title "LL-RR <title>" comes from the first collection it appears in; a popular entry wins over a Coming soon one."""
+    One placeholder per title (kind/tmdb, or u/<slug> for an entry TMDB did not match: a title-only film placeholder, unavailable): its sort title "LL-RR <title>" comes from the first collection it appears in; a popular entry wins over a Coming soon one."""
     specs = collection_specs(lists)
     by_ref = {v.get("ref"): v for v in details.values() if isinstance(v, dict) and v.get("ref")}
     entries = {s["key"]: [] for s in specs}
     for key, home_key, _ in HOME:
-        entries[key] = [e for e in (lists.get("home") or {}).get(home_key) or [] if not e.get("u") and e.get("id")]
+        entries[key] = [e for e in (lists.get("home") or {}).get(home_key) or [] if entry_key(e)]
     for r in lists.get("rows") or []:
-        entries[r["id"]] = [e for e in r.get("items") or [] if not e.get("u") and e.get("id")]
+        entries[r["id"]] = [e for e in r.get("items") or [] if entry_key(e)]
 
     titles = {}
     for i, spec in enumerate(specs, 1):
@@ -156,8 +173,9 @@ def plan(lists, coming, details, owned, states):
                 t.setdefault("coming_rank", rank)
             continue
         for e in entries[spec["key"]]:
-            key = f"{e['k']}/{e['id']}"
-            t = titles.setdefault(key, {"kind": e["k"], "tmdb": int(e["id"]), "first": (i, e["r"]), "entry": None, "info": None, "date": None})
+            key = entry_key(e)
+            u = key.startswith(UNMATCHED + "/")
+            t = titles.setdefault(key, {"kind": "movie" if u else e["k"], "tmdb": None if u else int(e["id"]), "first": (i, e["r"]), "entry": None, "info": None, "date": None})
             if t["entry"] is None or (e.get("x") and not t["entry"].get("x")):
                 t["entry"] = e
             t["info"] = t["info"] or details.get(e.get("d")) or by_ref.get(key)
@@ -198,7 +216,7 @@ def plan(lists, coming, details, owned, states):
         if spec["key"] == COMING[0]:
             keys = [k for k, t in sorted(titles.items(), key=lambda kv: kv[1].get("coming_rank", 0)) if "coming_rank" in t]
         else:
-            keys = [f"{e['k']}/{e['id']}" for e in entries[spec["key"]]]
+            keys = [entry_key(e) for e in entries[spec["key"]]]
         collections.append((spec, [m for m in map(member, keys) if m]))
         art[spec["key"]] = [art_ref(k) for k in keys if member(k)][:ART_MEMBERS]
     return Plan(placeholders, collections, art)

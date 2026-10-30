@@ -696,7 +696,7 @@ class Core:
         if mode not in ("now", "night"):
             self.audit(**log, decision="tv: unknown version")
             return
-        runtime = self.ticks(item.get("RunTimeTicks")) or idx["runtime"]
+        runtime = self.ticks(item.get("RunTimeTicks")) or self.ticks(rec.get("rt")) or idx["runtime"]
         if est is None or not runtime or est < runtime - 2 * TICKS:
             self.audit(**log, decision="tv: stopped early")
             return
