@@ -114,8 +114,8 @@ class GetOnlyTest(unittest.TestCase):
 
 class TargetsTest(unittest.TestCase):
     def test_floppy_users_minus_skip_and_exclude(self):
-        floppy = ["tomigorn", "jane", "floppy-sync", "root", "abr", "bob"]
-        self.assertEqual(ap.targets(floppy, ["bob", "# comment", ""]), ["jane", "tomigorn"])
+        floppy = ["zoe", "jane", "floppy-sync", "root", "abr", "bob"]
+        self.assertEqual(ap.targets(floppy, ["bob", "# comment", ""]), ["jane", "zoe"])
 
     def test_read_exclude_ignores_missing_file_and_comments(self):
         with tempfile.TemporaryDirectory() as d:
@@ -125,8 +125,8 @@ class TargetsTest(unittest.TestCase):
             self.assertEqual(ap.read_exclude(p), ["bob", "jane"])
 
     def test_floppy_users_parses_the_result_line(self):
-        out = 'noise\nRESULT ["tomigorn", "jane", "bad name"]\n'
-        self.assertEqual(ap.floppy_users(lambda code: (0, out)), ["tomigorn", "jane"])
+        out = 'noise\nRESULT ["zoe", "jane", "bad name"]\n'
+        self.assertEqual(ap.floppy_users(lambda code: (0, out)), ["zoe", "jane"])
         with self.assertRaises(ap.AbsError):
             ap.floppy_users(lambda code: (1, "Traceback\n"))
 
@@ -134,21 +134,21 @@ class TargetsTest(unittest.TestCase):
 class ServiceKeyTest(unittest.TestCase):
     def test_accepts_only_the_admin_service_user(self):
         ap.check_service(FakeAbs(me=SERVICE))
-        for me in [{**SERVICE, "username": "tomigorn"}, {**SERVICE, "type": "user"}, {**SERVICE, "type": "root"}, {**SERVICE, "isActive": False}]:
+        for me in [{**SERVICE, "username": "zoe"}, {**SERVICE, "type": "user"}, {**SERVICE, "type": "root"}, {**SERVICE, "isActive": False}]:
             with self.subTest(me=me), self.assertRaises(ap.AbsError):
                 ap.check_service(FakeAbs(me=me))
 
 
 class SyncedUsersTest(unittest.TestCase):
     def test_matches_targets_and_skips_service_root_inactive(self):
-        users = [abs_user("u1", "tomigorn"), abs_user("u2", "jane", "admin"), abs_user("u3", "root", "root"), abs_user("u4", "floppy-sync", "admin"),
+        users = [abs_user("u1", "zoe"), abs_user("u2", "jane", "admin"), abs_user("u3", "root", "root"), abs_user("u4", "floppy-sync", "admin"),
                  abs_user("u5", "abr"), abs_user("u6", "gone", active=False), abs_user("u7", "nofloppy"), abs_user("u8", "boss", "root")]
-        got = ap.synced_users(FakeAbs(users), ["tomigorn", "jane", "root", "floppy-sync", "abr", "gone", "boss"])
-        self.assertEqual(got, [("u2", "jane"), ("u1", "tomigorn")])
+        got = ap.synced_users(FakeAbs(users), ["zoe", "jane", "root", "floppy-sync", "abr", "gone", "boss"])
+        self.assertEqual(got, [("u2", "jane"), ("u1", "zoe")])
 
     def test_rejects_unsafe_ids(self):
         with self.assertRaises(ap.AbsError):
-            ap.synced_users(FakeAbs([abs_user("../x", "tomigorn")]), ["tomigorn"])
+            ap.synced_users(FakeAbs([abs_user("../x", "zoe")]), ["zoe"])
 
 
 class PlanTest(unittest.TestCase):
@@ -310,7 +310,7 @@ class FetchTest(unittest.TestCase):
         self.assertNotIn("/api/users/u3", fake.calls)
 
     def test_wrong_key_syncs_nobody(self):
-        fake = FakeAbs([abs_user("u1", "alice")], {"u1": [entry("b1", 5)]}, me={**SERVICE, "username": "tomigorn"})
+        fake = FakeAbs([abs_user("u1", "alice")], {"u1": [entry("b1", 5)]}, me={**SERVICE, "username": "zoe"})
         _, pending, failed = self.run_fetch(fake, ["alice"])
         self.assertEqual((pending, failed), ([], ["floppy-sync"]))
         self.assertEqual(fake.calls, ["/api/me"])
@@ -339,7 +339,7 @@ class ApplyTest(unittest.TestCase):
         self.assertEqual((ok, seen, pending, applied), (True, [{"user": "alice"}], False, True))
 
     def test_payload_for_another_user_is_refused(self):
-        ok, seen, pending, applied = self.run_apply("RESULT ok tomigorn\n", user="tomigorn", allowed=("alice", "tomigorn"))
+        ok, seen, pending, applied = self.run_apply("RESULT ok zoe\n", user="zoe", allowed=("alice", "zoe"))
         self.assertEqual((ok, seen, pending, applied), (False, [], True, False))
 
     def test_member_not_in_targets_is_refused(self):
@@ -394,7 +394,7 @@ class StoreKeyTest(unittest.TestCase):
         self.assertNotIn("k1", msg)
 
     def test_refuses_another_users_key(self):
-        for me in [{**SERVICE, "username": "tomigorn"}, {**SERVICE, "type": "user"}]:
+        for me in [{**SERVICE, "username": "zoe"}, {**SERVICE, "type": "user"}]:
             with self.subTest(me=me), self.assertRaises(ap.AbsError):
                 self.store(me)
 
