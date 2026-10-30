@@ -67,6 +67,22 @@ DROP = {"email", "apiKey", "plexToken", "jellyfinAuthToken", "jellyfinDeviceId",
 USER_KEYS = {"requestedBy", "modifiedBy", "createdBy", "user"}
 HOUSEHOLD = {"id": 0, "displayName": "Household"}
 METHOD_RE = re.compile(r"[A-Z]{1,10}")
+REQUEST_KEYS = {"mediaId", "mediaType", "is4k", "seasons", "serverId", "profileId", "rootFolder", "tvdbId", "imdbId"}
+MAX_REQUEST_BODY = 2048
+MAX_ID = 2 ** 31
+MAX_SEASONS = 100
+IMDB_RE = re.compile(r"tt[0-9]{1,10}")
+ROOT_FOLDER = "Library"
+BAD_REQUEST = {"message": "Bad request"}
+NOT_LISTED = "Only titles from the Popular lists can be requested"
+NO_RELEASE = "No good release yet; checked nightly"
+OWNED = "Already in the library or requested"
+DECLINED = "This title was declined by an admin"
+DAILY_CAP = "Today's request quota for everyone is used up"
+RATE = "Too many requests, try again in a minute"
+NO_NOW = "Download now is not available, choose Tonight"
+NOT_TAKEN = "Seerr could not take the request"
+NOT_SET_UP = "Requests are not set up"
 
 
 def b64(raw):
@@ -271,6 +287,8 @@ class Facade:
                 status, out = 200, self.empty(rel)
             elif kind == "proxy":
                 status, out = self.proxy(path_q, who)
+            elif (method, rel) == ("POST", "request"):
+                status, out = self.create_request(who, body, headers)
             else:
                 status, out = 404, {"message": "Not found"}
             return self.rotated(who, status, out, []) + (rel, who["jf_id"])
@@ -336,6 +354,134 @@ class Facade:
         if rel == "discover/watchlist":
             return {"page": 1, "totalPages": 1, "totalResults": 0, "results": []}
         return {"pageInfo": {"pages": 0, "pageSize": 25, "results": 0, "page": 1}, "results": []}
+
+    # --- requests -----------------------------------------------------------
+    @staticmethod
+    def parse_request(body):
+        """The POST request body when it has Seerr's shape and only values the facade offers (except is4k, refused later), else None."""
+        try:
+            req = json.loads(body)
+        except (ValueError, RecursionError):
+            return None
+        if not isinstance(req, dict) or not set(req) <= REQUEST_KEYS:
+            return None
+        mid, kind, seasons = req.get("mediaId"), req.get("mediaType"), req.get("seasons")
+        if not is_int(mid) or not 0 < mid < MAX_ID or kind not in ("movie", "tv"):
+            return None
+        if req.get("is4k") is not None and not isinstance(req["is4k"], bool):
+            return None
+        if req.get("serverId") is not None and not (is_int(req["serverId"]) and req["serverId"] in (0, 1)):
+            return None
+        if req.get("profileId") is not None and not (is_int(req["profileId"]) and req["profileId"] == 0):
+            return None
+        if req.get("rootFolder") is not None and req["rootFolder"] != ROOT_FOLDER:
+            return None
+        if req.get("tvdbId") is not None and not (is_int(req["tvdbId"]) and 0 <= req["tvdbId"] < MAX_ID):
+            return None
+        if req.get("imdbId") is not None and not (isinstance(req["imdbId"], str) and IMDB_RE.fullmatch(req["imdbId"])):
+            return None
+        if kind == "movie" and seasons is not None:
+            return None
+        if kind == "tv" and seasons != "all":
+            if not isinstance(seasons, list) or not 0 < len(seasons) <= MAX_SEASONS or not all(is_int(n) and 0 <= n < 1000 for n in seasons):
+                return None
+        return req
+
+    def create_request(self, caller, body, headers):
+        """(status, body) of POST request: Moonfin's request mapped onto the Popular rules (Core.send) as the caller; never creates a Seerr user."""
+        if (headers.get("content-type") or "").split(";")[0].strip().lower() != "application/json":
+            return 415, {"message": "JSON only"}
+        if len(body) > MAX_REQUEST_BODY:
+            return 413, {"message": "Too large"}
+        jf_id = caller["jf_id"]
+        if not self.core.rate_ok(jf_id):
+            return 429, {"message": RATE}
+        log = {"user": caller["name"], "userId": jf_id, "entry": None, "mode": None, "via": "moonfin"}
+        req = self.parse_request(body)
+        if req is None:
+            self.core.audit(**log, decision="bad request")
+            return 400, dict(BAD_REQUEST)
+        kind, tmdb = req["mediaType"], req["mediaId"]
+        mode = "now" if req.get("serverId") == 1 else "night"
+        entry = self.core.allow_index().get((kind, tmdb))
+        log.update(entry=entry["ref"] if entry else f"{kind}/{tmdb}", mode=mode)
+        if req.get("is4k"):
+            self.core.audit(**log, decision="refused: 4k")
+            return 403, {"message": "4K is not offered"}
+        if not entry:
+            if self.core.no_release(kind, tmdb):
+                self.core.audit(**log, decision="refused: no release")
+                return 403, {"message": NO_RELEASE}
+            self.core.audit(**log, decision="unknown entry")
+            return 403, {"message": NOT_LISTED}
+        log["title"] = entry["title"]
+        if kind == "tv" and req["seasons"] != "all" and entry["season"] not in req["seasons"]:
+            self.core.audit(**log, decision="refused: other season")
+            return 403, {"message": f"Only season {entry['season']} can be requested"}
+        user = {"id": jf_id, "name": caller["name"]}
+        dry = self.core.cfg.dry_flag.exists()
+        try:
+            with self.core.user_lock(jf_id):
+                refused = self.dry_refusal(jf_id, kind, mode, log) if dry else None
+                if refused:
+                    return refused
+                code, res = self.core.send(user, entry, mode, dry, log, create_service=False)
+        except urllib.error.HTTPError as e:
+            e.close()
+            self.core.audit(**log, decision=f"seerr error: HTTP {e.code}")
+            return 500, {"message": NOT_TAKEN}
+        except (OSError, ValueError, http.client.HTTPException) as e:
+            self.core.audit(**log, decision=f"seerr error: {type(e).__name__}")
+            return 500, {"message": NOT_TAKEN}
+        me = {"id": caller["uid"], "displayName": caller["name"]}
+        if code == 200 and dry:
+            self.core.audit(**log, decision="dry-run")
+            return 201, self.synthetic(entry, me)
+        if code == 200:
+            return 201, self.created(res.get("request"), entry, caller, me)
+        return self.refusal(code, res)
+
+    def dry_refusal(self, jf_id, kind, mode, log):
+        """The refusal the real request would get from the limits or the missing download-now tag, else None (dry run only)."""
+        left, today, _ = self.core.overview(jf_id)
+        if left <= 0:
+            self.core.audit(**log, decision="dry-run: refused: user limit")
+            return self.refusal(429, {"error": "limit"})
+        if today >= self.core.cfg.daily_max:
+            self.core.audit(**log, decision="dry-run: refused: daily cap")
+            return self.refusal(429, {"error": "daily cap"})
+        if mode == "now" and self.core.now_tag(kind) is None:
+            self.core.audit(**log, decision="dry-run: refused: no download-now tag")
+            return self.refusal(503, {"error": "download now unavailable"})
+        return None
+
+    def refusal(self, code, res):
+        """Seerr-shaped answer for a refused Core.send() result (spec "Errors")."""
+        error = res.get("error") if isinstance(res, dict) else None
+        if code == 409:
+            return (403, {"message": DECLINED}) if error == "declined" else (409, {"message": OWNED})
+        if code == 429:
+            if error == "limit":
+                return 403, {"message": f"Request quota reached: {self.core.cfg.limit} per {self.core.cfg.days} days"}
+            return 403, {"message": DAILY_CAP}
+        if code == 503:
+            return 503, {"message": NOT_SET_UP if error == "service user missing" else NO_NOW}
+        return 500, {"message": NOT_TAKEN}
+
+    @staticmethod
+    def synthetic(entry, me):
+        seasons = [{"id": 0, "seasonNumber": entry["season"], "status": 1}] if entry["kind"] == "tv" else []
+        return {"id": 0, "status": 1, "type": entry["kind"], "is4k": False, "media": {"tmdbId": entry["tmdb"], "mediaType": entry["kind"], "status": 1},
+                "requestedBy": me, "seasons": seasons}
+
+    def created(self, request, entry, caller, me):
+        """The created Seerr request, scrubbed, as the caller's own."""
+        if not isinstance(request, dict):
+            return self.synthetic(entry, me)
+        rid = request.get("id")
+        out = scrub(request, caller["uid"], {rid} if is_int(rid) else set(), caller["name"])
+        out["requestedBy"] = dict(me)
+        return out
 
     def mine(self, me):
         """Seerr request ids the caller made (filled in with the request routes)."""

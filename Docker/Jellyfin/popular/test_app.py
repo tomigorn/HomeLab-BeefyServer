@@ -4,6 +4,7 @@ import io
 import json
 import pathlib
 import socket
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -230,6 +231,88 @@ class Requests(Base):
         self.assertEqual((code, body["state"]), (200, "requestable"))
         self.assertEqual([p for p in self.seerr.posts if p[0] == "request"], [])
         self.assertEqual(body["left"], 10)
+
+
+class Remembered(Base):
+    GUEST = {"id": "11111111222233334444555555555555", "name": "guest"}
+
+    def entry(self, x="tok-movie-xxxxxxxxxxxx"):
+        return self.core.allow()[x]
+
+    def test_send_returns_created_and_remembers_it(self):
+        code, body = self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.assertEqual(code, 200)
+        created_id = 900 + len(self.seerr.posts)
+        self.assertEqual(body["request"], {"id": created_id})
+        self.assertEqual((body["ok"], body["state"], body["left"]), (True, "requested", 9))
+        self.assertEqual(self.core.requested_ids("70d44a367988405d8792444c1c716d9a"), [created_id])
+        self.assertEqual(self.core.requested_ids(self.GUEST["id"]), [])
+
+    def test_send_without_create_service_never_creates_user(self):
+        log = {"user": "guest", "userId": self.GUEST["id"], "entry": "movie/101", "mode": "night", "via": "moonfin"}
+        code, body = self.core.send(self.GUEST, self.entry(), "night", False, log, create_service=False)
+        self.assertEqual((code, body), (503, {"error": "service user missing"}))
+        self.assertNotIn("user", [p[0] for p in self.seerr.posts])
+        self.assertEqual([p for p in self.seerr.posts if p[0] == "request"], [])
+        self.assertEqual(self.audit()[-1]["decision"], "refused: no service user")
+        self.assertEqual(self.core.overview(self.GUEST["id"])[0], 10)
+        self.assertEqual(self.core.requested_ids(self.GUEST["id"]), [])
+
+    def test_send_with_existing_service_user_and_no_create(self):
+        self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, "permissions": 160})
+        code, body = self.core.send(self.GUEST, self.entry(), "night", False, {"user": "guest", "userId": self.GUEST["id"]}, create_service=False)
+        self.assertEqual((code, self.seerr.posts[-1][2]), (200, 20))
+        self.assertEqual(self.core.requested_ids(self.GUEST["id"]), [body["request"]["id"]])
+
+    def test_user_requests_backfilled_from_audit_once(self):
+        d = pathlib.Path(self.tmp.name) / "old"
+        d.mkdir()
+        con = sqlite3.connect(d / "state.db")
+        con.execute("CREATE TABLE requests (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, ref TEXT, at TEXT NOT NULL, day TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)")
+        con.commit()
+        con.close()
+        u = "70d44a367988405d8792444c1c716d9a"
+        line = lambda rid, decision="requested", user=u: json.dumps({"at": "2026-09-01T20:00:00+00:00", "decision": decision, "userId": user, "requestId": rid}) + "\n"
+        (d / "audit.jsonl").write_text(line(11) + line(12, "refused: owned") + line(13, user="other") + line(None) + "not json\n")
+        (d / "audit.jsonl.1").write_text(line(5) + line(11))
+        (d / "audit.jsonl.2").write_text(line("7"))
+        cfg = lambda: app.Config(allow_file=self.allow, audit_file=d / "audit.jsonl", request_state=d / "rs.json", origins=[ORIGIN])
+        core = app.Core(cfg(), seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now)
+        self.assertEqual(sorted(core.requested_ids(u)), [5, 11])
+        self.assertEqual(core.requested_ids("other"), [13])
+        with core.db() as con:
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM requests").fetchone()[0], 0)
+        (d / "audit.jsonl").write_text(line(99))
+        core = app.Core(cfg(), seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now)
+        self.assertEqual(sorted(core.requested_ids(u)), [5, 11])
+
+    def test_user_requests_never_pruned(self):
+        self.core.remember("70d44a367988405d8792444c1c716d9a", 3)
+        self.now = NOW + datetime.timedelta(days=400)
+        self.allow.write_text(self.allow.read_text().replace("2026-10-28T04:39:00", (NOW + datetime.timedelta(days=399)).isoformat()))
+        self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"})[0], 200)
+        self.assertIn(3, self.core.requested_ids("70d44a367988405d8792444c1c716d9a"))
+        self.core.remember("70d44a367988405d8792444c1c716d9a", 3)
+        self.assertEqual(self.core.requested_ids("70d44a367988405d8792444c1c716d9a").count(3), 1)
+
+    def test_allow_index_collapses_duplicates(self):
+        data = json.loads(self.allow.read_text())
+        data["entries"]["tok-movie-dup-xxxxxxxx"] = dict(data["entries"]["tok-movie-xxxxxxxxxxxx"])
+        data["entries"]["tok-tv-dup-xxxxxxxxxxx"] = dict(data["entries"]["tok-tv-xxxxxxxxxxxxxxx"])
+        self.allow.write_text(json.dumps(data))
+        idx = self.core.allow_index()
+        self.assertEqual(set(idx), {("movie", 101), ("tv", 202)})
+        self.assertEqual((idx[("movie", 101)]["ref"], idx[("tv", 202)]["season"]), ("movie/101", 4))
+
+    def test_no_release_from_details_sidecar(self):
+        d = pathlib.Path(self.tmp.name)
+        (d / "details.json").write_text(json.dumps({"updated": "2026-10-28T04:39:00", "entries": {"d" * 20: {"k": "movie", "id": 404}, "e" * 20: {"k": "tv", "id": 101}, "f" * 20: {"k": "movie", "id": 101}}}))
+        self.assertTrue(self.core.no_release("movie", 404))
+        self.assertTrue(self.core.no_release("tv", 101))
+        self.assertTrue(self.core.no_release("movie", 303))
+        self.assertFalse(self.core.no_release("movie", 101))
+        self.assertFalse(self.core.no_release("movie", 999))
+        self.assertFalse(self.core.no_release("tv", 404))
 
 
 class Noise(Base):

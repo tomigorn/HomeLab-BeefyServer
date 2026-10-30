@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import unittest
+import unittest.mock
 import urllib.error
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -680,6 +681,248 @@ class ReadProxy(FacadeBase):
         status, _, extra = self.get("movie/550")
         self.assertEqual(status, 200)
         self.assertIsNotNone(cookie_of(extra))
+
+
+class RequestSeerr(test_app.FakeSeerr):
+    def __init__(self):
+        super().__init__()
+        self.users.append(dict(SERVICE))
+        self.error, self.details_error, self.tags = None, None, [{"id": 5, "label": "download-now"}]
+
+    def __call__(self, method, path, body=None, user=None):
+        if method == "GET" and path.startswith("/api/v1/service/") and path.count("/") == 5:
+            return {"tags": self.tags}
+        if method == "GET" and path.startswith(("/api/v1/movie/", "/api/v1/tv/")) and self.details_error:
+            raise self.details_error
+        if method == "POST" and path == "/api/v1/request":
+            if self.error:
+                raise self.error
+            self.posts.append(("request", body, user))
+            rid = 900 + len(self.posts)
+            return {"id": rid, "status": 2, "type": body["mediaType"], "is4k": False, "media": {"tmdbId": body["mediaId"], "status": 3},
+                    "requestedBy": {"id": user, "email": "jellyfin-popular", "displayName": "Jellyfin popular", "plexToken": "x"},
+                    "modifiedBy": {"id": user, "email": "jellyfin-popular"}, "seasons": [{"id": 1, "seasonNumber": s, "status": 2} for s in body.get("seasons", [])]}
+        return super().__call__(method, path, body, user)
+
+
+class CreateRequest(FacadeBase):
+    MOVIE = {"mediaId": 101, "mediaType": "movie"}
+    TV = {"mediaId": 202, "mediaType": "tv", "seasons": "all"}
+    ME = {"id": facade.FIRST_UID, "displayName": "Jane Doe"}
+
+    def setUp(self):
+        super().setUp()
+        self.seerr = RequestSeerr()
+        self.core.seerr = self.seerr
+        _, self.cookie = self.sign_in()
+
+    def post(self, body, cookie=True):
+        raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+        return self.call("POST", "request", cookie=self.cookie if cookie is True else cookie, body=raw)
+
+    def requests(self):
+        return [p for p in self.seerr.posts if p[0] == "request"]
+
+    def fill_requests(self, n, user=JF_ID):
+        with self.core.db() as con:
+            for _ in range(n):
+                con.execute("INSERT INTO requests (user_id, ref, at, day, done) VALUES (?, 'x', ?, ?, 1)", (user, self.core.iso(self.now), self.core.day(self.now)))
+
+    def test_needs_cookie(self):
+        self.assertEqual(self.post(self.MOVIE, cookie=None)[:2], (401, {"message": "Unauthorized"}))
+        self.assertEqual(self.requests(), [])
+
+    def test_success_201_scrubbed_requested_by_me(self):
+        status, out, _ = self.post(self.MOVIE)
+        self.assertEqual(status, 201)
+        self.assertEqual((out["id"], out["requestedBy"], out["modifiedBy"]), (900 + len(self.seerr.posts), self.ME, self.ME))
+        self.assertNotIn("jellyfin-popular", json.dumps(out))
+        self.assertNotIn("plexToken", json.dumps(out))
+        self.assertEqual(self.requests()[-1], ("request", {"mediaType": "movie", "mediaId": 101}, 20))
+        self.assertEqual(self.core.requested_ids(JF_ID), [out["id"]])
+
+    def test_server_0_absent_is_night_1_is_now_with_tag(self):
+        for body, mode, tags in [(self.MOVIE, "night", None), (dict(self.MOVIE, serverId=0), "night", None), (dict(self.MOVIE, serverId=None), "night", None), (dict(self.MOVIE, serverId=1), "now", [5])]:
+            status, out, _ = self.post(body)
+            self.assertEqual(status, 201, (body, out))
+            self.assertEqual(self.requests()[-1][1].get("tags"), tags, body)
+            self.assertEqual(self.audit()[-1]["mode"], mode, body)
+
+    def test_other_server_profile_or_root_400(self):
+        for extra in ({"serverId": 2}, {"serverId": -1}, {"serverId": "1"}, {"serverId": True}, {"profileId": 1}, {"profileId": "0"}, {"rootFolder": "/movies"}, {"rootFolder": ""}):
+            self.assertEqual(self.post(dict(self.MOVIE, **extra))[:2], (400, {"message": "Bad request"}), extra)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.post(dict(self.MOVIE, serverId=0, profileId=0, rootFolder="Library", tvdbId=None, imdbId="tt0000001"))[0], 201)
+
+    def test_is4k_refused(self):
+        self.assertEqual(self.post(dict(self.MOVIE, is4k=True))[:2], (403, {"message": "4K is not offered"}))
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.post(dict(self.MOVIE, is4k=False))[0], 201)
+
+    def test_extra_keys_400(self):
+        for extra in ({"userId": 1}, {"tags": [5]}, {"languageProfileId": 1}, {"rootFolderId": 0}):
+            self.assertEqual(self.post(dict(self.MOVIE, **extra))[:2], (400, {"message": "Bad request"}), extra)
+        self.assertEqual(self.requests(), [])
+
+    def test_malformed_bodies_are_400(self):
+        sent = []
+        self.core.send = lambda *a, **k: sent.append(a)
+        bodies = [b"[]", b"null", b"5", b'"x"', b"{bad", b"", b"\xff\xfe", json.dumps([self.MOVIE]).encode(),
+                  {"mediaType": "movie"}, {"mediaId": 101}, {"mediaId": "101", "mediaType": "movie"}, {"mediaId": 101.0, "mediaType": "movie"},
+                  {"mediaId": True, "mediaType": "movie"}, {"mediaId": 0, "mediaType": "movie"}, {"mediaId": -5, "mediaType": "movie"}, {"mediaId": 10 ** 12, "mediaType": "movie"},
+                  {"mediaId": 101, "mediaType": "person"}, {"mediaId": 101, "mediaType": "Movie"}, {"mediaId": 101, "mediaType": None},
+                  {"mediaId": 202, "mediaType": "tv", "seasons": []}, {"mediaId": 202, "mediaType": "tv", "seasons": ["4"]}, {"mediaId": 202, "mediaType": "tv", "seasons": [4.0]},
+                  {"mediaId": 202, "mediaType": "tv", "seasons": [True]}, {"mediaId": 202, "mediaType": "tv", "seasons": "ALL"}, {"mediaId": 202, "mediaType": "tv", "seasons": {"4": 1}},
+                  {"mediaId": 202, "mediaType": "tv", "seasons": [-1]}, {"mediaId": 202, "mediaType": "tv", "seasons": list(range(200))}, {"mediaId": 202, "mediaType": "tv"},
+                  {"mediaId": 101, "mediaType": "movie", "seasons": [1]}, {"mediaId": 101, "mediaType": "movie", "seasons": "all"},
+                  dict(self.MOVIE, is4k="true"), dict(self.MOVIE, is4k=1), dict(self.MOVIE, tvdbId="x"), dict(self.MOVIE, imdbId=5), dict(self.MOVIE, imdbId="x" * 100)]
+        for body in bodies:
+            self.core.hits.clear()
+            self.assertEqual(self.post(body)[:2], (400, {"message": "Bad request"}), body)
+        self.assertEqual((sent, self.requests()), ([], []))
+
+    def test_not_json_or_too_large(self):
+        headers = {"Content-Type": "text/plain", "Cookie": f"connect.sid={self.cookie}"}
+        self.assertEqual(self.facade.handle("POST", "/api/v1/request", headers, json.dumps(self.MOVIE).encode())[:2], (415, {"message": "JSON only"}))
+        headers["Content-Type"] = "application/json; charset=utf-8"
+        self.assertEqual(self.facade.handle("POST", "/api/v1/request", headers, json.dumps(self.MOVIE).encode())[0], 201)
+        self.assertEqual(self.post(json.dumps(dict(self.MOVIE, imdbId=" " * 2100)).encode())[:2], (413, {"message": "Too large"}))
+
+    def test_tv_all_or_list_with_season_requests_only_that_season(self):
+        for seasons in ("all", [4], [1, 2, 3, 4, 5]):
+            self.seerr.media = {}
+            status, out, _ = self.post(dict(self.TV, seasons=seasons))
+            self.assertEqual(status, 201, (seasons, out))
+            self.assertEqual(self.requests()[-1][1], {"mediaType": "tv", "mediaId": 202, "seasons": [4]}, seasons)
+            self.assertEqual([s["seasonNumber"] for s in out["seasons"]], [4])
+
+    def test_tv_list_without_season_403_message(self):
+        self.assertEqual(self.post(dict(self.TV, seasons=[1, 3]))[:2], (403, {"message": "Only season 4 can be requested"}))
+        self.assertEqual(self.requests(), [])
+
+    def test_not_listed_vs_no_release_messages(self):
+        d = pathlib.Path(self.tmp.name)
+        (d / "details.json").write_text(json.dumps({"updated": "2026-10-28T04:39:00", "entries": {"d" * 20: {"k": "tv", "id": 77}}}))
+        not_listed = (403, {"message": "Only titles from the Popular lists can be requested"})
+        no_release = (403, {"message": "No good release yet; checked nightly"})
+        self.assertEqual(self.post({"mediaId": 999, "mediaType": "movie"})[:2], not_listed)
+        self.assertEqual(self.post({"mediaId": 101, "mediaType": "tv", "seasons": "all"})[:2], not_listed)
+        self.assertEqual(self.post({"mediaId": 303, "mediaType": "movie"})[:2], no_release)
+        self.assertEqual(self.post({"mediaId": 77, "mediaType": "tv", "seasons": [1]})[:2], no_release)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual([a["decision"] for a in self.audit()[-4:]], ["unknown entry", "unknown entry", "refused: no release", "refused: no release"])
+
+    def error_rows(self):
+        """(setup, body, status, message) per row of the spec Errors table."""
+        def media(status, req=None):
+            return lambda: self.seerr.media.update({"movie/101": {"status": status, "requests": req or []}})
+
+        def attr(obj, name, value):
+            return lambda: setattr(obj, name, value() if callable(value) else value)
+        return [
+            (media(5), self.MOVIE, 409, "Already in the library or requested"),
+            (media(3, [{"status": 2}]), self.MOVIE, 409, "Already in the library or requested"),
+            (media(1, [{"status": 3}]), self.MOVIE, 403, "This title was declined by an admin"),
+            (lambda: None, {"mediaId": 999, "mediaType": "movie"}, 403, "Only titles from the Popular lists can be requested"),
+            (lambda: None, {"mediaId": 303, "mediaType": "movie"}, 403, "No good release yet; checked nightly"),
+            (lambda: self.fill_requests(10), self.MOVIE, 403, "Request quota reached: 10 per 7 days"),
+            (attr(self.core.cfg, "daily_max", 0), self.MOVIE, 403, "Today's request quota for everyone is used up"),
+            (attr(self.seerr, "tags", []), dict(self.MOVIE, serverId=1), 503, "Download now is not available, choose Tonight"),
+            (attr(self.seerr, "error", lambda: seerr_http_error(500)), self.MOVIE, 500, "Seerr could not take the request"),
+            (attr(self.seerr, "error", socket.timeout("timed out")), self.MOVIE, 500, "Seerr could not take the request"),
+            (attr(self.seerr, "details_error", OSError("refused")), self.MOVIE, 500, "Seerr could not take the request"),
+            (attr(self.seerr, "details_error", lambda: seerr_http_error(502)), self.MOVIE, 500, "Seerr could not take the request"),
+            (attr(self.seerr, "users", [dict(u) for u in self.seerr.users if u["id"] != 20]), self.MOVIE, 503, "Requests are not set up"),
+        ]
+
+    def test_each_error_row_status_and_message(self):
+        for i in range(len(self.error_rows())):
+            self.tearDown()
+            self.setUp()
+            setup, body, status, message = self.error_rows()[i]
+            setup()
+            got = self.post(body)
+            self.assertEqual(got, (status, {"message": message}, []), (i, body))
+            if status == 403 and "quota" in message.lower():
+                self.assertIn("quota", got[1]["message"].lower())
+            self.assertEqual(self.requests(), [], i)
+            self.assertNotIn("user", [p[0] for p in self.seerr.posts], i)
+            self.assertEqual(self.core.requested_ids(JF_ID), [], i)
+        self.assertEqual(self.core.overview(JF_ID)[0], 10)
+
+    def test_quota_message_follows_config(self):
+        self.core.cfg.limit, self.core.cfg.days = 3, 14
+        self.fill_requests(3)
+        self.assertEqual(self.post(self.MOVIE)[:2], (403, {"message": "Request quota reached: 3 per 14 days"}))
+
+    def test_never_202(self):
+        statuses = set()
+        for i in range(len(self.error_rows())):
+            self.tearDown()
+            self.setUp()
+            self.error_rows()[i][0]()
+            statuses.add(self.post(self.error_rows()[i][1])[0])
+            statuses.add(self.post(self.TV)[0])
+            self.core.cfg.dry_flag.touch()
+            statuses.add(self.post(self.TV)[0])
+        self.assertNotIn(202, statuses)
+        self.assertIn(201, statuses)
+
+    def test_rate_limit_shared_with_page(self):
+        page_token = "d" * 32
+        with unittest.mock.patch.dict(test_app.USERS, {page_token: dict(JANE)}):
+            for _ in range(self.core.cfg.rate_per_min - 1):
+                self.assertEqual(test_app.Base.post(self, {"id": "tok-movie-xxxxxxxxxxxy"}, token=page_token)[0], 403)
+            self.assertEqual(self.post({"mediaId": 999, "mediaType": "movie"})[0], 403)
+            self.assertEqual(self.post(self.MOVIE)[:2], (429, {"message": "Too many requests, try again in a minute"}))
+            self.assertEqual(test_app.Base.post(self, {"id": "tok-movie-xxxxxxxxxxxx"}, token=page_token)[0], 429)
+        self.assertEqual(self.requests(), [])
+
+    def test_audit_line_via_moonfin(self):
+        self.post(dict(self.MOVIE, serverId=1))
+        a = self.audit()[-1]
+        self.assertEqual({k: a[k] for k in ("user", "userId", "entry", "mode", "via", "decision", "title", "seerrUser", "seerrVia")},
+                         {"user": "Jane Doe", "userId": JF_ID, "entry": "movie/101", "mode": "now", "via": "moonfin", "decision": "requested", "title": "Animals",
+                          "seerrUser": 20, "seerrVia": "service user: no Seerr account"})
+        self.assertEqual(a["requestId"], self.core.requested_ids(JF_ID)[0])
+
+    def test_dry_run_no_seerr_post_audit_dry_run(self):
+        self.core.cfg.dry_flag.touch()
+        status, out, _ = self.post(self.TV)
+        self.assertEqual((status, out), (201, {"id": 0, "status": 1, "type": "tv", "is4k": False, "media": {"tmdbId": 202, "mediaType": "tv", "status": 1},
+                                                 "requestedBy": self.ME, "seasons": [{"id": 0, "seasonNumber": 4, "status": 1}]}))
+        status, out, _ = self.post(dict(self.MOVIE, serverId=1))
+        self.assertEqual((status, out["type"], out["seasons"], out["media"]), (201, "movie", [], {"tmdbId": 101, "mediaType": "movie", "status": 1}))
+        self.assertEqual(self.requests(), [])
+        self.assertEqual([(a["decision"], a["via"], a["entry"]) for a in self.audit()[-2:]], [("dry-run", "moonfin", "tv/202/s4"), ("dry-run", "moonfin", "movie/101")])
+        self.assertEqual((self.core.overview(JF_ID)[0], self.core.requested_ids(JF_ID)), (10, []))
+        self.seerr.media["movie/101"] = {"status": 5, "requests": []}
+        self.assertEqual(self.post(self.MOVIE)[:2], (409, {"message": "Already in the library or requested"}))
+
+    def test_dry_run_still_refuses_over_limit_and_daily_cap(self):
+        self.core.cfg.dry_flag.touch()
+        self.fill_requests(10)
+        self.assertEqual(self.post(self.MOVIE)[:2], (403, {"message": "Request quota reached: 10 per 7 days"}))
+        self.tearDown()
+        self.setUp()
+        self.core.cfg.dry_flag.touch()
+        self.core.cfg.daily_max = 3
+        self.fill_requests(3, user="someone-else")
+        self.assertEqual(self.post(self.MOVIE)[:2], (403, {"message": "Today's request quota for everyone is used up"}))
+        self.assertEqual(self.requests(), [])
+
+    def test_dry_run_now_without_tag_503(self):
+        self.core.cfg.dry_flag.touch()
+        self.seerr.tags = []
+        self.assertEqual(self.post(dict(self.MOVIE, serverId=1))[:2], (503, {"message": "Download now is not available, choose Tonight"}))
+        self.assertEqual(self.post(self.MOVIE)[0], 201)
+        self.assertEqual(self.requests(), [])
+
+    def test_no_service_user_created_by_facade_request(self):
+        self.seerr.users = [u for u in self.seerr.users if u["id"] != 20]
+        self.post(self.MOVIE)
+        self.assertEqual(self.seerr.posts, [])
+        self.assertEqual(self.audit()[-1]["decision"], "refused: no service user")
 
 
 def seerr_http_error(code):

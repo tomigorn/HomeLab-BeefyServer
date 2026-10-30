@@ -149,7 +149,8 @@ class Core:
             self.auth_cache[key] = (now, user)
         return user
 
-    def allow(self):
+    def allow_raw(self):
+        """Every current allow-list entry, also those without a found release."""
         try:
             data = json.loads(self.cfg.allow_file.read_text())
             upd = datetime.datetime.fromisoformat(data["updated"])
@@ -158,7 +159,25 @@ class Core:
             return {}
         if self.clock() - upd > self.cfg.list_max_age:
             return {}
-        return {k: v for k, v in (data.get("entries") or {}).items() if v.get("res")}
+        return data.get("entries") or {}
+
+    def allow(self):
+        return {k: v for k, v in self.allow_raw().items() if v.get("res")}
+
+    def allow_index(self):
+        """(kind, tmdb) -> requestable entry; rows listing the same title collapse to the first one."""
+        out = {}
+        for e in self.allow().values():
+            out.setdefault((e.get("kind"), e.get("tmdb")), e)
+        return out
+
+    def no_release(self, kind, tmdb):
+        """Listed (details sidecars or the allow-list) but without a found release, so not requestable yet."""
+        if (kind, tmdb) in self.allow_index():
+            return False
+        if any(e.get("kind") == kind and e.get("tmdb") == tmdb for e in self.allow_raw().values()):
+            return True
+        return any(isinstance(e, dict) and e.get("k") == kind and e.get("id") == tmdb for f in self.cfg.details_files for e in self.sidecar(f).values())
 
     def sidecar(self, path):
         """Entries of one details sidecar (parsed once per change of the file), {} when missing, broken or older than the allow-list may be."""
@@ -204,6 +223,45 @@ class Core:
             con.execute("CREATE TABLE IF NOT EXISTS rejects (day TEXT NOT NULL, reason TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, reason))")
             if new:
                 self.db_import(con)
+            if not con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_requests'").fetchone():
+                con.execute("CREATE TABLE IF NOT EXISTS user_requests (user_id TEXT NOT NULL, seerr_id INTEGER NOT NULL, at TEXT, PRIMARY KEY (user_id, seerr_id))")
+                self.user_requests_import(con)
+
+    def audit_lines(self):
+        """Lines of the audit log and its rotations, oldest first."""
+        f = self.cfg.audit_file
+        for path in [f.with_name(f"{f.name}.{i}") for i in range(AUDIT_KEEP, 0, -1)] + [f]:
+            try:
+                yield from path.read_text().splitlines()
+            except OSError:
+                continue
+
+    def user_requests_import(self, con):
+        """Seerr request ids of the audit log written before the user_requests table existed."""
+        for line in self.audit_lines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(r, dict) or r.get("decision") != "requested":
+                continue
+            uid, rid = r.get("userId"), r.get("requestId")
+            if not isinstance(uid, str) or not uid or not isinstance(rid, int) or isinstance(rid, bool):
+                continue
+            try:
+                at = self.iso(datetime.datetime.fromisoformat(r["at"]))
+            except (KeyError, TypeError, ValueError):
+                at = None
+            con.execute("INSERT OR IGNORE INTO user_requests (user_id, seerr_id, at) VALUES (?, ?, ?)", (uid, rid, at))
+
+    def remember(self, user_id, seerr_id):
+        with self.lock, self.db() as con:
+            con.execute("INSERT OR IGNORE INTO user_requests (user_id, seerr_id, at) VALUES (?, ?, ?)", (user_id, seerr_id, self.iso(self.clock())))
+
+    def requested_ids(self, user_id):
+        """Seerr request ids the user made through this backend, newest first; never pruned."""
+        with self.db() as con:
+            return [r for (r,) in con.execute("SELECT seerr_id FROM user_requests WHERE user_id = ? ORDER BY at DESC, seerr_id DESC", (user_id,))]
 
     def db_import(self, con):
         """Requests of the audit log written before the state db existed."""
@@ -481,7 +539,7 @@ class Core:
         with self.user_lock(user["id"]):
             return self.send(user, entry, mode, req.get("check"), log)
 
-    def send(self, user, entry, mode, check, log):
+    def send(self, user, entry, mode, check, log, create_service=True):
         details = self.seerr("GET", f"/api/v1/{entry['kind']}/{entry['tmdb']}?language=en")
         st = seerr_status(entry["kind"], entry["season"], details.get("mediaInfo"))
         if st in ("available", "requested", "declined"):
@@ -508,10 +566,15 @@ class Core:
                     self.audit(**log, decision="refused: no download-now tag")
                     return 503, {"error": "download now unavailable"}
                 payload["tags"] = [tag]
-            sid, via = self.seerr_user(user["id"])
+            try:
+                sid, via = self.seerr_user(user["id"], create=create_service)
+            except NoServiceUser:
+                self.audit(**log, decision="refused: no service user")
+                return 503, {"error": "service user missing"}
             try:
                 created = self.seerr("POST", "/api/v1/request", payload, user=sid)
             except urllib.error.HTTPError as e:
+                e.close()
                 self.audit(**log, decision=f"seerr refused: HTTP {e.code}", **self.who(log, sid, via))
                 return 502, {"error": "Seerr refused the request"}
             except (OSError, ValueError) as e:
@@ -520,8 +583,11 @@ class Core:
             ok = True
         finally:
             self.settle(rid, ok)
-        self.audit(**log, decision="requested", requestId=(created or {}).get("id"), **self.who(log, sid, via))
-        return 200, {"ok": True, "state": "requested", "left": left - 1}
+        request_id = created.get("id") if isinstance(created, dict) else None
+        self.audit(**log, decision="requested", requestId=request_id, **self.who(log, sid, via))
+        if isinstance(request_id, int) and not isinstance(request_id, bool):
+            self.remember(user["id"], request_id)
+        return 200, {"ok": True, "state": "requested", "left": left - 1, "request": created}
 
     @staticmethod
     def who(log, sid, via):
