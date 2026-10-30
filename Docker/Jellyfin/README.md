@@ -590,33 +590,37 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 
 | Where | What |
 |---|---|
-| TV, phone apps | Media / My media → **Collections & Trending** → a list (`Top 10 Switzerland · Movies`, `· Shows`, `Coming soon`, then one per service and genre) → title → **Version** → Play |
-| Versions | `⬇ Download movie now` (listed first) and `🌙 Download movie tonight · lower power cost`; shows: `series` instead of `movie`. Not downloadable yet: one clip, no download versions |
+| TV, phone apps | Media / My media → **Collections & Trending** → a list (`Top 10 Switzerland · Movies`, `· Shows`, `Coming soon`, then one per service and genre) → film → **Version** → Play; series → **Specials** → episode → Play |
+| Films | versions `⬇ Download movie now` (listed first) and `🌙 Download movie tonight · lower power cost`. Not downloadable yet: one clip, no download versions |
+| Series | real Series (rows "Series" in Swiftfin, "TV series" on Android TV): Specials = `S00E01 ⬇ Download series now`, `S00E02 🌙 Download series tonight · lower power cost`. Not downloadable / requested / coming soon: one episode with that state as title |
 | Clip | 10 s, plays to the end → request. Back or stop earlier cancels. Requested titles show `✓ Requested` until they arrive |
 | Rule | request only when position ≥ runtime − 2 s (a stop up to runtime + 30 s counts); same allow-list, limits (10 per user per 7 days, 30 per day for all), audit log and Seerr code as the Popular page |
-| Library | `Trending items` (hidden for every user, never ticked in Seerr). A film already in the library is the real item inside the collection, sorted after the placeholders |
+| Libraries | `Trending items` (movies) and `Trending shows` (tvshows), hidden for every user, never ticked in Seerr. A title already in the library is the real item inside the collection, sorted after the placeholders. Placeholder NFOs carry `<dateadded>2000-01-01</dateadded>`: they never top "Recently added" |
 | Art (`trending_art.py`) | List poster 2:3: service / genre colour, logo (Swiss cross for Top 10, calendar for Coming soon), name large, the first 3 posters fanned. List backdrop: the #1 title's backdrop darkened, logo + name. Placeholder: top-left pill `Download` / `Requested` / `Downloading`, red diagonal banner when not downloadable. Library tile: name + Top 10 posters. Top right stays free for the clients' unplayed corner |
 
 | What | Where |
 |---|---|
-| Placeholders, clips, cache | `/srv/appdata/jellyfin/trending/{library,clips,cache}` (library = `/config/trending/library`) |
-| Request index | `/srv/appdata/jellyfin-popular/trending-index.json` (placeholder and version ids → entry) |
+| Placeholders, clips, cache | `/srv/appdata/jellyfin/trending/{library,shows,clips,cache}` (`/config/trending/library` films, `/config/trending/shows` series: `<Title> (<year>)/tvshow.nfo`, `Season 00/S00E0n….mp4` + `.nfo`) |
+| Request index | `/srv/appdata/jellyfin-popular/trending-index.json` (film, version and episode ids → entry) |
 | Hook | Webhooks destination "Trending requests" → `jellyfin-popular:8098` (internal), secret `secrets/popular/hook.secret`, key `hss-popular-hook` |
 | Sync | `jellyfin-trending.service`: after `popular.py` (04:39, 22:20) and, via `jellyfin-trending.path`, after each request |
 
 | Task | Command (in `Docker/Jellyfin/`) |
 |---|---|
-| Library, hiding, rename | `python3 scripts/trending-setup.py` (`--check`, `--dry-run`; `--force-tile` replaces Jellyfin's auto-collage tile of Collections & Trending) |
+| Libraries, hiding, rename | `python3 scripts/trending-setup.py` (missing folders, libraries, full scan for a new one; `--check`, `--dry-run`; `--force-tile` replaces Jellyfin's auto-collage tile of Collections & Trending) |
 | Sync | `python3 scripts/trending.py` (`--dry-run`) or `systemctl --user start jellyfin-trending.service` |
 | Clips | `python3 scripts/trending-clips.py` (`--force` rebuilds) |
 | Webhook | `python3 scripts/trending-webhook.py add\|remove\|check\|list` |
-| Device views | `python3 scripts/trending-device-views.py` (`--out DIR`): the requests of Swiftfin tvOS and Android TV as a non-admin Quick Connect user, saved to `~/.cache/trending-device-views/<date>/` |
+| Device views | `python3 scripts/trending-device-views.py` (`--out DIR`): the requests of Swiftfin tvOS and Android TV as a non-admin Quick Connect user (media, collections, Movies and Shows lists, details, series page, Recently added, search), saved to `~/.cache/trending-device-views/<date>/` |
 | Backup before any change | `bash scripts/backup-config.sh <label>` |
 | Tests | `cd scripts && python3 -m unittest discover`; `cd popular && python3 -m unittest test_app` |
 
 ### Traps
 - Item queries that must see films inside the sets need `CollapseBoxSetItems=false` (`popular.py`, `studio-logos.py`, `trending.py`), else a BoxSet replaces its films.
-- Renaming Collections needs one full "Scan Media Library" run to resolve; the same run is needed when the Trending library was emptied (rollback) and scans ran: the per-library refresh may stop working until then.
+- Renaming Collections needs one full "Scan Media Library" run to resolve; the same run is needed when a trending library was created or emptied (rollback) and scans ran: the per-library refresh may stop working until then. A new library: `trending-setup.py` creates its folder (owned like `library/`), the library, runs that full scan and hides it as soon as it resolves (same run); `trending.py` exits 1 and writes nothing while a trending library is unresolved.
+- Swiftfin's "Recently added" and home hero sort all Movie/Series by `DateCreated`, hidden libraries included: hence the old `<dateadded>`; an item refresh with `ReplaceAllMetadata` re-reads it.
+- Swiftfin's TV Shows tab lists every Series, the trending ones too (accepted).
+- Migration order (series): new folders and refresh first, then the collections, then old folders removed and their library refreshed.
 - Jellyfin auto-generates a collage tile for collection folders: `trending-setup.py` replaces it only with `--force-tile`.
 - Swiftfin's Media tab ("Random image", on by default) builds a library tile from the Backdrop of 3 random items inside, not from the library's Primary: every list needs a Backdrop (`/Images/Backdrop/0`; a plain `/Images/Backdrop` POST appends), else the tile is grey with the name only.
 - The lilac folded corner on Swiftfin posters is Swiftfin's unplayed indicator (Settings → Customize → Indicators), not our art.
@@ -624,7 +628,7 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 - `lsiown` stays non-recursive on `/srv/appdata/jellyfin/trending` (the clips are hard links shared by all placeholders).
 - `MinResumeDurationSeconds` is 300: any stop past 5 % of a 10 s clip marks it Played, so `Played` means nothing; the hook uses the tracked position.
 - Jellyfin clears `Session.PlayState` before the Stop event: the hook works from the tracked Play/Progress data.
-- The hook resets the placeholder's Played and position for that user after every Stop (`POST /UserItems/{id}/UserData`).
+- The hook resets the placeholder's (film or episode) Played and position for that user after every Stop (`POST /UserItems/{id}/UserData`); a series' Played is derived from its episodes.
 - Folder collision: a film and a series with the same name and year get distinct, stable folders.
 - Local-path `.strm` files are blocked: placeholders are real `.mp4` hard links.
 - List rows removed from the layout leave their tagged BoxSets behind: delete them by hand, tagged only (`jf.trending-collections` stays red until then).
@@ -636,7 +640,7 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 |---|---|
 | Requests from the TV | `python3 scripts/trending-webhook.py remove` |
 | Sync | `systemctl --user disable --now jellyfin-trending.path`; remove the second ExecStart from `jellyfin-popular.service` |
-| Placeholders | empty `/srv/appdata/jellyfin/trending/library`, run a full Scan Media Library, keep the library hidden |
+| Placeholders | empty `/srv/appdata/jellyfin/trending/library` and `…/shows`, run a full Scan Media Library, keep the libraries hidden |
 | Rename | `POST /Library/VirtualFolders/Name?name=Collections%20%26%20Trending&newName=Collections&refreshLibrary=false`, then scan |
 | Library removal | only with a DB restore from `backup-config.sh` (attended, Jellyfin stopped) |
 
