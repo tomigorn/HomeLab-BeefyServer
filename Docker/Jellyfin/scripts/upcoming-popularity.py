@@ -2,7 +2,7 @@
 """TMDB popularity and details of what is coming soon, for the home row "Coming soon" (home-placeholders/home-layout.js): ranks titles released in the same week, links titles in the library, opens the details overlay of the others.
 Reads the Sonarr and Radarr calendars, asks Seerr (its TMDB access, no own key) for each title's details and writes the JavaScript Injector entry "Home upcoming":
 window.HssUpcomingPop = {"s:<Sonarr series id>" | "m:<Radarr movie id>": popularity}, window.HssUpcomingInfo = {key: {tmdb, tvdb, imdb, d: details id}};
-the details themselves go to coming.json next to the popular allow-list (served by the popular backend by id only, never requestable); coming-list.json beside it lists those titles in the Coming soon order for the trending sync.
+the details themselves go to coming.json next to the popular allow-list (served by the popular backend by id only, never requestable); coming-list.json beside it lists those titles in the Coming soon order for the trending sync (a series with the season "s" and episode "e" of its soonest episode).
 Never prints API keys. Usage: upcoming-popularity.py [--dry-run]"""
 import contextlib
 import datetime
@@ -38,7 +38,7 @@ def release_date(entry, today):
 
 
 def titles(episodes, movies, today=None):
-    """{key: (kind, TMDB id, TVDB id, IMDb id, date)} for the calendar entries; one per series (its first episode)."""
+    """{key: (kind, TMDB id, TVDB id, IMDb id, date, (season, episode) | None)} for the calendar entries; one per series (its first episode)."""
     today = today or datetime.date.today()
     out = {}
     for e in episodes or []:
@@ -46,10 +46,11 @@ def titles(episodes, movies, today=None):
         if e.get("seriesId") and s.get("tmdbId"):
             key, date = f"s:{e['seriesId']}", release_date(e, today)
             if key not in out or (date and (not out[key][4] or date < out[key][4])):
-                out[key] = ("tv", s["tmdbId"], s.get("tvdbId"), s.get("imdbId"), date)
+                ep = (e["seasonNumber"], e.get("episodeNumber")) if isinstance(e.get("seasonNumber"), int) else None
+                out[key] = ("tv", s["tmdbId"], s.get("tvdbId"), s.get("imdbId"), date, ep)
     for m in movies or []:
         if m.get("id") and m.get("tmdbId"):
-            out[f"m:{m['id']}"] = ("movie", m["tmdbId"], None, m.get("imdbId"), release_date(m, today))
+            out[f"m:{m['id']}"] = ("movie", m["tmdbId"], None, m.get("imdbId"), release_date(m, today), None)
     return out
 
 
@@ -108,7 +109,7 @@ def coming_list(wanted, infos, pops):
         if ref in infos and t[4]:
             items.append((key, ref, t))
     items.sort(key=lambda x: (week_key(x[2][4]), -(pops.get(x[0]) if pops.get(x[0]) is not None else -1), (infos[x[1]].get("t") or {}).get("en") or ""))
-    return [{"ref": ref, "kind": t[0], "tmdb": int(t[1]), "d": None, "date": t[4], "pop": pops.get(key)} for key, ref, t in items]
+    return [{"ref": ref, "kind": t[0], "tmdb": int(t[1]), "d": None, "date": t[4], "pop": pops.get(key), **({"s": t[5][0], "e": t[5][1]} if t[5] else {})} for key, ref, t in items]
 
 
 def write_json(path, data):

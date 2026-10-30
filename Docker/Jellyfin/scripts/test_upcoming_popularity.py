@@ -66,6 +66,24 @@ class ReleaseDate(unittest.TestCase):
         self.assertEqual(up.titles(eps, [{"id": 2, "tmdbId": 6, "inCinemas": "2026-12-01"}], self.TODAY)["m:2"][4], "2026-12-01")
 
 
+class NextEpisode(unittest.TestCase):
+    TODAY = datetime.date(2026, 10, 29)
+
+    def test_series_carry_season_and_episode_of_the_soonest_episode(self):
+        eps = [{"seriesId": 1, "seasonNumber": 1, "episodeNumber": 6, "airDateUtc": "2026-11-11T01:00:00Z", "series": {"tmdbId": 5}},
+               {"seriesId": 1, "seasonNumber": 1, "episodeNumber": 5, "airDateUtc": "2026-11-04T01:00:00Z", "series": {"tmdbId": 5}},
+               {"seriesId": 2, "airDateUtc": "2026-11-04T01:00:00Z", "series": {"tmdbId": 6}}]
+        t = up.titles(eps, [{"id": 3, "tmdbId": 7, "inCinemas": "2026-11-05"}], self.TODAY)
+        self.assertEqual((t["s:1"][4], t["s:1"][5]), ("2026-11-04", (1, 5)))
+        self.assertIsNone(t["s:2"][5])
+        self.assertIsNone(t["m:3"][5])
+        items = up.coming_list(t, {"tv/5": {}, "tv/6": {}, "movie/7": {}}, {})
+        by = {i["ref"]: i for i in items}
+        self.assertEqual((by["tv/5"]["s"], by["tv/5"]["e"]), (1, 5))
+        self.assertNotIn("s", by["tv/6"])
+        self.assertNotIn("s", by["movie/7"])
+
+
 class Main(unittest.TestCase):
     def arr(self, name, path, query):
         self.asked.append((name, path, query))
