@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Configures the Moonbase plugin (Moonfin apps): safe server settings and the default home layout for every user (the web home order).
 Users whose stored value is still the previous default follow the new default; the app's own default of a key new here is replaced once per user, profile and key (markers in STATE_FILE); their own choices stay.
+A lost (after markers were written: sibling .written), corrupt or odd state file counts every marker as done. A failed user write is retried next run against the defaults it was compared with (state "pending"). One run at a time (sibling .lock).
 Idempotent. Usage: moonbase.py [--dry-run | --check]  (--check exits 1 when the config or a user differs)"""
 import copy
 import json
@@ -10,7 +11,7 @@ import sys
 import urllib.error
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from jellyfin_api import api  # noqa: E402
+from jellyfin_api import api, file_lock  # noqa: E402
 from trending_model import COMING, HOME, LIBRARIES  # noqa: E402
 
 PLUGIN_ID = "8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b"
@@ -150,10 +151,19 @@ def client_markers(settings):
 
 
 def load_state():
+    """(state, trusted): an untrusted state (lost after markers were written, corrupt, odd shape) must not let any app default be adopted again."""
     try:
-        return json.loads(STATE_FILE.read_text())
+        state = json.loads(STATE_FILE.read_text())
+    except FileNotFoundError:
+        return {}, not STATE_FILE.with_suffix(".written").exists()
     except (OSError, ValueError):
-        return {}
+        return {}, False
+    if not isinstance(state, dict):
+        return {}, False
+    migrated, pending = state.get("migrated", {}), state.get("pending", {})
+    if not isinstance(migrated, dict) or not all(isinstance(v, list) for v in migrated.values()) or not isinstance(pending, dict) or not all(isinstance(v, dict) for v in pending.values()):
+        return {}, False
+    return state, True
 
 
 def save_state(state):
@@ -161,6 +171,7 @@ def save_state(state):
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=1, sort_keys=True))
     tmp.replace(STATE_FILE)
+    STATE_FILE.with_suffix(".written").touch()
 
 
 def lists():
@@ -186,36 +197,59 @@ def user_settings(uid):
 
 
 def main(argv):
+    if "--check" in argv or "--dry-run" in argv:
+        return run(argv)
+    with file_lock(STATE_FILE.with_suffix(".lock"), timeout=600, step=1):
+        return run(argv)
+
+
+def run(argv):
     path = f"/Plugins/{PLUGIN_ID}/Configuration"
     old = api("GET", path)
     new = wanted(old, lists(), api("GET", "/Library/VirtualFolders"), studio_ids(injector_config()))
     diff = changed(old, new)
-    state = load_state()
-    migrated = dict(state.get("migrated") or {})
+    state, trusted = load_state()
+    if not trusted:
+        print(f"state {STATE_FILE} lost or unreadable: every app default counts as migrated")
+    migrated, pending = dict(state.get("migrated") or {}), dict(state.get("pending") or {})
+    before = {k: dict(v) for k, v in pending.items()}
     users = {}
     for user in api("GET", "/Users"):
         settings = user_settings(user["Id"])
         if not settings:
             continue
-        done = set(migrated.get(user["Id"]) or [])
-        change = adopt(settings, old.get("DefaultUserSettings") or {}, new["DefaultUserSettings"], done)
+        done = set(migrated.get(user["Id"]) or []) | (set() if trusted else client_markers(settings))
+        base = pending.get(user["Id"]) or old.get("DefaultUserSettings") or {}
+        change = adopt(settings, base, new["DefaultUserSettings"], done)
         if change:
-            users[user["Id"]] = (settings, change)
-        migrated[user["Id"]] = sorted(done | client_markers(settings))
-    keys = sorted({k for _, change in users.values() for p in change.values() for k in p})
+            users[user["Id"]] = (settings, change, base, sorted(done | client_markers(settings)))
+        else:
+            pending.pop(user["Id"], None)
+            migrated[user["Id"]] = sorted(done | client_markers(settings))
+    keys = sorted({k for _, change, _, _ in users.values() for p in change.values() for k in p})
     summary = ("config unchanged" if not diff else "config: " + ", ".join(diff)) + f"; {len(users)} user(s) to the new defaults" + (f" ({', '.join(keys)})" if keys else "")
     if "--check" in argv or "--dry-run" in argv:
         print("would change: " + summary if diff or users else "unchanged")
         return 1 if (diff or users) and "--check" in argv else 0
+    failed = []
+    for uid, (settings, change, base, markers) in users.items():
+        try:
+            api("POST", f"/Moonfin/Settings/{uid}", {"settings": {"syncEnabled": settings.get("syncEnabled", True), **change}, "clientId": "moonbase-defaults", "mergeMode": "merge"})
+        except (urllib.error.URLError, OSError) as e:
+            print(f"user {uid}: write failed ({type(e).__name__}), retried next run")
+            failed.append(uid)
+            pending[uid] = base
+            continue
+        pending.pop(uid, None)
+        migrated[uid] = markers
     if diff:
         api("POST", path, new)
-    for uid, (settings, change) in users.items():
-        api("POST", f"/Moonfin/Settings/{uid}", {"settings": {"syncEnabled": settings.get("syncEnabled", True), **change}, "clientId": "moonbase-defaults", "mergeMode": "merge"})
-    if migrated != (state.get("migrated") or {}):
-        save_state({**state, "migrated": migrated})
+    if not trusted or migrated != (state.get("migrated") or {}) or pending != before:
+        save_state({**state, "migrated": migrated, "pending": pending})
+    elif migrated:
+        STATE_FILE.with_suffix(".written").touch()
     print("changed: " + summary if diff or users else "unchanged")
-    return 0
-
+    return 1 if failed else 0
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

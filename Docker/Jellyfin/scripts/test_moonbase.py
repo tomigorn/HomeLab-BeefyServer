@@ -1,6 +1,9 @@
 import contextlib
+import fcntl
 import importlib.util
 import io
+import json
+import os
 import pathlib
 import tempfile
 import unittest
@@ -192,12 +195,16 @@ class MainTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_main(self, argv, user_settings, old=None):
+    def run_main(self, argv, user_settings, old=None, fail=(), probe=None):
         calls = []
         cfg = {**CONFIG, "EnableSettingsSync": True, "DefaultUserSettings": dict(old or OLD)}
 
         def fake(method, path, body=None):
             calls.append((method, path, body))
+            if probe and method == "POST":
+                probe()
+            if method == "POST" and path.rsplit("/", 1)[1] in fail:
+                raise mb.urllib.error.HTTPError(path, 500, "boom", {}, None)
             if path == f"/Plugins/{mb.PLUGIN_ID}/Configuration":
                 return cfg
             if path == "/Users":
@@ -214,6 +221,81 @@ class MainTest(unittest.TestCase):
         with mock.patch.object(mb, "api", fake), mock.patch.object(mb, "lists", lambda: LISTS), mock.patch.object(mb, "STATE_FILE", self.state), contextlib.redirect_stdout(io.StringIO()) as out:
             code = mb.main(argv)
         return code, [c for c in calls if c[0] == "POST"], out.getvalue()
+
+    def applied(self):
+        return mb.wanted({**CONFIG, "DefaultUserSettings": dict(OLD)}, LISTS, FOLDERS, None)["DefaultUserSettings"]
+
+    def user_posts(self, posts):
+        return [p[1] for p in posts if p[1].startswith("/Moonfin/Settings/")]
+
+    def test_first_run_marks_that_markers_exist(self):
+        self.run_main([], {"u1": {"tv": {"displayGenresRows": False}}})
+        self.assertTrue(self.state.exists())
+        self.assertTrue(self.state.with_suffix(".written").exists())
+
+    def test_existing_state_gets_its_written_mark_on_an_unchanged_run(self):
+        self.state.write_text(json.dumps({"migrated": {"u1": sorted(mb.client_markers({"tv": {}}))}, "pending": {}}))
+        before = self.state.read_text()
+        self.run_main([], {"u1": {"tv": {"displayGenresRows": False}}}, old=self.applied())
+        self.assertEqual(self.state.read_text(), before)
+        self.assertTrue(self.state.with_suffix(".written").exists())
+
+    def test_lost_state_file_after_markers_were_written_adopts_no_app_default(self):
+        self.run_main([], {"u1": {"tv": {"displayGenresRows": False}}})
+        self.state.unlink()
+        code, posts, out = self.run_main([], {"u1": {"tv": {"displayGenresRows": False}}}, old=self.applied())
+        self.assertEqual(self.user_posts(posts), [])
+        self.assertIn("state", out)
+        self.assertEqual(code, 0)
+        self.assertIn("tv:displayGenresRows", json.loads(self.state.read_text())["migrated"]["u1"])
+
+    def test_corrupt_or_odd_state_adopts_no_app_default(self):
+        for text in ["{", "[]", "null", '"x"', '{"migrated": []}', '{"migrated": {"u1": "tv:x"}}', '{"migrated": {}, "pending": []}']:
+            self.state.write_text(text)
+            code, posts, out = self.run_main([], {"u1": {"tv": {"displayGenresRows": False}}})
+            self.assertEqual(self.user_posts(posts), [], text)
+            self.assertIn("state", out, text)
+            self.assertIn("tv:displayGenresRows", json.loads(self.state.read_text())["migrated"]["u1"], text)
+
+    def test_a_previous_default_still_moves_with_odd_state(self):
+        self.state.write_text("{")
+        code, posts, _ = self.run_main([], {"u1": {"tv": {"homeSections": OLD["homeSections"]}}})
+        self.assertEqual(self.user_posts(posts), ["/Moonfin/Settings/u1"])
+
+    def test_users_written_before_the_config(self):
+        _, posts, _ = self.run_main([], {"u1": {"tv": {"homeSections": OLD["homeSections"]}}})
+        self.assertEqual([p[1] for p in posts], ["/Moonfin/Settings/u1", f"/Plugins/{mb.PLUGIN_ID}/Configuration"])
+
+    def test_failed_user_post_is_retried_against_the_previous_defaults(self):
+        layout = {"tv": {"homeSections": OLD["homeSections"], "displayGenresRows": False}}
+        code, posts, out = self.run_main([], {"u1": layout, "u2": layout}, fail={"u1"})
+        self.assertEqual(code, 1)
+        self.assertIn("u1", out)
+        self.assertEqual(self.user_posts(posts), ["/Moonfin/Settings/u1", "/Moonfin/Settings/u2"])
+        code, posts, _ = self.run_main([], {"u1": layout, "u2": {"tv": {"displayGenresRows": False}}}, old=self.applied())
+        self.assertEqual(code, 0)
+        self.assertEqual(self.user_posts(posts), ["/Moonfin/Settings/u1"])
+        self.assertEqual(set(posts[0][2]["settings"]["tv"]), {"homeSections", "displayGenresRows"})
+        code, posts, _ = self.run_main([], {"u1": {"tv": {"displayGenresRows": False}}}, old=self.applied())
+        self.assertEqual(self.user_posts(posts), [])
+        self.assertEqual(json.loads(self.state.read_text()).get("pending") or {}, {})
+
+    def test_writes_run_under_the_run_lock(self):
+        lock = self.state.with_suffix(".lock")
+        seen = []
+
+        def probe():
+            fd = os.open(lock, os.O_RDWR | os.O_CREAT, 0o600)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                seen.append(False)
+            except BlockingIOError:
+                seen.append(True)
+            finally:
+                os.close(fd)
+
+        self.run_main([], {"u1": {"tv": {"homeSections": OLD["homeSections"]}}}, probe=probe)
+        self.assertEqual(seen, [True, True])
 
     def test_untouched_user_layout_follows_the_defaults(self):
         code, posts, _ = self.run_main([], {"u1": {"syncEnabled": True, "tv": {"homeSections": OLD["homeSections"], "displaySeerrRows": False}}})

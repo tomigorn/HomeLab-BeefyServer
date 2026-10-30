@@ -14,8 +14,14 @@ LOCK_FILE = pathlib.Path(os.environ.get("JF_INJECTOR_LOCK") or pathlib.Path.home
 @contextlib.contextmanager
 def injector_lock(timeout=300, step=0.5):
     """One writer at a time for the whole JavaScript Injector config (GET, change, POST): the nightly scripts overlap (04:38 / 04:39)."""
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o600)
+    with file_lock(LOCK_FILE, timeout, step):
+        yield
+
+
+@contextlib.contextmanager
+def file_lock(path, timeout=300, step=0.5):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
     try:
         deadline = time.monotonic() + timeout
         while True:
@@ -24,7 +30,7 @@ def injector_lock(timeout=300, step=0.5):
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError(f"{LOCK_FILE} held for {timeout} s")
+                    raise TimeoutError(f"{path} held for {timeout} s")
                 time.sleep(step)
         yield
     finally:
