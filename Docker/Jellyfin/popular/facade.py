@@ -4,6 +4,7 @@ import binascii
 import datetime
 import hashlib
 import hmac
+import http.client
 import json
 import pathlib
 import re
@@ -24,6 +25,48 @@ HANDLE_TTL = datetime.timedelta(minutes=5)
 MAX_PENDING = 8
 SIGN_INS_PER_HOUR = 5
 SIGN_IN_WINDOW = datetime.timedelta(hours=1)
+PATH_RE = re.compile(r"[a-z0-9_/-]{1,120}")
+QUERY_RE = re.compile(r"[\x21-\x7e]{0,1024}")
+WARN_EVERY = datetime.timedelta(minutes=1)
+MAX_WARNED = 256
+N = r"[0-9]{1,10}"
+ROUTES = [
+    ("GET", r"status", "public"),
+    ("GET", r"settings/public", "public"),
+    ("POST", r"auth/jellyfin", "auth"),
+    ("POST", r"auth/local", "auth"),
+    ("POST", r"auth/jellyfin/quickconnect/initiate", "auth"),
+    ("POST", r"auth/jellyfin/quickconnect/authenticate", "auth"),
+    ("POST", r"auth/logout", "auth"),
+    ("GET", r"auth/me", "auth"),
+    ("GET", r"discover/watchlist", "empty_page"),
+    ("GET", r"blocklist|blacklist", "empty_page"),
+    ("GET", r"service/(radarr|sonarr)", "synth"),
+    ("GET", rf"service/(radarr|sonarr)/{N}", "synth"),
+    ("GET", rf"user/{N}/quota", "synth"),
+    ("GET", r"request", "synth"),
+    ("GET", r"request/count", "synth"),
+    ("GET", rf"request/{N}", "synth"),
+    ("POST", r"request", "synth"),
+    ("GET", r"settings/discover", "proxy"),
+    ("GET", r"discover/(?!watchlist(/|$))[a-z0-9_/-]+", "proxy"),
+    ("GET", r"search", "proxy"),
+    ("GET", rf"(movie|tv)/{N}(/similar|/recommendations)?", "proxy"),
+    ("GET", rf"tv/tvdb/{N}", "proxy"),
+    ("GET", rf"person/{N}(/combined_credits)?", "proxy"),
+    ("GET", rf"collection/{N}", "proxy"),
+    ("GET", r"media", "proxy"),
+    ("GET", r"languages|regions|genres/(movie|tv)|backdrops", "proxy"),
+    ("GET", r"watchproviders/(regions|movies|tv)", "proxy"),
+    ("GET", rf"(studio|network|keyword)/{N}", "proxy"),
+    ("GET", r"certifications/(movie|tv)", "proxy"),
+    ("GET", rf"issue|issue/count|issue/{N}", "proxy"),
+]
+COMPILED = [(m, re.compile(rx), kind) for m, rx, kind in ROUTES]
+DROP = {"email", "apiKey", "plexToken", "jellyfinAuthToken", "jellyfinDeviceId", "password", "resetPasswordGuid", "plexId", "jellyfinUserId", "settings"}
+USER_KEYS = {"requestedBy", "modifiedBy", "createdBy", "user"}
+HOUSEHOLD = {"id": 0, "displayName": "Household"}
+METHOD_RE = re.compile(r"[A-Z]{1,10}")
 
 
 def b64(raw):
@@ -147,47 +190,154 @@ class Sessions:
             con.execute("DELETE FROM sessions WHERE revoked = 1 OR COALESCE(last_seen, created) < ?", (cutoff,))
 
 
+def shown(method):
+    return method if isinstance(method, str) and METHOD_RE.fullmatch(method) else "-"
+
+
+def scrub(obj, me_uid, mine, me_name="You"):
+    """Copy of a Seerr body without secrets or user details: embedded users become {id, displayName}, the caller's own requests (id in mine) name the caller, everyone else is Household."""
+    me = {"id": me_uid, "displayName": me_name}
+    if isinstance(obj, list):
+        return [scrub(v, me_uid, mine, me_name) for v in obj]
+    if not isinstance(obj, dict):
+        return obj
+    own = is_int(obj.get("id")) and obj["id"] in mine
+    requester = obj.get("requestedBy")
+    out = {}
+    for k, v in obj.items():
+        if k in DROP:
+            continue
+        if k in USER_KEYS:
+            if v is None:
+                out[k] = None
+            elif own and (k == "requestedBy" or (k == "modifiedBy" and isinstance(v, dict) and isinstance(requester, dict) and is_int(v.get("id")) and v.get("id") == requester.get("id"))):
+                out[k] = dict(me)
+            else:
+                out[k] = dict(HOUSEHOLD)
+            continue
+        out[k] = scrub(v, me_uid, mine, me_name)
+    return out
+
+
 class Unavailable(Exception):
     """Jellyfin cannot be asked whether the caller still exists (503, session kept)."""
 
 
 class Facade:
-    """Seerr API subset for Moonbase: Quick Connect sign-in and the signed session."""
+    """Seerr API subset for Moonbase: Quick Connect sign-in, the signed session and a deny-by-default read proxy (ROUTES)."""
 
     def __init__(self, core, key, jf, clock=None):
         self.core, self.key, self.jf = core, key, jf
         self.clock = clock or core.clock
         self.sessions = Sessions(core)
         self.sessions.init()
-        self.pending, self.signins, self.checked = {}, {}, {}
+        self.pending, self.signins, self.checked, self.warned = {}, {}, {}, {}
+        self.log = lambda line: print(line, flush=True)
 
     def now(self):
         return int(self.clock().timestamp())
 
     def handle(self, method, path, headers, body):
         headers = {str(k).lower(): v for k, v in headers.items()}
-        path = path.partition("?")[0]
-        if not path.startswith(API):
-            return 404, {"message": "Not found"}, []
-        route = (method, path[len(API):])
+        status, out, extra, rel, jf_id = self.dispatch(method, path, headers, body)
+        self.log(f"facade {shown(method)} {rel or '-'} {status} {jf_id or '-'}")
+        return status, out, extra
+
+    def dispatch(self, method, path, headers, body):
+        """(status, body, extra headers, logged path or None, Jellyfin user id or None)."""
+        path, _, query = path.partition("?")
+        if not path.startswith(API) or not PATH_RE.fullmatch(path[len(API):]) or "//" in path or ".." in path or path.endswith("/"):
+            return 404, {"message": "Not found"}, [], None, None
+        rel = path[len(API):]
+        if not QUERY_RE.fullmatch(query):
+            return 400, {"message": "Bad request"}, [], rel, None
+        kind = next((k for m, rx, k in COMPILED if m == method and rx.fullmatch(rel)), None)
+        if kind is None:
+            self.warn(method, rel)
+            if method == "GET":
+                return 404, {"message": "Not found"}, [], rel, None
+            return 403, {"message": "Not available in this app"}, [], rel, None
+        path_q = rel + ("?" + query if query else "")
         try:
-            if route in (("POST", "auth/jellyfin"), ("POST", "auth/local")):
-                self.core.reject("facade password")
-                return 401, {"message": "Use Quick Connect to sign in"}, []
-            if route == ("POST", "auth/jellyfin/quickconnect/initiate"):
-                return self.initiate()
-            if route == ("POST", "auth/jellyfin/quickconnect/authenticate"):
-                return self.authenticate(body)
-            if route == ("POST", "auth/logout"):
-                return self.logout(headers)
-            if route == ("GET", "auth/me"):
-                who = self.caller(headers)
-                if who is None:
-                    return 403, {"status": 403, "error": "Unauthorized"}, []
-                return self.rotated(who, 200, self.me(who), [])
+            if kind == "auth":
+                status, out, extra, jf_id = self.auth(method, rel, headers, body)
+                return status, out, extra, rel, jf_id
+            if kind == "public":
+                return self.proxy(path_q, None) + ([], rel, None)
+            who = self.caller(headers)
+            if who is None:
+                return 401, {"message": "Unauthorized"}, [], rel, None
+            if kind == "empty_page":
+                status, out = 200, self.empty(rel)
+            elif kind == "proxy":
+                status, out = self.proxy(path_q, who)
+            else:
+                status, out = 404, {"message": "Not found"}
+            return self.rotated(who, status, out, []) + (rel, who["jf_id"])
         except Unavailable:
-            return 503, {"message": "Jellyfin is not reachable"}, []
-        return 404, {"message": "Not found"}, []
+            return 503, {"message": "Jellyfin is not reachable"}, [], rel, None
+
+    def auth(self, method, rel, headers, body):
+        """(status, body, extra headers, Jellyfin user id or None) of the sign-in routes."""
+        route = (method, rel)
+        if route in (("POST", "auth/jellyfin"), ("POST", "auth/local")):
+            self.core.reject("facade password")
+            return 401, {"message": "Use Quick Connect to sign in"}, [], None
+        if route == ("POST", "auth/jellyfin/quickconnect/initiate"):
+            return self.initiate() + (None,)
+        if route == ("POST", "auth/jellyfin/quickconnect/authenticate"):
+            return self.authenticate(body) + (None,)
+        if route == ("POST", "auth/logout"):
+            return self.logout(headers) + (None,)
+        who = self.caller(headers)
+        if who is None:
+            return 403, {"status": 403, "error": "Unauthorized"}, [], None
+        return self.rotated(who, 200, self.me(who), []) + (who["jf_id"],)
+
+    def warn(self, method, rel):
+        now = self.clock()
+        with self.core.lock:
+            for k in [k for k, at in self.warned.items() if now - at >= WARN_EVERY]:
+                del self.warned[k]
+            if rel in self.warned or len(self.warned) >= MAX_WARNED:
+                return
+            self.warned[rel] = now
+        self.log(f"facade refused {shown(method)} {rel}")
+
+    # --- reads --------------------------------------------------------------
+    def proxy(self, path_q, me):
+        """(status, body) of a GET to Seerr as the service user, scrubbed; me is the caller or None for the public routes."""
+        try:
+            svc = self.core.service_user(create=False)
+            uid = svc.get("id") if isinstance(svc, dict) else None
+            if not is_int(uid) or uid <= 1:
+                return 503, {"message": "Requests are not set up"}
+            out = self.core.seerr("GET", API + path_q, user=uid)
+            if not isinstance(out, (dict, list)):
+                return 502, {"message": "Seerr is not reachable"}
+            if path_q.partition("?")[0] == "settings/public" and isinstance(out, dict):
+                out = {**out, "movie4kEnabled": False, "series4kEnabled": False}
+            if me is None:
+                return 200, scrub(out, 0, set())
+            return 200, scrub(out, me["uid"], self.mine(me), me["name"])
+        except self.core.NoServiceUser:
+            return 503, {"message": "Requests are not set up"}
+        except urllib.error.HTTPError as e:
+            e.close()
+            return 502, {"message": "Seerr is not reachable"}
+        except (OSError, ValueError, KeyError, TypeError, RecursionError, http.client.HTTPException):
+            return 502, {"message": "Seerr is not reachable"}
+
+    @staticmethod
+    def empty(rel):
+        """No Plex watchlist and no blocklist for app users: empty pages in Seerr's shapes."""
+        if rel == "discover/watchlist":
+            return {"page": 1, "totalPages": 1, "totalResults": 0, "results": []}
+        return {"pageInfo": {"pages": 0, "pageSize": 25, "results": 0, "page": 1}, "results": []}
+
+    def mine(self, me):
+        """Seerr request ids the caller made (filled in with the request routes)."""
+        return set()
 
     def rotated(self, who, status, out, extra):
         now = self.now()

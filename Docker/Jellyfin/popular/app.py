@@ -42,6 +42,11 @@ KEEP_DAYS = 30
 FLUSH_EVERY = datetime.timedelta(minutes=1)
 AUTH_TTL = datetime.timedelta(seconds=30)
 UPSTREAM_TIMEOUT = 8
+SERVICE_TTL = datetime.timedelta(minutes=5)
+
+
+class NoServiceUser(Exception):
+    """The Seerr service user does not exist and may not be created here."""
 
 
 class Unauthorized(Exception):
@@ -104,6 +109,8 @@ def badge(kind, tmdb, rs, now):
 
 
 class Core:
+    NoServiceUser = NoServiceUser
+
     def __init__(self, cfg, seerr, jellyfin, clock=None, jellyfin_admin=None):
         self.cfg, self.seerr, self.jellyfin, self.jellyfin_admin = cfg, seerr, jellyfin, jellyfin_admin
         self.tracked = {}
@@ -305,23 +312,42 @@ class Core:
             yield
 
     # --- Seerr ----------------------------------------------------------
-    def seerr_user(self, jf_id):
+    def seerr_user(self, jf_id, create=True):
         """(Seerr user id, why). Owner's choice: any Jellyfin user may request from this page, also without a Seerr account or request right; the audit log says which applied."""
         users = self.seerr("GET", "/api/v1/user?take=1000")["results"]
         linked = next((u for u in users if str(u.get("jellyfinUserId") or "").replace("-", "").lower() == jf_id), None)
         if linked and linked.get("permissions", 0) & (2 | 32):
             return linked["id"], "linked Seerr user"
         why = "service user: linked Seerr user may not request" if linked else "service user: no Seerr account"
-        svc = next((u for u in users if (u.get("email") or "").lower() == SERVICE_EMAIL), None)
+        return self.service_user(create)["id"], why
+
+    def service_user(self, create=True):
+        """The Seerr service user "jellyfin-popular", cached 5 min; create=False never writes to Seerr and raises NoServiceUser when it is missing."""
+        now = self.clock()
+        with self.lock:
+            hit = self.cache.get("service_user")
+        if hit and now - hit[0] < SERVICE_TTL:
+            return hit[1]
+        svc = self.find_service_user()
         if svc is None:
+            if not create:
+                raise NoServiceUser()
             with self.svc_lock:
-                users = self.seerr("GET", "/api/v1/user?take=1000")["results"]
-                svc = next((u for u in users if (u.get("email") or "").lower() == SERVICE_EMAIL), None)
+                svc = self.find_service_user()
                 if svc is None:
                     svc = self.seerr("POST", "/api/v1/user", {"email": SERVICE_EMAIL, "username": SERVICE_NAME, "password": secrets.token_urlsafe(32)})
         if svc.get("permissions") != SERVICE_PERMISSIONS:
+            if not create:
+                return svc
             self.seerr("POST", f"/api/v1/user/{svc['id']}/settings/permissions", {"permissions": SERVICE_PERMISSIONS})
-        return svc["id"], why
+            svc = {**svc, "permissions": SERVICE_PERMISSIONS}
+        with self.lock:
+            self.cache["service_user"] = (now, svc)
+        return svc
+
+    def find_service_user(self):
+        users = self.seerr("GET", "/api/v1/user?take=1000")["results"]
+        return next((u for u in users if (u.get("email") or "").lower() == SERVICE_EMAIL), None)
 
     def now_tag(self, kind):
         svc = "radarr" if kind == "movie" else "sonarr"

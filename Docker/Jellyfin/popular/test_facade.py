@@ -3,10 +3,12 @@ import contextlib
 import datetime
 import hashlib
 import hmac
+import http.client
 import io
 import json
 import pathlib
 import re
+import socket
 import sys
 import threading
 import time
@@ -195,6 +197,8 @@ class FacadeBase(test_app.Base):
         self.jf = FakeJellyfin()
         self.core.jellyfin_admin = self.jf.admin
         self.facade = facade.Facade(self.core, KEY, self.jf)
+        self.lines = []
+        self.facade.log = self.lines.append
 
     def call(self, method, path, cookie=None, body=b""):
         headers = {"Content-Type": "application/json"}
@@ -359,10 +363,12 @@ class SignIn(FacadeBase):
         self.assertFalse(me["permissions"] & 2)
         self.assertGreaterEqual(me["id"], facade.FIRST_UID)
 
-    def test_other_paths_404_until_routed(self):
-        for method, path in [("GET", "status"), ("GET", "auth/jellyfin"), ("POST", "auth/me"), ("GET", "auth/logout")]:
+    def test_auth_paths_with_the_wrong_method_refused(self):
+        for method, path in [("GET", "auth/jellyfin"), ("GET", "auth/logout"), ("GET", "auth/jellyfin/quickconnect/initiate")]:
             self.assertEqual(self.call(method, path)[:2], (404, {"message": "Not found"}), path)
+        self.assertEqual(self.call("POST", "auth/me")[:2], (403, {"message": "Not available in this app"}))
         self.assertEqual(self.facade.handle("GET", "/auth/me", {}, b"")[:2], (404, {"message": "Not found"}))
+        self.assertEqual(self.jf.calls, [])
 
 
 class Session(FacadeBase):
@@ -446,9 +452,212 @@ class Session(FacadeBase):
             self.call("POST", "auth/jellyfin", body=b'{"password": "pw-secret"}')
             self.later(120)
             self.call("POST", "auth/local", body=b'{"password": "pw-secret"}')
-        text = out.getvalue()
+        text = out.getvalue() + "\n".join(self.lines)
+        self.assertIn("facade GET auth/me 200 " + JF_ID, self.lines)
+        self.assertIn("facade POST auth/jellyfin 401 -", self.lines)
         for secret in [TOKEN, handle, "jf-secret", cookie, cookie[2:].split(".")[0], cookie.split(".")[1], "pw-secret", KEY.hex()]:
             self.assertNotIn(secret, text)
+
+
+SERVICE = {"id": 20, "email": "jellyfin-popular", "permissions": 160}
+P_PATHS = [
+    "status", "settings/public", "settings/discover",
+    "discover/trending?page=1", "discover/movies?page=2&genre=18", "discover/tv", "discover/movies/top?limit=20&offset=0", "discover/tv/top",
+    "discover/movies/upcoming", "discover/tv/upcoming", "discover/genreslider/movie", "discover/genreslider/tv", "discover/movies/genre/18",
+    "discover/movies/studio/2", "discover/tv/network/49", "discover/keyword/9715/movies", "discover/movies/language/de",
+    "search?query=Am%C3%A9lie&page=1", "movie/550", "tv/1399", "tv/tvdb/121361", "movie/550/similar?page=1", "movie/550/recommendations",
+    "tv/1399/similar", "tv/1399/recommendations", "person/287", "person/287/combined_credits", "collection/10",
+    "media?filter=allavailable&sort=mediaAdded&take=20", "languages", "regions", "genres/movie", "genres/tv",
+    "watchproviders/regions", "watchproviders/movies?watchRegion=CH", "watchproviders/tv", "studio/2", "network/49", "keyword/9715",
+    "certifications/movie", "certifications/tv", "backdrops", "issue?take=10&skip=0", "issue/count", "issue/3",
+]
+
+
+class ProxySeerr(test_app.FakeSeerr):
+    def __init__(self):
+        super().__init__()
+        self.users.append(dict(SERVICE))
+        self.gets, self.answer, self.error = [], {}, None
+
+    def __call__(self, method, path, body=None, user=None):
+        if path.startswith("/api/v1/user"):
+            return super().__call__(method, path, body, user)
+        self.gets.append((method, path, user))
+        if self.error:
+            raise self.error
+        return self.answer.get(path, {"page": 1, "results": [], "path": path})
+
+
+class ReadProxy(FacadeBase):
+    def setUp(self):
+        super().setUp()
+        self.seerr = ProxySeerr()
+        self.core.seerr = self.seerr
+        _, self.cookie = self.sign_in()
+
+    def get(self, path, cookie=True):
+        return self.call("GET", path, cookie=self.cookie if cookie is True else cookie)
+
+    def test_every_enumerated_read_path_proxied_as_service_user(self):
+        for path in P_PATHS:
+            status, out, _ = self.get(path)
+            self.assertEqual(status, 200, path)
+            self.assertEqual(self.seerr.gets[-1], ("GET", "/api/v1/" + path, 20), path)
+        self.assertEqual({u for _, _, u in self.seerr.gets}, {20})
+        self.assertEqual(self.seerr.posts, [])
+        self.assertIn("facade GET movie/550 200 " + JF_ID, self.lines)
+        self.assertIn("facade GET search 200 " + JF_ID, self.lines)
+
+    def test_status_and_settings_public_need_no_cookie(self):
+        self.seerr.answer["/api/v1/settings/public"] = {"movie4kEnabled": True, "series4kEnabled": True, "partialRequestsEnabled": True}
+        self.seerr.answer["/api/v1/status"] = {"version": "2.7.3"}
+        self.assertEqual(self.get("status", cookie=None)[:2], (200, {"version": "2.7.3"}))
+        status, out, _ = self.get("settings/public", cookie=None)
+        self.assertEqual((status, out), (200, {"movie4kEnabled": False, "series4kEnabled": False, "partialRequestsEnabled": True}))
+        self.assertEqual(self.get("settings/public")[1]["movie4kEnabled"], False)
+        self.assertIn("facade GET status 200 -", self.lines)
+
+    def test_unknown_gets_404_and_warn_once_per_minute(self):
+        paths = ["settings/radarr", "settings/main", "user", "user/5", "user/5/requests", "status/appdata", "auth/plex", "discover/watchlist/x", "media/5/watch_data", "tv/1399/season/1"]
+        for _ in range(3):
+            for path in paths:
+                self.assertEqual(self.get(path)[:2], (404, {"message": "Not found"}), path)
+                self.assertEqual(self.get(path, cookie=None)[0], 404, path)
+        self.assertEqual(self.seerr.gets, [])
+        warned = [line for line in self.lines if line.startswith("facade refused")]
+        self.assertEqual(warned, [f"facade refused GET {p}" for p in paths])
+        self.later(59)
+        self.get("user")
+        self.assertEqual(len([line for line in self.lines if line.startswith("facade refused")]), len(paths))
+        self.later(1)
+        self.get("user")
+        self.assertEqual([line for line in self.lines if line.startswith("facade refused")][-1], "facade refused GET user")
+        self.assertEqual(len([line for line in self.lines if line.startswith("facade refused")]), len(paths) + 1)
+
+    def test_writes_refused_403(self):
+        cases = [(m, p) for m in ("POST", "PUT", "DELETE") for p in ("request/5", "request/5/approve", "request/5/decline", "issue", "watchlist",
+                                                                       "user/5/settings/main", "settings/notifications/webhook", "movie/550", "status")]
+        for method, path in cases:
+            for cookie in (self.cookie, None):
+                status, out, extra = self.call(method, path, cookie=cookie, body=b"{}")
+                self.assertEqual((status, out, extra), (403, {"message": "Not available in this app"}, []), (method, path))
+        self.assertEqual((self.seerr.gets, self.seerr.posts), ([], []))
+        self.assertIn("facade refused POST request/5", self.lines)
+        self.assertNotIn("facade refused DELETE request/5", self.lines)
+        self.assertIn("facade PUT issue 403 -", self.lines)
+        self.assertEqual(self.call("GET\x1b[2J", "request/5")[0], 403)
+        self.assertEqual(self.lines[-1], "facade - request/5 403 -")
+        self.assertFalse([line for line in self.lines if "\x1b" in line])
+
+    def test_reads_need_cookie_401(self):
+        forged = facade.make_cookie(b"\x02" * 32, "sid", 1000001, T0, T0 + 100)
+        for path in ["movie/550", "discover/trending", "search?query=x", "issue/count", "discover/watchlist", "blocklist", "service/radarr", "request", "user/1000001/quota"]:
+            for cookie in (None, "garbage", forged):
+                self.assertEqual(self.get(path, cookie=cookie), (401, {"message": "Unauthorized"}, []), (path, cookie))
+        self.assertEqual(self.seerr.gets, [])
+
+    def test_path_guard_encoded_variants(self):
+        for raw in ["/api/v1/%2e%2e/settings/main", "/api/v1/Settings/Radarr", "/api/v1/movie//550", "/api/v1/movie/550/", "/api/v1//movie/550",
+                    "/api/v1/movie/../settings/main", "/api/v1/movie/..", "/api/v1/", "/api/v1/movie%2F550", "/api/v1/" + "a" * 121, "/api/v1/movie/550\r\nX: y",
+                    "/api/v1/MOVIE/550", "/api/v1/movie/55%30", "/api/v1/movie/550;x", "/api/v1/discover/trending/"]:
+            for method in ("GET", "POST"):
+                status, out, extra = self.facade.handle(method, raw, {"Cookie": f"connect.sid={self.cookie}"}, b"")
+                self.assertEqual((status, out, extra), (404, {"message": "Not found"}, []), (method, raw))
+        q = "query=" + "a" * (1024 - len("query="))
+        self.assertEqual(self.get("search?" + q)[0], 200)
+        self.assertEqual(self.seerr.gets[-1][1], "/api/v1/search?" + q)
+        for bad in ["search?" + q + "a", "search?query=a b", "search?query=\r\nX-Api-User: 1", "search?query=é", "search?query=a\x00"]:
+            self.assertEqual(self.get(bad), (400, {"message": "Bad request"}, []), bad)
+        self.assertEqual(self.get("search?query=Am%C3%A9lie&page=1")[0], 200)
+        self.assertEqual(self.seerr.gets[-1][1], "/api/v1/search?query=Am%C3%A9lie&page=1")
+        self.assertEqual(len(self.seerr.gets), 2)
+        self.assertFalse([line for line in self.lines if "\r" in line or "\n" in line or "%2e" in line or "X-Api" in line])
+
+    def test_scrub_removes_secrets_everywhere(self):
+        user = {"id": 7, "email": "jane@example.com", "displayName": "Jane Doe", "apiKey": "k1", "plexToken": "p1", "jellyfinAuthToken": "j1",
+                "jellyfinDeviceId": "d1", "password": "pw", "resetPasswordGuid": "g1", "plexId": 5, "jellyfinUserId": "u1", "plexUsername": "jane",
+                "jellyfinUsername": "jane", "username": "jane", "avatar": "/a.png", "permissions": 2, "settings": {"locale": "de", "pgpKey": "x"}}
+        fixture = {"id": 550, "mediaInfo": {"id": 3, "jellyfinMediaId": "abc", "requests": [{"id": 9, "requestedBy": dict(user), "modifiedBy": dict(user),
+                   "media": {"issues": [{"createdBy": dict(user), "comments": [{"user": dict(user), "message": "hi"}]}]}}]},
+                   "deep": [[{"a": {"b": {"settings": {"email": "x@example.com"}, "apiKey": "k2", "keep": 1}}}]], "email": "top@example.com",
+                   "results": [{"user": dict(user), "title": "Dune"}, {"requestedBy": None}, {"modifiedBy": 5}]}
+        out = facade.scrub(fixture, 1000001, set())
+        text = json.dumps(out)
+        for key in ["email", "apiKey", "plexToken", "jellyfinAuthToken", "jellyfinDeviceId", "password", "resetPasswordGuid", "plexId", "jellyfinUserId", "settings",
+                    "plexUsername", "jellyfinUsername", "username", "permissions", "avatar"]:
+            self.assertNotIn(f'"{key}"', text, key)
+        self.assertNotIn("@", text)
+        for secret in ["k1", "p1", "j1", "d1", "pw", "g1", "u1", "k2", "jane"]:
+            self.assertNotIn(f'"{secret}"', text, secret)
+        self.assertEqual(out["deep"], [[{"a": {"b": {"keep": 1}}}]])
+        self.assertEqual(out["mediaInfo"]["jellyfinMediaId"], "abc")
+        self.assertEqual(out["results"], [{"user": facade.HOUSEHOLD, "title": "Dune"}, {"requestedBy": None}, {"modifiedBy": facade.HOUSEHOLD}])
+        self.assertEqual(facade.HOUSEHOLD, {"id": 0, "displayName": "Household"})
+        self.assertEqual(fixture["mediaInfo"]["requests"][0]["requestedBy"]["email"], "jane@example.com")
+
+    def test_scrub_applied_to_proxied_bodies(self):
+        self.seerr.answer["/api/v1/movie/550"] = {"id": 550, "mediaInfo": {"requests": [{"id": 9, "requestedBy": {"id": 1, "email": "admin@example.com", "displayName": "Admin"}}]}}
+        status, out, _ = self.get("movie/550")
+        self.assertEqual((status, out["mediaInfo"]["requests"][0]["requestedBy"]), (200, facade.HOUSEHOLD))
+        self.assertNotIn("@", json.dumps(out))
+
+    def test_requested_by_rewritten_mine_vs_household(self):
+        jane = {"id": 7, "displayName": "Jane Doe", "email": "jane@example.com"}
+        admin = {"id": 1, "displayName": "Admin", "email": "admin@example.com"}
+        fixture = {"results": [{"id": 5, "requestedBy": dict(jane), "modifiedBy": dict(admin)}, {"id": 6, "requestedBy": dict(jane), "modifiedBy": dict(jane)},
+                               {"id": 7, "requestedBy": dict(admin), "modifiedBy": None}, {"id": True, "requestedBy": dict(jane)}],
+                   "mediaInfo": {"requests": [{"id": 6, "requestedBy": dict(jane)}, {"id": 8, "requestedBy": dict(jane)}]}}
+        out = facade.scrub(fixture, 1000001, {5, 6, 7, 1}, me_name="Jane Doe")
+        me = {"id": 1000001, "displayName": "Jane Doe"}
+        r = out["results"]
+        self.assertEqual([(x["requestedBy"], x["modifiedBy"]) for x in r[:3]], [(me, facade.HOUSEHOLD), (me, me), (me, None)])
+        self.assertEqual(r[3]["requestedBy"], facade.HOUSEHOLD)
+        self.assertEqual([x["requestedBy"] for x in out["mediaInfo"]["requests"]], [me, facade.HOUSEHOLD])
+        self.assertEqual(facade.scrub({"id": 5, "requestedBy": dict(jane)}, 1000001, {5})["requestedBy"], {"id": 1000001, "displayName": "You"})
+        self.assertNotIn(1, [x["requestedBy"]["id"] for x in r if x["requestedBy"]])
+
+    def test_seerr_non_json_and_errors_are_502_json(self):
+        bad = [test_facade_http_error(500), test_facade_http_error(502), test_facade_http_error(404), test_facade_http_error(401), socket.timeout("timed out"),
+               OSError("connection refused"), ValueError("Expecting value: <html>login</html>"), http.client.IncompleteRead(b"<html>"),
+               http.client.RemoteDisconnected("gone"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")]
+        for err in bad:
+            self.seerr.error = err
+            for path in ["movie/550", "status"]:
+                status, out, extra = self.get(path)
+                self.assertEqual((status, out, extra), (502, {"message": "Seerr is not reachable"}, []), (err, path))
+        self.seerr.error = None
+        for value in [None, "<html>login</html>", 5, True]:
+            self.seerr.answer["/api/v1/movie/550"] = value
+            self.assertEqual(self.get("movie/550")[:2], (502, {"message": "Seerr is not reachable"}), value)
+        self.assertEqual(self.seerr.posts, [])
+
+    def test_watchlist_and_blocklist_empty_pages(self):
+        self.assertEqual(self.get("discover/watchlist?page=1")[:2], (200, {"page": 1, "totalPages": 1, "totalResults": 0, "results": []}))
+        for path in ["blocklist", "blacklist?take=25&skip=0"]:
+            self.assertEqual(self.get(path)[:2], (200, {"pageInfo": {"pages": 0, "pageSize": 25, "results": 0, "page": 1}, "results": []}), path)
+        self.assertEqual(self.seerr.gets, [])
+
+    def test_no_service_user_503_and_nothing_created(self):
+        self.seerr.users = [u for u in self.seerr.users if u["id"] != 20]
+        for path in ["movie/550", "status", "settings/public"]:
+            status, out, extra = self.get(path)
+            self.assertEqual((status, set(out), extra), (503, {"message"}, []), path)
+        self.assertEqual((self.seerr.gets, self.seerr.posts), ([], []))
+
+    def test_service_user_id_1_never_used(self):
+        self.seerr.users = [u for u in self.seerr.users if u["id"] != 20] + [{"id": 1, "email": "jellyfin-popular", "permissions": 160}]
+        self.assertEqual(self.get("movie/550")[0], 503)
+        self.assertEqual(self.seerr.gets, [])
+
+    def test_proxy_rotates_old_cookie(self):
+        self.later(86401)
+        status, _, extra = self.get("movie/550")
+        self.assertEqual(status, 200)
+        self.assertIsNotNone(cookie_of(extra))
+
+
+def test_facade_http_error(code):
+    return urllib.error.HTTPError("http://seerr:5055/api/v1/x", code, "error", {}, io.BytesIO(b"<html>Seerr login secret-page</html>"))
 
 
 class LoadKey(unittest.TestCase):

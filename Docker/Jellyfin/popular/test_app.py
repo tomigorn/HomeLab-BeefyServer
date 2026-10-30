@@ -194,6 +194,25 @@ class Requests(Base):
         self.assertEqual(self.seerr.posts[-1][2], 20)
         self.assertEqual(self.audit()[-1]["user"], "guest")
 
+    def test_service_user_lookup_without_create_never_posts(self):
+        with self.assertRaises(app.NoServiceUser):
+            self.core.service_user(create=False)
+        self.assertEqual(self.seerr.posts, [])
+
+    def test_service_user_cached_5_min(self):
+        self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, "permissions": 160})
+        gets = []
+        inner = self.core.seerr
+        self.core.seerr = lambda method, path, body=None, user=None: (gets.append(path), inner(method, path, body, user))[1]
+        self.assertEqual(self.core.service_user(create=False)["id"], 20)
+        self.assertEqual(self.core.service_user()["id"], 20)
+        self.now = NOW + datetime.timedelta(minutes=4, seconds=59)
+        self.core.service_user(create=False)
+        self.assertEqual(len(gets), 1)
+        self.now = NOW + datetime.timedelta(minutes=5)
+        self.core.service_user(create=False)
+        self.assertEqual((len(gets), self.seerr.posts), (2, []))
+
     def test_linked_user_without_request_permission_goes_through_the_service_user(self):
         self.seerr.users[0]["permissions"] = 0
         self.post({"id": "tok-movie-xxxxxxxxxxxx"})
