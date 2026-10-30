@@ -26,6 +26,8 @@ UNSAFE = re.compile(r'[/\\:*?"<>|\x00-\x1f\x7f]')
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 THUMB = "https://image.tmdb.org/t/p/w185"
 TRAILER = "plugin://plugin.video.youtube/?action=play_video&videoid="
+# Old on purpose: Jellyfin takes DateCreated from <dateadded>, so placeholders never top "Recently added".
+DATE_ADDED = "2000-01-01 00:00:00"
 
 
 @dataclasses.dataclass
@@ -197,7 +199,7 @@ def _prefix(ph):
 
 
 def nfo(ph):
-    """movie.nfo of a placeholder (UTF-8 XML, <movie> root): title, sort title, plot behind the state prefix, year, genres, ratings, trailers, cast; never a <uniqueid>."""
+    """movie.nfo of a placeholder (UTF-8 XML, <movie> root): title, sort title, plot behind the state prefix, year, genres, ratings, trailers, cast, an old date added; never a <uniqueid>."""
     inf = ph.info or {}
     root = ET.Element("movie")
 
@@ -223,6 +225,7 @@ def nfo(ph):
         add(a, "name", c.get("n"))
         add(a, "role", c.get("c"))
         add(a, "thumb", THUMB + c["p"] if c.get("p") else None)
+    add(root, "dateadded", DATE_ADDED)
     ET.indent(root)
     return '<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
 

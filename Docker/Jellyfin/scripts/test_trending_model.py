@@ -194,6 +194,10 @@ class Nfo(unittest.TestCase):
                          [("Jane Doe", "Hero", "https://image.tmdb.org/t/p/w185/jane.jpg"), ("John Roe", None, None)])
         self.assertIsNone(root.find("uniqueid"))
 
+    def test_nfo_date_added_is_old_so_placeholders_never_rank_as_recently_added(self):
+        root = ET.fromstring(tm.nfo(self.ph()).encode("utf-8"))
+        self.assertEqual(root.findtext("dateadded"), "2000-01-01 00:00:00")
+
     def test_nfo_prefixes_per_state(self):
         plot = lambda ph: ET.fromstring(tm.nfo(ph).encode()).findtext("plot")
         self.assertTrue(plot(self.ph("requested", "night")).startswith("✓ Requested — downloading tonight\n\n"))
