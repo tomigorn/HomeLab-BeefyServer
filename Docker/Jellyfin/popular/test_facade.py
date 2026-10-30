@@ -632,6 +632,21 @@ class ReadProxy(FacadeBase):
         self.assertEqual((status, out["mediaInfo"]["requests"][0]["requestedBy"]), (200, facade.HOUSEHOLD))
         self.assertNotIn("@", json.dumps(out))
 
+    def test_owned_movie_names_no_collection(self):
+        lotr = {"id": 119, "name": "The Lord of the Rings Collection"}
+        for status, kept in ((5, False), (4, False), (3, True), (2, True), (None, True)):
+            body = {"id": 121, "collection": dict(lotr)}
+            if status is not None:
+                body["mediaInfo"] = {"status": status}
+            self.seerr.answer["/api/v1/movie/121"] = body
+            out = self.get("movie/121")[1]
+            self.assertEqual("collection" in out, kept, status)
+            self.assertEqual(out["id"], 121)
+        self.seerr.answer["/api/v1/collection/119"] = {"id": 119, "parts": [{"id": 121, "mediaInfo": {"status": 5}}], "collection": dict(lotr)}
+        self.assertEqual(self.get("collection/119")[1]["parts"], [{"id": 121, "mediaInfo": {"status": 5}}])
+        self.seerr.answer["/api/v1/tv/1399"] = {"id": 1399, "mediaInfo": {"status": 5}, "collection": dict(lotr)}
+        self.assertIn("collection", self.get("tv/1399")[1])
+
     def test_requested_by_rewritten_mine_vs_household(self):
         jane = {"id": 7, "displayName": "Jane Doe", "email": "jane@example.com"}
         admin = {"id": 1, "displayName": "Admin", "email": "admin@example.com"}

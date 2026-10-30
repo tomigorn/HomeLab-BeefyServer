@@ -91,6 +91,8 @@ NOT_TAKEN = "Seerr could not take the request"
 NOT_SET_UP = "Requests are not set up"
 SERVERS = [{"id": 0, "name": "🌙 Tonight · lower power cost", "isDefault": True}, {"id": 1, "name": "⚡ Now · daytime price", "isDefault": False}]
 PROFILE = {"id": 0, "name": "Best found release (1080p/2160p)"}
+MOVIE_RE = re.compile(r"movie/[0-9]{1,10}")
+OWNED_MEDIA = {4, 5}
 SERVICE_RE = re.compile(r"service/(radarr|sonarr)(?:/([0-9]{1,10}))?")
 QUOTA_RE = re.compile(r"user/([0-9]{1,10})/quota")
 DIGITS_RE = re.compile(r"[0-9]{1,9}")
@@ -457,6 +459,9 @@ class Facade:
                 return 502, {"message": "Seerr is not reachable"}
             if path_q.partition("?")[0] == "settings/public" and isinstance(out, dict):
                 out = {**out, "movie4kEnabled": False, "series4kEnabled": False}
+            if MOVIE_RE.fullmatch(path_q.partition("?")[0]) and isinstance(out, dict) and isinstance(out.get("mediaInfo"), dict) and out["mediaInfo"].get("status") in OWNED_MEDIA:
+                # Moonfin adopts an owned member's TMDB collection for a list BoxSet and shows the other parts as missing
+                out = {k: v for k, v in out.items() if k != "collection"}
             if me is None:
                 return 200, scrub(out, 0, set())
             return 200, scrub(out, me["uid"], self.mine(me), me["name"])

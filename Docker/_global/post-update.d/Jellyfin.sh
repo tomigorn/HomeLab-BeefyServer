@@ -118,6 +118,8 @@ d=json.load(c('GET','settings/public'))
 print(json.dumps(d['movie4kEnabled']), json.dumps(d['series4kEnabled']))" 2>&1)"
   check jf.facade-refusals '^403 403 401 404 401 403$' "$(docker exec jellyfin-popular python3 -c "$FACADE_PY
 print(c('GET','auth/me').code, c('GET','auth/me',{'Cookie':'connect.sid=s%3Aforged.sig'}).code, c('POST','auth/jellyfin').code, c('GET','settings/radarr').code, c('GET','service/radarr').code, c('DELETE','request/1').code)" 2>&1)"
+  # owned films carry no TMDB collection, so Moonfin adopts no franchise for a list BoxSet
+  check jf.facade-owned-collection '^\[4, 5\] True$' "$(docker exec -w /app jellyfin-popular python3 -c 'import facade; print(sorted(facade.OWNED_MEDIA), bool(facade.MOVIE_RE.fullmatch("movie/121")))' 2>&1)"
   check jf.facade-unpublished '^0$' "$(docker inspect -f '{{json .NetworkSettings.Ports}}' jellyfin-popular 2>&1 | grep -c 8099)"
   check jf.facade-secret '^600 65128$' "$(stat -c '%a %u' "$DIR/../../Jellyfin/secrets/popular/facade.secret" 2>&1)"
   check jf.popular-timer '^active$' "$(jf_user_systemctl is-active jellyfin-popular.timer 2>&1)"
