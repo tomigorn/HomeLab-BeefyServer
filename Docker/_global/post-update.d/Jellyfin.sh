@@ -69,7 +69,7 @@ if want jellyfin; then
   check jf.trending-webhook '^ok$' "$(python3 "$DIR/../../Jellyfin/scripts/trending-webhook.py" check 2>&1)"
   # Moonbase (Moonfin apps): Seerr, the Similar override and the push relay stay off; left nav and the list rows are the defaults
   check jf.plugin-moonbase '^Active 2\.' "$(jf_plugin 'Moonbase')"
-  check jf.moonbase-config '^\[false,false,"","left",true\]$' "$(jf_api /Plugins/8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b/Configuration | jq -c '[.SeerrEnabled,.RecommendationsProviderEnabled,.PushRelayUrl,.DefaultUserSettings.navbarPosition,([.DefaultUserSettings.homeSections[]? | select(.kind == "pluginDynamic")] | length > 0)]' 2>&1)"
+  check jf.moonbase-config '^\[false,false,"","left",true,false\]$' "$(jf_api /Plugins/8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b/Configuration | jq -c '[.SeerrEnabled,.RecommendationsProviderEnabled,.PushRelayUrl,.DefaultUserSettings.navbarPosition,([.DefaultUserSettings.homeSections[]? | select(.kind == "pluginDynamic")] | length > 0),.DefaultUserSettings.mergeContinueWatchingNextUp]' 2>&1)"
 fi
 if want popular jellyfin; then
   POP=http://127.0.0.1:8097/hss-popular

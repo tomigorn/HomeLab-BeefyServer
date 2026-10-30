@@ -62,6 +62,9 @@ class WantedTest(unittest.TestCase):
         for key in ("navbarPosition", "mediaBarMode", "homeRowsStyle", "detailScreenStyle"):
             self.assertTrue(d.get(key), key)
 
+    def test_continue_watching_and_next_up_are_separate_rows(self):
+        self.assertIs(mb.wanted(CONFIG, LISTS, FOLDERS)["DefaultUserSettings"]["mergeContinueWatchingNextUp"], False)
+
     def test_existing_defaults_kept(self):
         cfg = {**CONFIG, "DefaultUserSettings": {"focusColor": "blue", "navbarPosition": "top"}}
         d = mb.wanted(cfg, LISTS, FOLDERS)["DefaultUserSettings"]

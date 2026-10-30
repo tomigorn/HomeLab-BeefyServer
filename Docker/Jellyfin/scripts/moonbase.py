@@ -37,6 +37,7 @@ DEFAULTS = {
     "collectionsRowSortOrder": "ascending",
     "displaySeerrRows": False,
     "seasonalRowEnabled": False,
+    "mergeContinueWatchingNextUp": False,  # the merged row dedupes by episode, not series: one show twice
 }
 
 
