@@ -70,8 +70,8 @@ def main(argv, api=None, index_file=INDEX, out=sys.stdout):
                 if argv == []:
                     api("DELETE", f"/UserPlayedItems/{urllib.parse.quote(iid)}?userId={uid}")
                 reset += 1
-        except OSError as e:
-            # HTTPError, URLError and timeouts
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            # HTTP errors, timeouts, bad JSON, unexpected payload shape
             failed += 1
             print(f"user failed {type(e).__name__}", file=sys.stderr)
     tail = f", {failed} users failed" if failed else ""

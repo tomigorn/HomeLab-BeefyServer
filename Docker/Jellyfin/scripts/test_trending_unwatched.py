@@ -141,6 +141,14 @@ class Sweep(unittest.TestCase):
             code, text = self.run_cli([])
         self.assertEqual((code, self.jf.resets(), text.strip()), (1, [("ep1", "u2")], "2 users: 1 marked placeholders reset, 1 users failed"))
 
+    def test_any_per_user_error_is_counted_and_the_rest_still_swept(self):
+        for exc in (ValueError("bad json"), KeyError("Id"), TypeError("nope")):
+            with self.subTest(exc=type(exc).__name__):
+                self.jf.fail = {("GET", "u1"): exc}
+                with contextlib.redirect_stderr(io.StringIO()):
+                    code, text = self.run_cli(["--dry-run"])
+                self.assertEqual((code, text.strip()), (1, "2 users: 1 marked placeholders would be reset, 1 users failed"))
+
     def test_check_fails_when_a_user_fails(self):
         self.jf.data["u1"] = {}
         self.jf.fail[("GET", "u2")] = TimeoutError("timed out")
