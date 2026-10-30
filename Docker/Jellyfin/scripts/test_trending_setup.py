@@ -188,6 +188,9 @@ class MainTest(unittest.TestCase):
         self.assertIn("paths=%2Fconfig%2Ftrending%2Fshows", creates[0])
         self.assertIn("refreshLibrary=false", creates[0])
         self.assertEqual(self.bodies["/Users/u/Configuration"]["MyMediaExcludes"], ["t", "s"])
+        self.assertEqual(calls.count(("POST", "/Library/Refresh")), 1)
+        self.assertLess(calls.index(("POST", "/Users/u/Configuration")), calls.index(("POST", "/Library/Refresh")))
+        self.assertIn("scan finished", out)
 
 
 class DirsTest(unittest.TestCase):

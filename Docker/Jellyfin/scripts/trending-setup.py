@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Creates the hidden libraries "Trending items" (movies) and "Trending shows" (tvshows), hides them for every user and renames the Collections library.
-A new library is scanned (full library scan) and hidden as soon as it resolves, in the same run.
+A new library gets one full library scan and is hidden as soon as it resolves, in the same run.
 Idempotent. Usage: trending-setup.py [--dry-run | --check]  (--check exits 1 when a user still sees the library)"""
 import base64
 import copy
@@ -154,7 +154,7 @@ def main(argv):
     for d in ensure_dirs(HOST_ROOT, [pathlib.PurePath(p).name for _, _, p in LIBRARIES], dry):
         say(f"create {d}")
 
-    rc, ids, scanned = 0, [], False
+    rc, ids, scanned, created = 0, [], False, False
     for name, collection_type, path in LIBRARIES:
         present, lib = find_library(folders, name), library_id(folders, name)
         if present is not None and lib is None:
@@ -167,6 +167,7 @@ def main(argv):
                 continue
             q = urllib.parse.urlencode({"name": name, "collectionType": collection_type, "paths": path, "refreshLibrary": "false"})
             api("POST", f"/Library/VirtualFolders?{q}", {"LibraryOptions": library_options(None, collection_type)})
+            created = True
             folders = api("GET", "/Library/VirtualFolders")
             lib = library_id(folders, name)
             if lib is None and not scanned:
@@ -197,6 +198,10 @@ def main(argv):
             if not dry:
                 api("POST", f"/Users/{u['Id']}/Configuration", config)
 
+    if created and not scanned:
+        say("scan all libraries")
+        api("POST", "/Library/Refresh")
+        scanned = True
     if scanned:
         for _ in range(SCAN_TRIES):
             if not scan_running(api):
