@@ -648,9 +648,11 @@ class ReadProxy(FacadeBase):
                 self.get("movie/550")
 
     def test_issues_empty_count_proxied(self):
-        for path in ["issue", "issue?take=10&skip=0&filter=open", "issue/3"]:
+        for path in ["issue", "issue?take=10&skip=0&filter=open"]:
             self.assertEqual(self.get(path)[:2], (200, {"pageInfo": {"pages": 0, "pageSize": 25, "results": 0, "page": 1}, "results": []}), path)
             self.assertEqual(self.get(path, cookie=None)[0], 401, path)
+        for cookie in (True, None):
+            self.assertEqual(self.get("issue/3", cookie=cookie), (404, {"message": "Not found"}, []))
         self.assertEqual(self.seerr.gets, [])
         self.assertEqual(self.get("issue/count")[0], 200)
         self.assertEqual(self.seerr.gets, [("GET", "/api/v1/issue/count", 20)])

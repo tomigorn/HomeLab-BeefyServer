@@ -40,7 +40,7 @@ ROUTES = [
     ("POST", r"auth/logout", "auth"),
     ("GET", r"auth/me", "auth"),
     ("GET", r"discover/watchlist", "empty_page"),
-    ("GET", rf"blocklist|blacklist|issue|issue/{N}", "empty_page"),
+    ("GET", r"blocklist|blacklist|issue", "empty_page"),
     ("GET", r"service/(radarr|sonarr)", "synth"),
     ("GET", rf"service/(radarr|sonarr)/{N}", "synth"),
     ("GET", rf"user/{N}/quota", "synth"),
