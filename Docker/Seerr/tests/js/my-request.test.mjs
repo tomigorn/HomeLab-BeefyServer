@@ -146,13 +146,13 @@ test("shared title: read-only with a note, delete still possible", async () => {
 });
 
 test("manager: every request with its requester; seasons and automatic tags shown", async () => {
-  const w = page(STATE([R({ mine: true }), R({ id: 60, mine: false, by: "Alezauron", seasons: [1, 2], auto: ["old-rare"], status: 1 })], true), {}, [], "/movie/1480613");
+  const w = page(STATE([R({ mine: true }), R({ id: 60, mine: false, by: "john", seasons: [1, 2], auto: ["old-rare"], status: 1 })], true), {}, [], "/movie/1480613");
   await settle();
   const p = panel(w);
   assert.match(p.querySelector("summary").textContent, /Requests \(2\)/);
   const items = p.querySelectorAll("[data-request]");
   assert.equal(items.length, 2);
-  assert.match(items[1].textContent, /by Alezauron/);
+  assert.match(items[1].textContent, /by john/);
   assert.match(items[1].textContent, /Pending approval/);
   assert.match(items[1].textContent, /Seasons 1, 2/);
   assert.match(items[1].textContent, /Old & rare \(automatic\)/);
