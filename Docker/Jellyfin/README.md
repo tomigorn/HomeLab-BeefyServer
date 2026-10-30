@@ -662,6 +662,26 @@ Episodes and films get **"Skip intro" / "Skip credits"** buttons. Buttons only, 
 | Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-intro-skipper`, `jf.intro-skipper-*`, `jf.segment-provider`) |
 | Rollback | stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/Intro Skipper_*`, start. Pre-change backup: `~/backups/jellyfin/jellyfin-config-pre-introskipper-2026-10-27-210156.tar.gz` |
 
+## Moonfin (Moonbase plugin) (2026-10-30)
+Test of the **Moonfin** TV apps (Apple TV, Android TV). The server plugin **Moonbase** sets their defaults for every user.
+
+| Plugin | Repo | Version | Config |
+|---|---|---|---|
+| Moonbase (Moonfin-Client, GPL-3.0) | `https://raw.githubusercontent.com/Moonfin-Client/Plugin/refs/heads/master/manifest.json` | 2.5.0.0 (targetAbi 10.10) | `/config/data/plugins/configurations/Moonfin.Server.xml`; per-user settings (JSON) in `.../configurations/Moonfin/` |
+
+- Defaults (`scripts/moonbase.py`, idempotent, `--dry-run`, `--check`): left navigation, media bar from Movies + Shows (random), modern home rows and details, backdrops on, collection rows by name (= rank).
+- Home rows: Continue Watching, Next Up, Top 10 Switzerland · Movies, · Shows, Coming soon, Recently added (Movies, Shows), then the service and genre lists (`hss-trending` BoxSets, empty ones left out at run time: rerun after the lists change).
+- Defaults only fill what a user has not set: a choice in the app (setup wizard, settings) wins. Pushing them over users' own choices: Dashboard → Plugins → Moonbase → User defaults → push.
+- The apps skip a wizard question when its setting comes from the server (navigation, media bar, row style, details style).
+- Off on purpose: Seerr (would bypass our allow-list and limits), push notifications (relay `push.moonfin.io` = third-party cloud), Moonfin Recommends (would replace Similar for every client), IMDb/MDBList lists and studio logos (no keys). No TMDB/MDBList key stored: Moonbase hands the server keys to every signed-in user.
+- Side effect: a Moonfin button in the stock web header (File Transformation). The web app itself is at `/Moonfin/Web/`.
+
+| Task | Command (in `Docker/Jellyfin/`) |
+|---|---|
+| Apply defaults | `bash scripts/backup-config.sh moonbase && python3 scripts/moonbase.py` |
+| Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-moonbase`, `jf.moonbase-config`) |
+| Rollback | Dashboard → Plugins → Moonbase → Uninstall, restart (`sudo docker compose restart jellyfin`); remove the Moonbase repository. Pre-change backup: `~/backups/jellyfin/20261030-014107-pre-moonbase` |
+
 ## IMDb link and rating (2026-10-25)
 - Film and series pages (web) show an **IMDb** and **TMDB** link row (`ExternalUrls`, built from `ProviderIds`); all 9 items have both IDs, nothing to fix. Apps show no link row.
 - IDs come from the TMDb provider on library scan / refresh. New item without IMDb link: Refresh metadata (not "Replace all") on the item.
