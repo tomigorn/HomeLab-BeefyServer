@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
-"""Configures the Moonbase plugin (Moonfin apps): safe server settings and the default home layout for every user.
-Idempotent. Usage: moonbase.py [--dry-run | --check]  (--check exits 1 when the config differs)"""
+"""Configures the Moonbase plugin (Moonfin apps): safe server settings and the default home layout for every user (the web home order).
+Users whose stored value is still the previous default (or the app's own default for a key new here) follow the new default; their own choices stay.
+Idempotent. Usage: moonbase.py [--dry-run | --check]  (--check exits 1 when the config or a user differs)"""
 import copy
+import json
 import pathlib
+import re
 import sys
+import urllib.error
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from jellyfin_api import api  # noqa: E402
-from trending_model import COMING, HOME, LIBRARY, TAG  # noqa: E402
+from trending_model import COMING, HOME, LIBRARIES  # noqa: E402
 
 PLUGIN_ID = "8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b"
 SERVER_URL = "https://jellyfin.holy-grail.ch"
-LEADING = [name for _, _, name in HOME] + [COMING[1]]
+TOP_MOVIES, TOP_SHOWS = (name for _, _, name in HOME)
+GEMS = "Hidden Gems"
+END_ROWS = ("Harry Potter Collection", "The Lord of the Rings Collection")
+ROW_SETS = (COMING[1], TOP_SHOWS, TOP_MOVIES, GEMS, *END_ROWS)
+INJECTOR = "JavaScript Injector"
+STUDIO_ENTRY = "Home networks"
+PROFILES = ("global", "desktop", "mobile", "tv")
+# Moonfin's own defaults for the keys set here first: a client writes them back on every sync, so they are no choice.
+CLIENT_DEFAULTS = {"displayFavoritesRows": False, "displayStudiosRows": False, "displayGenresRows": False, "genresRowItemFilter": "both", "studiosRowSelectedIds": "", "mediaBarAutoAdvance": True}
 
 # Seerr = our facade (limits enforced there), no push relay (third-party cloud), no server-wide Similar override, no fetch tasks without keys.
 SERVER = {
@@ -31,6 +43,7 @@ DEFAULTS = {
     "navbarPosition": "left",
     "mediaBarMode": "moonfin",
     "mediaBarSourceType": "random",
+    "mediaBarAutoAdvance": True,
     "homeRowsStyle": "v2",
     "detailScreenStyle": "modern",
     "homeBackdropEnabled": True,
@@ -42,38 +55,59 @@ DEFAULTS = {
     "seerrEnabled": True,
     "seasonalRowEnabled": False,
     "mergeContinueWatchingNextUp": False,  # the merged row dedupes by episode, not series: one show twice
+    "displayFavoritesRows": True,
+    "displayStudiosRows": True,
+    "displayGenresRows": True,
+    "displayRewatchRow": True,
+    "displaySinceYouWatchedRows": True,
+    "genresRowItemFilter": "movies",
 }
 
 
-def builtin(kind, order):
+def builtin(kind, order=0):
     return {"type": kind, "enabled": True, "order": order}
 
 
-def collection(item, order):
+def collection(item, order=0):
     return {"kind": "pluginDynamic", "pluginSource": "collections", "type": "none", "enabled": True, "order": order,
             "serverId": SERVER_URL, "pluginSection": "collection", "pluginAdditionalData": item["Id"], "pluginDisplayText": item["Name"]}
 
 
-def sections(lists):
-    """Continue Watching, Next Up, the leading lists, Recently added, then the other lists; empty lists left out."""
-    full = [item for item in lists if item["Count"] > 0]
-    lead = [item for item in full if item["Name"] in LEADING]
-    rest = [item for item in full if item["Name"] not in LEADING]
-    out = [builtin("resume", 0), builtin("nextup", 1)]
-    out += [collection(item, 0) for item in lead]
-    out.append(builtin("latestmedia", 0))
-    out += [collection(item, 0) for item in rest]
+def sections(sets):
+    """The web home order; collections missing or empty for a non-admin user left out, the service and genre lists not on home."""
+    full = {item["Name"]: item for item in sets if item["Count"] > 0}
+
+    def coll(*names):
+        return [collection(full[n]) for n in names if n in full]
+
+    out = [builtin("resume"), builtin("nextup"), *coll(COMING[1]), builtin("favoritemovies"), builtin("favoriteseries"), builtin("latestmedia"),
+           *coll(TOP_SHOWS), builtin("studios"), builtin("rewatch"), *coll(TOP_MOVIES), builtin("sinceyouwatched1"), *coll(GEMS), builtin("genres"), *coll(*END_ROWS)]
     for order, section in enumerate(out):
         section["order"] = order
     return out
 
 
-def wanted(config, lists, folders):
+def studio_ids(injector_config):
+    """The Jellyfin studio ids of the web's studio and network cards (studio-logos.py), studios first; None without the entry."""
+    script = next((s.get("Script") or "" for s in injector_config.get("CustomJavaScripts") or [] if s.get("Name") == STUDIO_ENTRY), None)
+    if script is None:
+        return None
+    ids = []
+    for var in ("HssStudios", "HssNetworks"):
+        m = re.search(rf"^window\.{var} = (.*);$", script, re.M)
+        for card in json.loads(m.group(1)) if m else []:
+            ids += [i for i in card.get("ids") or [] if i not in ids]
+    return ",".join(ids)
+
+
+def wanted(config, sets, folders, studios):
     new = copy.deepcopy(config)
     new.update(SERVER)
-    libraries = [f["ItemId"] for f in folders if f.get("CollectionType") in ("movies", "tvshows") and f.get("Name") != LIBRARY]
-    new["DefaultUserSettings"] = {**(new.get("DefaultUserSettings") or {}), **DEFAULTS, "mediaBarLibraryIds": libraries,
-                                  "homeSections": sections(lists), "homeRowOrder": None}
+    libraries = [f["ItemId"] for f in folders if f.get("CollectionType") in ("movies", "tvshows") and f.get("Name") not in LIBRARIES.values()]
+    defaults = {**(new.get("DefaultUserSettings") or {}), **DEFAULTS, "mediaBarLibraryIds": libraries, "homeSections": sections(sets), "homeRowOrder": None}
+    if studios is not None:
+        defaults["studiosRowSelectedIds"] = studios
+    new["DefaultUserSettings"] = defaults
     return new
 
 
@@ -83,24 +117,76 @@ def changed(old, new):
     return keys + [f"DefaultUserSettings.{k}" for k in nd if od.get(k) != nd[k]]
 
 
+def layout(rows):
+    return [(r.get("type"), r.get("pluginSource"), r.get("pluginAdditionalData")) for r in sorted(rows or [], key=lambda r: r.get("order") or 0) if r.get("enabled", True)]
+
+
+def adopt(settings, old, new):
+    """{profile: {key: new default}} for stored values that are no own choice: the previous default (a layout by its enabled rows) or the app's default of a key new here."""
+    out = {}
+    for name in PROFILES:
+        profile = settings.get(name)
+        if not isinstance(profile, dict):
+            continue
+        change = {}
+        for key, value in new.items():
+            have = profile.get(key)
+            if value is None or have is None or have == value:
+                continue
+            if key == "homeSections":
+                untouched = layout(have) == layout(old.get(key))
+            else:
+                untouched = have == old.get(key) or (key in CLIENT_DEFAULTS and have == CLIENT_DEFAULTS[key])
+            if untouched:
+                change[key] = value
+        if change:
+            out[name] = change
+    return out
+
+
 def lists():
-    """Tagged list collections in SortName order, counted as a non-admin user sees them (without a user a BoxSet counts 0)."""
+    """The home-row collections by name, counted as a non-admin user sees them (without a user a BoxSet counts 0)."""
     user = next(u["Id"] for u in api("GET", "/Users") if not u["Policy"]["IsAdministrator"])
-    items = api("GET", f"/Items?Recursive=true&IncludeItemTypes=BoxSet&Tags={TAG}&SortBy=SortName&CollapseBoxSetItems=false&EnableImages=false")["Items"]
-    return [{"Id": i["Id"], "Name": i["Name"], "Count": api("GET", f"/Items?userId={user}&ParentId={i['Id']}&Limit=0&EnableImages=false")["TotalRecordCount"]} for i in items]
+    items = api("GET", "/Items?Recursive=true&IncludeItemTypes=BoxSet&SortBy=SortName&CollapseBoxSetItems=false&EnableImages=false")["Items"]
+    return [{"Id": i["Id"], "Name": i["Name"], "Count": api("GET", f"/Items?userId={user}&ParentId={i['Id']}&Limit=0&EnableImages=false")["TotalRecordCount"]}
+            for i in items if i["Name"] in ROW_SETS]
+
+
+def injector_config():
+    plugin = next((p["Id"] for p in api("GET", "/Plugins") or [] if p.get("Name") == INJECTOR), None)
+    return api("GET", f"/Plugins/{plugin}/Configuration") if plugin else {}
+
+
+def user_settings(uid):
+    try:
+        return api("GET", f"/Moonfin/Settings/{uid}")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
 
 
 def main(argv):
     path = f"/Plugins/{PLUGIN_ID}/Configuration"
     old = api("GET", path)
-    new = wanted(old, lists(), api("GET", "/Library/VirtualFolders"))
+    new = wanted(old, lists(), api("GET", "/Library/VirtualFolders"), studio_ids(injector_config()))
     diff = changed(old, new)
+    users = {}
+    for user in api("GET", "/Users"):
+        settings = user_settings(user["Id"])
+        change = adopt(settings, old.get("DefaultUserSettings") or {}, new["DefaultUserSettings"]) if settings else {}
+        if change:
+            users[user["Id"]] = (settings, change)
+    keys = sorted({k for _, change in users.values() for p in change.values() for k in p})
+    summary = ("config unchanged" if not diff else "config: " + ", ".join(diff)) + f"; {len(users)} user(s) to the new defaults" + (f" ({', '.join(keys)})" if keys else "")
     if "--check" in argv or "--dry-run" in argv:
-        print("unchanged" if not diff else "would change: " + ", ".join(diff))
-        return 1 if diff and "--check" in argv else 0
+        print("would change: " + summary if diff or users else "unchanged")
+        return 1 if (diff or users) and "--check" in argv else 0
     if diff:
         api("POST", path, new)
-    print("unchanged" if not diff else "changed: " + ", ".join(diff))
+    for uid, (settings, change) in users.items():
+        api("POST", f"/Moonfin/Settings/{uid}", {"settings": {"syncEnabled": settings.get("syncEnabled", True), **change}, "clientId": "moonbase-defaults", "mergeMode": "merge"})
+    print("changed: " + summary if diff or users else "unchanged")
     return 0
 
 
