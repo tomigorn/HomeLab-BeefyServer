@@ -622,14 +622,16 @@ class HookBase(Base):
         self.dry = d / "hook-dry-run"
         self.admin = []
         self.core = app.Core(app.Config(allow_file=self.allow, audit_file=d / "audit.jsonl", request_state=d / "rs.json", origins=[ORIGIN], hook_secret=SECRET, signal_file=self.signal, dry_flag=self.dry),
-                             seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now, jellyfin_admin=lambda m, p, b=None: self.admin.append((m, p, b)))
+                             seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now, jellyfin_admin=lambda m, p, b=None: self.admin.append((m, p, b)),
+                             later=lambda delay, fn: self.later.append((delay, fn)))
+        self.later = []
 
-    def event(self, event, at, item="ph1", ms=None, pos=None, paused=False, user="u1", disabled=False, played=False, session="s1", secret=SECRET, runtime=10 * SEC):
+    def event(self, event, at, item="ph1", ms=None, pos=None, paused=False, user="u1", disabled=False, played=False, session="s1", secret=SECRET, runtime=10 * SEC, kind="Movie", extra=None):
         self.now = T0 + datetime.timedelta(seconds=at)
         ps = dict(CLEARED) if ms is None and pos is None else {"MediaSourceId": ms, "PositionTicks": pos, "IsPaused": paused, "CanSeek": True}
-        body = {"Event": event, "Item": {"Id": item, "Type": "Movie", "RunTimeTicks": runtime, "UserData": {"Played": played}},
+        body = {"Event": event, "Item": {"Id": item, "Type": kind, "RunTimeTicks": runtime, "UserData": {"Played": played}, **(extra or {})},
                 "User": {"Id": user, "Name": "anna", "Policy": {"IsDisabled": disabled}},
-                "Session": {"Id": session, "Client": "Android TV", "PlayState": ps}, "Server": {"Id": "srv"}}
+                "Session": None if session is None else {"Id": session, "Client": "Android TV", "PlayState": ps}, "Server": {"Id": "srv"}}
         return self.core.hook("/hook/" + secret, {"Content-Type": "application/json"}, json.dumps(body).encode())
 
     def requests(self):
@@ -640,7 +642,12 @@ class HookBase(Base):
         return [json.loads(l) for l in f.read_text().splitlines()] if f.exists() else []
 
     def reset_calls(self, item="ph1", user="u1"):
-        return [c for c in self.admin if c == ("POST", f"/UserItems/{item}/UserData?userId={user}", {"Played": False, "PlaybackPositionTicks": 0})]
+        return [c for c in self.admin if c == ("DELETE", f"/UserPlayedItems/{item}?userId={user}", None)]
+
+    def run_later(self):
+        jobs, self.later = self.later, []
+        for _, fn in jobs:
+            fn()
 
 
 class Hook(HookBase):
@@ -658,6 +665,55 @@ class Hook(HookBase):
     def test_hook_without_a_configured_secret_refuses_everything(self):
         self.core.cfg.hook_secret = None
         self.assertEqual(self.event("Stop", 10, ms="ms_night", pos=int(9.9 * SEC))[0], 403)
+
+    def test_hook_stop_resets_again_after_5_and_30_s(self):
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("Stop", 3)
+        self.assertEqual(len(self.reset_calls()), 1)
+        self.assertEqual([d for d, _ in self.later], [5, 30])
+        self.run_later()
+        self.assertEqual(len(self.reset_calls()), 3)
+        self.assertEqual(self.later, [])
+
+    def test_hook_stop_resets_the_played_version_too(self):
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("Stop", 3)
+        self.assertEqual((len(self.reset_calls()), len(self.reset_calls(item="ms_night")), len(self.reset_calls(item="ms_now"))), (1, 1, 0))
+
+    def test_hook_episode_stop_resets_episode_season_and_series(self):
+        ids = {"SeriesId": "aaaa1111bbbb2222cccc3333dddd4444", "SeasonId": "eeee5555-ffff-6666-0000-777788889999"}
+        self.event("Play", 0, ms="ms_night", pos=0, kind="Episode", extra=ids)
+        self.event("Stop", 3, kind="Episode", extra=ids)
+        self.run_later()
+        self.assertEqual(len(self.reset_calls()), 3)
+        self.assertEqual(len(self.reset_calls(item="aaaa1111bbbb2222cccc3333dddd4444")), 3)
+        self.assertEqual(len(self.reset_calls(item="eeee5555ffff66660000777788889999")), 3)
+
+    def test_hook_bad_series_id_is_not_reset(self):
+        self.event("Stop", 3, kind="Episode", extra={"SeriesId": "../Users", "SeasonId": 7})
+        self.assertEqual({p.split("?")[0].split("/")[2] for _, p, _ in self.admin}, {"ph1"})
+
+    def test_hook_mark_played_on_a_placeholder_resets_it(self):
+        self.assertEqual(self.event("MarkPlayed", 3, played=True, session=None), (204, {}))
+        self.assertEqual(len(self.reset_calls()), 1)
+        self.run_later()
+        self.assertEqual(len(self.reset_calls()), 3)
+        self.assertEqual((self.requests(), self.audits()), ([], []))
+
+    def test_hook_mark_played_already_unplayed_is_ignored(self):
+        self.event("MarkPlayed", 3, played=False, session=None)
+        self.event("MarkUnplayed", 4, played=False, session=None)
+        self.assertEqual((self.admin, self.later), ([], []))
+
+    def test_hook_mark_played_on_a_real_item_is_ignored(self):
+        self.event("MarkPlayed", 3, item="realfilm", played=True, session=None)
+        self.assertEqual((self.admin, self.later), ([], []))
+
+    def test_hook_mark_played_does_not_disturb_the_tracked_play(self):
+        self.event("Play", 0, ms="ms_night", pos=0)
+        self.event("MarkPlayed", 5, played=True, session=None)
+        self.event("Stop", 10.5)
+        self.assertEqual(len(self.requests()), 1)
 
     def test_hook_unknown_item_204_silent(self):
         for ev, at in (("Play", 0), ("Progress", 5), ("Pause", 6), ("Stop", 3600)):

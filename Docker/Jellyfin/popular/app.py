@@ -4,7 +4,7 @@ Details: only ids of the sidecars details.json (popular.py) and coming.json (upc
 The caller is checked with Jellyfin (/Users/Me with their own token, disabled = refused); only entries of the current allow-list (scripts/popular.py) with a found release can be requested, nothing free-form.
 The request goes to Seerr with its API key as the caller's linked Seerr user, else as the service user "jellyfin-popular". Every decision of a signed-in caller is written to the audit log (rotated);
 unauthenticated and wrong-origin hits are only counted. Limits are counted in a small SQLite file next to the log.
-TV requests: a second listener on :8098 (internal network only, not published) takes Jellyfin Webhooks plugin events at POST /hook/<secret>. A Stop of a trending placeholder (trending-index.json of scripts/trending.py) played to its end (runtime - 2 s .. runtime + 30 s, from the Stop position or the tracked Play/Progress position plus unpaused time) requests the allow-list entry as the event's user in the mode of the played version, with the same limits, audit log and Seerr code; the placeholder's Played/position is reset for that user after every Stop. The flag file /state/hook-dry-run turns TV requests into checks."""
+TV requests: a second listener on :8098 (internal network only, not published) takes Jellyfin Webhooks plugin events at POST /hook/<secret>. A Stop of a trending placeholder (trending-index.json of scripts/trending.py) played to its end (runtime - 2 s .. runtime + 30 s, from the Stop position or the tracked Play/Progress position plus unpaused time) requests the allow-list entry as the event's user in the mode of the played version, with the same limits, audit log and Seerr code; the placeholder (film and played version, or episode with its season and series) is unmarked for that user after every Stop and after a MarkPlayed (Jellyfin UserDataSaved), again after 5 s and 30 s. The flag file /state/hook-dry-run turns TV requests into checks."""
 import collections
 import concurrent.futures
 import contextlib
@@ -44,6 +44,7 @@ FLUSH_EVERY = datetime.timedelta(minutes=1)
 AUTH_TTL = datetime.timedelta(seconds=30)
 UPSTREAM_TIMEOUT = 8
 SERVICE_TTL = datetime.timedelta(minutes=5)
+RESET_DELAYS = (5, 30)
 
 
 class NoServiceUser(Exception):
@@ -112,8 +113,9 @@ def badge(kind, tmdb, rs, now):
 class Core:
     NoServiceUser = NoServiceUser
 
-    def __init__(self, cfg, seerr, jellyfin, clock=None, jellyfin_admin=None):
+    def __init__(self, cfg, seerr, jellyfin, clock=None, jellyfin_admin=None, later=None):
         self.cfg, self.seerr, self.jellyfin, self.jellyfin_admin = cfg, seerr, jellyfin, jellyfin_admin
+        self.later = later or run_later
         self.tracked = {}
         self.clock = clock or (lambda: datetime.datetime.now(datetime.timezone.utc))
         # Short critical sections only; Seerr and Jellyfin calls run outside, under the caller's own lock.
@@ -697,6 +699,11 @@ class Core:
         ps = sess.get("PlayState") if isinstance(sess.get("PlayState"), dict) else {}
         uid = self.hook_id(user.get("Id"))
         event = p.get("Event")
+        if uid and event == "MarkPlayed":
+            ud = item.get("UserData") if isinstance(item.get("UserData"), dict) else {}
+            if ud.get("Played") is True:
+                self.reset_all(self.reset_ids(iid, item, None, idx), uid)
+            return 204, {}
         if not uid or event not in ("Play", "Progress", "Pause", "Resume", "Stop"):
             return 204, {}
         now = self.clock()
@@ -715,11 +722,32 @@ class Core:
                 self.tracked[key] = {"ms": ms or (old or {}).get("ms"), "pos": est, "at": now, "paused": paused}
                 return 204, {}
             self.tracked.pop(key, None)
+        ms = ms or (old or {}).get("ms")
         try:
-            self.tv_stop(rec, idx, item, user, uid, sess, ms or (old or {}).get("ms"), pos if pos is not None else self.estimate(old, now))
+            self.tv_stop(rec, idx, item, user, uid, sess, ms, pos if pos is not None else self.estimate(old, now))
         finally:
-            self.reset(iid, uid)
+            self.reset_all(self.reset_ids(iid, item, ms, idx), uid)
         return 204, {}
+
+    def reset_ids(self, iid, item, ms, idx):
+        """The placeholder, the played version (index ids only) and, for an episode, its season and series."""
+        ids = [iid]
+        if ms and ms != iid and ms in idx["items"]:
+            ids.append(ms)
+        if item.get("Type") == "Episode":
+            for key in ("SeasonId", "SeriesId"):
+                v = self.hook_id(item.get(key)) if isinstance(item.get(key), str) else None
+                if v and v not in ids:
+                    ids.append(v)
+        return ids
+
+    def reset_all(self, ids, uid):
+        def run():
+            for iid in ids:
+                self.reset(iid, uid)
+        run()
+        for delay in RESET_DELAYS:
+            self.later(delay, run)
 
     def tv_stop(self, rec, idx, item, user, uid, sess, ms, est):
         x = rec.get("x")
@@ -762,12 +790,18 @@ class Core:
         if not self.jellyfin_admin:
             return
         try:
-            self.jellyfin_admin("POST", f"/UserItems/{iid}/UserData?userId={uid}", {"Played": False, "PlaybackPositionTicks": 0})
+            self.jellyfin_admin("DELETE", f"/UserPlayedItems/{iid}?userId={uid}")
         except Exception as e:  # noqa: BLE001
             print(f"reset failed {type(e).__name__}", flush=True)
 
 
 # --- production wiring ------------------------------------------------------
+def run_later(delay, fn):
+    t = threading.Timer(delay, fn)
+    t.daemon = True
+    t.start()
+
+
 def http_json(url, headers, method="GET", body=None, timeout=UPSTREAM_TIMEOUT):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(url, data=data, method=method, headers=dict(headers, **({"Content-Type": "application/json"} if data else {})))
