@@ -184,17 +184,24 @@ class Plan(unittest.TestCase):
         l = lists(shows=[item("tv", 1, 1, "Known"), unmatched("tv", 2, "Instadocs: AI Gone Wild"), item("tv", 3, 3, "Later")])
         p = tm.plan(l, coming(), {}, {}, {})
         ph = p.placeholders["Instadocs AI Gone Wild"]
-        self.assertEqual((ph.key, ph.kind, ph.tmdb, ph.state, ph.x, ph.badge, ph.info), ("u/instadocs-ai-gone-wild", "movie", None, "none", None, "none", None))
-        self.assertEqual(ph.files, {"Instadocs AI Gone Wild.mp4": "unavailable"})
+        self.assertEqual((ph.key, ph.kind, ph.tmdb, ph.state, ph.x, ph.badge, ph.info), ("u/instadocs-ai-gone-wild", "tv", None, "none", None, "none", None))
+        self.assertEqual(ph.files, {"Season 00/S00E01.mp4": "unavailable"})
         self.assertEqual(ph.sort_title, "02-02 Instadocs: AI Gone Wild")
         members = dict((s["key"], m) for s, m in p.collections)["home-shows"]
         self.assertEqual(members, [("ph", "Known (2026)"), ("ph", "Instadocs AI Gone Wild"), ("ph", "Later (2026)")])
         root = ET.fromstring(tm.nfo(ph).encode())
-        self.assertEqual(root.tag, "movie")
+        self.assertEqual(root.tag, "tvshow")
         self.assertEqual([c.tag for c in root], ["title", "sorttitle", "plot", "dateadded"])
         self.assertEqual(root.findtext("title"), "Instadocs: AI Gone Wild")
         self.assertEqual(root.findtext("plot"), tm.PREFIX["none"])
-        self.assertEqual(tm.episode_nfos(ph), {})
+        ep = ET.fromstring(tm.episode_nfos(ph)["Season 00/S00E01.nfo"].encode())
+        self.assertEqual((ep.findtext("title"), ep.findtext("season"), ep.findtext("episode")), (tm.PREFIX["none"], "0", "1"))
+
+    def test_unmatched_entry_kind_follows_its_first_list(self):
+        l = lists(movies=[unmatched("movie", 4, "Film Mystery")], rows=[row("genre-drama-tv", "tv", "Drama", [unmatched("movie", 2, "Show Mystery")], typ="genre")])
+        p = tm.plan(l, coming(), {}, {}, {})
+        self.assertEqual({ph.title: (ph.kind, list(ph.files.values())) for ph in p.placeholders.values()},
+                         {"Film Mystery": ("movie", ["unavailable"]), "Show Mystery": ("tv", ["unavailable"])})
 
     def test_unmatched_title_in_two_lists_is_one_placeholder(self):
         l = lists(shows=[unmatched("tv", 1, "Mystery")], rows=[row("service-8-tv", "tv", "Netflix", [unmatched("tv", 4, "Mystery")])])

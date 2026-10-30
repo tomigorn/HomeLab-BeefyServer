@@ -27,6 +27,7 @@ EPISODES = {
 }
 CLIPS = ("now", "night", "unavailable", "requested", "coming")
 HOME = (("home-movies", "movies", "Top 10 Switzerland · Movies"), ("home-shows", "shows", "Top 10 Switzerland · Shows"))
+HOME_KIND = {"home-movies": "movie", "home-shows": "tv"}
 COMING = ("coming", "Coming soon")
 UNMATCHED = "u"
 KIND_NAME = {"movie": "Movies", "tv": "Shows"}
@@ -158,7 +159,7 @@ def ordered_marks(found, order):
 def plan(lists, coming, details, owned, states):
     """Plan of placeholders {folder: Ph}, collections [(spec, [("ph", folder) | ("real", item id)])] in rank order and art {spec key: [{"p": poster, "b": backdrop}] of the first members}.
     details: {details token: tmdb_details projection} (details.json and coming.json entries); owned: {"kind/tmdb": Jellyfin item id}; states: {"kind/tmdb": (request status, mode)}.
-    One placeholder per title (kind/tmdb, or u/<slug> for an entry TMDB did not match: a title-only film placeholder, unavailable): its sort title "LL-RR <title>" comes from the first collection it appears in; a popular entry wins over a Coming soon one."""
+    One placeholder per title (kind/tmdb, or u/<slug> for an entry TMDB did not match: a title-only placeholder, unavailable, a series when its first list is a shows list): its sort title "LL-RR <title>" comes from the first collection it appears in; a popular entry wins over a Coming soon one."""
     specs = collection_specs(lists)
     by_ref = {v.get("ref"): v for v in details.values() if isinstance(v, dict) and v.get("ref")}
     entries = {s["key"]: [] for s in specs}
@@ -168,6 +169,7 @@ def plan(lists, coming, details, owned, states):
         entries[r["id"]] = [e for e in r.get("items") or [] if entry_key(e)]
 
     titles, found = {}, {}
+    list_kind = {**HOME_KIND, **{r["id"]: r.get("kind") for r in lists.get("rows") or []}}
     for i, spec in enumerate(specs, 1):
         if spec["key"] == COMING[0]:
             for rank, c in enumerate((coming or {}).get("items") or [], 1):
@@ -183,7 +185,7 @@ def plan(lists, coming, details, owned, states):
         for e in entries[spec["key"]]:
             key = entry_key(e)
             u = key.startswith(UNMATCHED + "/")
-            t = titles.setdefault(key, {"kind": "movie" if u else e["k"], "tmdb": None if u else int(e["id"]), "first": (i, e["r"]), "entry": None, "info": None, "date": None})
+            t = titles.setdefault(key, {"kind": list_kind.get(spec["key"], "movie") if u else e["k"], "tmdb": None if u else int(e["id"]), "first": (i, e["r"]), "entry": None, "info": None, "date": None})
             if t["entry"] is None or (e.get("x") and not t["entry"].get("x")):
                 t["entry"] = e
             t["info"] = t["info"] or details.get(e.get("d")) or by_ref.get(key)

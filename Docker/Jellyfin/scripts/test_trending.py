@@ -663,28 +663,50 @@ class SyncTest(Base):
         self.write_feeds(lists, coming, details, comingd)
 
     def unmatched_item(self):
-        return next(i for i in self.io.library if i["Name"] == "Instadocs AI Gone Wild")
+        return next(i for i in self.io.tv if i["Type"] == "Series" and i["Name"] == "Instadocs AI Gone Wild")
 
     def home_shows(self):
         return next(s for s in self.io.sets.values() if s["Name"] == "Top 10 Switzerland · Shows")["children"]
 
-    def test_unmatched_entry_is_a_title_only_film_placeholder_at_its_rank(self):
+    def test_unmatched_show_is_a_title_only_series_placeholder_at_its_rank(self):
         self.with_unmatched()
         self.assertEqual(self.run_sync(), 0, self.out)
-        d = self.paths.library / "Instadocs AI Gone Wild"
-        self.assertEqual(sorted(p.name for p in d.iterdir()), ["Instadocs AI Gone Wild.mp4", "movie.nfo", "poster.jpg"])
-        self.assertEqual(os.stat(d / "Instadocs AI Gone Wild.mp4").st_ino, os.stat(self.paths.clips / "unavailable.mp4").st_ino)
+        d = self.paths.shows / "Instadocs AI Gone Wild"
+        self.assertFalse((self.paths.library / "Instadocs AI Gone Wild").exists())
+        self.assertEqual(sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file()), ["Season 00/S00E01.mp4", "Season 00/S00E01.nfo", "poster.jpg", "tvshow.nfo"])
+        self.assertEqual(os.stat(d / "Season 00" / "S00E01.mp4").st_ino, os.stat(self.paths.clips / "unavailable.mp4").st_ino)
         self.assertEqual((d / "poster.jpg").read_bytes(), tr.art.poster(None, "none", "Instadocs: AI Gone Wild", [("home-shows", 3, None)]))
-        nfo = (d / "movie.nfo").read_text()
+        nfo = (d / "tvshow.nfo").read_text()
         self.assertIn("<title>Instadocs: AI Gone Wild</title>", nfo)
         self.assertIn(f"<plot>{tm.PREFIX['none']}</plot>", nfo)
         self.assertNotIn("<uniqueid", nfo)
+        self.assertIn(f"<title>{tm.PREFIX['none']}</title>", (d / "Season 00" / "S00E01.nfo").read_text())
         u = self.unmatched_item()
         self.assertEqual(self.home_shows(), [self.series("Delta")["Id"], self.series("Epsilon")["Id"], u["Id"]])
+        ep = self.episodes_of(u)
         idx = json.loads(self.paths.index.read_text())
-        self.assertEqual(idx["items"][u["Id"]], {"x": None, "t": "Instadocs: AI Gone Wild", "modes": {}, "rt": 100000000})
+        self.assertEqual(idx["items"][ep], {"x": None, "t": "Instadocs: AI Gone Wild", "modes": {}, "rt": 120000000})
+        self.assertNotIn(u["Id"], idx["items"])
         hide = next(s for s in self.io.injector["CustomJavaScripts"] if s["Name"] == "Trending hidden")["Script"]
         self.assertIn(f'"{u["Id"]}"', hide)
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.writes(), [])
+
+    def episodes_of(self, series):
+        return next(i["Id"] for i in self.io.tv if i.get("SeriesId") == series["Id"])
+
+    def test_old_film_placeholder_of_an_unmatched_show_moves_to_a_series(self):
+        self.with_unmatched()
+        old = self.paths.library / "Instadocs AI Gone Wild"
+        old.mkdir()
+        (old / "Instadocs AI Gone Wild.mp4").hardlink_to(self.paths.clips / "unavailable.mp4")
+        (old / "movie.nfo").write_text("<movie><title>Instadocs: AI Gone Wild</title></movie>")
+        self.io.scan()
+        old_id = next(i["Id"] for i in self.io.library if i["Name"] == "Instadocs AI Gone Wild")
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse(old.exists())
+        self.assertNotIn(old_id, [i["Id"] for i in self.io.library])
+        self.assertEqual(self.home_shows(), [self.series("Delta")["Id"], self.series("Epsilon")["Id"], self.unmatched_item()["Id"]])
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(self.writes(), [])
 
@@ -694,9 +716,9 @@ class SyncTest(Base):
         old = self.unmatched_item()["Id"]
         self.with_unmatched({**show(70, 3, "Instadocs: AI Gone Wild", found=False), "d": "none"})
         self.assertEqual(self.run_sync(), 0, self.out)
-        self.assertFalse((self.paths.library / "Instadocs AI Gone Wild").exists())
+        self.assertFalse((self.paths.shows / "Instadocs AI Gone Wild").exists())
         self.assertTrue(self.show_dir("Instadocs AI Gone Wild").is_dir())
-        self.assertNotIn(old, [i["Id"] for i in self.io.library])
+        self.assertNotIn(old, [i["Id"] for i in self.io.tv])
         self.assertEqual(self.home_shows(), [self.series("Delta")["Id"], self.series("Epsilon")["Id"], self.series("Instadocs AI Gone Wild")["Id"]])
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(self.writes(), [])
@@ -706,7 +728,7 @@ class SyncTest(Base):
         self.assertEqual(self.run_sync(), 0, self.out)
         self.write_feeds(*feeds())
         self.assertEqual(self.run_sync(), 0, self.out)
-        self.assertFalse((self.paths.library / "Instadocs AI Gone Wild").exists())
+        self.assertFalse((self.paths.shows / "Instadocs AI Gone Wild").exists())
         self.assertEqual(self.home_shows(), [self.series("Delta")["Id"], self.series("Epsilon")["Id"]])
 
     def test_unresolved_shows_library_raises_before_writing_any_folder(self):
