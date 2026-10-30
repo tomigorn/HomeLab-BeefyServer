@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import io
 import json
@@ -19,11 +20,15 @@ class FakeJellyfin:
     def __init__(self, data):
         self.data = data
         self.calls = []
+        self.fail = {}
 
     def api(self, method, path, body=None):
-        self.calls.append((method, path, body))
         url = urllib.parse.urlsplit(path)
         q = dict(urllib.parse.parse_qsl(url.query))
+        err = self.fail.get((method, q.get("userId")))
+        if err:
+            raise err
+        self.calls.append((method, path, body))
         if path == "/Users":
             return [{"Id": u, "Name": "secret-name-" + u} for u in self.data]
         if path == "/Library/VirtualFolders":
@@ -121,6 +126,27 @@ class Sweep(unittest.TestCase):
         self.index.write_text(json.dumps({"items": {f"x{n}": {} for n in range(150)} | {"ver": {}}}))
         self.run_cli([])
         self.assertIn(("ver", "u1"), self.jf.resets())
+
+    def test_a_failing_user_is_counted_and_the_rest_still_swept(self):
+        self.jf.fail[("GET", "u1")] = tu.urllib.error.HTTPError("/Items", 500, "boom", {}, None)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, text = self.run_cli([])
+        self.assertEqual((code, self.jf.resets(), text.strip()), (1, [("ep1", "u2")], "2 users: 1 marked placeholders reset, 1 users failed"))
+        self.assertEqual(err.getvalue(), "user failed HTTPError\n")
+
+    def test_a_timeout_is_counted_too(self):
+        self.jf.fail[("DELETE", "u1")] = TimeoutError("timed out")
+        with contextlib.redirect_stderr(io.StringIO()):
+            code, text = self.run_cli([])
+        self.assertEqual((code, self.jf.resets(), text.strip()), (1, [("ep1", "u2")], "2 users: 1 marked placeholders reset, 1 users failed"))
+
+    def test_check_fails_when_a_user_fails(self):
+        self.jf.data["u1"] = {}
+        self.jf.fail[("GET", "u2")] = TimeoutError("timed out")
+        with contextlib.redirect_stderr(io.StringIO()):
+            code, text = self.run_cli(["--check"])
+        self.assertEqual((code, text.strip()), (1, "0 placeholders played, 1 users failed"))
 
     def test_bad_usage(self):
         self.assertEqual(self.run_cli(["--nope"])[0], 2)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Nightly sweep: unmarks every trending placeholder for every user (films, versions, series, seasons and episodes of "Trending items" / "Trending shows" plus the TV hook index): DELETE /UserPlayedItems clears Played, play count, last played and position (12.4 ignores Played in POST /UserItems/{id}/UserData).
-Idempotent, prints counts only. Usage: trending-unwatched.py [--dry-run | --check]  (--check: number of placeholders still played, exit 1 when any)"""
+Idempotent, prints counts only; a user that fails (HTTP error, timeout) is counted and skipped, exit 1 at the end. Usage: trending-unwatched.py [--dry-run | --check]  (--check: number of placeholders still played, exit 1 when any)"""
 import json
 import pathlib
 import sys
@@ -59,21 +59,27 @@ def main(argv, api=None, index_file=INDEX, out=sys.stdout):
         return 1
     extra = index_ids(index_file)
     users = api("GET", "/Users")
-    played = reset = 0
+    played = reset = failed = 0
     for u in users:
         uid = u["Id"].replace("-", "")
-        for iid, ud in user_items(api, uid, libs, extra).items():
-            played += ud.get("Played") is True
-            if not marked(ud):
-                continue
-            reset += 1
-            if argv == []:
-                api("DELETE", f"/UserPlayedItems/{urllib.parse.quote(iid)}?userId={uid}")
+        try:
+            for iid, ud in user_items(api, uid, libs, extra).items():
+                played += ud.get("Played") is True
+                if not marked(ud):
+                    continue
+                if argv == []:
+                    api("DELETE", f"/UserPlayedItems/{urllib.parse.quote(iid)}?userId={uid}")
+                reset += 1
+        except OSError as e:
+            # HTTPError, URLError and timeouts
+            failed += 1
+            print(f"user failed {type(e).__name__}", file=sys.stderr)
+    tail = f", {failed} users failed" if failed else ""
     if argv == ["--check"]:
-        print(f"{played} placeholders played", file=out)
-        return 1 if played else 0
-    print(f"{len(users)} users: {reset} marked placeholders {'would be reset' if argv else 'reset'}", file=out)
-    return 0
+        print(f"{played} placeholders played{tail}", file=out)
+        return 1 if played or failed else 0
+    print(f"{len(users)} users: {reset} marked placeholders {'would be reset' if argv else 'reset'}{tail}", file=out)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
