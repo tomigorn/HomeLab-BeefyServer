@@ -19,7 +19,9 @@ if want seerr; then
   check seerr.oidc-build '^develop-2d1a2ed' "$(seerr_api /status | jq -r .version 2>&1)"
   check seerr.login-public '^\[false,false,false,"holy-grail"\]$' "$(seerr_api /settings/public | jq -c '[.localLogin,.mediaServerLogin,.newPlexLogin,(.openIdProviders[]?.slug)]' 2>&1)"
   check seerr.login-settings '^\[true,false,false,true,"holy-grail"\]$' "$(jq -c '[.main.oidcLogin,.main.localLogin,.main.mediaServerLogin,.network.trustProxy,.oidc.providers[0].slug]' "$SEERR_DIR/settings.json" 2>&1)"
-  check seerr.main '^\["https://requests.holy-grail.ch",8352\]$' "$(jq -c '[.main.applicationUrl,.main.defaultPermissions]' "$SEERR_DIR/settings.json" 2>&1)"
+  check seerr.main '^\["https://requests.holy-grail.ch",24736\]$' "$(jq -c '[.main.applicationUrl,.main.defaultPermissions]' "$SEERR_DIR/settings.json" 2>&1)"
+  # View Requests (16384) for every new and every human user; manage/admin (16, 2) only on the owner account 1; jellyfin-popular = service user
+  check seerr.permissions '^16384 0 0$' "$(echo "$(( $(jq '.main.defaultPermissions' "$SEERR_DIR/settings.json" 2>&1) & 16384 ))" $(sqlite3 "file:$SEERR_DIR/db/db.sqlite3?mode=ro" "SELECT count(*) FROM user WHERE id != 1 AND email != 'jellyfin-popular' AND (permissions & 16384) = 0; SELECT count(*) FROM user WHERE id != 1 AND (permissions & 18) != 0;" 2>&1 | xargs))"
   check seerr.arr-profiles '^\["4K HDR - UHD Bluray \+ WEB \(1080p fallback\)","4K HDR - WEB-2160p \(1080p fallback\)","Anime - Bluray \+ WEB 1080p"\]$' "$(jq -c '[.radarr[0].activeProfileName,.sonarr[0].activeProfileName,.sonarr[0].activeAnimeProfileName]' "$SEERR_DIR/settings.json" 2>&1)"
   check seerr.night-jobs '^0 job\(s\) would change' "$(python3 "$DIR/../../Seerr/scripts/night-jobs.py" --dry-run 2>&1 | tail -1)"
   check seerr.webhook-floppy '^True 142 http://192\.168\.1\.102:8012/webhook/seerr/global/$' "$(jq -r '.notifications.agents.webhook | "\(if .enabled then "True" else "False" end) \(.types) \(.options.webhookUrl)"' "$SEERR_DIR/settings.json" 2>&1)"

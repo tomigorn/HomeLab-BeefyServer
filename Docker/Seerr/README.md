@@ -84,7 +84,7 @@ sudo docker compose pull && sudo docker compose up -d
 
 Linked accounts stay in the DB. If the release configures OIDC differently (UI/API), adapt `configure.sh`. Back to plain v3.5.0 instead: same steps with `v3.5.0`; the Holy Grail button disappears, Quick Connect remains.
 
-## First login (one-time, by hand) — done 2026-10-19, owner is jane; friends auto-approve + advanced requests (defaultPermissions 8352)
+## First login (one-time, by hand) — done 2026-10-19, owner is jane; friends auto-approve + advanced requests + view requests (defaultPermissions 24736)
 
 Seerr's **first** user becomes the owner and must sign in with a Jellyfin
 **username + password** (Quick Connect is refused until a user exists, and the
@@ -141,6 +141,9 @@ Permissions: the owner (you) is admin (implies every permission). `configure.sh`
 | 32 | `REQUEST` | may request |
 | 128 | `AUTO_APPROVE` | requests go straight to Radarr/Sonarr |
 | 8192 | `REQUEST_ADVANCED` | advanced options in the request dialog (profile, root folder) |
+| 16384 | `REQUEST_VIEW` | sees everyone's requests (Requests list, who requested) — owner 2026-10-31; existing users 5 and 7 set by hand the same day |
+
+Never: `MANAGE_REQUESTS` (16) or `ADMIN` (2) for anyone but the owner (user 1). Check: `seerr.permissions` (post-update) = default has 16384, every human user has it, only user 1 has 16/2.
 
 Applies to users created afterwards; an existing user: Settings -> Users -> edit -> Advanced Requests. Change the defaults under Settings -> Users -> Default Permissions. Notifications (Telegram,
 email) are not set up: Settings -> Notifications.
