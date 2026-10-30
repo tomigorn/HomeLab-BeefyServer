@@ -17,6 +17,7 @@ import pathlib
 import re
 import secrets
 import sqlite3
+import sys
 import threading
 import urllib.error
 import urllib.parse
@@ -907,6 +908,12 @@ def make_hook_server(addr=("0.0.0.0", 8098), workers=4, backlog=8):
 def main():
     Handler.core = HookHandler.core = make_core()
     threading.Thread(target=make_hook_server(("0.0.0.0", int(os.environ.get("POP_HOOK_PORT", "8098")))).serve_forever, daemon=True).start()
+    sys.modules.setdefault("app", sys.modules[__name__])
+    import facade
+    fac = facade.make_facade(Handler.core)
+    if fac is not None:
+        facade.FacadeHandler.core = fac
+        threading.Thread(target=facade.make_facade_server(("0.0.0.0", int(os.environ.get("POP_FACADE_PORT", "8099")))).serve_forever, daemon=True).start()
     make_server().serve_forever()
 
 

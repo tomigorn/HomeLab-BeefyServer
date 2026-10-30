@@ -1249,5 +1249,132 @@ class LoadKey(unittest.TestCase):
             self.assertIsNone(facade.load_key(None))
 
 
+class Listener(FacadeBase):
+    def setUp(self):
+        super().setUp()
+        self.seerr = ProxySeerr()
+        self.core.seerr = self.seerr
+        self.handler_core = facade.FacadeHandler.core
+        facade.FacadeHandler.core = self.facade
+        self.srv = facade.make_facade_server(("127.0.0.1", 0), workers=2, backlog=2)
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.port = self.srv.server_address[1]
+        self.lines = []
+        self.facade.log = self.lines.append
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+        facade.FacadeHandler.core = self.handler_core
+        super().tearDown()
+
+    def call(self, method, path, body=b"", headers=None):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            c.request(method, path, body=body, headers=headers or {})
+            r = c.getresponse()
+            return r.status, dict(r.getheaders()), r.read()
+        finally:
+            c.close()
+
+    def test_facade_server_sets_cookie_and_json(self):
+        status, headers, raw = self.call("POST", "/api/v1/auth/jellyfin", b"{}")
+        self.assertEqual(status, 401)
+        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertIsInstance(json.loads(raw), dict)
+        self.seerr.answer["/api/v1/status"] = {"version": "2.0"}
+        status, headers, raw = self.call("GET", "/api/v1/status")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Cache-Control"], "no-store")
+        self.assertIn("version", json.loads(raw))
+        status, headers, raw = self.call("POST", "/api/v1/auth/jellyfin/quickconnect/initiate")
+        self.assertEqual(status, 200)
+        code = json.loads(raw)
+        status, headers, raw = self.call("POST", "/api/v1/auth/jellyfin/quickconnect/authenticate", json.dumps({"secret": code["secret"]}).encode())
+        self.assertEqual(status, 200)
+        self.assertIn("connect.sid=", headers["Set-Cookie"])
+
+    def test_put_delete_reach_the_facade(self):
+        self.assertEqual(self.call("DELETE", "/api/v1/request/1")[0], 403)
+        self.assertEqual(self.call("PUT", "/api/v1/request/1", b"{}")[0], 403)
+        self.assertEqual(self.call("PATCH", "/api/v1/request/1", b"{}")[0], 403)
+        self.assertEqual([l.split()[1] for l in self.lines if not l.startswith("facade refused")], ["DELETE", "PUT", "PATCH"])
+
+    def test_oversize_body_413(self):
+        status, _, raw = self.call("POST", "/api/v1/request", b"x" * 2049)
+        self.assertEqual(status, 413)
+        self.assertIsInstance(json.loads(raw), dict)
+        self.assertEqual(self.call("POST", "/api/v1/auth/jellyfin", b"x" * 2048)[0], 401)
+
+    def test_access_log_has_no_query_or_cookie(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            self.call("GET", "/api/v1/search?query=secretterm", headers={"Cookie": "connect.sid=cookiesecret"})
+        self.assertNotIn("secretterm", out.getvalue())
+        self.assertNotIn("cookiesecret", out.getvalue())
+        self.assertNotIn("GET /api", out.getvalue())
+
+    def test_internal_error_is_json(self):
+        def boom(*a):
+            raise RuntimeError("x")
+        self.facade.handle = boom
+        status, headers, raw = self.call("GET", "/api/v1/status")
+        self.assertEqual((status, headers["Content-Type"]), (500, "application/json"))
+        self.assertIsInstance(json.loads(raw), dict)
+
+
+class MakeFacade(unittest.TestCase):
+    def test_make_facade_without_key_is_none(self):
+        core = type("C", (), {})()
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertIsNone(facade.make_facade(core, {"POP_FACADE_SECRET_FILE": "/nonexistent/facade.secret"}))
+            self.assertIsNone(facade.make_facade(core, {}))
+        self.assertEqual(out.getvalue(), "facade off: no key\n" * 2)
+
+    def test_make_facade_builds_with_key(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "facade.secret"
+            p.write_text(KEY.hex())
+            base = test_app.Base()
+            base.setUp()
+            try:
+                f = facade.make_facade(base.core, {"POP_FACADE_SECRET_FILE": str(p)})
+                self.assertIsInstance(f, facade.Facade)
+                self.assertEqual(f.key, KEY)
+            finally:
+                base.tearDown()
+
+    def test_header_validated(self):
+        self.assertEqual(facade.jf_header("a", "b c", "d", "1"), 'MediaBrowser Client="a", Device="b c", DeviceId="d", Version="1"')
+        self.assertTrue(facade.jf_header("a", "b", "d", "1", "tok").endswith(', Token="tok"'))
+        for bad in ('x"y', "a,b", "a=b", "", "x" * 65, "a\nb"):
+            with self.assertRaises(ValueError):
+                facade.jf_header("a", "b", bad, "1")
+
+    def test_production_jf_turns_http_exceptions_into_oserror(self):
+        seen = {}
+
+        class Resp:
+            def read(self):
+                raise http.client.IncompleteRead(b"par")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def opener(req, timeout):
+            seen["auth"] = req.get_header("Authorization")
+            return Resp()
+        jf = facade.make_jf("http://jellyfin:8096", opener=opener)
+        with self.assertRaises(OSError):
+            jf("GET", "/Users/Me", device_id="dev1", token="tok")
+        self.assertIn('DeviceId="dev1"', seen["auth"])
+        self.assertIn('Token="tok"', seen["auth"])
+
+
 if __name__ == "__main__":
     unittest.main()

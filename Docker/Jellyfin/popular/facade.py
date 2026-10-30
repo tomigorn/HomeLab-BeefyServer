@@ -6,11 +6,15 @@ import hashlib
 import hmac
 import http.client
 import json
+import os
 import pathlib
 import re
 import secrets
 import urllib.error
 import urllib.parse
+import urllib.request
+
+import app
 
 FIRST_UID = 1000001
 COOKIE = "connect.sid"
@@ -823,3 +827,89 @@ class Facade:
                 return False
             self.signins[jf_id] = recent + [now]
             return True
+
+
+VALUE_RE = re.compile(r'^[^",=\x00-\x1f]{1,64}$')
+MAX_FACADE_BODY = 2048
+
+
+def jf_header(client, device, device_id, version, token=None):
+    for v in (client, device, device_id, version):
+        if not VALUE_RE.match(v or ""):
+            raise ValueError("bad client header value")
+    h = f'MediaBrowser Client="{client}", Device="{device}", DeviceId="{device_id}", Version="{version}"'
+    return h + f', Token="{token}"' if token else h
+
+
+def make_jf(base, opener=urllib.request.urlopen):
+    def jf(method, path, body=None, device_id=None, token=None):
+        data = None if body is None else json.dumps(body).encode()
+        headers = {"Authorization": jf_header("hss-seerr", "Moonfin requests", device_id or "hss-seerr", "1", token)}
+        if data is not None:
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+        try:
+            with opener(req, timeout=app.UPSTREAM_TIMEOUT) as resp:
+                raw = resp.read()
+        except http.client.HTTPException as e:
+            raise OSError(type(e).__name__) from None
+        return json.loads(raw) if raw else None
+    return jf
+
+
+def make_facade(core, env=os.environ):
+    key = load_key(env.get("POP_FACADE_SECRET_FILE"))
+    if key is None:
+        print("facade off: no key", flush=True)
+        return None
+    return Facade(core, key, make_jf(env.get("POP_JELLYFIN", "http://jellyfin:8096")))
+
+
+class FacadeHandler(app.Handler):
+    server_version = "hss-facade"
+    error_content_type = "application/json"
+    error_message_format = '{"message": "Bad request"}'
+
+    def _go(self, method):
+        n = app.body_length(self.headers.get("Content-Length"), MAX_FACADE_BODY)
+        extra = []
+        if n is None:
+            code, data = 400, {"message": "Bad request"}
+        elif n > MAX_FACADE_BODY:
+            self.close_connection = True
+            code, data = 413, {"message": "Too large"}
+        else:
+            try:
+                body = self.rfile.read(n) if n else b""
+                code, data, extra = self.core.handle(method, self.path, self.headers, body)
+            except TimeoutError:
+                self.close_connection = True
+                return
+            except Exception as e:  # noqa: BLE001
+                print(f"facade error {type(e).__name__}", flush=True)
+                code, data, extra = 500, {"message": "Internal error"}, []
+        raw = json.dumps(data).encode()
+        self.send_response(code)
+        for k, v in extra:
+            self.send_header(k, v)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def do_PUT(self):
+        self._go("PUT")
+
+    def do_DELETE(self):
+        self._go("DELETE")
+
+    def do_PATCH(self):
+        self._go("PATCH")
+
+    def log_message(self, fmt, *args):
+        pass
+
+
+def make_facade_server(addr=("0.0.0.0", 8099), workers=8, backlog=16):
+    return app.Server(addr, FacadeHandler, workers, backlog)
