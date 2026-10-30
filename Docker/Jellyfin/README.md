@@ -674,7 +674,7 @@ Test of the **Moonfin** TV apps (Apple TV, Android TV). The server plugin **Moon
 - Home rows: Continue Watching, Next Up (separate rows: the merged row dedupes by episode, so a show in progress showed twice), Top 10 Switzerland · Movies, · Shows, Coming soon, Recently added (Movies, Shows), then the service and genre lists (`hss-trending` BoxSets, empty ones left out at run time: rerun after the lists change).
 - Defaults only fill what a user has not set: a choice in the app (setup wizard, settings) wins. Pushing them over users' own choices: Dashboard → Plugins → Moonbase → User defaults → push. One user (merge, keeps the rest): `POST /Moonfin/Admin/PushDefaults/{userId}?overwrite=false` (writes every set default into each of the user's profiles).
 - The apps skip a wizard question when its setting comes from the server (navigation, media bar, row style, details style).
-- Off on purpose: Seerr (would bypass our allow-list and limits), push notifications (relay `push.moonfin.io` = third-party cloud), Moonfin Recommends (would replace Similar for every client), IMDb/MDBList lists and studio logos (no keys). No TMDB/MDBList key stored: Moonbase hands the server keys to every signed-in user.
+- Seerr points at our facade `http://jellyfin-popular:8099` (display name "Requests", rows on by default, see "Moonfin requests (Seerr facade)"); the real Seerr is never configured in Moonbase, and `SeerrWebhookSecret` is never touched. Off on purpose: push notifications (relay `push.moonfin.io` = third-party cloud), Moonfin Recommends (would replace Similar for every client), IMDb/MDBList lists and studio logos (no keys). No TMDB/MDBList key stored: Moonbase hands the server keys to every signed-in user.
 - Side effect: a Moonfin button in the stock web header (File Transformation). The web app itself is at `/Moonfin/Web/`.
 
 | Task | Command (in `Docker/Jellyfin/`) |
@@ -684,7 +684,7 @@ Test of the **Moonfin** TV apps (Apple TV, Android TV). The server plugin **Moon
 | Rollback | Dashboard → Plugins → Moonbase → Uninstall, restart (`sudo docker compose restart jellyfin`); remove the Moonbase repository. Pre-change backup: `~/backups/jellyfin/20261030-014107-pre-moonbase` |
 
 ## Moonfin requests (Seerr facade) (2026-10-30)
-Moonfin's Seerr screens (discover, details, request dialog, my requests) talk to the facade instead of Seerr. Every request still follows the Popular rules (allow-list, 10 per user per 7 days, 30 per day, audit). Moonbase's Seerr URL has to be `http://jellyfin-popular:8099`, set by `scripts/moonbase.py`.
+Moonfin's Seerr screens (discover, details, request dialog, my requests) talk to the facade instead of Seerr. Every request still follows the Popular rules (allow-list, 10 per user per 7 days, 30 per day, audit). Moonbase's Seerr URL is `http://jellyfin-popular:8099`, set by `scripts/moonbase.py` (live, no Jellyfin restart; check `GET /Moonfin/Seerr/Config`).
 
 | | |
 |---|---|

@@ -1,6 +1,9 @@
+import contextlib
 import importlib.util
+import io
 import pathlib
 import unittest
+from unittest import mock
 
 _spec = importlib.util.spec_from_file_location("moonbase", pathlib.Path(__file__).with_name("moonbase.py"))
 mb = importlib.util.module_from_spec(_spec)
@@ -46,9 +49,32 @@ class SectionsTest(unittest.TestCase):
 
 
 class WantedTest(unittest.TestCase):
-    def test_server_settings_safe(self):
+    def test_seerr_points_at_the_facade(self):
         new = mb.wanted(CONFIG, LISTS, FOLDERS)
-        self.assertEqual((new["SeerrEnabled"], new["RecommendationsProviderEnabled"], new["PushRelayUrl"]), (False, False, ""))
+        self.assertEqual((new["SeerrEnabled"], new["SeerrUrl"], new["SeerrDisplayName"], new["PushRelayUrl"], new["PublicServerUrl"]), (True, "http://jellyfin-popular:8099", "Requests", "", None))
+
+    def test_seerr_rows_on_by_default(self):
+        d = mb.wanted(CONFIG, LISTS, FOLDERS)["DefaultUserSettings"]
+        self.assertEqual((d["displaySeerrRows"], d["seerrEnabled"]), (True, True))
+
+    def test_webhook_secret_untouched_and_never_printed(self):
+        posted = []
+        cfg = {**CONFIG, "SeerrWebhookSecret": "s3cr3t-value"}
+
+        def fake(method, path, body=None):
+            if method == "POST":
+                posted.append(body)
+            if path.endswith("/Configuration"):
+                return cfg
+            return []
+
+        for argv in ([], ["--dry-run"]):
+            out = io.StringIO()
+            with mock.patch.object(mb, "api", fake), mock.patch.object(mb, "lists", lambda: LISTS), contextlib.redirect_stdout(out):
+                mb.main(argv)
+            self.assertNotIn("s3cr3t-value", out.getvalue())
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(posted[0]["SeerrWebhookSecret"], "s3cr3t-value")
 
     def test_other_settings_kept(self):
         self.assertEqual(mb.wanted(CONFIG, LISTS, FOLDERS)["SeerrWebhookSecret"], "s")

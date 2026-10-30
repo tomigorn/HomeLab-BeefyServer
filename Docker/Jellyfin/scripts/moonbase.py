@@ -13,10 +13,13 @@ PLUGIN_ID = "8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b"
 SERVER_URL = "https://jellyfin.holy-grail.ch"
 LEADING = [name for _, _, name in HOME] + [COMING[1]]
 
-# Seerr off (bypasses our limits), no push relay (third-party cloud), no server-wide Similar override, no fetch tasks without keys.
+# Seerr = our facade (limits enforced there), no push relay (third-party cloud), no server-wide Similar override, no fetch tasks without keys.
 SERVER = {
     "EnableSettingsSync": True,
-    "SeerrEnabled": False,
+    "SeerrEnabled": True,
+    "SeerrUrl": "http://jellyfin-popular:8099",
+    "SeerrDisplayName": "Requests",
+    "PublicServerUrl": None,
     "RecommendationsProviderEnabled": False,
     "PushRelayUrl": "",
     "ImdbListsEnabled": False,
@@ -35,7 +38,8 @@ DEFAULTS = {
     "displayCollectionsRows": True,
     "collectionsRowSortBy": "name",
     "collectionsRowSortOrder": "ascending",
-    "displaySeerrRows": False,
+    "displaySeerrRows": True,
+    "seerrEnabled": True,
     "seasonalRowEnabled": False,
     "mergeContinueWatchingNextUp": False,  # the merged row dedupes by episode, not series: one show twice
 }
