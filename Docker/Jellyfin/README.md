@@ -580,7 +580,7 @@ Any signed-in Jellyfin user may press a button; no Seerr login or `streaming-req
 |---|---|
 | Lists now | `scripts/popular.py` (`--dry-run`: no searches, no writes; `--tsv FILE`: Netflix TSV downloaded elsewhere when netflix.com is unreachable) |
 | UI scripts | `python3 scripts/popular-ui.py` → `upserted Currently popular UI` + `upserted Title details` (injector entries, signed-in users); data entry "Currently popular" (`window.HssPopular`) is written by `popular.py`, "Home upcoming" by `upcoming-popularity.py` |
-| Backend | `sudo docker compose up -d --no-deps popular` (an `app.py` change: `sudo docker restart jellyfin-popular`, the code is mounted); `curl -s localhost:8097/hss-popular/health` |
+| Backend | `sudo docker compose up -d --no-deps popular`, after a code change (`popular/*.py`, a mounted dir: `up -d` keeps the running process) `sudo docker compose restart popular`; `curl -s localhost:8097/hss-popular/health` |
 | Timer | `cp systemd/jellyfin-popular.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now jellyfin-popular.timer` |
 | Audit | `sudo tail /srv/appdata/jellyfin-popular-state/audit.jsonl`; refusal counters `sudo docker exec jellyfin-popular python3 -c 'import sqlite3; print(sqlite3.connect("/state/state.db").execute("select * from rejects").fetchall())'` |
 | Tests | `cd scripts && python3 -m unittest test_popular test_popular_ui test_tmdb_details test_upcoming_popularity test_injector_lock`; `cd popular && python3 -m unittest test_app`; JS: `node --test popular.test.mjs details.test.mjs home-layout.test.mjs` in `home-placeholders/` (same docker command as above). `test_studio_logos` needs Pillow (`python3-pil`, installed on beefy), else that test is skipped |
@@ -602,7 +602,7 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 | What | Where |
 |---|---|
 | Placeholders, clips, cache | `/srv/appdata/jellyfin/trending/{library,shows,clips,cache}` (`/config/trending/library` films, `/config/trending/shows` series: `<Title> (<year>)/tvshow.nfo`, `Season 00/S00E0n….mp4` + `.nfo`) |
-| Request index | `/srv/appdata/jellyfin-popular/trending-index.json` (film, version and episode ids → `{x, t, modes, rt}`; `rt` = that placeholder's clip runtime, used when the event has none) |
+| Request index | `/srv/appdata/jellyfin-popular/trending-index.json` (film, version and episode ids → `{x, t, modes, rt}`; `rt` = that placeholder's clip runtime, used when the event has none; `parents` = series and season ids of the show placeholders, the only seasons/series the hook unmarks) |
 | Hook | Webhooks destination "Trending requests" → `jellyfin-popular:8098` (internal), secret `secrets/popular/hook.secret`, key `hss-popular-hook` |
 | Sync | `jellyfin-trending.service`: after `popular.py` (04:39, 22:20) and, via `jellyfin-trending.path`, after each request |
 
@@ -612,7 +612,7 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 | Sync | `python3 scripts/trending.py` (`--dry-run`) or `systemctl --user start jellyfin-trending.service` |
 | Clips | `python3 scripts/trending-clips.py` (`--force` rebuilds) |
 | Webhook | `python3 scripts/trending-webhook.py add\|remove\|check\|list` (events Play, Progress, Pause, Resume, Stop, MarkPlayed) |
-| Unwatched sweep | `python3 scripts/trending-unwatched.py` (`--dry-run`, `--check` = placeholders still played): unmarks every placeholder for every user; nightly in `jellyfin-popular.service` after `trending.py` |
+| Unwatched sweep | `python3 scripts/trending-unwatched.py` (`--dry-run`, `--check` = placeholders still played): unmarks every placeholder for every user; a failing user (HTTP error, timeout) is counted (`n users failed`), the rest still swept, exit 1; nightly in `jellyfin-popular.service` after `trending.py` |
 | Device views | `python3 scripts/trending-device-views.py` (`--out DIR`): the requests of Swiftfin tvOS and Android TV as a non-admin Quick Connect user (media, collections, Movies and Shows lists, details, series page, Recently added, search), saved to `~/.cache/trending-device-views/<date>/` |
 | Backup before any change | `bash scripts/backup-config.sh <label>` |
 | Tests | `cd scripts && python3 -m unittest discover`; `cd popular && python3 -m unittest test_app` |
@@ -630,7 +630,7 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 - `lsiown` stays non-recursive on `/srv/appdata/jellyfin/trending` (the clips are hard links shared by all placeholders).
 - `MinResumeDurationSeconds` is 300: any stop past 5 % of a 10 s clip marks it Played, so `Played` means nothing; the hook uses the tracked position.
 - Jellyfin clears `Session.PlayState` before the Stop event: the hook works from the tracked Play/Progress data.
-- The hook unmarks the placeholder for that user after every Stop and MarkPlayed, again after 5 s and 30 s (Jellyfin or the client may write Played after the first reset): film + played version, or episode + season + series, with `DELETE /UserPlayedItems/{id}?userId=` (clears Played, play count, last played, position). 12.4 ignores `Played` in `POST /UserItems/{id}/UserData` (200, still played).
+- The hook unmarks the placeholder for that user after every Stop and MarkPlayed, again after 5 s and 30 s (Jellyfin or the client may write Played after the first reset; one worker thread, a new event refreshes the times, at most 500 pending, log `reset queue full, dropped n`; log `reset markplayed n` per MarkPlayed): film + played version, or episode + season + series (only ids in the index), with `DELETE /UserPlayedItems/{id}?userId=` (clears Played, play count, last played, position). 12.4 ignores `Played` in `POST /UserItems/{id}/UserData` (200, still played).
 - The DELETE fires `MarkUnplayed` to the members' Floppy hooks: Floppy skips it (placeholders have no provider ids). Our hook never subscribes `MarkUnplayed`, so no loop.
 - `/Items?Ids=` leaves out alternate versions and gives 414 from about 100 ids: the sweep reads 60 per request, the missing ones one by one.
 - A downloaded title is a new item (own ItemId in the real library, UserData keyed by ItemId): it starts unwatched whatever happened to the placeholder.
@@ -717,7 +717,7 @@ Moonfin's Seerr screens (discover, details, request dialog, my requests) talk to
 | Task | Command (in `Docker/Jellyfin/`) |
 |---|---|
 | Tests | `cd popular && python3 -m unittest test_app test_facade` |
-| Deploy | `bash scripts/backup-config.sh seerr-facade && sudo docker compose up -d --no-deps popular` |
+| Deploy | `bash scripts/backup-config.sh seerr-facade && sudo docker compose up -d --no-deps popular && sudo docker compose restart popular` |
 | Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.facade-*`) |
 | Logs | `sudo docker logs jellyfin-popular \| grep facade` (`facade refused …` = a Moonfin path we do not serve) |
 | Rotate key | replace `secrets/popular/facade.secret` (64 hex, 600, uid 65128), redeploy: everyone is signed out and signs in again |
@@ -738,7 +738,7 @@ Smart-TV Moonfin (Samsung/Tizen) has no Quick Connect: it sends username + passw
 | Targeted lockout | accepted, availability only: anyone who can reach the sign-in (any signed-in Jellyfin user via Moonbase) can lock a named user's TV code sign-in for 15 min with 5 wrong codes, or brake everyone's for a minute; the victim issues a new code to lift their lock. Quick Connect is unaffected |
 | Identity | Moonbase does not send the calling Jellyfin user to the facade, so the TV's Jellyfin user is not compared with the code's user: a code typed on someone else's TV signs that TV in as the code's owner (accepted: the owner handed out the code) |
 | Logs | audit.jsonl: `tv code: issued`, `tv code: sign-in`, `tv code: refused: …`, `tv code: brake` (no name); container log: `facade tv code failed <tag>` / `lockout`, tag = 8 hex of a keyed hash of the name (repeats of one name line up; a code typed as the name never shows), not in audit.jsonl, so a flood cannot rotate request history out. Never the typed name, the code, tokens or cookies |
-| Deploy | backend: `bash scripts/backup-config.sh tv-code && sudo docker compose up -d --no-deps --force-recreate popular`; page button: `bash scripts/backup-config.sh tv-code-ui && python3 scripts/popular-ui.py` |
+| Deploy | backend: `bash scripts/backup-config.sh tv-code && sudo docker compose up -d --no-deps popular && sudo docker compose restart popular`; page button: `bash scripts/backup-config.sh tv-code-ui && python3 scripts/popular-ui.py` |
 | Check | `jf.popular-tv-code-refusals` (no token 401, foreign Origin 403, API key 401) |
 
 ## IMDb link and rating (2026-10-25)
