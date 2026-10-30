@@ -304,15 +304,15 @@ C=/srv/appdata/jellyfin/data
 sudo cp -a $C/plugins/configurations/Jellyfin.Plugin.Oidc.xml{,.bak-recovery}
 sudo sed -i 's#<Enabled>true</Enabled>#<Enabled>false</Enabled>#' $C/plugins/configurations/Jellyfin.Plugin.Oidc.xml
 sudo sqlite3 $C/data/jellyfin.db ".backup $C/data/jellyfin.db.bak-recovery"
-sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Name='tomigorn' AND AuthenticationProviderId='Jellyfin.Plugin.Oidc.Identity.OidcPasswordDisabledProvider';"
+sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Name='jane' AND AuthenticationProviderId='Jellyfin.Plugin.Oidc.Identity.OidcPasswordDisabledProvider';"
 docker compose start jellyfin
 ```
 
 Then, from your PC: `ssh -L 8096:127.0.0.1:8096 beefy` and open
 `http://localhost:8096` (the LAN address is firewalled to fastpi only). The local `admin` user was deleted on
-2026-10-19 (Holy Grail is the only login), so first give `tomigorn` a password:
-`sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET Password=NULL WHERE Name='tomigorn';"`
-(empty password, set a new one right after signing in). Sign in as `tomigorn`. Fix
+2026-10-19 (Holy Grail is the only login), so first give `jane` a password:
+`sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET Password=NULL WHERE Name='jane';"`
+(empty password, set a new one right after signing in). Sign in as `jane`. Fix
 the problem, then put it back: Plugins -> OIDC Authentication -> enable, "Local
 password sign-in" = **Disable for all users**, save (the plugin switches the user
 back to the disabled provider). Check with
@@ -339,7 +339,7 @@ Server-side per user, so every client that takes the server's track choice follo
 | Remember subtitle selections | Playback | on |
 
 - "Remember": a track you pick is stored per user **per film/episode** and used next time; the next episode in a queue keeps your pick (web/phone). A new episode otherwise starts with your language settings.
-- Jellyfin has no default user settings: `scripts/user-defaults.py` (user timer `systemd/jellyfin-user-defaults.timer`, every minute) gives each NEW user the column above once and never touches them again. Users present at install were only switched to "remember" (tomigorn already was: audio preference empty, play default track on, subtitles empty, mode Default).
+- Jellyfin has no default user settings: `scripts/user-defaults.py` (user timer `systemd/jellyfin-user-defaults.timer`, every minute) gives each NEW user the column above once and never touches them again. Users present at install were only switched to "remember" (jane already was: audio preference empty, play default track on, subtitles empty, mode Default).
 - Tell new members: set **Preferred subtitle language**, otherwise Smart shows forced subtitles only.
 
 | Client | Uses these settings | Where to change them |

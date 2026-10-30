@@ -84,7 +84,7 @@ sudo docker compose pull && sudo docker compose up -d
 
 Linked accounts stay in the DB. If the release configures OIDC differently (UI/API), adapt `configure.sh`. Back to plain v3.5.0 instead: same steps with `v3.5.0`; the Holy Grail button disappears, Quick Connect remains.
 
-## First login (one-time, by hand) — done 2026-10-19, owner is tomigorn; friends auto-approve + advanced requests (defaultPermissions 8352)
+## First login (one-time, by hand) — done 2026-10-19, owner is jane; friends auto-approve + advanced requests (defaultPermissions 8352)
 
 Seerr's **first** user becomes the owner and must sign in with a Jellyfin
 **username + password** (Quick Connect is refused until a user exists, and the
@@ -95,8 +95,8 @@ window for your own account, then close it again. On beefy:
 cd ~/Projects/Docker/Jellyfin && sudo docker compose stop jellyfin
 C=/srv/appdata/jellyfin/data
 sudo sqlite3 $C/data/jellyfin.db ".backup $C/data/jellyfin.db.bak-pre-seerr"
-sudo sqlite3 $C/data/jellyfin.db "SELECT quote(Password), quote(AuthenticationProviderId) FROM Users WHERE Username='tomigorn';" | sudo tee /root/jf-auth.sav
-sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Username='tomigorn';"
+sudo sqlite3 $C/data/jellyfin.db "SELECT quote(Password), quote(AuthenticationProviderId) FROM Users WHERE Username='jane';" | sudo tee /root/jf-auth.sav
+sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Username='jane';"
 sudo docker compose start jellyfin
 # set a temporary password (API key: secrets/api-key in the Jellyfin project), user id from GET /Users
 JK=$(cat ~/Projects/Docker/Jellyfin/secrets/api-key); U=<your user id>
@@ -114,7 +114,7 @@ WEB 1080p`, series type `anime`, same root `/data/media/tv`; see `../Movie-Downl
 ```bash
 cd ~/Projects/Docker/Jellyfin && sudo docker compose stop jellyfin
 PW=$(sudo cut -d'|' -f1 /root/jf-auth.sav); PR=$(sudo cut -d'|' -f2 /root/jf-auth.sav)
-sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET Password=$PW, AuthenticationProviderId=$PR WHERE Username='tomigorn';"
+sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET Password=$PW, AuthenticationProviderId=$PR WHERE Username='jane';"
 sudo rm /root/jf-auth.sav && sudo docker compose start jellyfin
 # every user must show OidcPasswordDisabledProvider again:
 curl -s -H "Authorization: MediaBrowser Token=$JK" http://127.0.0.1:8096/Users | grep -o '"AuthenticationProviderId":"[^"]*"'
@@ -305,7 +305,7 @@ Order ⚠️⏳🔍🌙🧭📅, combined. Placements: status badges (title page
 | Who | Sees the button on |
 |---|---|
 | Admins, users with **Manage Requests** | every title |
-| Everyone else (requesters, e.g. the owner's everyday account `tomigorn`) | only titles with **their own** request (any status but declined); never on a friend's title, so nobody starts daytime downloads for someone else |
+| Everyone else (requesters, e.g. the owner's everyday account `jane`) | only titles with **their own** request (any status but declined); never on a friend's title, so nobody starts daytime downloads for someone else |
 
 Why not in the Manage panel any more: requesters have no Manage button. One place for everyone keeps it simple; the Manage-panel button is gone (2026-10-28).
 

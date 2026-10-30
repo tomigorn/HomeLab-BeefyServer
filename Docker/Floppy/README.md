@@ -128,7 +128,7 @@ Digest of a tag: `docker buildx imagetools inspect ghcr.io/dannyvfilms/floppy:<t
 
 Per Floppy user. Floppy opens no connection into the LAN for any of them.
 
-| Integration | Direction / path | Credential | Owner (tomigorn) |
+| Integration | Direction / path | Credential | Owner (jane) |
 |---|---|---|---|
 | Jellyfin (playback, watched checkmark) | Jellyfin Webhooks plugin → `http://192.168.1.102:8012/webhook/jellyfin/<token>` (hairpin on beefy) | the user's Floppy token, bound to their Jellyfin user | on |
 | Seerr (request → Planning) | Seerr webhook → `http://192.168.1.102:8012/webhook/seerr/global/`, routed by requester name | shared secret (Secrets) | on |
