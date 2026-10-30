@@ -612,9 +612,10 @@ def sync(io, paths, now, dry_run, log):
     lists, coming, details = load_feeds(paths, now)
     folders = io.jf("GET", "/Library/VirtualFolders")
     lib_ids = {k: tm.library_id(folders, tm.LIBRARIES[k]) for k in KINDS}
+    missing = [tm.LIBRARIES[k] for k in KINDS if not lib_ids[k]]
+    if missing:
+        raise JellyfinError(f"library {' and '.join(missing)} missing or unresolved (run trending-setup.py)")
     lib_id = lib_ids["movie"]
-    if not lib_id:
-        raise JellyfinError(f"library {tm.LIBRARY} missing or unresolved (run trending-setup.py)")
     have = owned(io, lib_id)
     rs = read_json(paths.request_state)
     st = states(io.seerr_media(), rs, lists, now)
@@ -657,9 +658,6 @@ def sync(io, paths, now, dry_run, log):
     verb = "would " if dry_run else ""
     n_removed = sum(len(r) for r in removed.values())
     log(f"{len(plan.placeholders)} placeholders: {verb}add {len(added)}, {verb}restructure {len(restructured)}, {verb}update {len(touched)}, {verb}remove {n_removed}")
-    missing = [tm.LIBRARIES[k] for k in KINDS if not lib_ids[k]]
-    if missing:
-        raise JellyfinError(f"library {', '.join(missing)} missing or unresolved (run trending-setup.py, then a library scan)")
 
     placed = {k: view(k, listing(io, lib_ids[k], k)) for k in KINDS}
     want = {k: wanted_signature(by_kind[k]) for k in KINDS}

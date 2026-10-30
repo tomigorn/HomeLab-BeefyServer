@@ -103,29 +103,34 @@ class UnresolvedTest(unittest.TestCase):
 
 
 class MainTest(unittest.TestCase):
-    def run_main(self, folders_after_create, argv=()):
+    def run_main(self, folders_after_create, argv=(), scan_states=("Idle",)):
         import io
         from contextlib import redirect_stdout
         from unittest import mock
         calls = []
         self.bodies = {}
-        seq = iter(folders_after_create)
+        seq = list(folders_after_create)
+        states = list(scan_states)
 
         def api(method, path, body=None):
             calls.append((method, path))
             self.bodies[path] = body
             if path == "/Library/VirtualFolders" and method == "GET":
-                return next(seq)
+                return seq.pop(0) if len(seq) > 1 else seq[0]
             if path == "/Users":
                 return [{"Id": "u", "Name": "u", "Configuration": {}}]
             if path == "/Library/MediaFolders":
                 return {"Items": []}
+            if path == "/ScheduledTasks":
+                return [{"Key": "RefreshLibrary", "State": states.pop(0) if len(states) > 1 else states[0]}]
             return None
 
         fake = mock.MagicMock(api=api, api_raw=lambda *a: None)
         out = io.StringIO()
-        with mock.patch.dict(sys.modules, {"jellyfin_api": fake}), mock.patch.object(ts, "seerr_enabled", return_value=False), redirect_stdout(out):
+        with mock.patch.dict(sys.modules, {"jellyfin_api": fake}), mock.patch.object(ts, "seerr_enabled", return_value=False), \
+                mock.patch.object(ts, "ensure_dirs", return_value=[]) as dirs, mock.patch.object(ts, "sleep", lambda s: None), redirect_stdout(out):
             rc = ts.main(list(argv))
+        self.dirs = dirs
         return rc, calls, out.getvalue()
 
     def test_present_unresolved_folder_is_never_recreated_or_hidden(self):
@@ -138,6 +143,38 @@ class MainTest(unittest.TestCase):
         rc, calls, out = self.run_main([[], [{"Name": "Trending items"}], [{"Name": "Trending items"}, {"Name": "Trending shows"}]])
         self.assertEqual(rc, 1)
         self.assertFalse([c for c in calls if c[1].startswith("/Users/")])
+        self.assertEqual(calls.count(("POST", "/Library/Refresh")), 1)
+        self.assertIn("no ItemId", out)
+
+    def test_new_library_is_scanned_and_hidden_in_one_flow(self):
+        movies = {"Name": "Trending items", "ItemId": "t", "LibraryOptions": ts.library_options(None)}
+        shows = {"Name": "Trending shows", "LibraryOptions": ts.library_options(None, "tvshows")}
+        rc, calls, out = self.run_main([[movies], [movies, shows], [movies, shows], [movies, dict(shows, ItemId="s")]], scan_states=("Running", "Running", "Idle"))
+        self.assertEqual(rc, 0, out)
+        create = next(i for i, c in enumerate(calls) if c[1].startswith("/Library/VirtualFolders?"))
+        scan = calls.index(("POST", "/Library/Refresh"))
+        hide = calls.index(("POST", "/Users/u/Configuration"))
+        self.assertLess(create, scan)
+        self.assertLess(scan, hide)
+        self.assertEqual(self.bodies["/Users/u/Configuration"]["MyMediaExcludes"], ["t", "s"])
+        self.assertLess(hide, calls.index(("GET", "/ScheduledTasks")))
+        self.assertEqual(calls.count(("GET", "/ScheduledTasks")), 3)
+        self.assertIn("scan finished", out)
+
+    def test_resolved_libraries_need_no_scan(self):
+        movies = {"Name": "Trending items", "ItemId": "t", "LibraryOptions": ts.library_options(None)}
+        shows = {"Name": "Trending shows", "ItemId": "s", "LibraryOptions": ts.library_options(None, "tvshows")}
+        rc, calls, out = self.run_main([[movies, shows]])
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn(("POST", "/Library/Refresh"), calls)
+        self.assertNotIn(("GET", "/ScheduledTasks"), calls)
+        self.dirs.assert_called_once()
+
+    def test_dry_run_neither_scans_nor_creates_dirs(self):
+        rc, calls, out = self.run_main([[]], argv=["--dry-run"])
+        self.assertFalse([c for c in calls if c[0] == "POST"])
+        self.assertIs(self.dirs.call_args.args[-1], True)
+        self.assertIn("would create library Trending shows", out)
 
     def test_creates_the_shows_library_next_to_the_film_library_and_hides_both(self):
         movies = {"Name": "Trending items", "ItemId": "t", "LibraryOptions": ts.library_options(None)}
@@ -151,6 +188,41 @@ class MainTest(unittest.TestCase):
         self.assertIn("paths=%2Fconfig%2Ftrending%2Fshows", creates[0])
         self.assertIn("refreshLibrary=false", creates[0])
         self.assertEqual(self.bodies["/Users/u/Configuration"]["MyMediaExcludes"], ["t", "s"])
+
+
+class DirsTest(unittest.TestCase):
+    def setUp(self):
+        import os
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name) / "trending"
+        (self.root / "library").mkdir(parents=True)
+        os.chmod(self.root / "library", 0o2755)
+        self.st = (self.root / "library").stat()
+        self.runs = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_dirs(self, dry=False):
+        return ts.ensure_dirs(self.root, ("library", "shows"), dry, run=lambda cmd, check: self.runs.append((cmd, check)))
+
+    def test_missing_shows_dir_is_created_owned_like_library(self):
+        self.assertEqual(self.run_dirs(), [self.root / "shows"])
+        self.assertEqual(self.runs, [(["sudo", "-n", "install", "-d", "-o", str(self.st.st_uid), "-g", str(self.st.st_gid), "-m", "2755", str(self.root / "shows")], True)])
+
+    def test_existing_dirs_are_left_alone(self):
+        (self.root / "shows").mkdir()
+        self.assertEqual(self.run_dirs(), [])
+        self.assertEqual(self.runs, [])
+
+    def test_dry_run_only_reports(self):
+        self.assertEqual(self.run_dirs(dry=True), [self.root / "shows"])
+        self.assertEqual(self.runs, [])
+
+    def test_host_dirs_match_the_library_paths(self):
+        self.assertEqual(ts.HOST_ROOT, pathlib.Path("/srv/appdata/jellyfin/trending"))
+        self.assertEqual([pathlib.PurePath(p).name for _, _, p in ts.LIBRARIES], ["library", "shows"])
 
 
 class CountTest(unittest.TestCase):

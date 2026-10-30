@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Creates the hidden libraries "Trending items" (movies) and "Trending shows" (tvshows), hides them for every user and renames the Collections library.
+A new library is scanned (full library scan) and hidden as soon as it resolves, in the same run.
 Idempotent. Usage: trending-setup.py [--dry-run | --check]  (--check exits 1 when a user still sees the library)"""
 import base64
 import copy
 import json
 import pathlib
+import stat
 import subprocess
 import sys
+import time
 import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -15,6 +18,11 @@ from trending_model import COLLECTIONS_NAME, LIBRARY, SHOWS_LIBRARY, find_librar
 PATH = "/config/trending/library"
 LIBRARIES = [(LIBRARY, "movies", PATH), (SHOWS_LIBRARY, "tvshows", "/config/trending/shows")]
 TYPES = {"movies": ("Movie",), "tvshows": ("Series", "Season", "Episode")}
+HOST_ROOT = pathlib.Path("/srv/appdata/jellyfin/trending")
+POLL = 2
+RESOLVE_TRIES = 150
+SCAN_TRIES = 900
+sleep = time.sleep
 OLD_COLLECTIONS = "Collections"
 SEERR_SETTINGS = pathlib.Path("/srv/appdata/seerr/settings.json")
 LISTS = pathlib.Path("/srv/appdata/jellyfin-popular/lists.json")
@@ -87,6 +95,32 @@ def check_line(users, libs):
     return True, f"all {len(users)} users hide {' and '.join(libs)}"
 
 
+def ensure_dirs(root, names, dry, run=subprocess.run):
+    """Creates missing library folders owned like library/ (the trending root belongs to the container user)."""
+    like = root / "library"
+    missing = [root / n for n in names if not (root / n).is_dir()]
+    if dry or not missing:
+        return missing
+    st = like.stat() if like.is_dir() else root.stat()
+    mode = f"{stat.S_IMODE(st.st_mode):o}" if like.is_dir() else "2755"
+    for d in missing:
+        run(["sudo", "-n", "install", "-d", "-o", str(st.st_uid), "-g", str(st.st_gid), "-m", mode, str(d)], check=True)
+    return missing
+
+
+def wait_resolved(api, name):
+    for _ in range(RESOLVE_TRIES):
+        folders = api("GET", "/Library/VirtualFolders")
+        if library_id(folders, name):
+            return folders
+        sleep(POLL)
+    return folders
+
+
+def scan_running(api):
+    return any(t.get("Key") == "RefreshLibrary" and t.get("State") != "Idle" for t in api("GET", "/ScheduledTasks"))
+
+
 def seerr_enabled():
     try:
         text = SEERR_SETTINGS.read_text()
@@ -117,7 +151,10 @@ def main(argv):
     def say(step):
         print(f"would {step}" if dry else step)
 
-    rc, ids = 0, []
+    for d in ensure_dirs(HOST_ROOT, [pathlib.PurePath(p).name for _, _, p in LIBRARIES], dry):
+        say(f"create {d}")
+
+    rc, ids, scanned = 0, [], False
     for name, collection_type, path in LIBRARIES:
         present, lib = find_library(folders, name), library_id(folders, name)
         if present is not None and lib is None:
@@ -132,6 +169,12 @@ def main(argv):
             api("POST", f"/Library/VirtualFolders?{q}", {"LibraryOptions": library_options(None, collection_type)})
             folders = api("GET", "/Library/VirtualFolders")
             lib = library_id(folders, name)
+            if lib is None and not scanned:
+                say("scan all libraries")
+                api("POST", "/Library/Refresh")
+                scanned = True
+                folders = wait_resolved(api, name)
+                lib = library_id(folders, name)
             if lib is None:
                 print(f"{name} was created but has no ItemId yet; users not changed for it, rerun after a library scan")
                 rc = 1
@@ -153,6 +196,16 @@ def main(argv):
             say(f"hide {', '.join(n for n, _ in ids)} for {u['Name']}")
             if not dry:
                 api("POST", f"/Users/{u['Id']}/Configuration", config)
+
+    if scanned:
+        for _ in range(SCAN_TRIES):
+            if not scan_running(api):
+                print("library scan finished")
+                break
+            sleep(POLL)
+        else:
+            print(f"library scan still running after {SCAN_TRIES * POLL} s; wait for it before the next trending.py run")
+            rc = 1
 
     if any(f["Name"] == OLD_COLLECTIONS and f.get("CollectionType") == "boxsets" for f in folders):
         say(f"rename {OLD_COLLECTIONS} to {COLLECTIONS_NAME}")

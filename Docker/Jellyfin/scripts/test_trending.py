@@ -583,15 +583,17 @@ class SyncTest(Base):
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(self.writes(), [])
 
-    def test_unresolved_shows_library_writes_folders_and_changes_nothing_in_jellyfin(self):
+    def test_unresolved_shows_library_raises_before_writing_any_folder(self):
         self.io.shows_id = None
         old = self.paths.library / "Delta (2026)"
         old.mkdir()
         (old / "Delta (2026).mp4").hardlink_to(self.paths.clips / "unavailable.mp4")
         self.assertEqual(self.run_sync(), 1, self.out)
         self.assertIn("Trending shows", self.out)
-        self.assertTrue((self.show_dir("Delta") / "tvshow.nfo").is_file())
+        self.assertFalse(self.folder("Alpha").exists())
+        self.assertFalse(self.show_dir("Delta").exists())
         self.assertTrue(old.is_dir())
+        self.assertFalse(self.paths.state.exists())
         self.assertEqual(self.writes(), [])
 
     def test_usage(self):
