@@ -15,6 +15,8 @@ GREEN = (34, 160, 80)
 BLUE = (37, 110, 230)
 DARK = (20, 22, 28)
 PILL = (10, 10, 14, 205)
+FLAG_RED = (218, 41, 28)
+RANK_TOP, RANK_H, RANK_FLAG, RANK_FONT = 132, 84, 56, 48
 SERVICES = {
     "8": ("#c20a14", "#1a0002"),
     "119": ("#0091c9", "#03182a"),
@@ -351,38 +353,80 @@ def badge_pill(im, label, icon, ring, glyph):
     return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
 
 
-def badge_none(im):
-    ang = math.degrees(math.atan2(H, W))
+def badge_none(im, p0=(0, H), p1=(W, 0), size=50):
+    """Red band along the line p0 to p1 with NOT ABLE TO DOWNLOAD; the default runs corner to corner."""
+    ang = math.degrees(math.atan2(p0[1] - p1[1], p1[0] - p0[0]))
     band = 150
     d = ImageDraw.Draw(im)
-    nx, ny = H / math.hypot(W, H), W / math.hypot(W, H)
+    ln = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+    nx, ny = (p0[1] - p1[1]) / ln, (p1[0] - p0[0]) / ln
     o = band / 2
-    d.polygon([(-o * nx, H - o * ny), (o * nx, H + o * ny), (W + o * nx, o * ny), (W - o * nx, -o * ny)], fill=RED)
+    d.polygon([(p0[0] - o * nx, p0[1] - o * ny), (p0[0] + o * nx, p0[1] + o * ny), (p1[0] + o * nx, p1[1] + o * ny), (p1[0] - o * nx, p1[1] - o * ny)], fill=RED)
     for s in (-1, 1):
         e = o * s
-        d.line([(-e * nx, H - e * ny), (W - e * nx, -e * ny)], fill=(255, 255, 255), width=4)
+        d.line([(p0[0] - e * nx, p0[1] - e * ny), (p1[0] - e * nx, p1[1] - e * ny)], fill=(255, 255, 255), width=4)
     layer = Image.new("RGBA", (1000, 160), (0, 0, 0, 0))
     ld = ImageDraw.Draw(layer)
-    ld.text((500, 80), "NOT ABLE TO DOWNLOAD", font=font(50), fill=WHITE, anchor="mm")
+    ld.text((500, 80), "NOT ABLE TO DOWNLOAD", font=font(size), fill=WHITE, anchor="mm")
     layer = layer.rotate(ang, expand=True, resample=Image.BICUBIC)
-    im.paste(layer, ((W - layer.width) // 2, (H - layer.height) // 2), layer)
+    cx, cy = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
+    im.paste(layer, (int(2 * cx - layer.width) // 2, int(2 * cy - layer.height) // 2), layer)
     return im
 
 
-def title_poster(title):
+# Low and flat band: keeps the title of a title-only poster and the rank badge clear.
+LOW_BAND = ((-60, 846), (660, 534))
+
+
+def rank_box(rank):
+    """Box of the rank badge: top right, below the corner where clients draw their played/unplayed marker, clear of the top-left pill."""
+    w = 14 + RANK_FLAG + 14 + round(font(RANK_FONT).getlength(f"#{rank}")) + 26
+    return (W - 22 - w, RANK_TOP, W - 22, RANK_TOP + RANK_H)
+
+
+def flag_box(rank):
+    x0, y0, _, y1 = rank_box(rank)
+    fy = (y0 + y1 - RANK_FLAG) // 2
+    return (x0 + 14, fy, x0 + 14 + RANK_FLAG, fy + RANK_FLAG)
+
+
+def swiss_flag(d, box):
+    x0, y0, x1, _ = box
+    u = (x1 - x0) / 32
+    cx, cy = x0 + 16 * u, y0 + 16 * u
+    d.rounded_rectangle(box, radius=round(4 * u), fill=FLAG_RED, outline=WHITE, width=2)
+    d.rectangle((cx - 3 * u, cy - 10 * u, cx + 3 * u, cy + 10 * u), fill=WHITE)
+    d.rectangle((cx - 10 * u, cy - 3 * u, cx + 10 * u, cy + 3 * u), fill=WHITE)
+
+
+def rank_badge(im, rank):
+    """Swiss flag and #rank on a dark translucent pill, the rank in a Top 10 Switzerland list."""
+    layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    x0, y0, x1, y1 = rank_box(rank)
+    d.rounded_rectangle((x0, y0, x1, y1), radius=RANK_H // 2, fill=PILL)
+    fb = flag_box(rank)
+    swiss_flag(d, fb)
+    d.text((fb[2] + 14, (y0 + y1) // 2 + 1), f"#{rank}", font=font(RANK_FONT), fill=WHITE, anchor="lm")
+    return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
+
+
+def title_box(badge, rank):
+    if badge != "none":
+        return (50, 250, W - 50, 650)
+    return (50, rank_box(rank)[3] + 24 if rank else 70, W - 50, 480)
+
+
+def title_poster(title, box=(50, 250, W - 50, 650)):
     im = gradient((W, H), (45, 52, 72), (14, 16, 24))
     d = ImageDraw.Draw(im)
-    draw_text_block(d, title, (50, 250, W - 50, 650), 64)
+    draw_text_block(d, title, box, 64)
     return im
 
 
-def base_image(base, title):
+def poster(base, badge, title, rank=None):
     pic = decode(base)
-    return cover(pic, (W, H)) if pic is not None else title_poster(title)
-
-
-def poster(base, badge, title):
-    im = base_image(base, title)
+    im = cover(pic, (W, H)) if pic is not None else title_poster(title, title_box(badge, rank))
     if badge == "found":
         im = badge_pill(im, "Download", "arrow", (255, 255, 255), (16, 16, 20))
     elif badge == "requested":
@@ -390,7 +434,9 @@ def poster(base, badge, title):
     elif badge == "downloading":
         im = badge_pill(im, "Downloading", "arrow", BLUE, WHITE)
     elif badge == "none":
-        im = badge_none(im)
+        im = badge_none(im) if pic is not None and not rank else badge_none(im, *LOW_BAND, size=44)
+    if rank:
+        im = rank_badge(im, rank)
     return to_jpeg(im)
 
 

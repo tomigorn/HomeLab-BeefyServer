@@ -1,5 +1,5 @@
 """Pure model of the trending libraries: the published lists (lists.json, coming-list.json) and their details become placeholder folders and 37 collections.
-plan() decides each title's placeholder (folder, state, clips, badge, sort title) or its real library item; nfo() writes its movie.nfo or tvshow.nfo, episode_nfos() a series' Season 00 episodes. No I/O: trending.py applies the plan."""
+plan() decides each title's placeholder (folder, state, clips, badge, Top 10 rank, sort title) or its real library item; nfo() writes its movie.nfo or tvshow.nfo, episode_nfos() a series' Season 00 episodes. No I/O: trending.py applies the plan."""
 import dataclasses
 import datetime
 import copy
@@ -58,6 +58,7 @@ class Ph:
     files: dict
     badge: str | None
     coming_date: str | None
+    rank: int | None = None
 
 
 @dataclasses.dataclass
@@ -194,7 +195,7 @@ def plan(lists, coming, details, owned, states):
         placeholders[folder] = Ph(
             key=key, kind=t["kind"], tmdb=t["tmdb"], season=(e or {}).get("s"), folder=folder, title=title, year=year, state=state, mode=mode,
             x=e.get("x") if state == "found" else None, sort_title=f"{li:02d}-{rank:02d} {title}", info=inf, files=_files(folder, t["kind"], state),
-            badge=None if state == "coming" else state, coming_date=t["date"])
+            badge=None if state == "coming" else state, coming_date=t["date"], rank=rank if li <= len(HOME) else None)
         folders[key] = folder
 
     def member(key):

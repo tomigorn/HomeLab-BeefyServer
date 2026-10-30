@@ -248,6 +248,22 @@ class Base(unittest.TestCase):
         return {i["Path"].rsplit("/", 1)[1]: i["Id"] for i in self.io.tv if i.get("SeriesId") == s["Id"]}
 
 
+class Desired(unittest.TestCase):
+    class NoImages:
+        def get(self, size, path):
+            return None
+
+    def test_poster_carries_the_rank_and_unranked_posters_are_unchanged(self):
+        lists = {"home": {"movies": [entry(1, 4, "Ranked")], "shows": []},
+                 "rows": [{"id": "service-8-movie", "kind": "movie", "type": "service", "name": {"en": "Netflix", "de": "Netflix"}, "logo": None, "items": [entry(2, 1, "Plain")]}]}
+        p = tm.plan(lists, {"items": []}, {}, {}, {})
+        by = {ph.title: ph for ph in p.placeholders.values()}
+        ranked, plain = by["Ranked"], by["Plain"]
+        self.assertEqual(tr.desired(ranked, self.NoImages())["poster.jpg"], tr.art.poster(None, ranked.badge, "Ranked", 4))
+        self.assertNotEqual(tr.desired(ranked, self.NoImages())["poster.jpg"], tr.art.poster(None, ranked.badge, "Ranked"))
+        self.assertEqual(tr.desired(plain, self.NoImages())["poster.jpg"], tr.art.poster(None, plain.badge, "Plain"))
+
+
 class SyncTest(Base):
     def test_writes_folder_files_and_hardlinks(self):
         self.assertEqual(self.run_sync(), 0, self.out)
@@ -603,7 +619,7 @@ class SyncTest(Base):
         d = self.paths.library / "Instadocs AI Gone Wild"
         self.assertEqual(sorted(p.name for p in d.iterdir()), ["Instadocs AI Gone Wild.mp4", "movie.nfo", "poster.jpg"])
         self.assertEqual(os.stat(d / "Instadocs AI Gone Wild.mp4").st_ino, os.stat(self.paths.clips / "unavailable.mp4").st_ino)
-        self.assertEqual((d / "poster.jpg").read_bytes(), tr.art.poster(None, "none", "Instadocs: AI Gone Wild"))
+        self.assertEqual((d / "poster.jpg").read_bytes(), tr.art.poster(None, "none", "Instadocs: AI Gone Wild", 3))
         nfo = (d / "movie.nfo").read_text()
         self.assertIn("<title>Instadocs: AI Gone Wild</title>", nfo)
         self.assertIn(f"<plot>{tm.PREFIX['none']}</plot>", nfo)

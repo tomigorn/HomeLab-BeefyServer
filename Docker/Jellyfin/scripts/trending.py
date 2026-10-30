@@ -262,7 +262,7 @@ def desired(ph, images):
     out = {tm.nfo_name(ph): tm.nfo(ph).encode()}
     out.update({name: xml.encode() for name, xml in tm.episode_nfos(ph).items()})
     base = images.get("w780", poster_path(ph))
-    out["poster.jpg"] = KEEP if base is Images.FAILED else art.poster(base, ph.badge, ph.title)
+    out["poster.jpg"] = KEEP if base is Images.FAILED else art.poster(base, ph.badge, ph.title, ph.rank)
     back = images.get("w1280", (ph.info or {}).get("b"))
     out["fanart.jpg"] = KEEP if back is Images.FAILED else art.fanart(back)
     return out

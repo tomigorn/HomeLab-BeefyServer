@@ -152,6 +152,13 @@ class Plan(unittest.TestCase):
         self.assertEqual(members["coming"], [("ph", ph.folder)])
         self.assertEqual(members["service-8-movie"], [("ph", ph.folder)])
 
+    def test_rank_only_for_titles_whose_first_list_is_a_top_10(self):
+        l = lists(movies=[item("movie", 5, 3, "Shared Film")], shows=[item("tv", 6, 10, "Show"), unmatched("tv", 7, "Mystery")],
+                  rows=[row("service-8-movie", "movie", "Netflix", [item("movie", 9, 1, "Other"), item("movie", 5, 7, "Shared Film")])])
+        p = tm.plan(l, coming(("movie", 20, "d20", "2026-11-04")), {"d20": info("movie", 20, "Upcoming", 2026)}, {}, {})
+        ranks = {ph.title: ph.rank for ph in p.placeholders.values()}
+        self.assertEqual(ranks, {"Shared Film": 3, "Show": 10, "Mystery": 7, "Other": None, "Upcoming": None})
+
     def test_coming_owned_is_real_and_without_details_skipped(self):
         c = coming(("tv", 30, "d30", "2026-11-04"), ("movie", 31, "missing", "2026-11-05"))
         p = tm.plan(lists(), c, {"d30": info("tv", 30, "Running Show", 2020)}, {"tv/30": "jf30"}, {})

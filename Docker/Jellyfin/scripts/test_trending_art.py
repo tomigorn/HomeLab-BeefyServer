@@ -19,9 +19,12 @@ def load(data):
     return Image.open(io.BytesIO(data))
 
 
+def rgb_pixels(im):
+    return list(zip(*[iter(im.convert("RGB").tobytes())] * 3))
+
+
 def mean(im, box):
-    c = im.convert("RGB").crop(box)
-    px = list(zip(*[iter(c.tobytes())] * 3))
+    px = rgb_pixels(im.crop(box))
     return tuple(sum(p[i] for p in px) / len(px) for i in range(3))
 
 
@@ -88,6 +91,56 @@ class Art(unittest.TestCase):
         self.assertGreater(sum(mean(im, (1600, 400, 1900, 600))), 3 * 120)
         self.assertEqual(load(ta.collection_backdrop("coming", "Coming soon", None, None, [])).size, (1920, 1080))
         self.assertEqual(load(ta.collection_backdrop("coming", "Coming soon", None, b"not an image", [img()])).size, (1920, 1080))
+
+    def test_rank_badge_top_right_below_the_client_corner_and_clear_of_the_pill(self):
+        base = Image.new("RGB", (600, 900), (90, 120, 160))
+        for rank in (1, 3, 10):
+            x0, y0, x1, y1 = ta.rank_box(rank)
+            self.assertGreater(y0, 22 + 84 + 8, rank)
+            self.assertGreater(y0, 120, rank)
+            self.assertLessEqual(x1, 580, rank)
+            self.assertGreater(x0, 300, rank)
+            self.assertLess(y1, 250, rank)
+            for badge in (None, "found", "downloading"):
+                im = load(ta.poster(img(), badge, "Title", rank)).convert("RGB")
+                for x, y in ((590, 10), (480, 60), (590, 120), (300, 450), (590, 890), (10, 890)):
+                    d = max(abs(a - c) for a, c in zip(im.getpixel((x, y)), base.getpixel((x, y))))
+                    self.assertLess(d, 12, (rank, badge, x, y))
+                fx0, fy0, fx1, fy1 = ta.flag_box(rank)
+                cx, cy = (fx0 + fx1) // 2, (fy0 + fy1) // 2
+                self.assertGreater(min(im.getpixel((cx, cy))), 220, (rank, badge))
+                r, g, b = im.getpixel((fx0 + 6, fy0 + 6))
+                self.assertTrue(r > 180 and g < 70 and b < 70, (rank, badge, r, g, b))
+                if badge:
+                    self.assertLess(sum(im.getpixel((30, 60))), sum(base.getpixel((30, 60))) - 60, badge)
+
+    def test_rank_badge_widens_with_the_number_and_none_leaves_the_poster_unchanged(self):
+        self.assertGreater(ta.rank_box(1)[0] - ta.rank_box(10)[0], 10)
+        self.assertEqual(ta.rank_box(1)[2], ta.rank_box(10)[2])
+        for badge in (None, "found", "none"):
+            self.assertEqual(ta.poster(img(), badge, "Title", None), ta.poster(img(), badge, "Title"))
+
+    def test_unavailable_title_poster_keeps_the_title_clear_of_the_banner(self):
+        title = "A Very Long Unmatched Movie Title That Wraps Around"
+        for rank in (None, 7):
+            im = load(ta.poster(None, "none", title, rank)).convert("RGB")
+            x0, y0, x1, y1 = ta.title_box("none", rank)
+            if rank:
+                self.assertGreater(y0, ta.rank_box(rank)[3])
+            px = rgb_pixels(im.crop((x0, y0, x1, y1)))
+            self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, rank)
+            self.assertGreater(sum(1 for p in px if min(p) > 230), 500, rank)
+            red = sum(1 for r, g, b in rgb_pixels(im) if r > 150 and g < 80 and b < 80)
+            self.assertGreater(red, 40000, rank)
+
+    def test_ranked_unavailable_poster_keeps_the_band_off_the_rank_badge(self):
+        for rank in (1, 10):
+            im = load(ta.poster(img(), "none", "Title", rank)).convert("RGB")
+            x0, y0, x1, y1 = ta.rank_box(rank)
+            fx1 = ta.flag_box(rank)[2]
+            px = rgb_pixels(im.crop((fx1 + 4, y0, x1, y1 + 40)))
+            self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, rank)
+            self.assertGreater(sum(1 for r, g, b in rgb_pixels(im) if r > 150 and g < 80 and b < 80), 40000, rank)
 
     def test_fanart_and_tile(self):
         self.assertIsNone(ta.fanart(None))
