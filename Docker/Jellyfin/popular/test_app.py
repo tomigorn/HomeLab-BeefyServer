@@ -29,8 +29,13 @@ class FakeSeerr:
         self.users = [{"id": 7, "jellyfinUserId": "40e05f0a9e964fd9b225eb1379dfcfa4", "permissions": 8352, "email": "x"}]
         self.media = {}
         self.posts = []
+        self.linked = {}
+        self.link_gets = 0
 
     def __call__(self, method, path, body=None, user=None):
+        if method == "GET" and path.startswith("/api/v1/user/") and path.endswith("/settings/linked-accounts"):
+            self.link_gets += 1
+            return self.linked.get(int(path.split("/")[4]), [])
         if method == "GET" and path.startswith("/api/v1/user"):
             return {"results": self.users}
         if method == "POST" and path == "/api/v1/user":
@@ -245,6 +250,193 @@ class Requests(Base):
         self.assertEqual((code, body["state"]), (200, "requestable"))
         self.assertEqual([p for p in self.seerr.posts if p[0] == "request"], [])
         self.assertEqual(body["left"], 10)
+
+
+def holy_grail(name, slug="holy-grail"):
+    return [{"id": 1, "username": name, "provider": {"slug": slug, "name": "Holy Grail"}}]
+
+
+class Attribution(Base):
+    GUEST = "b" * 32
+
+    def setUp(self):
+        super().setUp()
+        self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, "permissions": 160, "userType": 2})
+        self.seerr.users.append({"id": 5, "email": "x5", "permissions": 24736, "userType": 2})
+
+    def sent_as(self):
+        return [p for p in self.seerr.posts if p[0] == "request"][-1][2]
+
+    def test_holy_grail_account_with_the_jellyfin_name_is_the_requester(self):
+        self.seerr.linked[5] = holy_grail("Guest")
+        self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=self.GUEST)[0], 200)
+        self.assertEqual(self.sent_as(), 5)
+        a = self.audit()[-1]
+        self.assertEqual((a["via"], a["seerrUser"], a["person"], a["source"]), ("linked Seerr user", 5, 5, "jellyfin"))
+
+    def test_other_sign_in_provider_does_not_count(self):
+        self.seerr.linked[5] = holy_grail("guest", slug="elsewhere")
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=self.GUEST)
+        self.assertEqual(self.sent_as(), 20)
+        self.assertEqual((self.audit()[-1]["via"], self.audit()[-1]["person"]), ("service user: no Seerr account", None))
+
+    def test_two_accounts_with_the_name_fall_back(self):
+        self.seerr.users.append({"id": 6, "email": "x6", "permissions": 24736, "userType": 2})
+        self.seerr.linked[5] = self.seerr.linked[6] = holy_grail("guest")
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=self.GUEST)
+        self.assertEqual(self.sent_as(), 20)
+        self.assertEqual(self.audit()[-1]["via"], "service user: ambiguous Seerr account")
+
+    def test_jellyfin_link_wins_without_asking_linked_accounts(self):
+        self.seerr.linked[5] = holy_grail("jane")
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.assertEqual((self.sent_as(), self.seerr.link_gets), (7, 0))
+
+    def test_service_user_is_never_the_person(self):
+        self.seerr.linked[20] = holy_grail("guest")
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=self.GUEST)
+        self.assertEqual((self.sent_as(), self.audit()[-1]["person"]), (20, None))
+
+    def test_without_auto_approve_the_service_user_requests_for_the_person(self):
+        self.seerr.users[0]["permissions"] = 32 | 8192 | 16384
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.assertEqual(self.sent_as(), 20)
+        a = self.audit()[-1]
+        self.assertEqual((a["via"], a["seerrUser"], a["person"]), ("service user: linked Seerr user not auto-approved", 20, 7))
+
+    def test_permissions_per_kind(self):
+        self.seerr.users[0]["permissions"] = 262144 | 256
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.assertEqual(self.sent_as(), 7)
+        self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"})
+        self.assertEqual(self.sent_as(), 20)
+        self.assertEqual(self.audit()[-1]["via"], "service user: linked Seerr user may not request")
+
+    def test_admin_may_everything(self):
+        self.seerr.users[0]["permissions"] = 2
+        self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"})
+        self.assertEqual(self.sent_as(), 7)
+
+    def test_linked_accounts_cached_5_min(self):
+        self.seerr.linked[5] = holy_grail("guest")
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=self.GUEST)
+        n = self.seerr.link_gets
+        self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token=self.GUEST)
+        self.assertEqual(self.seerr.link_gets, n)
+        self.now = NOW + datetime.timedelta(minutes=5)
+        self.core.seerr_user("11111111222233334444555555555555", name="guest", kind="movie")
+        self.assertGreater(self.seerr.link_gets, n)
+
+    def test_linked_accounts_error_means_no_link(self):
+        inner = self.seerr
+        def seerr(m, path, body=None, user=None):
+            if path.endswith("/settings/linked-accounts"):
+                raise OSError("down")
+            return inner(m, path, body, user)
+        self.core.seerr = seerr
+        self.assertEqual(self.core.seerr_user("11111111222233334444555555555555", name="guest", kind="movie")[1], "service user: sign-in accounts unreadable")
+
+
+    def test_one_unreadable_account_list_means_no_name_match_and_no_cache(self):
+        self.seerr.users.append({"id": 6, "email": "x6", "permissions": 24736, "userType": 2})
+        self.seerr.linked[5] = self.seerr.linked[6] = holy_grail("guest")
+        inner = self.seerr
+        def seerr(m, path, body=None, user=None):
+            if path == "/api/v1/user/6/settings/linked-accounts":
+                raise OSError("down")
+            return inner(m, path, body, user)
+        self.core.seerr = seerr
+        self.assertEqual(self.core.seerr_user("11111111222233334444555555555555", name="guest", kind="movie")[0], 20)
+        self.core.seerr = inner
+        self.assertEqual(self.core.seerr_user("11111111222233334444555555555555", name="guest", kind="movie")[1], "service user: ambiguous Seerr account")
+
+    def test_account_linked_to_another_jellyfin_user_is_never_matched_by_name(self):
+        self.seerr.users[2]["jellyfinUserId"] = "ffffffffffffffffffffffffffffffff"
+        self.seerr.linked[5] = holy_grail("guest")
+        self.assertEqual(self.core.seerr_user("11111111222233334444555555555555", name="guest", kind="movie")[:2], (20, "service user: no Seerr account"))
+
+    def test_odd_linked_accounts_answer_never_breaks_a_request(self):
+        self.seerr.linked[5] = [{"username": "guest", "provider": "holy-grail"}, "x", None]
+        self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=self.GUEST)[0], 200)
+        self.assertEqual(self.sent_as(), 20)
+
+
+class Origins(Base):
+    def setUp(self):
+        super().setUp()
+        self.export = pathlib.Path(self.tmp.name, "export", "origins.json")
+        self.core.cfg.export_file = self.export
+        self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, "permissions": 160, "userType": 2})
+
+    def origins(self):
+        return json.loads(self.export.read_text())
+
+    def test_web_request_exported_with_source_and_person(self):
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token="b" * 32)
+        reqs = self.origins()["requests"]
+        ids = sorted(reqs, key=int)
+        self.assertEqual(reqs[ids[0]], {"source": "jellyfin", "name": "jane", "seerrUser": 7, "person": 7, "service": False})
+        self.assertEqual(reqs[ids[1]], {"source": "jellyfin", "name": "guest", "seerrUser": 20, "person": None, "service": True})
+        self.assertNotIn("@", self.export.read_text())
+        self.assertNotIn("userId", self.export.read_text())
+
+    def test_moonfin_and_tv_sources(self):
+        e = self.core.allow()["tok-movie-xxxxxxxxxxxx"]
+        jane = {"id": "40e05f0a9e964fd9b225eb1379dfcfa4", "name": "jane"}
+        self.core.send(jane, e, "night", False, {"user": "jane", "userId": jane["id"], "via": "moonfin"})
+        self.seerr.media.clear()
+        self.core.send(jane, self.core.allow()["tok-tv-xxxxxxxxxxxxxxx"], "night", False, {"user": "jane", "userId": jane["id"], "via": "tv"})
+        self.assertEqual([v["source"] for _, v in sorted(self.origins()["requests"].items(), key=lambda kv: int(kv[0]))], ["moonfin", "tv"])
+        self.assertEqual(self.audit()[-1]["source"], "tv")
+
+    def test_written_at_start_and_unwritable_never_breaks_a_request(self):
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.export.unlink()
+        core = app.Core(app.Config(allow_file=self.allow, audit_file=self.core.cfg.audit_file, request_state=self.core.cfg.request_state, origins=[ORIGIN], export_file=self.export),
+                        seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now)
+        self.assertEqual(len(self.origins()["requests"]), 1)
+        core.cfg.export_file = pathlib.Path(self.tmp.name, "allow.json", "x.json")
+        core.seerr = self.seerr
+        self.assertEqual(core.handle("POST", "/hss-popular/request", {"Content-Type": "application/json", "Origin": ORIGIN, "X-Emby-Token": "b" * 32}, json.dumps({"id": "tok-tv-xxxxxxxxxxxxxxx"}).encode())[0], 200)
+
+    def test_half_migrated_state_db_gets_the_missing_columns(self):
+        d = pathlib.Path(self.tmp.name, "half")
+        d.mkdir()
+        con = sqlite3.connect(d / "state.db")
+        con.execute("CREATE TABLE user_requests (user_id TEXT NOT NULL, seerr_id INTEGER NOT NULL, at TEXT, source TEXT, PRIMARY KEY (user_id, seerr_id))")
+        con.execute("CREATE TABLE requests (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, ref TEXT, at TEXT NOT NULL, day TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)")
+        con.commit()
+        con.close()
+        core = app.Core(app.Config(allow_file=self.allow, audit_file=d / "audit.jsonl", request_state=d / "rs.json", origins=[ORIGIN], export_file=d / "o.json"),
+                        seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now)
+        core.remember("u1", 5, ("tv", "tom", 7, 7, 0))
+        self.assertEqual(json.loads((d / "o.json").read_text())["requests"]["5"]["source"], "tv")
+
+    def test_old_state_db_gets_the_columns_and_the_audit_backfill(self):
+        d = pathlib.Path(self.tmp.name, "old")
+        d.mkdir()
+        con = sqlite3.connect(d / "state.db")
+        con.execute("CREATE TABLE user_requests (user_id TEXT NOT NULL, seerr_id INTEGER NOT NULL, at TEXT, PRIMARY KEY (user_id, seerr_id))")
+        con.execute("CREATE TABLE requests (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, ref TEXT, at TEXT NOT NULL, day TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)")
+        for rid in (64, 65, 70):
+            con.execute("INSERT INTO user_requests VALUES ('u1', ?, '2026-10-30T00:00:00+00:00')", (rid,))
+        con.commit()
+        con.close()
+        lines = [
+            {"decision": "requested", "requestId": 64, "user": "tom", "userId": "u1", "via": "tv", "seerrVia": "linked Seerr user", "seerrUser": 7, "at": "2026-10-30T00:00:00+00:00"},
+            {"decision": "requested", "requestId": 65, "user": "tom", "userId": "u1", "via": "moonfin", "seerrVia": "service user: no Seerr account", "seerrUser": 8, "at": "2026-10-30T00:00:00+00:00"},
+            {"decision": "requested", "requestId": 70, "user": "tom", "userId": "u1", "via": "linked Seerr user", "seerrUser": 7, "at": "2026-10-30T00:00:00+00:00"},
+            {"decision": "dry-run", "user": "tom", "userId": "u1", "via": "moonfin"},
+        ]
+        (d / "audit.jsonl").write_text("".join(json.dumps(l) + "\n" for l in lines))
+        export = d / "origins.json"
+        app.Core(app.Config(allow_file=self.allow, audit_file=d / "audit.jsonl", request_state=d / "rs.json", origins=[ORIGIN], export_file=export),
+                 seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now)
+        reqs = json.loads(export.read_text())["requests"]
+        self.assertEqual(reqs, {"64": {"source": "tv", "name": "tom", "seerrUser": 7, "person": 7, "service": False},
+                                "65": {"source": "moonfin", "name": "tom", "seerrUser": 8, "person": None, "service": True},
+                                "70": {"source": "jellyfin", "name": "tom", "seerrUser": 7, "person": 7, "service": False}})
 
 
 class Remembered(Base):
@@ -863,6 +1055,7 @@ class Hook(HookBase):
         self.assertEqual(self.requests(), [])
         self.assertEqual(self.audits()[-1]["decision"], "dry-run: requestable")
         self.assertEqual(self.core.overview("u1")[0], 10)
+        self.assertEqual({k: self.audits()[-1].get(k) for k in ("dryVia", "source")}, {"dryVia": "service user missing", "source": "tv"})
         self.assertFalse(self.signal.exists())
         self.assertEqual(len(self.reset_calls()), 1)
 

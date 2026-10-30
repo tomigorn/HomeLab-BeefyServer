@@ -92,6 +92,7 @@ services:
       - POP_SIGNAL=/signal/requested
       - POP_FACADE_PORT=8099
       - POP_FACADE_SECRET_FILE=/run/secrets/popular/facade.secret
+      - POP_EXPORT_FILE=/export/origins.json
     volumes:
       - ./popular:/app:ro
       - ./secrets/popular:/run/secrets/popular:ro
@@ -103,6 +104,8 @@ services:
       - ${APPDATA_ROOT}/indexer-bar:/indexer-bar:ro
       # requested: touched after a TV request, starts jellyfin-trending.path
       - ${APPDATA_ROOT}/jellyfin-popular-signal:/signal
+      # origins.json: source + requester of each request, read by Seerr's download-now (Seerr README "Request origin")
+      - ${APPDATA_ROOT}/jellyfin-popular-export:/export
     ports:
       - "${POPULAR_PORT}:8097"
     networks:

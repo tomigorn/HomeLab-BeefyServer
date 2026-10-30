@@ -936,6 +936,7 @@ class CreateRequest(FacadeBase):
         self.assertEqual((status, out["type"], out["seasons"], out["media"]), (201, "movie", [], {"tmdbId": 101, "mediaType": "movie", "status": 1}))
         self.assertEqual(self.requests(), [])
         self.assertEqual([(a["decision"], a["via"], a["entry"]) for a in self.audit()[-2:]], [("dry-run", "moonfin", "tv/202/s4"), ("dry-run", "moonfin", "movie/101")])
+        self.assertEqual([(a["dryAs"], a["dryVia"], a["source"]) for a in self.audit()[-2:]], [(20, "service user: no Seerr account", "moonfin")] * 2)
         self.assertEqual((self.core.overview(JF_ID)[0], self.core.requested_ids(JF_ID)), (10, []))
         self.seerr.media["movie/101"] = {"status": 5, "requests": []}
         self.assertEqual(self.post(self.MOVIE)[:2], (409, {"message": "Already in the library or requested"}))

@@ -28,6 +28,11 @@ import zoneinfo
 SERVICE_EMAIL = "jellyfin-popular"
 SERVICE_NAME = "Jellyfin popular"
 SERVICE_PERMISSIONS = 32 | 128  # REQUEST + AUTO_APPROVE
+ADMIN = 2
+MAY_REQUEST = {"movie": 32 | 262144, "tv": 32 | 524288}  # REQUEST | REQUEST_MOVIE / REQUEST_TV
+AUTO_APPROVED = {"movie": 128 | 256, "tv": 128 | 512}  # AUTO_APPROVE | AUTO_APPROVE_MOVIE / AUTO_APPROVE_TV
+OIDC_PROVIDER = "holy-grail"
+SOURCES = {"moonfin": "moonfin", "tv": "tv"}
 TOKEN_RE = re.compile(r"^[A-Za-z0-9]{16,128}$")
 DETAILS_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 AUTH_RE = re.compile(r'Token="([^"]*)"')
@@ -59,7 +64,7 @@ class Unauthorized(Exception):
 
 class Config:
     def __init__(self, allow_file, audit_file, request_state, origins, limit=10, days=7, daily_max=30, rate_per_min=10, list_max_age_days=9, tz="Europe/Zurich", state_db=None, audit_max_bytes=AUDIT_MAX_BYTES,
-                 details_files=None, details_per_min=60, index_file=None, hook_secret=None, signal_file=None, dry_flag=None):
+                 details_files=None, details_per_min=60, index_file=None, hook_secret=None, signal_file=None, dry_flag=None, export_file=None):
         self.allow_file, self.audit_file, self.request_state = pathlib.Path(allow_file), pathlib.Path(audit_file), pathlib.Path(request_state)
         self.details_files = [pathlib.Path(f) for f in details_files] if details_files else [self.allow_file.with_name("details.json"), self.allow_file.with_name("coming.json")]
         self.details_per_min = details_per_min
@@ -70,6 +75,7 @@ class Config:
         self.hook_secret = hook_secret or None
         self.signal_file = pathlib.Path(signal_file) if signal_file else None
         self.dry_flag = pathlib.Path(dry_flag) if dry_flag else self.audit_file.with_name("hook-dry-run")
+        self.export_file = pathlib.Path(export_file) if export_file else None
 
 
 def seerr_status(kind, season, media):
@@ -123,6 +129,7 @@ class Core:
         # Short critical sections only; Seerr and Jellyfin calls run outside, under the caller's own lock.
         self.lock = threading.Lock()
         self.svc_lock = threading.Lock()
+        self.export_lock = threading.Lock()
         self.user_locks = {}
         self.auth_cache, self.hits, self.cache = {}, {}, {}
         self.noise, self.flushed = collections.Counter(), None
@@ -232,6 +239,13 @@ class Core:
             if not con.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_requests'").fetchone():
                 con.execute("CREATE TABLE IF NOT EXISTS user_requests (user_id TEXT NOT NULL, seerr_id INTEGER NOT NULL, at TEXT, PRIMARY KEY (user_id, seerr_id))")
                 self.user_requests_import(con)
+            cols = {c for (_, c, *_) in con.execute("PRAGMA table_info(user_requests)")}
+            for col, typ in (("source", "TEXT"), ("name", "TEXT"), ("seerr_user", "INTEGER"), ("person", "INTEGER"), ("service", "INTEGER")):
+                if col not in cols:
+                    con.execute(f"ALTER TABLE user_requests ADD COLUMN {col} {typ}")
+            if "service" not in cols:
+                self.origins_import(con)
+        self.export_origins()
 
     def audit_lines(self):
         """Lines of the audit log and its rotations, oldest first."""
@@ -260,9 +274,52 @@ class Core:
                 at = None
             con.execute("INSERT OR IGNORE INTO user_requests (user_id, seerr_id, at) VALUES (?, ?, ?)", (uid, rid, at))
 
-    def remember(self, user_id, seerr_id):
+    @staticmethod
+    def origin_of(r):
+        """(source, name, seerr user, person, service) of a "requested" audit record."""
+        via, reason = r.get("via"), r.get("seerrVia") if r.get("via") in SOURCES else r.get("via")
+        reason = reason if isinstance(reason, str) else ""
+        sid = r.get("seerrUser") if isinstance(r.get("seerrUser"), int) and not isinstance(r.get("seerrUser"), bool) else None
+        service = reason.startswith("service user")
+        person = r.get("person") if "person" in r else (None if service else sid)
+        return SOURCES.get(via, "jellyfin"), r.get("user") if isinstance(r.get("user"), str) else None, sid, person if isinstance(person, int) else None, int(service)
+
+    def origins_import(self, con):
+        """Source and person of the requests remembered before those columns existed, from the audit log."""
+        for line in self.audit_lines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(r, dict) or r.get("decision") != "requested" or not isinstance(r.get("requestId"), int) or not isinstance(r.get("userId"), str):
+                continue
+            con.execute("UPDATE user_requests SET source = ?, name = ?, seerr_user = ?, person = ?, service = ? WHERE user_id = ? AND seerr_id = ? AND source IS NULL",
+                        (*self.origin_of(r), r["userId"], r["requestId"]))
+
+    def export_origins(self):
+        """origins.json for the Seerr pages (Seerr README "Request origin"): source and requester name by Seerr request id, never a Jellyfin id or a mail address."""
+        f = self.cfg.export_file
+        if not f:
+            return
+        with self.export_lock:
+            try:
+                with self.db() as con:
+                    rows = con.execute("SELECT seerr_id, source, name, seerr_user, person, service FROM user_requests WHERE source IS NOT NULL ORDER BY seerr_id").fetchall()
+                out = {"updated": self.iso(self.clock()), "requests": {str(rid): {"source": src, "name": name, "seerrUser": sid, "person": person, "service": bool(service)}
+                                                                        for rid, src, name, sid, person, service in rows}}
+                f.parent.mkdir(parents=True, exist_ok=True)
+                tmp = f.with_name(f".{f.name}.tmp")
+                tmp.write_text(json.dumps(out, ensure_ascii=False, sort_keys=True))
+                tmp.chmod(0o644)
+                os.replace(tmp, f)
+            except (OSError, sqlite3.Error) as e:
+                print(f"origins export failed {type(e).__name__}", flush=True)
+
+    def remember(self, user_id, seerr_id, origin=(None, None, None, None, 0)):
         with self.lock, self.db() as con:
-            con.execute("INSERT OR IGNORE INTO user_requests (user_id, seerr_id, at) VALUES (?, ?, ?)", (user_id, seerr_id, self.iso(self.clock())))
+            con.execute("INSERT OR IGNORE INTO user_requests (user_id, seerr_id, at, source, name, seerr_user, person, service) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (user_id, seerr_id, self.iso(self.clock()), *origin))
+        self.export_origins()
 
     def requested_ids(self, user_id):
         """Seerr request ids the user made through this backend, newest first; never pruned."""
@@ -376,14 +433,55 @@ class Core:
             yield
 
     # --- Seerr ----------------------------------------------------------
-    def seerr_user(self, jf_id, create=True):
-        """(Seerr user id, why). Owner's choice: any Jellyfin user may request from this page, also without a Seerr account or request right; the audit log says which applied."""
-        users = self.seerr("GET", "/api/v1/user?take=1000")["results"]
+    def seerr_user(self, jf_id, create=True, name=None, kind=None):
+        """(Seerr user id, why, person): the caller's own Seerr account when it may request the kind and is auto-approved for it, else the service user; person = the matched Seerr account (None = none or ambiguous).
+        Owner's choice: any Jellyfin user may request from this page, also without a Seerr account or request right; the audit log says which applied."""
+        person, why = self.find_person(jf_id, name)
+        if person:
+            p = person.get("permissions") or 0
+            may = MAY_REQUEST.get(kind, 32 | 262144 | 524288)
+            auto = AUTO_APPROVED.get(kind, 128 | 256 | 512)
+            if p & ADMIN or (p & may and p & auto):
+                return person["id"], "linked Seerr user", person["id"]
+            why = "service user: linked Seerr user not auto-approved" if p & may else "service user: linked Seerr user may not request"
+        return self.service_user(create)["id"], why, person["id"] if person else None
+
+    def find_person(self, jf_id, name):
+        """(Seerr user, why): Seerr's Jellyfin link first, else the one Holy Grail sign-in account with the Jellyfin user name (both come from the same Authentik user)."""
+        users = [u for u in self.seerr("GET", "/api/v1/user?take=1000")["results"] if (u.get("email") or "").lower() != SERVICE_EMAIL]
         linked = next((u for u in users if str(u.get("jellyfinUserId") or "").replace("-", "").lower() == jf_id), None)
-        if linked and linked.get("permissions", 0) & (2 | 32):
-            return linked["id"], "linked Seerr user"
-        why = "service user: linked Seerr user may not request" if linked else "service user: no Seerr account"
-        return self.service_user(create)["id"], why
+        if linked:
+            return linked, None
+        want = (name or "").casefold()
+        if not want:
+            return None, "service user: no Seerr account"
+        names = self.sign_in_names(users)
+        if names is None:
+            return None, "service user: sign-in accounts unreadable"
+        hits = [u for u in users if not u.get("jellyfinUserId") and want in names.get(u.get("id"), ())]
+        if len(hits) > 1:
+            return None, "service user: ambiguous Seerr account"
+        return (hits[0], None) if hits else (None, "service user: no Seerr account")
+
+    def sign_in_names(self, users):
+        """Seerr user id -> casefolded Holy Grail sign-in user names, cached 5 min; None (not cached) when one account's list is unreadable, so a missed duplicate cannot pick the wrong person."""
+        now = self.clock()
+        with self.lock:
+            hit = self.cache.get("sign_in_names")
+        if hit and now - hit[0] < SERVICE_TTL:
+            return hit[1]
+        out = {}
+        for u in users:
+            try:
+                accts = self.seerr("GET", f"/api/v1/user/{int(u['id'])}/settings/linked-accounts")
+            except (OSError, ValueError, KeyError, TypeError):
+                return None
+            accts = accts if isinstance(accts, list) else []
+            out[u["id"]] = {str(a.get("username") or "").casefold() for a in accts
+                            if isinstance(a, dict) and isinstance(a.get("provider"), dict) and a["provider"].get("slug") == OIDC_PROVIDER}
+        with self.lock:
+            self.cache["sign_in_names"] = (now, out)
+        return out
 
     def service_user(self, create=True):
         """The Seerr service user "jellyfin-popular", cached 5 min; create=False never writes to Seerr and raises NoServiceUser when it is missing."""
@@ -613,7 +711,7 @@ class Core:
                     return 503, {"error": "download now unavailable"}
                 payload["tags"] = [tag]
             try:
-                sid, via = self.seerr_user(user["id"], create=create_service)
+                sid, via, person = self.seerr_user(user["id"], create=create_service, name=user.get("name"), kind=entry["kind"])
             except NoServiceUser:
                 self.audit(**log, decision="refused: no service user")
                 return 503, {"error": "service user missing"}
@@ -621,23 +719,24 @@ class Core:
                 created = self.seerr("POST", "/api/v1/request", payload, user=sid)
             except urllib.error.HTTPError as e:
                 e.close()
-                self.audit(**log, decision=f"seerr refused: HTTP {e.code}", **self.who(log, sid, via))
+                self.audit(**log, decision=f"seerr refused: HTTP {e.code}", **self.who(log, sid, via, person))
                 return 502, {"error": "Seerr refused the request"}
             except (OSError, ValueError) as e:
-                self.audit(**log, decision=f"seerr error: {type(e).__name__}", **self.who(log, sid, via))
+                self.audit(**log, decision=f"seerr error: {type(e).__name__}", **self.who(log, sid, via, person))
                 return 502, {"error": "Seerr did not answer"}
             ok = True
         finally:
             self.settle(rid, ok)
         request_id = created.get("id") if isinstance(created, dict) else None
-        self.audit(**log, decision="requested", requestId=request_id, **self.who(log, sid, via))
+        rec = dict(log, requestId=request_id, **self.who(log, sid, via, person))
+        self.audit(**rec, decision="requested")
         if isinstance(request_id, int) and not isinstance(request_id, bool):
-            self.remember(user["id"], request_id)
+            self.remember(user["id"], request_id, self.origin_of(rec))
         return 200, {"ok": True, "state": "requested", "left": left - 1, "request": created}
 
     @staticmethod
-    def who(log, sid, via):
-        return {"seerrUser": sid, "seerrVia" if "via" in log else "via": via}
+    def who(log, sid, via, person):
+        return {"seerrUser": sid, "seerrVia" if "via" in log else "via": via, "person": person, "source": SOURCES.get(log.get("via"), "jellyfin")}
 
     # --- TV playback hook -------------------------------------------------
     def trending_index(self):
@@ -781,12 +880,23 @@ class Core:
         with self.user_lock(uid):
             code, _ = self.send({"id": uid, "name": name}, entry, mode, dry, log)
         if dry and code == 200:
-            self.audit(**log, decision="dry-run: requestable")
+            self.audit(**log, **self.dry_who(uid, name, entry["kind"], log), decision="dry-run: requestable")
         elif code == 200 and self.cfg.signal_file:
             try:
                 self.cfg.signal_file.touch()
             except OSError as e:
                 print(f"signal failed {type(e).__name__}", flush=True)
+
+    def dry_who(self, uid, name, kind, log):
+        """As whom the real request would go to Seerr (dry run only, never writes to Seerr)."""
+        out = {"source": SOURCES.get(log.get("via"), "jellyfin")}
+        try:
+            sid, via, person = self.seerr_user(uid, create=False, name=name, kind=kind)
+        except NoServiceUser:
+            return dict(out, dryVia="service user missing")
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            return dict(out, dryVia=f"seerr error: {type(e).__name__}")
+        return dict(out, dryAs=sid, dryVia=via, person=person)
 
     def reset(self, iid, uid):
         if not self.jellyfin_admin:
@@ -901,7 +1011,8 @@ def make_core():
     cfg = Config(allow_file=env.get("POP_ALLOW", "/data/allow.json"), audit_file=env.get("POP_AUDIT", "/state/audit.jsonl"),
                  request_state=env.get("POP_REQUEST_STATE", "/indexer-bar/request-state.json"), origins=[o for o in env.get("POP_ORIGINS", "").split(",") if o],
                  limit=int(env.get("POP_LIMIT", "10")), days=int(env.get("POP_DAYS", "7")), daily_max=int(env.get("POP_DAILY_MAX", "30")), tz=env.get("TZ") or "Europe/Zurich",
-                 hook_secret=secret_file(env.get("POP_HOOK_SECRET_FILE", "/run/secrets/popular/hook.secret")), signal_file=env.get("POP_SIGNAL", "/signal/requested"))
+                 hook_secret=secret_file(env.get("POP_HOOK_SECRET_FILE", "/run/secrets/popular/hook.secret")), signal_file=env.get("POP_SIGNAL", "/signal/requested"),
+                 export_file=env.get("POP_EXPORT_FILE") or None)
     return Core(cfg, seerr, jellyfin, jellyfin_admin=jellyfin_admin if jf_key else None)
 
 
