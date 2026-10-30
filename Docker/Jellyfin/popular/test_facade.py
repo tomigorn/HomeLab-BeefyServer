@@ -1,11 +1,17 @@
 import base64
+import contextlib
 import datetime
 import hashlib
 import hmac
+import io
 import json
 import pathlib
+import re
 import sys
+import threading
+import time
 import unittest
+import urllib.error
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import facade  # noqa: E402
@@ -138,6 +144,311 @@ class Sessions(test_app.Base):
             left = {s for (s,) in con.execute("SELECT sid FROM sessions")}
         self.assertEqual(left, {old_used, fresh})
         self.assertEqual(self.sessions.uid_for("a"), 1000001)
+
+
+JANE = {"Id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "Name": "Jane Doe", "Policy": {"IsDisabled": False}}
+JF_ID = "aaaaaaaabbbbccccddddeeeeeeeeeeee"
+TOKEN = "t" * 32
+DEVICE_RE = re.compile(r"hss-seerr-[0-9a-f]{16}")
+
+
+def http_error(code):
+    return urllib.error.HTTPError("http://jellyfin:8096/x", code, "error", {}, io.BytesIO(b""))
+
+
+class FakeJellyfin:
+    def __init__(self):
+        self.calls, self.admin_calls = [], []
+        self.me = dict(JANE)
+        self.users = {JF_ID: dict(JANE)}
+        self.me_error, self.admin_down, self.delay = None, False, 0
+
+    def __call__(self, method, path, body=None, device_id=None, token=None):
+        self.calls.append((method, path, device_id, token))
+        if (method, path) == ("POST", "/QuickConnect/Initiate"):
+            return {"Code": "123456", "Secret": "jf-secret", "DeviceId": device_id, "Authenticated": False}
+        if (method, path) == ("POST", "/Users/AuthenticateWithQuickConnect"):
+            assert body == {"Secret": "jf-secret"}, body
+            time.sleep(self.delay)
+            return {"AccessToken": TOKEN, "User": dict(JANE)}
+        if (method, path) == ("GET", "/Users/Me"):
+            if self.me_error:
+                raise self.me_error
+            return self.me
+        if (method, path) == ("POST", "/Sessions/Logout"):
+            return None
+        raise AssertionError((method, path))
+
+    def admin(self, method, path, body=None):
+        self.admin_calls.append((method, path))
+        if self.admin_down:
+            raise OSError("connection refused")
+        jf_id = path.rsplit("/", 1)[1]
+        if method != "GET" or jf_id not in self.users:
+            raise http_error(404)
+        return self.users[jf_id]
+
+
+class FacadeBase(test_app.Base):
+    def setUp(self):
+        super().setUp()
+        self.jf = FakeJellyfin()
+        self.core.jellyfin_admin = self.jf.admin
+        self.facade = facade.Facade(self.core, KEY, self.jf)
+
+    def call(self, method, path, cookie=None, body=b""):
+        headers = {"Content-Type": "application/json"}
+        if cookie:
+            headers["Cookie"] = f"connect.sid={cookie}"
+        return self.facade.handle(method, "/api/v1/" + path, headers, body)
+
+    def initiate(self):
+        status, out, _ = self.call("POST", "auth/jellyfin/quickconnect/initiate", body=b"{}")
+        self.assertEqual(status, 200, out)
+        return out["secret"]
+
+    def authenticate(self, handle):
+        return self.call("POST", "auth/jellyfin/quickconnect/authenticate", body=json.dumps({"secret": handle}).encode())
+
+    def sign_in(self):
+        status, out, extra = self.authenticate(self.initiate())
+        self.assertEqual(status, 200, out)
+        return out, cookie_of(extra)
+
+    def later(self, seconds):
+        self.now = self.now + datetime.timedelta(seconds=seconds)
+
+    def session_row(self):
+        with self.core.db() as con:
+            return con.execute("SELECT sid, revoked, last_seen FROM sessions").fetchall()
+
+
+def cookie_of(extra):
+    values = [v for k, v in extra if k == "Set-Cookie"]
+    if not values:
+        return None
+    assert len(values) == 1, values
+    return values[0].split(";")[0].partition("=")[2]
+
+
+class SignIn(FacadeBase):
+    def test_password_login_refused_without_jellyfin_call(self):
+        for path in ["auth/jellyfin", "auth/local"]:
+            with contextlib.redirect_stdout(io.StringIO()):
+                status, out, extra = self.call("POST", path, body=json.dumps({"username": "jane", "password": "pw"}).encode())
+            self.assertEqual((status, out, extra), (401, {"message": "Use Quick Connect to sign in"}, []))
+        self.assertEqual(self.jf.calls, [])
+        self.assertEqual(self.jf.admin_calls, [])
+        self.assertEqual(self.core.rejected().get("facade password"), 2)
+
+    def test_quick_connect_happy_path_sets_cookie_and_logs_out(self):
+        status, out, extra = self.call("POST", "auth/jellyfin/quickconnect/initiate", body=b"{}")
+        self.assertEqual(status, 200)
+        self.assertEqual(set(out), {"code", "secret"})
+        self.assertEqual(out["code"], "123456")
+        self.assertEqual(len(out["secret"]), 32)
+        self.assertNotIn("jf-secret", json.dumps(out))
+        self.assertEqual(extra, [])
+        status, me, extra = self.authenticate(out["secret"])
+        self.assertEqual(status, 200, me)
+        self.assertEqual(me, self.facade.me({"jf_id": JF_ID, "name": "Jane Doe", "uid": 1000001}))
+        self.assertEqual([(m, p) for m, p, _, _ in self.jf.calls],
+                         [("POST", "/QuickConnect/Initiate"), ("POST", "/Users/AuthenticateWithQuickConnect"), ("GET", "/Users/Me"), ("POST", "/Sessions/Logout")])
+        devices = {d for _, _, d, _ in self.jf.calls}
+        self.assertEqual(len(devices), 1)
+        self.assertRegex(devices.pop(), DEVICE_RE)
+        self.assertEqual([t for _, _, _, t in self.jf.calls], [None, None, TOKEN, TOKEN])
+        self.assertFalse(any("/Devices" in p for _, p, _, _ in self.jf.calls))
+        self.assertFalse(any("/Devices" in p for _, p in self.jf.admin_calls))
+        cookie = cookie_of(extra)
+        payload = facade.read_cookie(KEY, f"connect.sid={cookie}", T0)
+        self.assertEqual(payload["uid"], 1000001)
+        self.assertTrue(self.facade.sessions.active(payload["sid"], JF_ID))
+        self.assertIn("HttpOnly", extra[0][1])
+        status, again, _ = self.call("GET", "auth/me", cookie=cookie)
+        self.assertEqual((status, again), (200, me))
+
+    def test_logout_called_when_users_me_fails(self):
+        for err, code in [(http_error(500), 503), (OSError("reset"), 503), (http_error(401), 401)]:
+            self.jf.calls.clear()
+            self.jf.me_error = err
+            status, out, extra = self.authenticate(self.initiate())
+            self.assertEqual(status, code, out)
+            self.assertIn("message", out)
+            self.assertEqual(extra, [])
+            self.assertEqual(self.jf.calls[-1][:2], ("POST", "/Sessions/Logout"))
+            self.assertEqual(self.jf.calls[-1][3], TOKEN)
+        self.assertEqual(self.session_row(), [])
+
+    def test_handle_is_single_use_under_concurrency(self):
+        handle = self.initiate()
+        self.jf.delay = 0.05
+        barrier = threading.Barrier(2)
+        results = []
+
+        def go():
+            barrier.wait()
+            results.append(self.authenticate(handle)[:2])
+
+        threads = [threading.Thread(target=go) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(sorted(s for s, _ in results), [200, 401])
+        self.assertIn((401, {"message": "Quick Connect expired"}), results)
+        self.assertEqual(len(self.session_row()), 1)
+        self.assertEqual(sum(p == "/Users/AuthenticateWithQuickConnect" for _, p, _, _ in self.jf.calls), 1)
+        self.assertEqual(self.authenticate(handle)[:2], (401, {"message": "Quick Connect expired"}))
+
+    def test_handle_expires_after_5_min(self):
+        handle = self.initiate()
+        self.later(300)
+        self.assertEqual(self.authenticate(handle)[:2], (401, {"message": "Quick Connect expired"}))
+        self.assertEqual(self.authenticate("x" * 32)[:2], (401, {"message": "Quick Connect expired"}))
+        for bad in [b"", b"[]", b"null", b"{", json.dumps({"secret": 5}).encode(), b"{}"]:
+            status, out, _ = self.call("POST", "auth/jellyfin/quickconnect/authenticate", body=bad)
+            self.assertIn(status, (400, 401), bad)
+            self.assertIn("message", out)
+        self.assertFalse(any(p == "/Users/AuthenticateWithQuickConnect" for _, p, _, _ in self.jf.calls))
+        fresh = self.initiate()
+        self.later(299)
+        self.assertEqual(self.authenticate(fresh)[0], 200)
+
+    def test_initiate_rate_and_pending_limits(self):
+        handles = [self.initiate() for _ in range(8)]
+        status, out, _ = self.call("POST", "auth/jellyfin/quickconnect/initiate", body=b"{}")
+        self.assertEqual(status, 429)
+        self.assertIn("message", out)
+        self.assertEqual(self.authenticate(handles.pop())[0], 200)
+        self.assertEqual(self.authenticate(handles.pop())[0], 200)
+        handles += [self.initiate()]
+        self.assertEqual(self.authenticate(handles.pop())[0], 200)
+        initiates = sum(p == "/QuickConnect/Initiate" for _, p, _, _ in self.jf.calls)
+        self.assertEqual(initiates, 9)
+        status, out, _ = self.call("POST", "auth/jellyfin/quickconnect/initiate", body=b"{}")
+        self.assertEqual((status, set(out)), (429, {"message"}))
+        self.assertEqual(sum(p == "/QuickConnect/Initiate" for _, p, _, _ in self.jf.calls), initiates)
+        self.later(301)
+        self.assertEqual(len(self.facade.pending), 6)
+        self.initiate()
+        self.assertEqual(len(self.facade.pending), 1)
+
+    def test_sign_in_limit_5_per_hour(self):
+        for _ in range(5):
+            self.sign_in()
+            self.later(60)
+        status, out, extra = self.authenticate(self.initiate())
+        self.assertEqual((status, set(out), extra), (429, {"message"}, []))
+        self.assertEqual(len(self.session_row()), 5)
+        self.later(3600 - 300)
+        self.sign_in()
+
+    def test_disabled_user_gets_no_session(self):
+        self.jf.me = {**JANE, "Policy": {"IsDisabled": True}}
+        status, out, extra = self.authenticate(self.initiate())
+        self.assertEqual((status, set(out), extra), (403, {"message"}, []))
+        self.assertEqual(self.session_row(), [])
+        self.assertEqual(self.jf.calls[-1][:2], ("POST", "/Sessions/Logout"))
+
+    def test_me_id_never_1_no_admin_bit(self):
+        me, _ = self.sign_in()
+        self.assertEqual(me, {"id": 1000001, "displayName": "Jane Doe", "username": "Jane Doe", "email": None, "avatar": None, "permissions": 8224,
+                              "userType": 2, "requestCount": 0, "warnings": [], "settings": {"streamingRegion": "CH", "locale": None}})
+        self.assertEqual(facade.REQUESTER, 8224)
+        self.assertFalse(me["permissions"] & 2)
+        self.assertGreaterEqual(me["id"], facade.FIRST_UID)
+
+    def test_other_paths_404_until_routed(self):
+        for method, path in [("GET", "status"), ("GET", "auth/jellyfin"), ("POST", "auth/me"), ("GET", "auth/logout")]:
+            self.assertEqual(self.call(method, path)[:2], (404, {"message": "Not found"}), path)
+        self.assertEqual(self.facade.handle("GET", "/auth/me", {}, b"")[:2], (404, {"message": "Not found"}))
+
+
+class Session(FacadeBase):
+    def test_auth_me_without_cookie_403_shape(self):
+        forged = facade.make_cookie(b"\x02" * 32, "sid", 1000001, T0, T0 + 100)
+        for cookie in [None, "garbage", forged]:
+            self.assertEqual(self.call("GET", "auth/me", cookie=cookie), (403, {"status": 403, "error": "Unauthorized"}, []))
+        self.assertEqual(self.jf.admin_calls, [])
+
+    def test_deleted_or_disabled_after_sign_in_loses_session_after_60s(self):
+        for change in ["delete", "disable"]:
+            self.jf.users[JF_ID] = dict(JANE)
+            _, cookie = self.sign_in()
+            self.later(30)
+            if change == "delete":
+                del self.jf.users[JF_ID]
+            else:
+                self.jf.users[JF_ID] = {**JANE, "Policy": {"IsDisabled": True}}
+            self.assertEqual(self.call("GET", "auth/me", cookie=cookie)[0], 200, change)
+            self.later(31)
+            self.assertEqual(self.call("GET", "auth/me", cookie=cookie)[:2], (403, {"status": 403, "error": "Unauthorized"}), change)
+            self.jf.users[JF_ID] = dict(JANE)
+            self.later(61)
+            self.assertEqual(self.call("GET", "auth/me", cookie=cookie)[0], 403, change)
+            self.later(3600)
+        self.assertEqual([r for _, r, _ in self.session_row()], [1, 1])
+
+    def test_recheck_jellyfin_down_is_503(self):
+        _, cookie = self.sign_in()
+        self.later(61)
+        self.jf.admin_down = True
+        status, out, extra = self.call("GET", "auth/me", cookie=cookie)
+        self.assertEqual((status, set(out), extra), (503, {"message"}, []))
+        self.assertEqual([r for _, r, _ in self.session_row()], [0])
+        self.jf.admin_down = False
+        self.assertEqual(self.call("GET", "auth/me", cookie=cookie)[0], 200)
+        self.core.jellyfin_admin = None
+        self.later(61)
+        self.assertEqual(self.call("GET", "auth/me", cookie=cookie)[0], 503)
+
+    def test_name_follows_jellyfin_rename(self):
+        _, cookie = self.sign_in()
+        self.jf.users[JF_ID] = {**JANE, "Name": "Jane Roe"}
+        self.later(61)
+        status, me, _ = self.call("GET", "auth/me", cookie=cookie)
+        self.assertEqual((status, me["displayName"], me["id"]), (200, "Jane Roe", 1000001))
+
+    def test_cookie_rotated_after_one_day(self):
+        _, cookie = self.sign_in()
+        sid = facade.read_cookie(KEY, f"connect.sid={cookie}", T0)["sid"]
+        self.later(86400)
+        self.assertEqual(self.call("GET", "auth/me", cookie=cookie)[2], [])
+        self.later(1)
+        status, _, extra = self.call("GET", "auth/me", cookie=cookie)
+        self.assertEqual(status, 200)
+        fresh = cookie_of(extra)
+        now = T0 + 86401
+        payload = facade.read_cookie(KEY, f"connect.sid={fresh}", now)
+        self.assertEqual((payload["sid"], payload["iat"], payload["exp"]), (sid, now, now + facade.MAX_AGE))
+        self.assertEqual(self.session_row(), [(sid, 0, self.core.iso(self.now))])
+        self.assertEqual(self.call("GET", "auth/me", cookie=fresh)[2], [])
+        self.later(1)
+        self.assertEqual(self.call("GET", "auth/me", cookie="s%3A" + cookie[2:])[0], 200)
+
+    def test_logout_revokes(self):
+        _, cookie = self.sign_in()
+        self.assertEqual(self.call("POST", "auth/logout", cookie=cookie), (200, {"status": "ok"}, []))
+        self.assertEqual(self.call("GET", "auth/me", cookie=cookie)[0], 403)
+        self.assertEqual([r for _, r, _ in self.session_row()], [1])
+        self.assertEqual(self.call("POST", "auth/logout"), (200, {"status": "ok"}, []))
+
+    def test_no_token_or_cookie_in_stdout(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            handle = self.initiate()
+            _, _, extra = self.authenticate(handle)
+            cookie = cookie_of(extra)
+            self.later(86401)
+            self.call("GET", "auth/me", cookie=cookie)
+            self.call("POST", "auth/logout", cookie=cookie)
+            self.call("POST", "auth/jellyfin", body=b'{"password": "pw-secret"}')
+            self.later(120)
+            self.call("POST", "auth/local", body=b'{"password": "pw-secret"}')
+        text = out.getvalue()
+        for secret in [TOKEN, handle, "jf-secret", cookie, cookie[2:].split(".")[0], cookie.split(".")[1], "pw-secret", KEY.hex()]:
+            self.assertNotIn(secret, text)
 
 
 class LoadKey(unittest.TestCase):
