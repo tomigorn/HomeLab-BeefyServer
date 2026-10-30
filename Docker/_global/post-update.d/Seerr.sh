@@ -17,7 +17,7 @@ seerr_dn_requester() {
 if want seerr; then
   check seerr.image-pin '@sha256:28744b1ced522beb' "$(docker inspect -f '{{.Config.Image}}' seerr 2>&1)"
   check seerr.oidc-build '^develop-2d1a2ed' "$(seerr_api /status | jq -r .version 2>&1)"
-  check seerr.login-public '^\[false,false,"holy-grail"\]$' "$(seerr_api /settings/public | jq -c '[.localLogin,.mediaServerLogin,(.openIdProviders[]?.slug)]' 2>&1)"
+  check seerr.login-public '^\[false,false,false,"holy-grail"\]$' "$(seerr_api /settings/public | jq -c '[.localLogin,.mediaServerLogin,.newPlexLogin,(.openIdProviders[]?.slug)]' 2>&1)"
   check seerr.login-settings '^\[true,false,false,true,"holy-grail"\]$' "$(jq -c '[.main.oidcLogin,.main.localLogin,.main.mediaServerLogin,.network.trustProxy,.oidc.providers[0].slug]' "$SEERR_DIR/settings.json" 2>&1)"
   check seerr.main '^\["https://requests.holy-grail.ch",8352\]$' "$(jq -c '[.main.applicationUrl,.main.defaultPermissions]' "$SEERR_DIR/settings.json" 2>&1)"
   check seerr.arr-profiles '^\["4K HDR - UHD Bluray \+ WEB \(1080p fallback\)","4K HDR - WEB-2160p \(1080p fallback\)","Anime - Bluray \+ WEB 1080p"\]$' "$(jq -c '[.radarr[0].activeProfileName,.sonarr[0].activeProfileName,.sonarr[0].activeAnimeProfileName]' "$SEERR_DIR/settings.json" 2>&1)"

@@ -18,7 +18,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Customization | Where | Reapply | Verify | Update can break |
 |---|---|---|---|---|
 | `preview-new-oidc` build pinned by digest | `Seerr/docker-compose.yaml` | Seerr README "Back to stable" | `seerr.image-pin`: Config.Image → @sha256:28744b1c…; `seerr.oidc-build`: /api/v1/status version → develop-2d1a2ed | a stable tag without OIDC removes the Holy Grail login |
-| Holy Grail only: oidcLogin on, localLogin off, mediaServerLogin off, trustProxy | `settings.json` | `Seerr/scripts/configure.sh` (Seerr stopped) | `seerr.login-public`: /settings/public → [false,false,"holy-grail"]; `seerr.login-settings`: settings.json → [true,false,false,true,"holy-grail"] | settings schema change drops the OIDC keys |
+| Holy Grail only: oidcLogin on, localLogin off, mediaServerLogin off, newPlexLogin off, trustProxy | `settings.json` | `Seerr/scripts/configure.sh` (Seerr stopped) | `seerr.login-public`: /settings/public → [false,false,false,"holy-grail"]; `seerr.login-settings`: settings.json → [true,false,false,true,"holy-grail"] | settings schema change drops the OIDC keys |
 | App URL, default permissions 8352 | `settings.json` | `configure.sh` | `seerr.main`: → requests.holy-grail.ch, 8352 | |
 | Radarr/Sonarr profiles incl. anime profile | `settings.json` | `configure.sh` | `seerr.arr-profiles`: activeProfileName / activeAnimeProfileName → the 4K + anime names | profile renamed by Recyclarr |
 | Jobs in the maintenance window | Seerr settings | `Seerr/scripts/night-jobs.py` | `seerr.night-jobs`: night-jobs.py --dry-run → 0 job(s) would change | new job ids, reset schedules |

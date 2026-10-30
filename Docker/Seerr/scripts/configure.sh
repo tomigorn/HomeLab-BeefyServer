@@ -85,7 +85,7 @@ SID=$(j "$A/settings/sonarr" | python3 -c 'import json,sys; r=[x["id"] for x in 
 if [ -n "$SID" ]; then j -X PUT "$A/settings/sonarr/$SID" -d "$SONARR" >/dev/null; else j -X POST "$A/settings/sonarr" -d "$SONARR" >/dev/null; fi
 
 echo "== Main settings"
-j -X POST "$A/settings/main" -d "$(j "$A/settings/main" | python3 -c 'import json,sys; d=json.load(sys.stdin); d.pop("apiKey", None); d.update(applicationUrl="https://requests.holy-grail.ch", applicationTitle="Requests", localLogin=False, mediaServerLogin=False); d["defaultPermissions"] |= 128 | 8192; print(json.dumps(d))')" >/dev/null
+j -X POST "$A/settings/main" -d "$(j "$A/settings/main" | python3 -c 'import json,sys; d=json.load(sys.stdin); d.pop("apiKey", None); d.update(applicationUrl="https://requests.holy-grail.ch", applicationTitle="Requests", localLogin=False, mediaServerLogin=False, newPlexLogin=False); d["defaultPermissions"] |= 128 | 8192; print(json.dumps(d))')" >/dev/null
 j -X POST "$A/settings/initialize" | python3 -c 'import json,sys; print("   initialized:", json.load(sys.stdin)["initialized"])'
 
 install -d -m 700 "$D/secrets"
