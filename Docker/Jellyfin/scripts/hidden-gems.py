@@ -21,12 +21,26 @@ def pick(items, size=SIZE):
     return [i["Id"] for i in real[:size]]
 
 
-def order_steps(have, want):
-    """(drop, add): Jellyfin appends new members, so everything after the common head is removed and added again in order."""
+def steps(have, want):
+    """[(method, ids)] to turn the members have into want: new titles first, then stale ones out, then the order; never empty on the way (Jellyfin appends new members)."""
+    out = []
+    fresh = [i for i in want if i not in have]
+    stale = [i for i in have if i not in want]
+    if fresh:
+        out.append(("POST", fresh))
+    if stale:
+        out.append(("DELETE", stale))
+    cur = [i for i in have if i in want] + fresh
     keep = 0
-    while keep < min(len(have), len(want)) and have[keep] == want[keep]:
+    while keep < len(cur) and cur[keep] == want[keep]:
         keep += 1
-    return have[keep:], want[keep:]
+    if keep == len(want):
+        return out
+    if keep:
+        return out + [("DELETE", want[keep:]), ("POST", want[keep:])]
+    for i in want:
+        out += [("DELETE", [i]), ("POST", [i])]
+    return out
 
 
 def main(argv, api=None):
@@ -58,21 +72,14 @@ def main(argv, api=None):
         if not dry:
             api("POST", f"/Items/{sid}", {**item, "Name": NAME, "Tags": tags + [TAG] if TAG not in tags else tags, "DisplayOrder": "Default", "LockData": True})
     have = [i["Id"] for i in api("GET", f"/Items?ParentId={sid}&userId={admin}&EnableImages=false&EnableUserData=false")["Items"]]
-    drop, add = order_steps(have, want)
-    if drop or add:
+    todo = steps(have, want)
+    if todo:
         changes += 1
-        fresh = [i for i in add if i not in have]
-        lead = fresh if add[:len(fresh)] == fresh else []
         if not dry:
-            # Titles new to the set go in before the rest is dropped, so the set is never empty on the way.
-            if lead:
-                api("POST", f"/Collections/{sid}/Items?ids={','.join(lead)}")
-            if drop:
-                api("DELETE", f"/Collections/{sid}/Items?ids={','.join(drop)}")
-            if add[len(lead):]:
-                api("POST", f"/Collections/{sid}/Items?ids={','.join(add[len(lead):])}")
+            for method, ids in todo:
+                api(method, f"/Collections/{sid}/Items?ids={','.join(ids)}")
     verb = "would change" if dry else "changed"
-    print(f"{NAME}: {verb} ({len(want)} titles, -{len(drop)} +{len(add)})" if changes else f"{NAME}: unchanged ({len(want)} titles)")
+    print(f"{NAME}: {verb} ({len(want)} titles, {len(todo)} steps)" if changes else f"{NAME}: unchanged ({len(want)} titles)")
     return 0
 
 

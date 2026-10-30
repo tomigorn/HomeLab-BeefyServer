@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Configures the Moonbase plugin (Moonfin apps): safe server settings and the default home layout for every user (the web home order).
-Users whose stored value is still the previous default (or the app's own default for a key new here) follow the new default; their own choices stay.
+Users whose stored value is still the previous default follow the new default; the app's own default of a key new here is replaced once per user, profile and key (markers in STATE_FILE); their own choices stay.
 Idempotent. Usage: moonbase.py [--dry-run | --check]  (--check exits 1 when the config or a user differs)"""
 import copy
 import json
@@ -22,7 +22,8 @@ ROW_SETS = (COMING[1], TOP_SHOWS, TOP_MOVIES, GEMS, *END_ROWS)
 INJECTOR = "JavaScript Injector"
 STUDIO_ENTRY = "Home networks"
 PROFILES = ("global", "desktop", "mobile", "tv")
-# Moonfin's own defaults for the keys set here first: a client writes them back on every sync, so they are no choice.
+STATE_FILE = pathlib.Path.home() / ".local" / "state" / "jellyfin-moonbase.json"
+# Moonfin's own defaults for the keys set here first: the apps write them back, so before the first run they are no choice; afterwards they may be one.
 CLIENT_DEFAULTS = {"displayFavoritesRows": False, "displayStudiosRows": False, "displayGenresRows": False, "genresRowItemFilter": "both", "studiosRowSelectedIds": "", "mediaBarAutoAdvance": True}
 
 # Seerr = our facade (limits enforced there), no push relay (third-party cloud), no server-wide Similar override, no fetch tasks without keys.
@@ -121,8 +122,8 @@ def layout(rows):
     return [(r.get("type"), r.get("pluginSource"), r.get("pluginAdditionalData")) for r in sorted(rows or [], key=lambda r: r.get("order") or 0) if r.get("enabled", True)]
 
 
-def adopt(settings, old, new):
-    """{profile: {key: new default}} for stored values that are no own choice: the previous default (a layout by its enabled rows) or the app's default of a key new here."""
+def adopt(settings, old, new, done=frozenset()):
+    """{profile: {key: new default}} for stored values that are no own choice: the previous default (a layout by its enabled rows) or, unless done holds "profile:key", the app's default of a key new here."""
     out = {}
     for name in PROFILES:
         profile = settings.get(name)
@@ -136,12 +137,30 @@ def adopt(settings, old, new):
             if key == "homeSections":
                 untouched = layout(have) == layout(old.get(key))
             else:
-                untouched = have == old.get(key) or (key in CLIENT_DEFAULTS and have == CLIENT_DEFAULTS[key])
+                untouched = have == old.get(key) or (key in CLIENT_DEFAULTS and f"{name}:{key}" not in done and have == CLIENT_DEFAULTS[key])
             if untouched:
                 change[key] = value
         if change:
             out[name] = change
     return out
+
+
+def client_markers(settings):
+    return {f"{name}:{key}" for name in PROFILES if isinstance(settings.get(name), dict) for key in CLIENT_DEFAULTS}
+
+
+def load_state():
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=1, sort_keys=True))
+    tmp.replace(STATE_FILE)
 
 
 def lists():
@@ -171,12 +190,18 @@ def main(argv):
     old = api("GET", path)
     new = wanted(old, lists(), api("GET", "/Library/VirtualFolders"), studio_ids(injector_config()))
     diff = changed(old, new)
+    state = load_state()
+    migrated = dict(state.get("migrated") or {})
     users = {}
     for user in api("GET", "/Users"):
         settings = user_settings(user["Id"])
-        change = adopt(settings, old.get("DefaultUserSettings") or {}, new["DefaultUserSettings"]) if settings else {}
+        if not settings:
+            continue
+        done = set(migrated.get(user["Id"]) or [])
+        change = adopt(settings, old.get("DefaultUserSettings") or {}, new["DefaultUserSettings"], done)
         if change:
             users[user["Id"]] = (settings, change)
+        migrated[user["Id"]] = sorted(done | client_markers(settings))
     keys = sorted({k for _, change in users.values() for p in change.values() for k in p})
     summary = ("config unchanged" if not diff else "config: " + ", ".join(diff)) + f"; {len(users)} user(s) to the new defaults" + (f" ({', '.join(keys)})" if keys else "")
     if "--check" in argv or "--dry-run" in argv:
@@ -186,6 +211,8 @@ def main(argv):
         api("POST", path, new)
     for uid, (settings, change) in users.items():
         api("POST", f"/Moonfin/Settings/{uid}", {"settings": {"syncEnabled": settings.get("syncEnabled", True), **change}, "clientId": "moonbase-defaults", "mergeMode": "merge"})
+    if migrated != (state.get("migrated") or {}):
+        save_state({**state, "migrated": migrated})
     print("changed: " + summary if diff or users else "unchanged")
     return 0
 

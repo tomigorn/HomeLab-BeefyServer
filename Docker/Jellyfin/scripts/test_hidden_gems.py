@@ -24,18 +24,42 @@ class PickTest(unittest.TestCase):
         self.assertEqual(hg.pick(items), [f"i{n:02d}" for n in range(30, 10, -1)])
 
 
-class OrderTest(unittest.TestCase):
+def apply(have, steps):
+    """Members after each step, as Jellyfin applies them (POST appends new ids, DELETE removes)."""
+    cur, sizes = list(have), []
+    for method, ids in steps:
+        if method == "POST":
+            cur += [i for i in ids if i not in cur]
+        else:
+            cur = [i for i in cur if i not in ids]
+        sizes.append(len(cur))
+    return cur, sizes
+
+
+class StepsTest(unittest.TestCase):
+    CASES = [
+        (["a", "b"], ["a", "b"]),
+        (["a", "b", "c", "d"], ["a", "x", "b", "c"]),
+        (["a", "b"], ["n", "a", "b"]),
+        (["a", "b", "c"], ["a", "b"]),
+        (["x", "b"], ["a", "b"]),
+        (["b", "a"], ["a", "b"]),
+        (["c", "b", "a"], ["n", "a", "b", "c"]),
+        ([], ["a", "b"]),
+    ]
+
+    def test_ends_in_order_and_never_empty(self):
+        for have, want in self.CASES:
+            cur, sizes = apply(have, hg.steps(have, want))
+            self.assertEqual(cur, want, (have, want))
+            self.assertNotIn(0, sizes, (have, want))
+
     def test_in_order_nothing_to_do(self):
-        self.assertEqual(hg.order_steps(["a", "b"], ["a", "b"]), ([], []))
+        self.assertEqual(hg.steps(["a", "b"], ["a", "b"]), [])
 
-    def test_keeps_the_matching_head_and_rebuilds_the_rest(self):
-        self.assertEqual(hg.order_steps(["a", "b", "c", "d"], ["a", "x", "b", "c"]), (["b", "c", "d"], ["x", "b", "c"]))
-
-    def test_new_title_in_front(self):
-        self.assertEqual(hg.order_steps(["a", "b"], ["n", "a", "b"]), (["a", "b"], ["n", "a", "b"]))
-
-    def test_dropped_title_at_the_end(self):
-        self.assertEqual(hg.order_steps(["a", "b", "c"], ["a", "b"]), (["c"], []))
+    def test_new_titles_added_before_anything_is_removed(self):
+        st = hg.steps(["x", "b"], ["a", "b"])
+        self.assertEqual(st[0], ("POST", ["a"]))
 
 
 class FakeJellyfin:
@@ -112,8 +136,8 @@ class MainTest(unittest.TestCase):
         run(jf)
         self.assertEqual(jf.members["g"], ["a", "b"])
 
-    def test_never_empty_when_new_titles_come_first(self):
-        jf = FakeJellyfin(boxes=[{"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG]}], members={"g": ["b"]}, items=ITEMS)
+    def test_never_empty_when_the_order_changes(self):
+        jf = FakeJellyfin(boxes=[{"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG]}], members={"g": ["old", "b", "a"]}, items=ITEMS)
         jf.meta["g"] = {"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG], "DisplayOrder": "Default", "LockData": True}
         sizes = []
         real = jf.__call__

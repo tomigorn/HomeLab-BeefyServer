@@ -2,6 +2,7 @@ import contextlib
 import importlib.util
 import io
 import pathlib
+import tempfile
 import unittest
 from unittest import mock
 
@@ -88,6 +89,13 @@ class AdoptTest(unittest.TestCase):
     def test_client_defaults_of_new_keys_filled(self):
         stored = {"displayStudiosRows": False, "genresRowItemFilter": "both", "mediaBarAutoAdvance": True}
         self.assertEqual(mb.adopt({"mobile": stored}, OLD, NEW), {"mobile": {"displayStudiosRows": True, "genresRowItemFilter": "movies"}})
+
+    def test_client_default_migrated_only_once(self):
+        stored = {"displayStudiosRows": False}
+        self.assertEqual(mb.adopt({"mobile": stored}, OLD, NEW, done={"mobile:displayStudiosRows"}), {})
+
+    def test_markers_for_every_client_default_key_of_each_profile(self):
+        self.assertEqual(mb.client_markers({"tv": {}, "mobile": None}), {f"tv:{k}" for k in mb.CLIENT_DEFAULTS})
 
     def test_own_value_of_a_new_key_kept(self):
         self.assertEqual(mb.adopt({"mobile": {"genresRowItemFilter": "series"}}, OLD, NEW), {})
@@ -177,9 +185,16 @@ class WantedTest(unittest.TestCase):
 
 
 class MainTest(unittest.TestCase):
-    def run_main(self, argv, user_settings):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = pathlib.Path(self.tmp.name) / "moonbase.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_main(self, argv, user_settings, old=None):
         calls = []
-        cfg = {**CONFIG, "EnableSettingsSync": True, "DefaultUserSettings": dict(OLD)}
+        cfg = {**CONFIG, "EnableSettingsSync": True, "DefaultUserSettings": dict(old or OLD)}
 
         def fake(method, path, body=None):
             calls.append((method, path, body))
@@ -196,7 +211,7 @@ class MainTest(unittest.TestCase):
                 return {"Success": True}
             return []
 
-        with mock.patch.object(mb, "api", fake), mock.patch.object(mb, "lists", lambda: LISTS), contextlib.redirect_stdout(io.StringIO()) as out:
+        with mock.patch.object(mb, "api", fake), mock.patch.object(mb, "lists", lambda: LISTS), mock.patch.object(mb, "STATE_FILE", self.state), contextlib.redirect_stdout(io.StringIO()) as out:
             code = mb.main(argv)
         return code, [c for c in calls if c[0] == "POST"], out.getvalue()
 
@@ -214,6 +229,16 @@ class MainTest(unittest.TestCase):
             self.assertEqual(posts, [])
             self.assertIn("1 user", out)
         self.assertEqual(code, 1)
+
+    def test_own_choice_after_the_first_run_survives_the_next(self):
+        self.run_main([], {"u1": {"tv": {"displayGenresRows": False}}})
+        applied = mb.wanted({**CONFIG, "DefaultUserSettings": dict(OLD)}, LISTS, FOLDERS, None)["DefaultUserSettings"]
+        code, posts, _ = self.run_main([], {"u1": {"tv": {"displayGenresRows": False}}}, old=applied)
+        self.assertEqual([p for p in posts if p[1].startswith("/Moonfin/Settings/")], [])
+
+    def test_dry_run_keeps_no_markers(self):
+        self.run_main(["--dry-run"], {"u1": {"tv": {"displayGenresRows": False}}})
+        self.assertFalse(self.state.exists())
 
     def test_users_without_settings_or_changes_not_written(self):
         code, posts, _ = self.run_main([], {"u1": {"global": {"navbarPosition": "top"}}})
