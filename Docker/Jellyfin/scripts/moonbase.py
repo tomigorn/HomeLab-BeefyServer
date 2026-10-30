@@ -25,7 +25,7 @@ STUDIO_ENTRY = "Home networks"
 PROFILES = ("global", "desktop", "mobile", "tv")
 STATE_FILE = pathlib.Path.home() / ".local" / "state" / "jellyfin-moonbase.json"
 # Moonfin's own defaults for the keys set here first: the apps write them back, so before the first run they are no choice; afterwards they may be one.
-CLIENT_DEFAULTS = {"displayFavoritesRows": False, "displayStudiosRows": False, "displayGenresRows": False, "genresRowItemFilter": "both", "studiosRowSelectedIds": "", "mediaBarAutoAdvance": True}
+CLIENT_DEFAULTS = {"displayFavoritesRows": False, "displayStudiosRows": False, "displayGenresRows": False, "genresRowItemFilter": "both", "studiosRowSelectedIds": "", "mediaBarAutoAdvance": True, "showSeerrButton": True}
 
 # Seerr = our facade (limits enforced there), no push relay (third-party cloud), no server-wide Similar override, no fetch tasks without keys.
 SERVER = {
@@ -55,6 +55,7 @@ DEFAULTS = {
     "collectionsRowSortOrder": "ascending",
     "displaySeerrRows": True,
     "seerrEnabled": True,
+    "showSeerrButton": False,  # no Requests entry in the navigation; request buttons and Discover rows stay
     "seasonalRowEnabled": False,
     "mergeContinueWatchingNextUp": False,  # the merged row dedupes by episode, not series: one show twice
     "displayFavoritesRows": True,

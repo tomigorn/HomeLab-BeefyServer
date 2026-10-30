@@ -115,6 +115,15 @@ class WantedTest(unittest.TestCase):
         new = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)
         self.assertEqual((new["SeerrEnabled"], new["SeerrUrl"], new["SeerrDisplayName"], new["PushRelayUrl"], new["PublicServerUrl"]), (True, "http://jellyfin-popular:8099", "Requests", "", None))
 
+    def test_requests_hidden_in_navigation_but_seerr_kept(self):
+        d = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)["DefaultUserSettings"]
+        self.assertEqual((d["showSeerrButton"], d["seerrEnabled"], d["displaySeerrRows"]), (False, True, True))
+
+    def test_stored_app_default_navigation_entry_hidden_once(self):
+        d = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)["DefaultUserSettings"]
+        stored = {"mobile": {"showSeerrButton": True}, "tv": {"showSeerrButton": True}}
+        self.assertEqual(mb.adopt(stored, {}, {"showSeerrButton": d["showSeerrButton"]}, done={"tv:showSeerrButton"}), {"mobile": {"showSeerrButton": False}})
+
     def test_seerr_rows_on_by_default(self):
         d = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)["DefaultUserSettings"]
         self.assertEqual((d["displaySeerrRows"], d["seerrEnabled"]), (True, True))

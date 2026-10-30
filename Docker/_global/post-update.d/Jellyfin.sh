@@ -79,6 +79,7 @@ if want jellyfin; then
   check jf.plugin-moonbase '^Active 2\.' "$(jf_plugin 'Moonbase')"
   check jf.moonbase-config '^\[true,"http://jellyfin-popular:8099",false,"","left",true,false,true,true,true,true\]$' "$(jf_api /Plugins/8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b/Configuration | jq -c '[.SeerrEnabled,.SeerrUrl,.RecommendationsProviderEnabled,.PushRelayUrl,.DefaultUserSettings.navbarPosition,([.DefaultUserSettings.homeSections[]? | select(.kind == "pluginDynamic")] | length > 0),.DefaultUserSettings.mergeContinueWatchingNextUp,.DefaultUserSettings.displaySeerrRows,.DefaultUserSettings.mediaBarAutoAdvance,.DefaultUserSettings.displayStudiosRows,(.DefaultUserSettings.studiosRowSelectedIds // "" | length > 0)]' 2>&1)"
   check jf.moonbase-order '^recentlyAdded playlistOrder$' "$(jf_api /Plugins/8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b/Configuration | jq -r '[.DefaultUserSettings.mediaBarSourceType,.DefaultUserSettings.collectionsRowSortBy] | join(" ")' 2>&1)"
+  check jf.moonbase-nav '^false true true$' "$(jf_api /Plugins/8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b/Configuration | jq -r '[.DefaultUserSettings.showSeerrButton,.DefaultUserSettings.seerrEnabled,.DefaultUserSettings.displaySeerrRows] | map(tostring) | join(" ")' 2>&1)"
   check jf.media-bar '^ok [0-9]+ users$' "$(python3 "$DIR/../../Jellyfin/scripts/media-bar.py" --check 2>&1 | tail -1)"
   check jf.media-bar-timer '^active$' "$(jf_user_systemctl is-active jellyfin-media-bar.timer 2>&1)"
 fi
