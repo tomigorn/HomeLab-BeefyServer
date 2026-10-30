@@ -34,7 +34,7 @@ class FakeSeerr:
         if method == "GET" and path.startswith("/api/v1/user"):
             return {"results": self.users}
         if method == "POST" and path == "/api/v1/user":
-            self.users.append({"id": 20, "email": body["email"], "permissions": 8352})
+            self.users.append({"id": 20, "email": body["email"], "permissions": 8352, "userType": 2})
             self.posts.append(("user", body["email"]))
             return self.users[-1]
         if path.endswith("/settings/permissions"):
@@ -200,8 +200,22 @@ class Requests(Base):
             self.core.service_user(create=False)
         self.assertEqual(self.seerr.posts, [])
 
+    def test_service_user_must_be_local_and_have_160_without_create(self):
+        for extra in ({"userType": 1}, {}, {"userType": 2, "permissions": 2}):
+            self.seerr.users = [u for u in self.seerr.users if u["id"] != 20]
+            self.core.cache.pop("service_user", None)
+            self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, **{"permissions": 160, **extra}})
+            with self.assertRaises(app.NoServiceUser, msg=extra):
+                self.core.service_user(create=False)
+        self.assertEqual(self.seerr.posts, [])
+
+    def test_service_user_create_still_fixes_permissions_of_local_user(self):
+        self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, "permissions": 2, "userType": 2})
+        self.assertEqual(self.core.service_user()["permissions"], 160)
+        self.assertEqual(self.seerr.posts, [("permissions", 160)])
+
     def test_service_user_cached_5_min(self):
-        self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, "permissions": 160})
+        self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, "permissions": 160, "userType": 2})
         gets = []
         inner = self.core.seerr
         self.core.seerr = lambda method, path, body=None, user=None: (gets.append(path), inner(method, path, body, user))[1]
@@ -270,7 +284,7 @@ class Remembered(Base):
         self.assertEqual(self.core.requested_ids(self.GUEST["id"]), [])
 
     def test_send_with_existing_service_user_and_no_create(self):
-        self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, "permissions": 160})
+        self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, "permissions": 160, "userType": 2})
         code, body = self.core.send(self.GUEST, self.entry(), "night", False, {"user": "guest", "userId": self.GUEST["id"]}, create_service=False)
         self.assertEqual((code, self.seerr.posts[-1][2]), (200, 20))
         self.assertEqual(self.core.requested_ids(self.GUEST["id"]), [body["request"]["id"]])

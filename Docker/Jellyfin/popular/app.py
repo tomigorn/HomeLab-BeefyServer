@@ -397,7 +397,7 @@ class Core:
                     svc = self.seerr("POST", "/api/v1/user", {"email": SERVICE_EMAIL, "username": SERVICE_NAME, "password": secrets.token_urlsafe(32)})
         if svc.get("permissions") != SERVICE_PERMISSIONS:
             if not create:
-                return svc
+                raise NoServiceUser()
             self.seerr("POST", f"/api/v1/user/{svc['id']}/settings/permissions", {"permissions": SERVICE_PERMISSIONS})
             svc = {**svc, "permissions": SERVICE_PERMISSIONS}
         with self.lock:
@@ -406,7 +406,7 @@ class Core:
 
     def find_service_user(self):
         users = self.seerr("GET", "/api/v1/user?take=1000")["results"]
-        return next((u for u in users if (u.get("email") or "").lower() == SERVICE_EMAIL), None)
+        return next((u for u in users if (u.get("email") or "").lower() == SERVICE_EMAIL and u.get("userType") == 2), None)
 
     def now_tag(self, kind):
         svc = "radarr" if kind == "movie" else "sonarr"

@@ -619,7 +619,7 @@ class Facade:
 
     def my_requests(self, caller):
         """The caller's Seerr requests (Popular requests plus those of the linked Seerr user), scrubbed, newest first; vanished ones are dropped."""
-        ids = list(dict.fromkeys(list(self.core.requested_ids(caller["jf_id"])) + self.linked_requests(caller["jf_id"])))
+        ids = list(dict.fromkeys(list(self.core.requested_ids(caller["jf_id"])) + self.linked_requests(caller["jf_id"])))[:MAX_TAKE]
         found = [r for r in (self.fetch_request(i) for i in ids) if r is not None]
         mine = {r["id"] for r in found}
         return [self.own_media(scrub(r, caller["uid"], mine, caller["name"]), mine) for r in found]
@@ -774,7 +774,7 @@ class Facade:
     def authenticate(self, body):
         try:
             data = json.loads(body or b"")
-        except ValueError:
+        except (ValueError, RecursionError):
             return 400, {"message": "Bad request"}, []
         if not isinstance(data, dict):
             return 400, {"message": "Bad request"}, []
@@ -803,13 +803,16 @@ class Facade:
             if isinstance(token, str) and token:
                 try:
                     self.jf("POST", "/Sessions/Logout", device_id=device_id, token=token)
-                except (OSError, ValueError):
-                    pass
+                except (OSError, ValueError) as e:
+                    if isinstance(e, urllib.error.HTTPError):
+                        e.close()
+                    self.log(f"facade logout failed: {type(e).__name__}")
         user = self.user_of(u)
         if user is None:
             return 403, {"message": "This Jellyfin account may not sign in"}, []
         if not self.sign_in_ok(user["id"], now):
             return 429, {"message": "Too many sign-ins, try again later"}, []
+        self.sessions.prune()
         uid = self.sessions.uid_for(user["id"])
         sid = self.sessions.open(user["id"])
         with self.core.lock:

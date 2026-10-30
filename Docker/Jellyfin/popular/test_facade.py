@@ -164,7 +164,7 @@ class FakeJellyfin:
         self.calls, self.admin_calls = [], []
         self.me = dict(JANE)
         self.users = {JF_ID: dict(JANE)}
-        self.me_error, self.admin_down, self.delay = None, False, 0
+        self.me_error, self.logout_error, self.admin_down, self.delay = None, None, False, 0
 
     def __call__(self, method, path, body=None, device_id=None, token=None):
         self.calls.append((method, path, device_id, token))
@@ -179,6 +179,8 @@ class FakeJellyfin:
                 raise self.me_error
             return self.me
         if (method, path) == ("POST", "/Sessions/Logout"):
+            if self.logout_error:
+                raise self.logout_error
             return None
         raise AssertionError((method, path))
 
@@ -272,6 +274,30 @@ class SignIn(FacadeBase):
         self.assertIn("HttpOnly", extra[0][1])
         status, again, _ = self.call("GET", "auth/me", cookie=cookie)
         self.assertEqual((status, again), (200, me))
+
+    def test_authenticate_prunes_dead_sessions(self):
+        _, cookie = self.sign_in()
+        self.call("POST", "auth/logout", cookie=cookie)
+        self.sign_in()
+        self.assertEqual([r[1] for r in self.session_row()].count(1), 0)
+        self.later(facade.MAX_AGE + 10)
+        self.sign_in()
+        self.assertEqual(len(self.session_row()), 1)
+
+    def test_deeply_nested_body_is_400(self):
+        status, out, extra = self.call("POST", "auth/jellyfin/quickconnect/authenticate", body=b"[" * 200000)
+        self.assertEqual((status, out, extra), (400, {"message": "Bad request"}, []))
+
+    def test_failed_token_logout_is_closed_and_logged_without_token(self):
+        for err, name in [(http_error(500), "HTTPError"), (OSError("reset"), "OSError")]:
+            self.lines.clear()
+            self.jf.logout_error = err
+            status, out, _ = self.authenticate(self.initiate())
+            self.assertEqual(status, 200, out)
+            self.assertIn(f"facade logout failed: {name}", self.lines)
+            self.assertFalse(any(TOKEN in l for l in self.lines))
+            if isinstance(err, urllib.error.HTTPError):
+                self.assertTrue(err.fp.closed)
 
     def test_logout_called_when_users_me_fails(self):
         for err, code in [(http_error(500), 503), (OSError("reset"), 503), (http_error(401), 401)]:
@@ -395,7 +421,7 @@ class Session(FacadeBase):
             self.later(61)
             self.assertEqual(self.call("GET", "auth/me", cookie=cookie)[0], 403, change)
             self.later(3600)
-        self.assertEqual([r for _, r, _ in self.session_row()], [1, 1])
+        self.assertEqual([r for _, r, _ in self.session_row()], [1])
 
     def test_recheck_jellyfin_down_is_503(self):
         _, cookie = self.sign_in()
@@ -460,7 +486,7 @@ class Session(FacadeBase):
             self.assertNotIn(secret, text)
 
 
-SERVICE = {"id": 20, "email": "jellyfin-popular", "permissions": 160}
+SERVICE = {"id": 20, "email": "jellyfin-popular", "permissions": 160, "userType": 2}
 P_PATHS = [
     "status", "settings/public", "settings/discover",
     "discover/trending?page=1", "discover/movies?page=2&genre=18", "discover/tv", "discover/movies/top?limit=20&offset=0", "discover/tv/top",
@@ -1065,6 +1091,19 @@ class MyRequests(FacadeBase):
         status, out, _ = self.get(path)
         self.assertEqual(status, 200, out)
         return [r["id"] for r in out["results"]]
+
+    def test_cold_cache_fetches_are_capped(self):
+        for i in range(1, facade.MAX_TAKE + 51):
+            self.add(fake_request(i))
+        self.assertEqual(len(self.get("request?take=100")[1]["results"]), facade.MAX_TAKE)
+        self.assertEqual(len(self.seerr.fetches), facade.MAX_TAKE)
+
+    def test_cold_cache_stops_after_first_seerr_error(self):
+        for i in range(1, 6):
+            self.add(fake_request(i))
+        self.seerr.error = OSError("timed out")
+        self.assertEqual(self.get("request")[0], 502)
+        self.assertEqual(len(self.seerr.fetches), 1)
 
     def test_request_list_only_mine_paged_filtered_sorted(self):
         for i in range(1, 6):
