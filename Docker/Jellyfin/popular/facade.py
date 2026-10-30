@@ -10,6 +10,7 @@ import os
 import pathlib
 import re
 import secrets
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -105,6 +106,19 @@ MEDIA_OPEN = {1, 2, 3, 4}
 FILTERS = {"approved": ({2}, MEDIA_ANY), "processing": ({2}, MEDIA_OPEN), "pending": ({1}, MEDIA_ANY), "unavailable": ({1, 2}, MEDIA_OPEN),
            "failed": ({4}, MEDIA_ANY), "completed": ({5}, MEDIA_ANY), "available": ({5}, {5}), "deleted": ({5}, {7})}
 FILTER_ALL = ({1, 2, 3, 4, 5}, MEDIA_ANY)
+TV_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+TV_CODE_LEN = 10
+TV_CODE_TTL = datetime.timedelta(minutes=10)
+TV_ISSUE_PER_HOUR = 5
+TV_FAILS_PER_NAME = 5
+TV_LOCK = datetime.timedelta(minutes=15)
+TV_FAILS_GLOBAL = 20
+TV_GLOBAL_WINDOW = datetime.timedelta(minutes=1)
+TV_NAME_MAX = 64
+TV_INPUT_MAX = 128
+TV_FAIL = "Wrong username or code. Get a new code on the Popular page (Code for TV)"
+TV_LOCKED = "Too many attempts, try again later"
+TV_BUSY = "Too many attempts, try again in a minute"
 
 
 def b64(raw):
@@ -257,12 +271,92 @@ def scrub(obj, me_uid, mine, me_name="You"):
     return out
 
 
+def tv_fold(name):
+    return name.strip().casefold() if isinstance(name, str) and len(name) <= TV_INPUT_MAX else ""
+
+
+def tv_normal(code):
+    return code.replace("-", "").replace(" ", "").upper() if isinstance(code, str) and len(code) <= TV_INPUT_MAX else ""
+
+
+class TvCodes:
+    """One-time TV sign-in codes (README "Samsung TV"): memory only, kept as HMAC-SHA256 under a per-process key; a restart drops every code."""
+
+    def __init__(self, clock, key=None):
+        self.clock = clock
+        self.key = key or secrets.token_bytes(32)
+        self.lock = threading.Lock()
+        self.codes, self.issued, self.fails, self.locked, self.failed_all = {}, {}, {}, {}, []
+
+    def digest(self, jf_id, code):
+        return hmac.new(self.key, f"{jf_id}:{code}".encode(), hashlib.sha256).digest()
+
+    def issue(self, jf_id, name):
+        """(code, expires) for this Jellyfin user, replacing their previous code, or None after TV_ISSUE_PER_HOUR codes in the last hour."""
+        now = self.clock()
+        hour = datetime.timedelta(hours=1)
+        code = "".join(secrets.choice(TV_ALPHABET) for _ in range(TV_CODE_LEN))
+        fold = tv_fold(name)
+        with self.lock:
+            for k in [k for k, v in self.issued.items() if not v or now - v[-1] >= hour]:
+                del self.issued[k]
+            recent = [t for t in self.issued.get(jf_id, []) if now - t < hour]
+            if len(recent) >= TV_ISSUE_PER_HOUR:
+                return None
+            self.issued[jf_id] = recent + [now]
+            self.codes[jf_id] = (fold, self.digest(jf_id, code), now + TV_CODE_TTL)
+            self.fails.pop(fold, None)
+            self.locked.pop(fold, None)
+        return code, now + TV_CODE_TTL
+
+    def prune(self, now):
+        for k in [k for k, (_, _, exp) in self.codes.items() if now >= exp]:
+            del self.codes[k]
+        for k in [k for k, until in self.locked.items() if now >= until]:
+            del self.locked[k]
+        for k in [k for k, v in self.fails.items() if not v or now - v[-1] >= TV_LOCK]:
+            del self.fails[k]
+        self.failed_all = [t for t in self.failed_all if now - t < TV_GLOBAL_WINDOW]
+
+    def consume(self, username, code):
+        """(outcome, Jellyfin user id or None, brake): outcome ok (code used up), failed, lockout (this failure locked the name: its code is burnt), locked or busy; brake = this failure used up the global budget."""
+        now = self.clock()
+        fold, given = tv_fold(username), tv_normal(code)
+        with self.lock:
+            self.prune(now)
+            if len(self.failed_all) >= TV_FAILS_GLOBAL:
+                return "busy", None, False
+            if fold in self.locked:
+                return "locked", None, False
+            hit = next(((k, v) for k, v in self.codes.items() if fold and v[0] == fold), None)
+            jf_id, digest = (hit[0], hit[1][1]) if hit else ("", self.digest("", ""))
+            if hmac.compare_digest(digest, self.digest(jf_id, given)) and hit:
+                del self.codes[jf_id]
+                self.fails.pop(fold, None)
+                return "ok", jf_id, False
+            self.failed_all.append(now)
+            brake = len(self.failed_all) >= TV_FAILS_GLOBAL
+            recent = [t for t in self.fails.get(fold, []) if now - t < TV_LOCK] + [now]
+            if len(recent) < TV_FAILS_PER_NAME:
+                self.fails[fold] = recent
+                return "failed", None, brake
+            self.locked[fold] = now + TV_LOCK
+            self.fails.pop(fold, None)
+            for k in [k for k, v in self.codes.items() if v[0] == fold]:
+                del self.codes[k]
+            return "lockout", None, brake
+
+
+def shown_name(name):
+    return "".join(c for c in name if c.isprintable())[:TV_NAME_MAX] if isinstance(name, str) else ""
+
+
 class Unavailable(Exception):
     """Jellyfin cannot be asked whether the caller still exists (503, session kept)."""
 
 
 class Facade:
-    """Seerr API subset for Moonbase: Quick Connect sign-in, the signed session and a deny-by-default read proxy (ROUTES)."""
+    """Seerr API subset for Moonbase: Quick Connect or one-time TV code sign-in, the signed session and a deny-by-default read proxy (ROUTES)."""
 
     def __init__(self, core, key, jf, clock=None):
         self.core, self.key, self.jf = core, key, jf
@@ -270,6 +364,7 @@ class Facade:
         self.sessions = Sessions(core)
         self.sessions.init()
         self.pending, self.signins, self.checked, self.warned, self.cache = {}, {}, {}, {}, {}
+        self.codes = TvCodes(self.clock)
         self.log = lambda line: print(line, flush=True)
 
     def now(self):
@@ -321,8 +416,7 @@ class Facade:
         """(status, body, extra headers, Jellyfin user id or None) of the sign-in routes."""
         route = (method, rel)
         if route in (("POST", "auth/jellyfin"), ("POST", "auth/local")):
-            self.core.reject("facade password")
-            return 401, {"message": "Use Quick Connect to sign in"}, [], None
+            return self.code_sign_in(body)
         if route == ("POST", "auth/jellyfin/quickconnect/initiate"):
             return self.initiate() + (None,)
         if route == ("POST", "auth/jellyfin/quickconnect/authenticate"):
@@ -812,6 +906,10 @@ class Facade:
             return 403, {"message": "This Jellyfin account may not sign in"}, []
         if not self.sign_in_ok(user["id"], now):
             return 429, {"message": "Too many sign-ins, try again later"}, []
+        return self.open_session(user, now)
+
+    def open_session(self, user, now):
+        """200, the Seerr user and the signed cookie of a new session for an enabled Jellyfin user."""
         self.sessions.prune()
         uid = self.sessions.uid_for(user["id"])
         sid = self.sessions.open(user["id"])
@@ -820,6 +918,43 @@ class Facade:
         iat = int(now.timestamp())
         cookie = make_cookie(self.key, sid, uid, iat, iat + MAX_AGE)
         return 200, self.me({"uid": uid, "name": user["name"]}), [("Set-Cookie", set_cookie_header(cookie))]
+
+    # --- one-time TV code (Smart-TV Moonfin: username + password only) -------
+    def code_sign_in(self, body):
+        """(status, body, extra headers, Jellyfin user id or None) of auth/jellyfin and auth/local: the password must be the user's one-time TV code; real passwords are never checked or forwarded."""
+        try:
+            data = json.loads(body or b"")
+        except (ValueError, RecursionError):
+            data = None
+        if not isinstance(data, dict):
+            self.core.reject("facade password")
+            return 400, {"message": "Bad request"}, [], None
+        username = data.get("username") if "username" in data else data.get("email")
+        name = shown_name(username)
+        outcome, jf_id, brake = self.codes.consume(username, data.get("password"))
+        log = {"user": name, "userId": jf_id, "via": "moonfin-tv"}
+        if brake:
+            self.core.audit(**log, decision="tv code: brake")
+        if outcome in ("busy", "locked"):
+            self.core.reject("tv code " + outcome)
+            return 429, {"message": TV_BUSY if outcome == "busy" else TV_LOCKED}, [], None
+        if outcome != "ok":
+            self.core.reject("facade password")
+            self.log(f"facade tv code {outcome} {json.dumps(name)}")
+            return (429, {"message": TV_LOCKED}, [], None) if outcome == "lockout" else (401, {"message": TV_FAIL}, [], None)
+        user = self.jellyfin_user(jf_id)
+        if user is None:
+            self.core.audit(**log, decision="tv code: refused: disabled or deleted")
+            return 403, {"message": "This Jellyfin account may not sign in"}, [], None
+        if user["name"].strip().casefold() != tv_fold(username):
+            self.core.audit(**log, decision="tv code: refused: renamed")
+            return 401, {"message": TV_FAIL}, [], None
+        now = self.clock()
+        if not self.sign_in_ok(jf_id, now):
+            self.core.audit(**log, decision="tv code: refused: sign-in limit")
+            return 429, {"message": "Too many sign-ins, try again later"}, [], None
+        self.core.audit(user=user["name"], userId=jf_id, via="moonfin-tv", decision="tv code: sign-in")
+        return self.open_session(user, now) + (jf_id,)
 
     def sign_in_ok(self, jf_id, now):
         with self.core.lock:

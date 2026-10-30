@@ -1,5 +1,5 @@
 """Request backend for "Currently popular" (Jellyfin README "Currently popular"): any signed-in Jellyfin user may request a listed title.
-POST /hss-popular/request {"id": <opaque list entry id>, "mode": "night" | "now", "check": bool}, GET /hss-popular/state, GET /hss-popular/details?id=<opaque details id>, GET /hss-popular/health.
+POST /hss-popular/request {"id": <opaque list entry id>, "mode": "night" | "now", "check": bool}, POST /hss-popular/tv-code {} (one-time Seerr facade sign-in code for the caller), GET /hss-popular/state, GET /hss-popular/details?id=<opaque details id>, GET /hss-popular/health.
 Details: only ids of the sidecars details.json (popular.py) and coming.json (upcoming-popularity.py), never a TMDB id, so it is no open TMDB proxy; those ids are never requestable.
 The caller is checked with Jellyfin (/Users/Me with their own token, disabled = refused); only entries of the current allow-list (scripts/popular.py) with a found release can be requested, nothing free-form.
 The request goes to Seerr with its API key as the caller's linked Seerr user, else as the service user "jellyfin-popular". Every decision of a signed-in caller is written to the audit log (rotated);
@@ -122,6 +122,7 @@ class Core:
         self.user_locks = {}
         self.auth_cache, self.hits, self.cache = {}, {}, {}
         self.noise, self.flushed = collections.Counter(), None
+        self.tv_codes = None
         self.db_init()
 
     # --- inputs -------------------------------------------------------
@@ -446,6 +447,8 @@ class Core:
             return self.details(headers, query)
         if path == "/hss-popular/request" and method == "POST":
             return self.request(headers, body)
+        if path == "/hss-popular/tv-code" and method == "POST":
+            return self.tv_code(headers, body)
         return 404, {"error": "not found"}
 
     def state(self, headers):
@@ -541,6 +544,40 @@ class Core:
             code, out = self.send(user, entry, mode, req.get("check"), log)
         out.pop("request", None)
         return code, out
+
+    def tv_code(self, headers, body):
+        """A one-time code for the caller only (identity from their own token, never from the body) to sign in to the Seerr facade on a TV."""
+        if (headers.get("origin") or "") not in self.cfg.origins:
+            self.reject("bad origin")
+            return 403, {"error": "origin"}
+        if (headers.get("content-type") or "").split(";")[0].strip().lower() != "application/json":
+            self.reject("not JSON")
+            return 415, {"error": "JSON only"}
+        if len(body) > MAX_BODY:
+            self.reject("too large")
+            return 413, {"error": "too large"}
+        try:
+            user = self.user(headers)
+        except Unauthorized:
+            self.reject("unauthenticated")
+            return 401, {"error": "sign in to Jellyfin"}
+        if user["disabled"]:
+            return 403, {"error": "account disabled"}
+        try:
+            req = json.loads(body)
+        except (ValueError, RecursionError):
+            req = None
+        if req != {}:
+            return 400, {"error": "only {}"}
+        if self.tv_codes is None:
+            return 503, {"error": "TV sign-in is off"}
+        got = self.tv_codes.issue(user["id"], user["name"])
+        if got is None:
+            self.audit(user=user["name"], userId=user["id"], via="moonfin-tv", decision="tv code: refused: issue limit")
+            return 429, {"error": "limit"}
+        code, expires = got
+        self.audit(user=user["name"], userId=user["id"], via="moonfin-tv", decision="tv code: issued")
+        return 200, {"code": code, "expires": expires.isoformat(timespec="seconds"), "minutes": round((expires - self.clock()).total_seconds() / 60), "user": user["name"]}
 
     def send(self, user, entry, mode, check, log, create_service=True):
         details = self.seerr("GET", f"/api/v1/{entry['kind']}/{entry['tmdb']}?language=en")
@@ -914,6 +951,7 @@ def start_facade(core):
             facade.FacadeHandler.core = fac
             srv = facade.make_facade_server(("0.0.0.0", int(os.environ.get("POP_FACADE_PORT", "8099"))))
             threading.Thread(target=srv.serve_forever, daemon=True).start()
+            core.tv_codes = fac.codes
     except Exception as e:
         print("facade off: " + type(e).__name__, flush=True)
 

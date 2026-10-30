@@ -243,7 +243,7 @@ class SignIn(FacadeBase):
         for path in ["auth/jellyfin", "auth/local"]:
             with contextlib.redirect_stdout(io.StringIO()):
                 status, out, extra = self.call("POST", path, body=json.dumps({"username": "jane", "password": "pw"}).encode())
-            self.assertEqual((status, out, extra), (401, {"message": "Use Quick Connect to sign in"}, []))
+            self.assertEqual((status, out, extra), (401, {"message": facade.TV_FAIL}, []))
         self.assertEqual(self.jf.calls, [])
         self.assertEqual(self.jf.admin_calls, [])
         self.assertEqual(self.core.rejected().get("facade password"), 2)
@@ -1343,7 +1343,7 @@ class Listener(FacadeBase):
         status, _, raw = self.call("POST", "/api/v1/request", b"x" * 2049)
         self.assertEqual(status, 413)
         self.assertIsInstance(json.loads(raw), dict)
-        self.assertEqual(self.call("POST", "/api/v1/auth/jellyfin", b"x" * 2048)[0], 401)
+        self.assertEqual(self.call("POST", "/api/v1/auth/jellyfin", b"x" * 2048)[0], 400)
 
     def test_access_log_has_no_query_or_cookie(self):
         out = io.StringIO()
@@ -1381,6 +1381,14 @@ class MakeFacade(unittest.TestCase):
                 contextlib.redirect_stdout(out):
             app.start_facade(object())
         self.assertEqual(out.getvalue(), "facade off: OSError\n")
+
+    def test_start_facade_hands_its_tv_codes_to_the_page_backend_only_when_listening(self):
+        import app
+        fake, srv = unittest.mock.Mock(), unittest.mock.Mock()
+        core = type("C", (), {"tv_codes": None})()
+        with unittest.mock.patch.object(facade, "make_facade", lambda c: fake), unittest.mock.patch.object(facade, "make_facade_server", lambda addr: srv):
+            app.start_facade(core)
+        self.assertIs(core.tv_codes, fake.codes)
 
     def test_make_facade_without_key_is_none(self):
         core = type("C", (), {})()
@@ -1432,6 +1440,245 @@ class MakeFacade(unittest.TestCase):
             jf("GET", "/Users/Me", device_id="dev1", token="tok")
         self.assertIn('DeviceId="dev1"', seen["auth"])
         self.assertIn('Token="tok"', seen["auth"])
+
+
+JANE_POP = test_app.USERS[test_app.TOKEN]
+JANE_POP_ID = "40e05f0a9e964fd9b225eb1379dfcfa4"
+CODE_RE = re.compile(r"[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}")
+
+
+class TvCode(FacadeBase):
+    def setUp(self):
+        super().setUp()
+        self.core.tv_codes = self.facade.codes
+        self.jf.users[JANE_POP_ID] = dict(JANE_POP)
+        self.out = io.StringIO()
+        self.enterContext(contextlib.redirect_stdout(self.out))
+
+    def issue(self, token=test_app.TOKEN, origin=test_app.ORIGIN, body=b"{}", ctype="application/json"):
+        headers = {"Content-Type": ctype}
+        if origin:
+            headers["Origin"] = origin
+        if token:
+            headers["X-Emby-Token"] = token
+        return self.core.handle("POST", "/hss-popular/tv-code", headers, body)
+
+    def code(self):
+        status, out = self.issue()
+        self.assertEqual(status, 200, out)
+        return out["code"]
+
+    def login(self, username, password, path="auth/jellyfin", field="username"):
+        return self.call("POST", path, body=json.dumps({field: username, "password": password}).encode())
+
+    def test_issue_returns_a_10_char_code_valid_10_min(self):
+        status, out = self.issue()
+        self.assertEqual(status, 200, out)
+        self.assertEqual(set(out), {"code", "expires", "minutes", "user"})
+        self.assertRegex(out["code"], CODE_RE)
+        self.assertEqual(out["minutes"], 10)
+        self.assertEqual(out["user"], "jane")
+        self.assertEqual(datetime.datetime.fromisoformat(out["expires"]), test_app.NOW + datetime.timedelta(minutes=10))
+        self.assertEqual(facade.TV_ALPHABET, "ABCDEFGHJKMNPQRSTUVWXYZ23456789")
+        self.assertNotEqual(self.code(), out["code"])
+
+    def test_issue_refusals(self):
+        self.assertEqual(self.issue(token=None)[0], 401)
+        self.assertEqual(self.issue(token="z" * 32)[0], 401)
+        self.assertEqual(self.issue(origin=None)[0], 403)
+        self.assertEqual(self.issue(origin="https://evil.example.com")[0], 403)
+        self.assertEqual(self.issue(ctype="text/plain")[0], 415)
+        for bad in [b"", b"[]", b"{", b'{"user": "guest"}', b'{"userId": "11111111222233334444555555555555"}', b"x" * 3000]:
+            self.assertIn(self.issue(body=bad)[0], (400, 413), bad)
+        self.assertEqual(self.issue(token="c" * 32)[0], 403)
+        self.core.tv_codes = None
+        self.assertEqual(self.issue()[0], 503)
+        self.assertEqual(self.facade.codes.codes, {})
+
+    def test_issue_limit_5_per_hour(self):
+        for _ in range(5):
+            self.code()
+            self.later(60)
+        status, out = self.issue()
+        self.assertEqual(status, 429)
+        self.assertNotIn("code", out)
+        self.later(3600 - 4 * 60)
+        self.code()
+
+    def test_code_stored_only_as_a_keyed_hash(self):
+        code = self.code()
+        stored = repr(self.facade.codes.codes) + repr(vars(self.facade.codes))
+        self.assertNotIn(code, stored)
+        self.assertNotIn(code.lower(), stored)
+        name, digest, _ = self.facade.codes.codes[JANE_POP_ID]
+        self.assertEqual((name, len(digest)), ("jane", 32))
+        self.assertNotEqual(digest, hashlib.sha256(code.encode()).digest())
+
+    def test_sign_in_with_username_and_code_same_session_as_quick_connect(self):
+        code = self.code()
+        status, me, extra = self.login("JANE", code)
+        self.assertEqual(status, 200, me)
+        self.assertEqual(me, self.facade.me({"uid": 1000001, "name": "jane"}))
+        self.assertFalse(me["permissions"] & 2)
+        cookie = cookie_of(extra)
+        self.assertIn("HttpOnly", extra[0][1])
+        self.assertEqual(self.call("GET", "auth/me", cookie=cookie)[:2], (200, me))
+        self.assertTrue(self.facade.sessions.active(facade.read_cookie(KEY, f"connect.sid={cookie}", T0)["sid"], JANE_POP_ID))
+        self.assertEqual(self.jf.calls, [])
+        self.assertIn("tv code: sign-in", [a["decision"] for a in self.audit()])
+
+    def test_code_typed_in_lower_case_with_spaces_or_dash_and_local_auth(self):
+        code = self.code()
+        self.assertEqual(self.login(" jane ", f"{code[:5].lower()}-{code[5:].lower()} ")[0], 200)
+        code = self.code()
+        self.assertEqual(self.login("jane", f"{code[:5]} {code[5:]}", path="auth/local", field="email")[0], 200)
+
+    def test_single_use(self):
+        code = self.code()
+        self.assertEqual(self.login("jane", code)[0], 200)
+        self.assertEqual(self.login("jane", code)[:2], (401, {"message": facade.TV_FAIL}))
+
+    def test_single_use_under_concurrency(self):
+        code = self.code()
+        barrier = threading.Barrier(8)
+        results = []
+
+        def go():
+            barrier.wait()
+            results.append(self.login("jane", code)[0])
+
+        threads = [threading.Thread(target=go) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(results.count(200), 1)
+        self.assertLessEqual(set(results), {200, 401, 429})
+        self.assertEqual(len(self.session_row()), 1)
+
+    def test_expires_after_10_min(self):
+        code = self.code()
+        self.later(599)
+        self.assertEqual(self.login("jane", code)[0], 200)
+        code = self.code()
+        self.later(600)
+        self.assertEqual(self.login("jane", code)[:2], (401, {"message": facade.TV_FAIL}))
+
+    def test_new_code_invalidates_the_previous(self):
+        old = self.code()
+        new = self.code()
+        self.assertEqual(self.login("jane", old)[0], 401)
+        self.assertEqual(self.login("jane", new)[0], 200)
+
+    def test_code_bound_to_its_user(self):
+        code = self.code()
+        self.assertEqual(self.login("guest", code)[:2], (401, {"message": facade.TV_FAIL}))
+        self.assertEqual(self.login("Jane Doe", code)[0], 401)
+        self.assertEqual(self.login("jane", code)[0], 200)
+
+    def test_no_user_enumeration(self):
+        self.code()
+        answers = [self.login(u, p) for u, p in [("jane", "WRONGCODE2"), ("nobody", "WRONGCODE2"), ("guest", "ABCDEFGHJK"), ("jane", "real-password"), ("", ""), ("jane", None), (5, "x")]]
+        self.assertEqual(len({json.dumps(a) for a in answers}), 1, answers)
+        self.assertEqual(answers[0], (401, {"message": facade.TV_FAIL}, []))
+        self.assertEqual(self.jf.calls, [])
+
+    def test_compare_is_constant_time_also_for_unknown_users(self):
+        self.code()
+        real = hmac.compare_digest
+        seen = []
+        with unittest.mock.patch.object(facade.hmac, "compare_digest", side_effect=lambda a, b: seen.append(1) or real(a, b)):
+            self.login("nobody", "ABCDEFGHJK")
+            self.login("jane", "ABCDEFGHJK")
+        self.assertEqual(len(seen), 2)
+
+    def test_lockout_after_5_failures_burns_the_code(self):
+        code = self.code()
+        for _ in range(4):
+            self.assertEqual(self.login("Jane", "WRONGCODE2")[0], 401)
+        self.assertEqual(self.login("jane", "WRONGCODE2")[:2], (429, {"message": facade.TV_LOCKED}))
+        self.assertEqual(self.login("jane", code)[:2], (429, {"message": facade.TV_LOCKED}))
+        self.later(15 * 60)
+        self.assertEqual(self.login("jane", code)[0], 401)
+        self.assertEqual(self.lines.count('facade tv code lockout "jane"'), 1)
+        self.assertEqual(self.lines.count('facade tv code failed "Jane"'), 4)
+        self.assertNotIn("lockout", pathlib.Path(self.tmp.name, "audit.jsonl").read_text())
+
+    def test_issuing_a_new_code_lifts_the_lockout(self):
+        self.code()
+        for _ in range(5):
+            self.login("jane", "WRONGCODE2")
+        self.assertEqual(self.login("jane", self.code())[0], 200)
+
+    def test_unknown_users_are_locked_out_too(self):
+        for _ in range(5):
+            self.login("nobody", "WRONGCODE2")
+        self.assertEqual(self.login("NOBODY", "WRONGCODE2")[:2], (429, {"message": facade.TV_LOCKED}))
+        self.assertEqual(self.login("other", "WRONGCODE2")[0], 401)
+
+    def test_failures_older_than_the_window_are_forgotten(self):
+        self.code()
+        for _ in range(4):
+            self.login("jane", "WRONGCODE2")
+        self.later(15 * 60)
+        self.login("jane", "WRONGCODE2")
+        code = self.code()
+        self.assertEqual(self.login("jane", code)[0], 200)
+
+    def test_global_failure_budget_brakes_all_code_sign_ins_for_a_minute(self):
+        code = self.code()
+        for i in range(facade.TV_FAILS_GLOBAL):
+            self.assertEqual(self.login(f"user{i}", "WRONGCODE2")[0], 401)
+        self.assertEqual(self.login("jane", code)[:2], (429, {"message": facade.TV_BUSY}))
+        self.assertEqual(self.login("someone", "WRONGCODE2")[:2], (429, {"message": facade.TV_BUSY}))
+        self.later(60)
+        self.assertEqual(self.login("jane", code)[0], 200)
+        self.assertEqual([a["decision"] for a in self.audit()].count("tv code: brake"), 1)
+        self.assertEqual(facade.TV_FAILS_GLOBAL, 20)
+
+    def test_disabled_or_renamed_user_gets_no_session(self):
+        code = self.code()
+        self.jf.users[JANE_POP_ID] = {**JANE_POP, "Policy": {"IsDisabled": True}}
+        self.assertEqual(self.login("jane", code)[0], 403)
+        self.jf.users[JANE_POP_ID] = {**JANE_POP, "Name": "janet"}
+        self.later(61)
+        code = self.code()
+        self.core.auth_cache.clear()
+        self.assertEqual(self.login("jane", code)[0], 401)
+        self.assertEqual(self.session_row(), [])
+
+    def test_jellyfin_down_is_503_without_session(self):
+        code = self.code()
+        self.jf.admin_down = True
+        self.assertEqual(self.login("jane", code)[0], 503)
+        self.assertEqual(self.session_row(), [])
+
+    def test_bad_bodies(self):
+        for bad in [b"{", b"[]", b"null", b"[" * 200000]:
+            self.assertEqual(self.call("POST", "auth/jellyfin", body=bad)[:2], (400, {"message": "Bad request"}), bad[:5])
+        self.assertEqual(self.login("j" * 65, "ABCDEFGHJK")[0], 401)
+
+    def test_code_and_tokens_never_logged(self):
+        code = self.code()
+        self.login("jane", "WRONGCODE2")
+        _, _, extra = self.login("jane", code)
+        cookie = cookie_of(extra)
+        text = self.out.getvalue() + "\n".join(self.lines) + pathlib.Path(self.tmp.name, "audit.jsonl").read_text()
+        for secret in [code, code.lower(), "WRONGCODE2", test_app.TOKEN, cookie, cookie[2:].split(".")[0]]:
+            self.assertNotIn(secret, text)
+        audit = {a["decision"]: a for a in self.audit()}
+        self.assertEqual((audit["tv code: issued"]["userId"], audit["tv code: issued"]["user"]), (JANE_POP_ID, "jane"))
+        self.assertIn('facade tv code failed "jane"', self.lines)
+        self.assertNotIn("tv code: failed", audit)
+        self.assertEqual(audit["tv code: sign-in"]["userId"], JANE_POP_ID)
+        self.assertIn("facade POST auth/jellyfin 200 " + JANE_POP_ID, self.lines)
+
+    def test_audit_name_of_a_failure_is_cut_and_printable(self):
+        self.login("x\n" * 50, "WRONGCODE2")
+        line = [l for l in self.lines if l.startswith("facade tv code failed")][-1]
+        self.assertEqual(line, 'facade tv code failed "' + "x" * 50 + '"')
+        self.login("y" * 100, "WRONGCODE2")
+        self.assertEqual(self.lines[-2], 'facade tv code failed "' + "y" * 64 + '"')
 
 
 if __name__ == "__main__":
