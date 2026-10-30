@@ -593,6 +593,7 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 | TV, phone apps | Media / My media → **Collections & Trending** → a list (`Top 10 Switzerland · Movies`, `· Shows`, `Coming soon`, then one per service and genre) → film → **Version** → Play; series → **Specials** → episode → Play |
 | Films | versions `⬇ Download movie now` (listed first) and `🌙 Download movie tonight · lower power cost`. Not downloadable yet: one clip, no download versions |
 | Series | real Series (rows "Series" in Swiftfin, "TV series" on Android TV): Specials = `S00E01 ⬇ Download series now`, `S00E02 🌙 Download series tonight · lower power cost`. Not downloadable / requested / coming soon: one episode with that state as title |
+| No TMDB match (`"u": true`, no id) | title-only film placeholder at its list rank, film or series alike: `movie.nfo` with title + "Not able to download yet", title poster with the red banner, the unavailable clip, no versions, never requestable. Key `u/<slug of the title>`; once TMDB matches, the normal placeholder replaces it |
 | Clip | 10 s, plays to the end → request. Back or stop earlier cancels. Requested titles show `✓ Requested` until they arrive |
 | Rule | request only when position ≥ runtime − 2 s (a stop up to runtime + 30 s counts); same allow-list, limits (10 per user per 7 days, 30 per day for all), audit log and Seerr code as the Popular page |
 | Libraries | `Trending items` (movies) and `Trending shows` (tvshows), hidden for every user, never ticked in Seerr. A title already in the library is the real item inside the collection, sorted after the placeholders. Placeholder NFOs carry `<dateadded>2000-01-01</dateadded>`: they never top "Recently added" |
@@ -601,7 +602,7 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 | What | Where |
 |---|---|
 | Placeholders, clips, cache | `/srv/appdata/jellyfin/trending/{library,shows,clips,cache}` (`/config/trending/library` films, `/config/trending/shows` series: `<Title> (<year>)/tvshow.nfo`, `Season 00/S00E0n….mp4` + `.nfo`) |
-| Request index | `/srv/appdata/jellyfin-popular/trending-index.json` (film, version and episode ids → entry) |
+| Request index | `/srv/appdata/jellyfin-popular/trending-index.json` (film, version and episode ids → `{x, t, modes, rt}`; `rt` = that placeholder's clip runtime, used when the event has none) |
 | Hook | Webhooks destination "Trending requests" → `jellyfin-popular:8098` (internal), secret `secrets/popular/hook.secret`, key `hss-popular-hook` |
 | Sync | `jellyfin-trending.service`: after `popular.py` (04:39, 22:20) and, via `jellyfin-trending.path`, after each request |
 
