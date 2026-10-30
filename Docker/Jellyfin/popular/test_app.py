@@ -18,7 +18,7 @@ NOW = datetime.datetime(2026, 10, 29, 1, 0, tzinfo=datetime.timezone.utc)
 ORIGIN = "https://jellyfin.holy-grail.ch"
 TOKEN = "a" * 32
 USERS = {
-    TOKEN: {"Id": "70d44a36-7988-405d-8792-444c1c716d9a", "Name": "tomigorn", "Policy": {"IsDisabled": False}},
+    TOKEN: {"Id": "40e05f0a-9e96-4fd9-b225-eb1379dfcfa4", "Name": "jane", "Policy": {"IsDisabled": False}},
     "b" * 32: {"Id": "11111111-2222-3333-4444-555555555555", "Name": "guest", "Policy": {"IsDisabled": False}},
     "c" * 32: {"Id": "99999999-2222-3333-4444-555555555555", "Name": "gone", "Policy": {"IsDisabled": True}},
 }
@@ -26,7 +26,7 @@ USERS = {
 
 class FakeSeerr:
     def __init__(self):
-        self.users = [{"id": 7, "jellyfinUserId": "70d44a367988405d8792444c1c716d9a", "permissions": 8352, "email": "x"}]
+        self.users = [{"id": 7, "jellyfinUserId": "40e05f0a9e964fd9b225eb1379dfcfa4", "permissions": 8352, "email": "x"}]
         self.media = {}
         self.posts = []
 
@@ -172,7 +172,7 @@ class Refusals(Base):
     def test_refusals_are_audited(self):
         self.post({"id": "tok-movie-xxxxxxxxxxxy"})
         a = self.audit()[-1]
-        self.assertEqual((a["user"], a["entry"], a["decision"]), ("tomigorn", "tok-movie-xxxxxxxxxxxy", "unknown entry"))
+        self.assertEqual((a["user"], a["entry"], a["decision"]), ("jane", "tok-movie-xxxxxxxxxxxy", "unknown entry"))
 
 
 class Requests(Base):
@@ -183,7 +183,7 @@ class Requests(Base):
         _, sent, user = self.seerr.posts[-1]
         self.assertEqual((sent, user), ({"mediaType": "tv", "mediaId": 202, "seasons": [4]}, 7))
         a = self.audit()[-1]
-        self.assertEqual((a["user"], a["title"], a["mode"], a["decision"], a["seerrUser"]), ("tomigorn", "The Diplomat", "night", "requested", 7))
+        self.assertEqual((a["user"], a["title"], a["mode"], a["decision"], a["seerrUser"]), ("jane", "The Diplomat", "night", "requested", 7))
 
     def test_now_adds_the_download_now_tag(self):
         self.post({"id": "tok-movie-xxxxxxxxxxxx", "mode": "now"})
@@ -254,13 +254,13 @@ class Remembered(Base):
         return self.core.allow()[x]
 
     def test_send_returns_created_and_remembers_it(self):
-        log = {"user": "tomigorn", "userId": "70d44a367988405d8792444c1c716d9a"}
-        code, body = self.core.send({"id": "70d44a367988405d8792444c1c716d9a", "name": "tomigorn"}, self.entry(), "night", False, log)
+        log = {"user": "jane", "userId": "40e05f0a9e964fd9b225eb1379dfcfa4"}
+        code, body = self.core.send({"id": "40e05f0a9e964fd9b225eb1379dfcfa4", "name": "jane"}, self.entry(), "night", False, log)
         self.assertEqual(code, 200)
         created_id = 900 + len(self.seerr.posts)
         self.assertEqual(body["request"], {"id": created_id})
         self.assertEqual((body["ok"], body["state"], body["left"]), (True, "requested", 9))
-        self.assertEqual(self.core.requested_ids("70d44a367988405d8792444c1c716d9a"), [created_id])
+        self.assertEqual(self.core.requested_ids("40e05f0a9e964fd9b225eb1379dfcfa4"), [created_id])
         self.assertEqual(self.core.requested_ids(self.GUEST["id"]), [])
 
     def test_page_answer_has_no_seerr_request(self):
@@ -271,7 +271,7 @@ class Remembered(Base):
         self.assertEqual(code, 200)
         self.assertNotIn("request", body)
         self.assertNotIn("@", json.dumps(body))
-        self.assertEqual(self.core.requested_ids("70d44a367988405d8792444c1c716d9a"), [5])
+        self.assertEqual(self.core.requested_ids("40e05f0a9e964fd9b225eb1379dfcfa4"), [5])
 
     def test_send_without_create_service_never_creates_user(self):
         log = {"user": "guest", "userId": self.GUEST["id"], "entry": "movie/101", "mode": "night", "via": "moonfin"}
@@ -296,7 +296,7 @@ class Remembered(Base):
         con.execute("CREATE TABLE requests (id INTEGER PRIMARY KEY, user_id TEXT NOT NULL, ref TEXT, at TEXT NOT NULL, day TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0)")
         con.commit()
         con.close()
-        u = "70d44a367988405d8792444c1c716d9a"
+        u = "40e05f0a9e964fd9b225eb1379dfcfa4"
         line = lambda rid, decision="requested", user=u: json.dumps({"at": "2026-09-01T20:00:00+00:00", "decision": decision, "userId": user, "requestId": rid}) + "\n"
         (d / "audit.jsonl").write_text(line(11) + line(12, "refused: owned") + line(13, user="other") + line(None) + "not json\n")
         (d / "audit.jsonl.1").write_text(line(5) + line(11))
@@ -312,13 +312,13 @@ class Remembered(Base):
         self.assertEqual(sorted(core.requested_ids(u)), [5, 11])
 
     def test_user_requests_never_pruned(self):
-        self.core.remember("70d44a367988405d8792444c1c716d9a", 3)
+        self.core.remember("40e05f0a9e964fd9b225eb1379dfcfa4", 3)
         self.now = NOW + datetime.timedelta(days=400)
         self.allow.write_text(self.allow.read_text().replace("2026-10-28T04:39:00", (NOW + datetime.timedelta(days=399)).isoformat()))
         self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"})[0], 200)
-        self.assertIn(3, self.core.requested_ids("70d44a367988405d8792444c1c716d9a"))
-        self.core.remember("70d44a367988405d8792444c1c716d9a", 3)
-        self.assertEqual(self.core.requested_ids("70d44a367988405d8792444c1c716d9a").count(3), 1)
+        self.assertIn(3, self.core.requested_ids("40e05f0a9e964fd9b225eb1379dfcfa4"))
+        self.core.remember("40e05f0a9e964fd9b225eb1379dfcfa4", 3)
+        self.assertEqual(self.core.requested_ids("40e05f0a9e964fd9b225eb1379dfcfa4").count(3), 1)
 
     def test_allow_index_collapses_duplicates(self):
         data = json.loads(self.allow.read_text())
@@ -380,8 +380,8 @@ class Noise(Base):
         d = pathlib.Path(self.tmp.name)
         fresh = d / "fresh"
         fresh.mkdir()
-        (fresh / "audit.jsonl").write_text(json.dumps({"at": "2026-10-28T20:00:00+00:00", "decision": "requested", "userId": "70d44a367988405d8792444c1c716d9a", "ref": "movie/101"}) + "\n" +
-                                           json.dumps({"at": "2026-10-28T20:00:00+00:00", "decision": "unknown entry", "userId": "70d44a367988405d8792444c1c716d9a"}) + "\n")
+        (fresh / "audit.jsonl").write_text(json.dumps({"at": "2026-10-28T20:00:00+00:00", "decision": "requested", "userId": "40e05f0a9e964fd9b225eb1379dfcfa4", "ref": "movie/101"}) + "\n" +
+                                           json.dumps({"at": "2026-10-28T20:00:00+00:00", "decision": "unknown entry", "userId": "40e05f0a9e964fd9b225eb1379dfcfa4"}) + "\n")
         core = app.Core(app.Config(allow_file=self.allow, audit_file=fresh / "audit.jsonl", request_state=d / "rs.json", origins=[ORIGIN]), seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now)
         self.assertEqual(core.handle("GET", "/hss-popular/state", {"X-Emby-Token": TOKEN}, b"")[1]["left"], 9)
 
@@ -768,12 +768,12 @@ class Hook(HookBase):
         self.assertEqual(len(self.reset_calls()), 1)
 
     def test_hook_limits_shared_with_web(self):
-        uid = "70d44a367988405d8792444c1c716d9a"
+        uid = "40e05f0a9e964fd9b225eb1379dfcfa4"
         for _ in range(10):
             self.assertEqual(self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"})[0], 200)
             self.core.hits.clear()
-        self.event("Play", 0, ms="ms_night", pos=0, user="70d44a36-7988-405d-8792-444c1c716d9a")
-        self.event("Stop", 10.5, user="70d44a36-7988-405d-8792-444c1c716d9a")
+        self.event("Play", 0, ms="ms_night", pos=0, user="40e05f0a-9e96-4fd9-b225-eb1379dfcfa4")
+        self.event("Stop", 10.5, user="40e05f0a-9e96-4fd9-b225-eb1379dfcfa4")
         self.assertEqual(len(self.requests()), 10)
         a = self.audits()[-1]
         self.assertEqual((a["decision"], a["userId"], a["via"]), ("refused: user limit", uid, "tv"))

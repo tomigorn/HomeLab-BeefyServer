@@ -22,7 +22,7 @@ PROFILES = [{"id": 7, "name": "4K HDR"}, {"id": 11, "name": "4K preferred · old
 ME, FRIEND, ADMIN = {"id": 7, "permissions": 8352}, {"id": 5, "permissions": 8352}, {"id": 1, "permissions": 2}
 
 
-def req(rid=57, uid=7, status=2, tags=(), profile=7, created="2026-10-28T08:41:20.000Z", name="tomigorn", seasons=()):
+def req(rid=57, uid=7, status=2, tags=(), profile=7, created="2026-10-28T08:41:20.000Z", name="jane", seasons=()):
     return {"id": rid, "status": status, "is4k": False, "serverId": 0, "profileId": profile, "rootFolder": "/data/media/movies", "languageProfileId": None,
             "tags": list(tags), "createdAt": created, "requestedBy": {"id": uid, "displayName": name}, "seasons": [{"seasonNumber": n} for n in seasons]}
 
@@ -120,7 +120,7 @@ class Read(unittest.TestCase):
 
     def test_manager_sees_every_request_with_its_requester(self):
         out = get(World(me=ADMIN, requests=[req(), req(rid=60, uid=5, name="friend"), req(rid=61, uid=5, status=3)]))[1]
-        self.assertEqual([(r["id"], r["mine"], r["by"], r["editable"]) for r in out["requests"]], [(57, False, "tomigorn", True), (60, False, "friend", True)])
+        self.assertEqual([(r["id"], r["mine"], r["by"], r["editable"]) for r in out["requests"]], [(57, False, "jane", True), (60, False, "friend", True)])
 
     def test_title_shared_with_a_friend_is_read_only_for_the_requester_and_delete_keeps_the_title(self):
         r = get(World(requests=[req(), req(rid=60, uid=5, name="friend")]))[1]["requests"]
