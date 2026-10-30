@@ -83,6 +83,16 @@ class Art(unittest.TestCase):
         self.assertGreater(b, r + 40)
         self.assertNotEqual(mean(nf, (560, 0, 600, 40)), mean(bare, (560, 0, 600, 40)))
 
+    def test_hidden_gems_art_is_emerald_with_a_gem_mark(self):
+        im = load(ta.collection_poster("gems", "Hidden Gems", None, [img((250, 250, 250))] * 3)).convert("RGB")
+        r, g, b = mean(im, (560, 0, 600, 40))
+        self.assertGreater(g, r + 40)
+        self.assertGreater(min(mean(im, (270, 720, 330, 780))), 200)
+        m = ta.mark("gems", None, 132)
+        self.assertEqual(m.size, (132, 132))
+        self.assertTrue(any(bb > 150 and bb > rr + 40 for rr, gg, bb in rgb_pixels(m.convert("RGB").crop((30, 30, 100, 100)))))
+        self.assertEqual(load(ta.collection_backdrop("gems", "Hidden Gems", None, None, [img()])).size, (1920, 1080))
+
     def test_collection_poster_fans_the_member_posters(self):
         im = load(ta.collection_poster("coming", "Coming soon", None, [img((250, 250, 250))]))
         self.assertGreater(min(mean(im, (270, 720, 330, 780))), 200)

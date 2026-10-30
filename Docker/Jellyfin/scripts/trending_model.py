@@ -29,6 +29,8 @@ CLIPS = ("now", "night", "unavailable", "requested", "coming")
 HOME = (("home-movies", "movies", "Top 10 Switzerland · Movies"), ("home-shows", "shows", "Top 10 Switzerland · Shows"))
 HOME_KIND = {"home-movies": "movie", "home-shows": "tv"}
 COMING = ("coming", "Coming soon")
+# Grid position after every list; Hidden Gems (hidden-gems.py) follows with 91, the real collections after.
+COMING_SORT = 90
 UNMATCHED = "u"
 KIND_NAME = {"movie": "Movies", "tv": "Shows"}
 ART_MEMBERS = 4
@@ -72,13 +74,15 @@ class Plan:
 
 
 def collection_specs(lists):
-    """[{key, name, sort "NN <name>", logo}]: the two Top 10 home lists, Coming soon, then every row of lists.json in its order."""
+    """[{key, name, sort "NN <name>", logo}]: the two Top 10 home lists, Coming soon, then every row of lists.json in its order; Coming soon sorts last in the grid."""
     out = [{"key": key, "name": name, "logo": None} for key, _, name in HOME]
     out.append({"key": COMING[0], "name": COMING[1], "logo": None})
     for r in lists.get("rows") or []:
         out.append({"key": r["id"], "name": f"{r['name']['en']} · {KIND_NAME[r['kind']]}", "logo": r.get("logo")})
-    for i, s in enumerate(out, 1):
+    listed = [s for s in out if s["key"] != COMING[0]]
+    for i, s in enumerate(listed, 1):
         s["sort"] = f"{i:02d} {s['name']}"
+    out[len(HOME)]["sort"] = f"{COMING_SORT} {COMING[1]}"
     return out
 
 

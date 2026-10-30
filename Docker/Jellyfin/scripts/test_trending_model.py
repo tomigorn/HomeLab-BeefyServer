@@ -62,7 +62,9 @@ class CollectionSpecs(unittest.TestCase):
         self.assertEqual(specs[3]["logo"], "/logo8.png")
         self.assertIsNone(specs[0]["logo"])
         self.assertEqual(specs[-1]["name"], "Romance · Movies")
-        self.assertEqual(specs[-1]["sort"], "37 Romance · Movies")
+        self.assertEqual(specs[-1]["sort"], "36 Romance · Movies")
+        self.assertEqual((specs[2]["sort"], specs[3]["sort"], specs[1]["sort"]), ("90 Coming soon", "03 Netflix · Movies", "02 Top 10 Switzerland · Shows"))
+        self.assertEqual(sorted(specs, key=lambda s: s["sort"])[-1]["name"], "Coming soon")
 
 
 class Plan(unittest.TestCase):

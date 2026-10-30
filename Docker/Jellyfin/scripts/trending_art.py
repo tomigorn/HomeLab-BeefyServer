@@ -57,6 +57,7 @@ GENRES = {
 }
 HOME = ("#d52b1e", "#3a0505")
 COMING = ("#0284c7", "#1b1846")
+GEMS = ("#059669", "#02241c")
 OTHER = ("#6d4bb8", "#140f2a")
 TILE = ("#3b2f8f", "#0a0918")
 
@@ -113,6 +114,8 @@ def palette(key):
         return tuple(map(rgb, HOME))
     if key == "coming":
         return tuple(map(rgb, COMING))
+    if key == "gems":
+        return tuple(map(rgb, GEMS))
     return tuple(map(rgb, OTHER))
 
 
@@ -228,7 +231,7 @@ def fan(im, posters, cx, top, w):
 
 
 def mark(key, logo, size):
-    """The service logo, a Swiss cross for Top 10, a calendar for Coming soon; None for genres."""
+    """The service logo, a Swiss cross for Top 10, a calendar for Coming soon, a gem for Hidden Gems; None for genres."""
     if logo:
         lg = decode_rgba(logo)
         if lg is not None:
@@ -253,6 +256,12 @@ def mark(key, logo, size):
             for j in range(3):
                 x, y = s * (0.2 + 0.24 * j), s * (0.42 + 0.17 * i)
                 d.rounded_rectangle((x, y, x + s * 0.14, y + s * 0.1), radius=3, fill=(2, 132, 199, 255) if (i, j) == (1, 1) else (190, 200, 215, 255))
+        return tile
+    if key == "gems":
+        d.rounded_rectangle((0, 0, s - 1, s - 1), radius=round(s * 0.2), fill=(255, 255, 255, 255))
+        gem = emoji("💎", round(s * 0.72))
+        if gem is not None:
+            tile.alpha_composite(gem, ((s - gem.width) // 2, (s - gem.height) // 2))
         return tile
     return None
 

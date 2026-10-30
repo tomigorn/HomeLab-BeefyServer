@@ -2,7 +2,11 @@ import contextlib
 import importlib.util
 import io
 import pathlib
+import tempfile
 import unittest
+import urllib.error
+
+from PIL import Image
 
 _spec = importlib.util.spec_from_file_location("hidden_gems", pathlib.Path(__file__).with_name("hidden-gems.py"))
 hg = importlib.util.module_from_spec(_spec)
@@ -118,9 +122,37 @@ class Orders:
         self.calls.append((users, orders, dry))
 
 
-def run(jf, argv=(), order=None):
+def jpeg(color):
+    b = io.BytesIO()
+    Image.new("RGB", (40, 60), color).save(b, "JPEG")
+    return b.getvalue()
+
+
+class Raw:
+    """Images of the members: Primary of every id, a Backdrop only for a."""
+
+    def __init__(self):
+        self.calls = []
+        self.uploads = {}
+
+    def __call__(self, method, path, data, content_type):
+        self.calls.append((method, path))
+        if method == "POST":
+            self.uploads[path] = data
+            return b""
+        item = path.split("/")[2]
+        if "/Backdrop" in path and item != "a":
+            raise urllib.error.HTTPError(path, 404, "not found", {}, None)
+        return jpeg((len(item) * 40 % 255, 120, 90))
+
+
+TMP = tempfile.TemporaryDirectory()
+
+
+def run(jf, argv=(), order=None, raw=None, state=None):
     with contextlib.redirect_stdout(io.StringIO()) as out:
-        code = hg.main(list(argv), api=jf, order=order or Orders())
+        code = hg.main(list(argv), api=jf, order=order or Orders(), raw=raw or Raw(), state=state or pathlib.Path(tempfile.mkdtemp(dir=TMP.name)) / "s.json",
+                       originals=pathlib.Path(TMP.name) / "none")
     return code, out.getvalue()
 
 
@@ -138,14 +170,14 @@ class MainTest(unittest.TestCase):
         run(jf)
         self.assertEqual(jf.members["new"], ["a", "b"])
         meta = jf.meta["new"]
-        self.assertEqual((meta["Tags"], meta["DisplayOrder"], meta["LockData"], meta["Name"]), ([hg.TAG], "Default", True, hg.NAME))
+        self.assertEqual((meta["Tags"], meta["DisplayOrder"], meta["LockData"], meta["Name"], meta["ForcedSortName"]), ([hg.TAG], "Default", True, hg.NAME, "91 Hidden Gems"))
 
     def test_second_run_changes_nothing(self):
-        jf = FakeJellyfin(items=ITEMS)
-        run(jf)
+        jf, state = FakeJellyfin(items=ITEMS), pathlib.Path(tempfile.mkdtemp(dir=TMP.name)) / "s.json"
+        run(jf, state=state)
         jf.boxes[0]["Tags"] = [hg.TAG]
         before = len([c for c in jf.calls if c[0] != "GET"])
-        code, out = run(jf)
+        code, out = run(jf, state=state)
         self.assertEqual(len([c for c in jf.calls if c[0] != "GET"]), before)
         self.assertIn("unchanged", out)
 
@@ -168,7 +200,7 @@ class MainTest(unittest.TestCase):
             return out
 
         with contextlib.redirect_stdout(io.StringIO()):
-            hg.main([], api=spy, order=Orders())
+            hg.main([], api=spy, order=Orders(), raw=Raw(), state=pathlib.Path(tempfile.mkdtemp(dir=TMP.name)) / "s.json", originals=pathlib.Path(TMP.name) / "none")
         self.assertEqual(jf.members["g"], ["a", "b"])
         self.assertNotIn(0, sizes)
 
@@ -198,6 +230,56 @@ class MainTest(unittest.TestCase):
         orders = Orders()
         run(FakeJellyfin(items=[]), order=orders)
         self.assertEqual(orders.calls, [])
+
+    def test_art_from_the_first_members_uploaded_when_they_change(self):
+        jf = FakeJellyfin(boxes=[{"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG]}], members={"g": ["a", "b"]}, items=ITEMS)
+        jf.meta["g"] = {"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG], "DisplayOrder": "Default", "LockData": True, "ForcedSortName": "91 Hidden Gems"}
+        state = pathlib.Path(tempfile.mkdtemp(dir=TMP.name)) / "s.json"
+        raw = Raw()
+        run(jf, raw=raw, state=state)
+        self.assertEqual(sorted(raw.uploads), ["/Items/g/Images/Backdrop/0", "/Items/g/Images/Primary"])
+        posters = [jpeg((40, 120, 90)), jpeg((40, 120, 90))]
+        self.assertEqual(raw.uploads["/Items/g/Images/Primary"], hg.base64.b64encode(hg.art.collection_poster("gems", hg.NAME, None, posters)))
+        raw = Raw()
+        code, out = run(jf, raw=raw, state=state)
+        self.assertEqual(raw.uploads, {})
+        self.assertIn("unchanged", out)
+        jf.items = [item("c", 9.0, "2026-10-31T00:00:00Z"), *ITEMS]
+        raw = Raw()
+        run(jf, raw=raw, state=state)
+        self.assertEqual(sorted(raw.uploads), ["/Items/g/Images/Backdrop/0", "/Items/g/Images/Primary"])
+
+    def test_art_prefers_the_kept_original_of_a_marked_poster(self):
+        jf = FakeJellyfin(boxes=[{"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG]}], members={"g": ["a", "b"]}, items=ITEMS)
+        orig = pathlib.Path(tempfile.mkdtemp(dir=TMP.name))
+        (orig / "a.jpg").write_bytes(jpeg((250, 250, 250)))
+        raw = Raw()
+        with contextlib.redirect_stdout(io.StringIO()):
+            hg.main([], api=jf, order=Orders(), raw=raw, state=orig / "s.json", originals=orig)
+        self.assertNotIn(("GET", "/Items/a/Images/Primary"), [(m, p.split("?")[0]) for m, p in raw.calls])
+        self.assertEqual(raw.uploads["/Items/g/Images/Primary"], hg.base64.b64encode(hg.art.collection_poster("gems", hg.NAME, None, [jpeg((250, 250, 250)), jpeg((40, 120, 90))])))
+
+    def test_dry_run_uploads_no_art(self):
+        jf = FakeJellyfin(boxes=[{"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG]}], members={"g": ["a", "b"]}, items=ITEMS)
+        raw = Raw()
+        code, out = run(jf, ["--dry-run"], raw=raw)
+        self.assertEqual(raw.uploads, {})
+        self.assertIn("would upload art", out)
+
+    def test_order_or_art_failure_is_logged_and_the_run_succeeds(self):
+        jf = FakeJellyfin(boxes=[{"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG]}], members={"g": ["a", "b"]}, items=ITEMS)
+
+        def broken_order(users, orders, dry):
+            raise hg.subprocess.CalledProcessError(1, ["sudo"])
+
+        class BrokenRaw(Raw):
+            def __call__(self, method, path, data, content_type):
+                raise urllib.error.HTTPError(path, 500, "boom", {}, None)
+
+        code, out = run(jf, order=broken_order, raw=BrokenRaw())
+        self.assertEqual(code, 0)
+        self.assertIn("Moonfin order failed: CalledProcessError", out)
+        self.assertIn("art failed: HTTPError", out)
 
     def test_no_titles_no_empty_collection(self):
         jf = FakeJellyfin(items=[])
