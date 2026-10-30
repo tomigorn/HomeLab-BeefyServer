@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Configures the Moonbase plugin (Moonfin apps): safe server settings and the default home layout for every user (the web home order).
 Users whose stored value is still the previous default follow the new default; the app's own default of a key new here is replaced once per user, profile and key (markers in STATE_FILE); their own choices stay.
-A lost (after markers were written: sibling .written), corrupt or odd state file counts every marker as done. A failed user write is retried next run against the defaults it was compared with (state "pending"). One run at a time (sibling .lock).
+A lost (after markers were written: sibling .written), corrupt or odd state file counts every marker as done. A failed user write is retried next run against the defaults it was compared with (state "pending"); with a lost state the markers are kept for it too, so no app default is adopted later. An empty list and null count as equal. One run at a time (sibling .lock).
 Idempotent. Usage: moonbase.py [--dry-run | --check]  (--check exits 1 when the config or a user differs)"""
 import copy
 import json
@@ -113,10 +113,14 @@ def wanted(config, sets, folders, studios):
     return new
 
 
+def blank(value):
+    return None if value in ([], None) else value
+
+
 def changed(old, new):
     keys = [k for k in SERVER if old.get(k) != new.get(k)]
     od, nd = old.get("DefaultUserSettings") or {}, new.get("DefaultUserSettings") or {}
-    return keys + [f"DefaultUserSettings.{k}" for k in nd if od.get(k) != nd[k]]
+    return keys + [f"DefaultUserSettings.{k}" for k in nd if blank(od.get(k)) != blank(nd[k])]
 
 
 def layout(rows):
@@ -239,6 +243,8 @@ def run(argv):
             print(f"user {uid}: write failed ({type(e).__name__}), retried next run")
             failed.append(uid)
             pending[uid] = base
+            if not trusted:
+                migrated[uid] = markers
             continue
         pending.pop(uid, None)
         migrated[uid] = markers

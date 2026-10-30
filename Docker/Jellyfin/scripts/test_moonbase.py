@@ -188,6 +188,17 @@ class WantedTest(unittest.TestCase):
 
 
 
+class HomeRowOrderTest(unittest.TestCase):
+    def test_empty_list_and_null_are_the_same(self):
+        for stored in ([], None):
+            old = {"DefaultUserSettings": {**mb.wanted({}, LISTS, FOLDERS, None)["DefaultUserSettings"], "homeRowOrder": stored}, **mb.SERVER}
+            self.assertEqual(mb.changed(old, mb.wanted(old, LISTS, FOLDERS, None)), [])
+
+    def test_a_real_order_still_differs(self):
+        old = {"DefaultUserSettings": {"homeRowOrder": ["a"]}}
+        self.assertIn("DefaultUserSettings.homeRowOrder", mb.changed(old, {"DefaultUserSettings": {"homeRowOrder": None}}))
+
+
 class MainTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -280,6 +291,21 @@ class MainTest(unittest.TestCase):
         code, posts, _ = self.run_main([], {"u1": {"tv": {"displayGenresRows": False}}}, old=self.applied())
         self.assertEqual(self.user_posts(posts), [])
         self.assertEqual(json.loads(self.state.read_text()).get("pending") or {}, {})
+
+    def test_lost_state_and_failed_user_never_adopts_app_defaults_later(self):
+        own = {"tv": {"homeSections": OLD["homeSections"], "displayGenresRows": False}}
+        self.run_main([], {"u1": own})
+        self.state.unlink()
+        code, posts, _ = self.run_main([], {"u1": own}, fail={"u1"})
+        self.assertEqual(code, 1)
+        code, posts, _ = self.run_main([], {"u1": own}, old=self.applied())
+        self.assertEqual(self.user_posts(posts), ["/Moonfin/Settings/u1"])
+        self.assertEqual(code, 0)
+        for p in posts:
+            if p[1] == "/Moonfin/Settings/u1":
+                self.assertNotIn("displayGenresRows", p[2]["settings"]["tv"])
+        code, posts, _ = self.run_main([], {"u1": {"tv": {"displayGenresRows": False}}}, old=self.applied())
+        self.assertEqual(self.user_posts(posts), [])
 
     def test_writes_run_under_the_run_lock(self):
         lock = self.state.with_suffix(".lock")
