@@ -506,7 +506,7 @@ Groups (owner 2026-10-29): the wide-card rows and the My List band divide the ho
 | Task | Command (in `Docker/Jellyfin/`) |
 |---|---|
 | Studio logos + Moonfin studio cards | `python3 scripts/studio-logos.py && bash scripts/backup-config.sh studio-cards && python3 scripts/studio-cards.py` (both `--dry-run`); timer install: `cp systemd/jellyfin-studio-logos.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now jellyfin-studio-logos.timer` |
-| Library options | `python3 scripts/library-options.py` (`--check`): automatic movie collections on the Movies library (franchises become BoxSets, e.g. Harry Potter Collection); after adding films a library scan creates them; tests `python3 -m unittest test_library_options` in `scripts/` |
+| Library options | `python3 scripts/library-options.py` (`--check`): automatic movie collections on the Movies library (franchises become BoxSets, e.g. Harry Potter Collection; a set can match the wrong TMDB collection by name, e.g. LOTR got 1173608 "The Making of …" instead of 119, fixed 2026-10-30 (`../CUSTOMIZATIONS.md`); check `jf.franchise-collection-ids`); after adding films a library scan creates them; tests `python3 -m unittest test_library_options` in `scripts/` |
 | Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-home-sections`, `jf.home-sections-*`; `../CUSTOMIZATIONS.md`) |
 | Rollback | stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/{Home Screen Sections,Plugin Pages,File Transformation}_*`, start. Pre-change backup: `/srv/appdata/jellyfin-pre-hss-2026-10-27.tgz` (root, 600) |
 

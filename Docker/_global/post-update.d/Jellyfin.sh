@@ -85,6 +85,8 @@ if want jellyfin; then
   check jf.moonbase-nav '^false true true$' "$(jf_api /Plugins/8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b/Configuration | jq -r '[.DefaultUserSettings.showSeerrButton,.DefaultUserSettings.seerrEnabled,.DefaultUserSettings.displaySeerrRows] | map(tostring) | join(" ")' 2>&1)"
   check jf.media-bar '^ok [0-9]+ users$' "$(python3 "$DIR/../../Jellyfin/scripts/media-bar.py" --check 2>&1 | tail -1)"
   check jf.media-bar-timer '^active$' "$(jf_user_systemctl is-active jellyfin-media-bar.timer 2>&1)"
+  # Franchise BoxSets (own TMDB id): every member's TmdbCollection is the set's id (LOTR had the "Making of" collection 1173608, fixed 2026-10-30)
+  check jf.franchise-collection-ids '^[1-9][0-9]* sets, 0 members of another franchise$' "$(u=$(jf_api /Users | jq -r '[.[] | select(.Policy.IsAdministrator)][0].Id'); jf_api '/Items?IncludeItemTypes=BoxSet&Recursive=true&Fields=ProviderIds' | jq -r '.Items[] | select(.ProviderIds.Tmdb) | "\(.Id) \(.ProviderIds.Tmdb)"' | while read -r id t; do jf_api "/Users/$u/Items?ParentId=$id&Fields=ProviderIds" | jq --arg t "$t" '[.Items[] | .ProviderIds.TmdbCollection // empty | select(. != $t)] | length'; done | awk '{n++; b += $1} END {print n " sets, " b " members of another franchise"}' 2>&1)"
 fi
 if want popular jellyfin; then
   POP=http://127.0.0.1:8097/hss-popular
