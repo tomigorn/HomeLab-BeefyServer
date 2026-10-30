@@ -68,6 +68,7 @@ if want jellyfin; then
   check jf.trending-hide-served '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssTrendingHide = ' 2>&1)"
   check jf.trending-path '^active$' "$(jf_user_systemctl is-active jellyfin-trending.path 2>&1)"
   check jf.trending-webhook '^ok$' "$(python3 "$DIR/../../Jellyfin/scripts/trending-webhook.py" check 2>&1)"
+  check jf.trending-unwatched '^0 placeholders played$' "$(python3 "$DIR/../../Jellyfin/scripts/trending-unwatched.py" --check 2>&1 | tail -1)"
   GEMS=$(jf_api '/Items?Recursive=true&IncludeItemTypes=BoxSet&Tags=hss-hidden-gems&Fields=DisplayOrder&EnableImages=false')
   GEMS_ADMIN=$(jf_api /Users | jq -r '[.[] | select(.Policy.IsAdministrator)][0].Id' 2>&1)
   check jf.hidden-gems '^1 Hidden Gems Default [1-9][0-9]*$' "$(echo "$GEMS" | jq -r '"\(.Items | length) \([.Items[] | "\(.Name) \(.DisplayOrder)"] | join(","))"' 2>&1) $(jf_api "/Items?ParentId=$(echo "$GEMS" | jq -r '.Items[0].Id' 2>&1)&userId=$GEMS_ADMIN&Limit=0" | jq -r '.TotalRecordCount' 2>&1)"
