@@ -1324,6 +1324,25 @@ class Listener(FacadeBase):
 
 
 class MakeFacade(unittest.TestCase):
+    def test_start_facade_survives_failures(self):
+        import app
+        for boom in (lambda core: (_ for _ in ()).throw(RuntimeError("/secret/path")), lambda core: facade.Facade(core, None, None)):
+            out = io.StringIO()
+            with unittest.mock.patch.object(facade, "make_facade", boom), contextlib.redirect_stdout(out):
+                app.start_facade(object())
+            self.assertRegex(out.getvalue(), r"^facade off: \w+\n$")
+            self.assertNotIn("secret", out.getvalue())
+
+    def test_start_facade_survives_bind_failure(self):
+        import app
+        out = io.StringIO()
+        fake = unittest.mock.Mock()
+        with unittest.mock.patch.object(facade, "make_facade", lambda core: fake), \
+                unittest.mock.patch.object(facade, "make_facade_server", side_effect=OSError("/x in use")), \
+                contextlib.redirect_stdout(out):
+            app.start_facade(object())
+        self.assertEqual(out.getvalue(), "facade off: OSError\n")
+
     def test_make_facade_without_key_is_none(self):
         core = type("C", (), {})()
         out = io.StringIO()

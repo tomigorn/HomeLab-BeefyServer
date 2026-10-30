@@ -905,15 +905,23 @@ def make_hook_server(addr=("0.0.0.0", 8098), workers=4, backlog=8):
     return Server(addr, HookHandler, workers, backlog)
 
 
+def start_facade(core):
+    try:
+        sys.modules.setdefault("app", sys.modules[__name__])
+        import facade
+        fac = facade.make_facade(core)
+        if fac is not None:
+            facade.FacadeHandler.core = fac
+            srv = facade.make_facade_server(("0.0.0.0", int(os.environ.get("POP_FACADE_PORT", "8099"))))
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+    except Exception as e:
+        print("facade off: " + type(e).__name__, flush=True)
+
+
 def main():
     Handler.core = HookHandler.core = make_core()
     threading.Thread(target=make_hook_server(("0.0.0.0", int(os.environ.get("POP_HOOK_PORT", "8098")))).serve_forever, daemon=True).start()
-    sys.modules.setdefault("app", sys.modules[__name__])
-    import facade
-    fac = facade.make_facade(Handler.core)
-    if fac is not None:
-        facade.FacadeHandler.core = fac
-        threading.Thread(target=facade.make_facade_server(("0.0.0.0", int(os.environ.get("POP_FACADE_PORT", "8099")))).serve_forever, daemon=True).start()
+    start_facade(Handler.core)
     make_server().serve_forever()
 
 
