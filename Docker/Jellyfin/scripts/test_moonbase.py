@@ -165,7 +165,7 @@ class WantedTest(unittest.TestCase):
 
     def test_defaults_left_navigation_and_real_libraries_in_media_bar(self):
         d = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)["DefaultUserSettings"]
-        self.assertEqual((d["navbarPosition"], d["mediaBarLibraryIds"], d["displayCollectionsRows"], d["collectionsRowSortBy"]), ("left", ["mov", "tv"], True, "name"))
+        self.assertEqual((d["navbarPosition"], d["mediaBarLibraryIds"], d["displayCollectionsRows"], d["collectionsRowSortBy"]), ("left", ["mov", "tv"], True, "playlistOrder"))
 
     def test_wizard_questions_answered_by_defaults(self):
         d = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)["DefaultUserSettings"]

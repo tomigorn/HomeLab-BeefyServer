@@ -51,7 +51,7 @@ DEFAULTS = {
     "homeBackdropEnabled": True,
     "detailsBackdropEnabled": True,
     "displayCollectionsRows": True,
-    "collectionsRowSortBy": "name",
+    "collectionsRowSortBy": "playlistOrder",  # each BoxSet's own DisplayOrder
     "collectionsRowSortOrder": "ascending",
     "displaySeerrRows": True,
     "seerrEnabled": True,
