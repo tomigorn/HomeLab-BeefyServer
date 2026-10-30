@@ -57,6 +57,9 @@ class StepsTest(unittest.TestCase):
     def test_in_order_nothing_to_do(self):
         self.assertEqual(hg.steps(["a", "b"], ["a", "b"]), [])
 
+    def test_no_titles_leaves_the_members(self):
+        self.assertEqual(hg.steps(["a", "b"], []), [])
+
     def test_new_titles_added_before_anything_is_removed(self):
         st = hg.steps(["x", "b"], ["a", "b"])
         self.assertEqual(st[0], ("POST", ["a"]))
@@ -114,6 +117,14 @@ def run(jf, argv=()):
 
 
 class MainTest(unittest.TestCase):
+    def test_no_titles_leaves_an_existing_collection_unchanged(self):
+        jf = FakeJellyfin(boxes=[{"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG]}], members={"g": ["a", "b"]}, items=[])
+        jf.meta["g"] = {"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG], "DisplayOrder": "Default", "LockData": True}
+        code, out = run(jf)
+        self.assertEqual(jf.members["g"], ["a", "b"])
+        self.assertEqual([c for c in jf.calls if c[0] != "GET"], [])
+        self.assertIn("no titles", out)
+
     def test_creates_the_tagged_locked_collection_in_order(self):
         jf = FakeJellyfin(items=ITEMS)
         run(jf)

@@ -22,7 +22,9 @@ def pick(items, size=SIZE):
 
 
 def steps(have, want):
-    """[(method, ids)] to turn the members have into want: new titles first, then stale ones out, then the order; never empty on the way (Jellyfin appends new members)."""
+    """[(method, ids)] to turn the members have into want: new titles first, then stale ones out, then the order; never empty on the way (Jellyfin appends new members), and nothing at all without titles."""
+    if not want:
+        return []
     out = []
     fresh = [i for i in want if i not in have]
     stale = [i for i in have if i not in want]
@@ -64,6 +66,9 @@ def main(argv, api=None):
             return 0
         sid = api("POST", f"/Collections?name={urllib.parse.quote(NAME)}&ids={','.join(want)}&isLocked=true")["Id"]
         print(f"created {NAME} with {len(want)} titles")
+    elif not want:
+        print(f"no titles: {NAME} left unchanged")
+        return 0
     changes = 0
     item = api("GET", f"/Items/{sid}?userId={admin}")
     tags = list(item.get("Tags") or [])
