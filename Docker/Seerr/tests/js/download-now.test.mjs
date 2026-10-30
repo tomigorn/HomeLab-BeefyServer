@@ -31,7 +31,7 @@ function fakeXHR(routes, posts, calls) {
         setTimeout(() => this.onload && this.onload(), 0);
       }
     };
-    w.hgNightLabel = { released: [], release(ids) { this.released.push(...ids); } };
+    w.hgNightLabel = { released: [], release(ids) { this.released.push(...ids); }, spinner() { const s = w.document.createElement("span"); s.setAttribute("data-hg-spin", ""); return s; }, hint(el, text) { el.setAttribute("data-hg-hint", text); } };
   };
 }
 const settle = async () => { for (let i = 0; i < 8; i++) { await new Promise((r) => setTimeout(r, 30)); await tick(); } };
@@ -239,14 +239,26 @@ test("polls every few seconds while the search runs, shows the result, then stop
   assert.equal(calls.filter((c) => c.url === API).length, n);
 });
 
-test("a grab during the search: ✅ Downloading", async () => {
+test("a grab during the search: spinner + Downloading with a hint, never the ✅ of Available", async () => {
   const r = routes(ME.requester, null, { [API]: st("searching", search("started", { started: "2026-10-28T09:55:12Z" })) });
   const w = pageFast(titlePage(), r);
   await settle();
   r[API] = st("downloading", search(null, { last: "2026-10-28T10:00:23Z" }));
   await settle();
   await settle();
-  assert.equal(box(w).textContent, "✅ Downloading");
+  assert.equal(box(w).textContent, "Downloading");
+  assert.ok(box(w).querySelector("[data-hg-spin]"));
+  assert.equal(box(w).getAttribute("data-hg-hint"), "Downloading now at the daytime power price (started with Download now)");
+  assert.equal(box(w).getAttribute("tabindex"), "0");
+});
+
+test("grab chip without the night-label script: ◌ in the text, hint as title; German", async () => {
+  const r = routes(ME.requester, null, { [API]: st("downloading", search(null, { last: "2026-10-28T10:00:23Z" })) });
+  const w = load("download-now.js", titlePage("Verarbeiten"), (win) => { fakeXHR(r, {}, [])(win); delete win.hgNightLabel; }, "https://requests.example.com/movie/673");
+  opened.push(w);
+  await settle();
+  assert.equal(box(w).textContent, "◌ Lädt herunter");
+  assert.equal(box(w).title, "Lädt jetzt zum Tagstrompreis herunter (mit Jetzt herunterladen gestartet)");
 });
 
 test("leaving the title stops the polling", async () => {

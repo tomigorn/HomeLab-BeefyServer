@@ -3,7 +3,7 @@
   "use strict";
   var API = "/_download-now/api";
   var BOX = "hg-download-now";
-  var GERMAN = /^(Verarbeiten|Verfügbar|Teilweise verfügbar|Angefragt|Ausstehend|Gelöscht)$/;
+  var GERMAN = /^(Verarbeiten|Verfügbar|Teilweise verfügbar|Angefragt|Ausstehend|Gelöscht|Abgelehnt|Unbekannt)$/;
   var TEXT = {
     en: {
       button: "⚡ Download now — at daytime power price",
@@ -16,7 +16,8 @@
       queued: "🔍 Waiting for other searches ({n} ahead)",
       none: "🧭 No release found yet (searched {t}) — searched again in tonight's scheduled search (04:17); downloads at night when found",
       again: "⚡ Search again now — at daytime power price",
-      grabbed: "✅ Downloading",
+      grabbed: "Downloading",
+      grabbedHint: "Downloading now at the daytime power price (started with Download now)",
       locale: "en-GB",
     },
     de: {
@@ -30,7 +31,8 @@
       queued: "🔍 Wartet auf andere Suchen ({n} davor)",
       none: "🧭 Noch kein Release gefunden (gesucht {t}) — die geplante Suche heute Nacht (04:17) sucht weiter; lädt nachts, sobald gefunden",
       again: "⚡ Nochmals suchen — zum Tagstrompreis",
-      grabbed: "✅ Lädt herunter",
+      grabbed: "Lädt herunter",
+      grabbedHint: "Lädt jetzt zum Tagstrompreis herunter (mit Jetzt herunterladen gestartet)",
       locale: "de-CH",
     },
   };
@@ -87,6 +89,23 @@
     return c;
   }
 
+  // downloading: the drawn spinner of the legend (✅ means available), with the static hint of the status badges
+  function grabbedChip(doc, t) {
+    var c = chip(doc, t.grabbed, true), nl = typeof window !== "undefined" && window.hgNightLabel;
+    if (nl && nl.spinner && nl.hint) {
+      var sp = nl.spinner();
+      sp.style.marginRight = ".4rem";
+      c.insertBefore(sp, c.firstChild);
+      nl.hint(c, t.grabbedHint);
+    } else {
+      c.textContent = "◌ " + t.grabbed;
+      c.title = t.grabbedHint;
+    }
+    c.setAttribute("tabindex", "0");
+    c.style.cursor = "help";
+    return c;
+  }
+
   function running(st) {
     return !!(st && st.state === "searching" && st.search && (st.search.status === "queued" || st.search.status === "started"));
   }
@@ -94,7 +113,7 @@
   // what the title's button area shows for a backend answer; null = nothing
   function view(doc, t, title, st) {
     var s = st && st.search;
-    if (st && st.state === "downloading" && st.now) return chip(doc, t.grabbed, true);
+    if (st && st.state === "downloading" && st.now) return grabbedChip(doc, t);
     if (running(st)) return chip(doc, s.status === "started" ? t.running.replace("{t}", clock(s.started, t)) : t.queued.replace("{n}", String(s.ahead || 0)), true);
     if (st && st.state === "searching" && s && s.last) {
       var box = doc.createElement("div");
