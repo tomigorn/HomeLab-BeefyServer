@@ -606,6 +606,8 @@ class State(Base):
 SECRET = "s3cr3t-hook-token-xxxxxxxxxxxxxxxxxxxx"
 T0 = NOW
 SEC = 10_000_000
+SERIES = "aaaa1111bbbb2222cccc3333dddd4444"
+SEASON = "eeee5555-ffff-6666-0000-777788889999"
 CLEARED = {"PositionTicks": None, "MediaSourceId": None, "IsPaused": False, "CanSeek": False}
 
 
@@ -616,15 +618,16 @@ class HookBase(Base):
         self.index = d / "trending-index.json"
         rec = {"x": "tok-movie-xxxxxxxxxxxx", "t": "Animals", "modes": {"ms_now": "now", "ms_night": "night"}}
         nope = {"x": None, "t": "Nope", "modes": {}}
-        self.index.write_text(json.dumps({"updated": "2026-10-28T04:39:00+00:00", "library": "lib", "runtimeTicks": 10 * SEC, "items": {"ph1": rec, "ms_now": rec, "ms_night": rec, "ph2": nope}}))
+        self.index.write_text(json.dumps({"updated": "2026-10-28T04:39:00+00:00", "library": "lib", "runtimeTicks": 10 * SEC, "items": {"ph1": rec, "ms_now": rec, "ms_night": rec, "ph2": nope},
+                                          "parents": [SERIES, SEASON.replace("-", "")]}))
         self.signal = d / "signal" / "requested"
         self.signal.parent.mkdir()
         self.dry = d / "hook-dry-run"
         self.admin = []
         self.core = app.Core(app.Config(allow_file=self.allow, audit_file=d / "audit.jsonl", request_state=d / "rs.json", origins=[ORIGIN], hook_secret=SECRET, signal_file=self.signal, dry_flag=self.dry),
-                             seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now, jellyfin_admin=lambda m, p, b=None: self.admin.append((m, p, b)),
-                             later=lambda delay, fn: self.later.append((delay, fn)))
-        self.later = []
+                             seerr=self.seerr, jellyfin=jellyfin, clock=lambda: self.now, jellyfin_admin=lambda m, p, b=None: self.admin.append((m, p, b)))
+        self.mono = 0.0
+        self.core.resets = app.Resetter(self.core.reset, clock=lambda: self.mono, autostart=False)
 
     def event(self, event, at, item="ph1", ms=None, pos=None, paused=False, user="u1", disabled=False, played=False, session="s1", secret=SECRET, runtime=10 * SEC, kind="Movie", extra=None):
         self.now = T0 + datetime.timedelta(seconds=at)
@@ -645,9 +648,8 @@ class HookBase(Base):
         return [c for c in self.admin if c == ("DELETE", f"/UserPlayedItems/{item}?userId={user}", None)]
 
     def run_later(self):
-        jobs, self.later = self.later, []
-        for _, fn in jobs:
-            fn()
+        for self.mono in (self.mono + 5, self.mono + 30):
+            self.core.resets.run_due()
 
 
 class Hook(HookBase):
@@ -670,10 +672,10 @@ class Hook(HookBase):
         self.event("Play", 0, ms="ms_night", pos=0)
         self.event("Stop", 3)
         self.assertEqual(len(self.reset_calls()), 1)
-        self.assertEqual([d for d, _ in self.later], [5, 30])
+        self.assertEqual(self.core.resets.pending(), {("u1", "ph1"): [5, 30], ("u1", "ms_night"): [5, 30]})
         self.run_later()
         self.assertEqual(len(self.reset_calls()), 3)
-        self.assertEqual(self.later, [])
+        self.assertEqual(self.core.resets.pending(), {})
 
     def test_hook_stop_resets_the_played_version_too(self):
         self.event("Play", 0, ms="ms_night", pos=0)
@@ -681,7 +683,7 @@ class Hook(HookBase):
         self.assertEqual((len(self.reset_calls()), len(self.reset_calls(item="ms_night")), len(self.reset_calls(item="ms_now"))), (1, 1, 0))
 
     def test_hook_episode_stop_resets_episode_season_and_series(self):
-        ids = {"SeriesId": "aaaa1111bbbb2222cccc3333dddd4444", "SeasonId": "eeee5555-ffff-6666-0000-777788889999"}
+        ids = {"SeriesId": SERIES, "SeasonId": SEASON}
         self.event("Play", 0, ms="ms_night", pos=0, kind="Episode", extra=ids)
         self.event("Stop", 3, kind="Episode", extra=ids)
         self.run_later()
@@ -693,8 +695,19 @@ class Hook(HookBase):
         self.event("Stop", 3, kind="Episode", extra={"SeriesId": "../Users", "SeasonId": 7})
         self.assertEqual({p.split("?")[0].split("/")[2] for _, p, _ in self.admin}, {"ph1"})
 
+    def test_hook_series_and_season_outside_the_index_are_not_reset(self):
+        self.event("MarkPlayed", 3, kind="Episode", played=True, session=None, extra={"SeriesId": "0123456789abcdef0123456789abcdef", "SeasonId": SEASON})
+        self.assertEqual({p.split("?")[0].split("/")[2] for _, p, _ in self.admin}, {"ph1", SEASON.replace("-", "")})
+        self.index.write_text(json.dumps({"items": {"ph1": {"x": None, "modes": {}}}}))
+        self.admin.clear()
+        self.event("MarkPlayed", 4, kind="Episode", played=True, session=None, extra={"SeriesId": SERIES, "SeasonId": SEASON})
+        self.assertEqual({p.split("?")[0].split("/")[2] for _, p, _ in self.admin}, {"ph1"})
+
     def test_hook_mark_played_on_a_placeholder_resets_it(self):
-        self.assertEqual(self.event("MarkPlayed", 3, played=True, session=None), (204, {}))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(self.event("MarkPlayed", 3, played=True, session=None), (204, {}))
+        self.assertEqual(out.getvalue(), "reset markplayed 1\n")
         self.assertEqual(len(self.reset_calls()), 1)
         self.run_later()
         self.assertEqual(len(self.reset_calls()), 3)
@@ -703,11 +716,11 @@ class Hook(HookBase):
     def test_hook_mark_played_already_unplayed_is_ignored(self):
         self.event("MarkPlayed", 3, played=False, session=None)
         self.event("MarkUnplayed", 4, played=False, session=None)
-        self.assertEqual((self.admin, self.later), ([], []))
+        self.assertEqual((self.admin, self.core.resets.pending()), ([], {}))
 
     def test_hook_mark_played_on_a_real_item_is_ignored(self):
         self.event("MarkPlayed", 3, item="realfilm", played=True, session=None)
-        self.assertEqual((self.admin, self.later), ([], []))
+        self.assertEqual((self.admin, self.core.resets.pending()), ([], {}))
 
     def test_hook_mark_played_does_not_disturb_the_tracked_play(self):
         self.event("Play", 0, ms="ms_night", pos=0)
@@ -862,6 +875,60 @@ class Hook(HookBase):
     def test_public_listener_has_no_hook_route(self):
         self.assertEqual(self.core.handle("POST", "/hook/" + SECRET, {"Content-Type": "application/json"}, b"{}")[0], 404)
         self.assertEqual(self.core.handle("POST", "/hss-popular/hook/" + SECRET, {"Content-Type": "application/json"}, b"{}")[0], 404)
+
+
+class Resets(HookBase):
+    def test_a_burst_uses_one_worker_and_one_entry_per_id(self):
+        core = self.core
+        core.resets = app.Resetter(core.reset, delays=(0.3, 0.6))
+        self.addCleanup(core.resets.close)
+        before = threading.active_count()
+        with contextlib.redirect_stdout(io.StringIO()):
+            for n in range(20):
+                self.event("MarkPlayed", n, kind="Episode", played=True, session=None, extra={"SeriesId": SERIES, "SeasonId": SEASON})
+        self.assertLessEqual(threading.active_count() - before, 1)
+        self.assertEqual(len(core.resets.pending()), 3)
+        deadline = time.monotonic() + 3
+        while core.resets.pending() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertEqual(core.resets.pending(), {})
+        self.assertEqual(len(self.reset_calls()), 20 + 2)
+        self.assertEqual(threading.active_count() - before, 1)
+
+    def test_adding_again_refreshes_the_due_times(self):
+        r = self.core.resets
+        r.add("u1", ["a"])
+        self.mono = 10
+        r.add("u1", ["b", "a"])
+        self.assertEqual(r.pending(), {("u1", "b"): [15, 40], ("u1", "a"): [15, 40]})
+        self.assertEqual(list(r.pending()), [("u1", "b"), ("u1", "a")])
+
+    def test_late_due_times_run_once(self):
+        self.core.resets.add("u1", ["ph1"])
+        self.mono = 100
+        self.core.resets.run_due()
+        self.assertEqual((len(self.reset_calls()), self.core.resets.pending()), (1, {}))
+
+    def test_queue_is_capped_dropping_the_oldest(self):
+        calls = []
+        r = app.Resetter(lambda iid, uid: calls.append(iid), cap=3, clock=lambda: 0, autostart=False)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            r.add("u1", ["a", "b", "c", "d", "e"])
+        self.assertEqual(list(r.pending()), [("u1", "c"), ("u1", "d"), ("u1", "e")])
+        self.assertEqual(out.getvalue(), "reset queue full, dropped 2\n")
+        self.assertEqual(app.Resetter(print).cap, 500)
+
+    def test_a_failing_reset_keeps_the_worker(self):
+        def boom(iid, uid):
+            raise ValueError("x")
+        r = app.Resetter(boom, clock=lambda: self.mono, autostart=False)
+        r.add("u1", ["a", "b"])
+        self.mono = 5
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            r.run_due()
+        self.assertEqual(out.getvalue(), "reset failed ValueError\nreset failed ValueError\n")
+        self.assertEqual(len(r.pending()), 2)
 
 
 class HookServer(unittest.TestCase):

@@ -19,6 +19,7 @@ import secrets
 import sqlite3
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -45,6 +46,7 @@ AUTH_TTL = datetime.timedelta(seconds=30)
 UPSTREAM_TIMEOUT = 8
 SERVICE_TTL = datetime.timedelta(minutes=5)
 RESET_DELAYS = (5, 30)
+RESET_CAP = 500
 
 
 class NoServiceUser(Exception):
@@ -113,9 +115,9 @@ def badge(kind, tmdb, rs, now):
 class Core:
     NoServiceUser = NoServiceUser
 
-    def __init__(self, cfg, seerr, jellyfin, clock=None, jellyfin_admin=None, later=None):
+    def __init__(self, cfg, seerr, jellyfin, clock=None, jellyfin_admin=None):
         self.cfg, self.seerr, self.jellyfin, self.jellyfin_admin = cfg, seerr, jellyfin, jellyfin_admin
-        self.later = later or run_later
+        self.resets = Resetter(self.reset)
         self.tracked = {}
         self.clock = clock or (lambda: datetime.datetime.now(datetime.timezone.utc))
         # Short critical sections only; Seerr and Jellyfin calls run outside, under the caller's own lock.
@@ -652,9 +654,10 @@ class Core:
         try:
             data = json.loads(path.read_text())
             items = data["items"] if isinstance(data.get("items"), dict) else {}
-            data = {"runtime": int(data.get("runtimeTicks") or 0), "items": items}
+            parents = data.get("parents") if isinstance(data.get("parents"), list) else []
+            data = {"runtime": int(data.get("runtimeTicks") or 0), "items": items, "parents": {self.hook_id(v) for v in parents if isinstance(v, str)} - {None}}
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            data = {"runtime": 0, "items": {}}
+            data = {"runtime": 0, "items": {}, "parents": set()}
         with self.lock:
             self.cache["index"] = (sig, data)
         return data
@@ -702,7 +705,9 @@ class Core:
         if uid and event == "MarkPlayed":
             ud = item.get("UserData") if isinstance(item.get("UserData"), dict) else {}
             if ud.get("Played") is True:
-                self.reset_all(self.reset_ids(iid, item, None, idx), uid)
+                ids = self.reset_ids(iid, item, None, idx)
+                self.reset_all(ids, uid)
+                print(f"reset markplayed {len(ids)}", flush=True)
             return 204, {}
         if not uid or event not in ("Play", "Progress", "Pause", "Resume", "Stop"):
             return 204, {}
@@ -730,24 +735,21 @@ class Core:
         return 204, {}
 
     def reset_ids(self, iid, item, ms, idx):
-        """The placeholder, the played version (index ids only) and, for an episode, its season and series."""
+        """The placeholder, the played version and, for an episode, its season and series: index ids only."""
         ids = [iid]
         if ms and ms != iid and ms in idx["items"]:
             ids.append(ms)
         if item.get("Type") == "Episode":
             for key in ("SeasonId", "SeriesId"):
                 v = self.hook_id(item.get(key)) if isinstance(item.get(key), str) else None
-                if v and v not in ids:
+                if v and v not in ids and v in idx["parents"]:
                     ids.append(v)
         return ids
 
     def reset_all(self, ids, uid):
-        def run():
-            for iid in ids:
-                self.reset(iid, uid)
-        run()
-        for delay in RESET_DELAYS:
-            self.later(delay, run)
+        for iid in ids:
+            self.reset(iid, uid)
+        self.resets.add(uid, ids)
 
     def tv_stop(self, rec, idx, item, user, uid, sess, ms, est):
         x = rec.get("x")
@@ -795,11 +797,72 @@ class Core:
             print(f"reset failed {type(e).__name__}", flush=True)
 
 
+class Resetter:
+    """One worker thread runs the delayed resets: {(user, item): due times}, adding again refreshes them, at most cap entries (oldest dropped)."""
+
+    def __init__(self, fn, delays=RESET_DELAYS, cap=RESET_CAP, clock=time.monotonic, autostart=True):
+        self.fn, self.delays, self.cap, self.clock, self.autostart = fn, delays, cap, clock, autostart
+        self.due = collections.OrderedDict()
+        self.cond = threading.Condition()
+        self.thread, self.closed = None, False
+
+    def add(self, uid, ids):
+        now, dropped = self.clock(), 0
+        with self.cond:
+            for iid in ids:
+                self.due.pop((uid, iid), None)
+                self.due[(uid, iid)] = [now + d for d in self.delays]
+            while len(self.due) > self.cap:
+                self.due.popitem(last=False)
+                dropped += 1
+            self.cond.notify()
+            if self.autostart and self.thread is None:
+                self.thread = threading.Thread(target=self.loop, name="placeholder-reset", daemon=True)
+                self.thread.start()
+        if dropped:
+            print(f"reset queue full, dropped {dropped}", flush=True)
+
+    def pending(self):
+        with self.cond:
+            return collections.OrderedDict((k, list(v)) for k, v in self.due.items())
+
+    def run_due(self):
+        now, todo = self.clock(), []
+        with self.cond:
+            for key, times in list(self.due.items()):
+                if times[0] <= now:
+                    todo.append(key)
+                    rest = [t for t in times if t > now]
+                    if rest:
+                        self.due[key] = rest
+                    else:
+                        del self.due[key]
+        for uid, iid in todo:
+            try:
+                self.fn(iid, uid)
+            except Exception as e:  # noqa: BLE001
+                print(f"reset failed {type(e).__name__}", flush=True)
+
+    def loop(self):
+        while True:
+            with self.cond:
+                while not self.closed and not self.due:
+                    self.cond.wait()
+                if self.closed:
+                    return
+                wait = min(t[0] for t in self.due.values()) - self.clock()
+                if wait > 0:
+                    self.cond.wait(wait)
+                    continue
+            self.run_due()
+
+    def close(self):
+        with self.cond:
+            self.closed = True
+            self.cond.notify()
+
+
 # --- production wiring ------------------------------------------------------
-def run_later(delay, fn):
-    t = threading.Timer(delay, fn)
-    t.daemon = True
-    t.start()
 
 
 def http_json(url, headers, method="GET", body=None, timeout=UPSTREAM_TIMEOUT):
