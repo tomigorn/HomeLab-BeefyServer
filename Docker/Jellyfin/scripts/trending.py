@@ -46,6 +46,7 @@ TICKS = 10 * 10_000_000
 IMAGE_PATH = re.compile(r"^/[A-Za-z0-9_-]+\.(jpg|jpeg|png|webp|svg)$")
 MODE = {"now": "now", "night": "night"}
 ITEM_REFRESH = "MetadataRefreshMode=FullRefresh&ImageRefreshMode=FullRefresh&ReplaceAllMetadata=true&ReplaceAllImages=true"
+IMAGE_REFRESH = "MetadataRefreshMode=Default&ImageRefreshMode=FullRefresh&ReplaceAllMetadata=false&ReplaceAllImages=false"
 LIB_REFRESH = "Recursive=true&MetadataRefreshMode=Default&ImageRefreshMode=Default&ReplaceAllMetadata=false&ReplaceAllImages=false"
 KEEP = object()
 FAILURES = (OSError, urllib.error.URLError, ValueError, KeyError, TypeError, TimeoutError)
@@ -90,6 +91,10 @@ class Paths:
     @property
     def cache(self):
         return self.root / "cache"
+
+    @property
+    def originals(self):
+        return self.root / "originals"
 
     @property
     def index(self):
@@ -257,12 +262,19 @@ def poster_path(ph):
     return (p.get("en") or p.get("de")) if isinstance(p, dict) else p
 
 
-def desired(ph, images):
+def with_logos(marks, logos):
+    """[(list key, rank, logo bytes)]; None when a logo download failed."""
+    out = [(key, rank, logos.get(key)) for key, rank in marks]
+    return None if any(lg is Images.FAILED for _, _, lg in out) else out
+
+
+def desired(ph, images, logos):
     """{path in the folder: bytes | None (absent) | KEEP} for the folder's own non-video files."""
     out = {tm.nfo_name(ph): tm.nfo(ph).encode()}
     out.update({name: xml.encode() for name, xml in tm.episode_nfos(ph).items()})
     base = images.get("w780", poster_path(ph))
-    out["poster.jpg"] = KEEP if base is Images.FAILED else art.poster(base, ph.badge, ph.title, ph.rank)
+    marks = with_logos(ph.marks, logos)
+    out["poster.jpg"] = KEEP if base is Images.FAILED or marks is None else art.poster(base, ph.badge, ph.title, marks)
     back = images.get("w1280", (ph.info or {}).get("b"))
     out["fanart.jpg"] = KEEP if back is Images.FAILED else art.fanart(back)
     return out
@@ -589,6 +601,118 @@ class Collections:
         arts[spec["key"]] = digest
 
 
+class RealArt:
+    """Library posters of owned listed titles: the original Primary is kept in originals/<id>.jpg before the first upload, the marked poster uploaded whenever the marks or the Primary image tag changed, the original uploaded back once the title is in no list (an image refresh when the original is lost).
+    originals/<id>.badged marks an item whose Primary was replaced: its current Primary is never kept as the original, even when the state file is lost."""
+
+    def __init__(self, io, paths, state, dry_run, log, save):
+        self.io, self.dir, self.dry_run, self.log, self.save = io, paths.originals, dry_run, log, save
+        self.held = state.setdefault("real", {})
+        self.changed = 0
+
+    def original(self, iid):
+        return self.dir / f"{iid}.jpg"
+
+    def badged(self, iid):
+        return iid in self.held or (self.dir / f"{iid}.badged").exists()
+
+    def sync(self, real_marks, logos):
+        if not self.dir.is_dir():
+            self.log(f"originals folder missing ({self.dir}), library posters skipped: run trending-setup.py")
+            return
+        ids = sorted(set(real_marks) | set(self.held) | {p.stem for p in self.dir.glob("*.badged")})
+        items = {}
+        for i in range(0, len(ids), 50):
+            chunk = ",".join(ids[i:i + 50])
+            items.update({it["Id"]: it for it in self.io.jf("GET", f"/Items?Ids={chunk}&Recursive=true&CollapseBoxSetItems=false&EnableUserData=false")["Items"]})
+        n_mark, n_restore = 0, 0
+        for iid in ids:
+            item = items.get(iid)
+            try:
+                if item is None:
+                    self.drop(iid)
+                elif iid in real_marks:
+                    n_mark += self.mark(iid, item, real_marks[iid], logos)
+                elif self.badged(iid):
+                    n_restore += self.restore(iid)
+            except (JellyfinError, *FAILURES) as e:
+                self.log(f"library poster {iid} failed: {type(e).__name__}")
+        if self.dry_run and (n_mark or n_restore):
+            self.log(f"would mark {n_mark} library posters, restore {n_restore}")
+        elif n_mark or n_restore:
+            self.log(f"marked {n_mark} library posters, restored {n_restore}")
+
+    def drop(self, iid):
+        """Item not in the library (now): its record goes, the original stays for when it comes back."""
+        if not self.dry_run and self.held.pop(iid, None) is not None:
+            self.save()
+
+    def forget(self, iid):
+        if self.dry_run:
+            return
+        self.drop(iid)
+        (self.dir / f"{iid}.badged").unlink(missing_ok=True)
+        self.original(iid).unlink(missing_ok=True)
+
+    def tag(self, iid):
+        items = self.io.jf("GET", f"/Items?Ids={iid}&Recursive=true&CollapseBoxSetItems=false&EnableUserData=false")["Items"]
+        return ((items[0] if items else {}).get("ImageTags") or {}).get("Primary")
+
+    def mark(self, iid, item, marks, logos):
+        marks = with_logos(marks, logos)
+        if marks is None:
+            return 0
+        f = self.original(iid)
+        if not f.is_file():
+            if self.badged(iid):
+                self.log(f"original of {iid} lost, its poster is refreshed")
+                return self.refresh(iid)
+            if self.dry_run:
+                return 1
+            try:
+                data = self.io.jf_raw("GET", f"/Items/{iid}/Images/Primary", None, "image/jpeg")
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    return 0
+                raise
+            if art.decode(data) is None:
+                return 0
+            write_atomic(f, data)
+        poster = art.poster(f.read_bytes(), None, "", marks)
+        digest = hashlib.sha256(poster).hexdigest()
+        rec = self.held.get(iid) or {}
+        if rec.get("digest") == digest and rec.get("tag") == (item.get("ImageTags") or {}).get("Primary"):
+            return 0
+        self.changed += 1
+        if self.dry_run:
+            return 1
+        write_atomic(self.dir / f"{iid}.badged", digest.encode())
+        self.io.jf_raw("POST", f"/Items/{iid}/Images/Primary", base64.b64encode(poster), "image/jpeg")
+        self.held[iid] = {"digest": digest, "tag": self.tag(iid)}
+        self.save()
+        return 1
+
+    def restore(self, iid):
+        f = self.original(iid)
+        if not f.is_file():
+            return self.refresh(iid)
+        self.changed += 1
+        if self.dry_run:
+            return 1
+        self.io.jf_raw("POST", f"/Items/{iid}/Images/Primary", base64.b64encode(f.read_bytes()), "image/jpeg")
+        self.forget(iid)
+        return 1
+
+    def refresh(self, iid):
+        self.changed += 1
+        if self.dry_run:
+            return 1
+        self.io.jf("DELETE", f"/Items/{iid}/Images/Primary")
+        self.io.jf("POST", f"/Items/{iid}/Refresh?{IMAGE_REFRESH}")
+        self.forget(iid)
+        return 1
+
+
 def admin_id(io):
     return next(u["Id"] for u in io.jf("GET", "/Users") if (u.get("Policy") or {}).get("IsAdministrator"))
 
@@ -662,7 +786,8 @@ def sync(io, paths, now, dry_run, log):
             write_atomic(paths.state, json.dumps(state, indent=1, sort_keys=True).encode(), 0o600)
 
     added, restructured, touched = [], [], []
-    files = {folder: desired(ph, images) for folder, ph in plan.placeholders.items()}
+    logos = {spec["key"]: images.get("w500", spec.get("logo")) for spec, _ in plan.collections}
+    files = {folder: desired(ph, images, logos) for folder, ph in plan.placeholders.items()}
     for folder, ph in plan.placeholders.items():
         new, structure, content = sync_folder(paths.dir(kinds[folder]) / folder, ph, files[folder], clips, True)
         if new:
@@ -718,6 +843,8 @@ def sync(io, paths, now, dry_run, log):
         return ref if kind == "real" else (ids.get(ref) or {}).get("Id")
 
     set_ids = cols.sync(plan.collections, member_id, plan.art)
+    real_art = RealArt(io, paths, state, dry_run, log, save)
+    real_art.sync(plan.real_marks, logos)
     all_placed = {f: pl for k in KINDS for f, pl in placed[k].items() if f in by_kind[k]}
     index_changed, n_index = write_index(paths, all_placed, plan.placeholders, now, dry_run)
     hidden_ids = set(index_items(plan.placeholders, all_placed)) | {pl.item["Id"] for pl in all_placed.values()}
@@ -737,7 +864,7 @@ def sync(io, paths, now, dry_run, log):
     if state != read_json(paths.state):
         save()
 
-    changes = len(added) + len(restructured) + len(touched) + n_removed + refreshed + cols.changed + hide_changed
+    changes = len(added) + len(restructured) + len(touched) + n_removed + refreshed + cols.changed + hide_changed + real_art.changed
     if dry_run:
         log(f"would change {cols.changed} collection settings, index {'would change' if index_changed else 'unchanged'} ({n_index} ids), hide entry {'would change' if hide_changed else 'unchanged'}")
     elif changes:

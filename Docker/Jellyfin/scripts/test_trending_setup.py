@@ -169,6 +169,7 @@ class MainTest(unittest.TestCase):
         self.assertNotIn(("POST", "/Library/Refresh"), calls)
         self.assertNotIn(("GET", "/ScheduledTasks"), calls)
         self.dirs.assert_called_once()
+        self.assertEqual(list(self.dirs.call_args.args[1]), ["library", "shows", "originals"])
 
     def test_dry_run_neither_scans_nor_creates_dirs(self):
         rc, calls, out = self.run_main([[]], argv=["--dry-run"])

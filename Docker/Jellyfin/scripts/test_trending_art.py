@@ -15,6 +15,18 @@ def img(color=(90, 120, 160), size=(600, 900)):
     return b.getvalue()
 
 
+def logo_png(color):
+    b = io.BytesIO()
+    Image.new("RGBA", (200, 200), color).save(b, "PNG")
+    return b.getvalue()
+
+
+if HAVE_PIL:
+    HOME1, HOME10 = ("home-movies", 1, None), ("home-movies", 10, None)
+    HORROR3, COMEDY7 = ("genre-horror-movie", 3, None), ("genre-comedy-movie", 7, None)
+    NETFLIX5 = ("service-8-movie", 5, logo_png((200, 10, 20, 255)))
+
+
 def load(data):
     return Image.open(io.BytesIO(data))
 
@@ -92,64 +104,88 @@ class Art(unittest.TestCase):
         self.assertEqual(load(ta.collection_backdrop("coming", "Coming soon", None, None, [])).size, (1920, 1080))
         self.assertEqual(load(ta.collection_backdrop("coming", "Coming soon", None, b"not an image", [img()])).size, (1920, 1080))
 
-    def test_rank_badge_top_right_below_the_client_corner_and_clear_of_the_pill(self):
+    def test_mark_stack_top_right_below_the_client_corner_and_clear_of_the_pill(self):
         base = Image.new("RGB", (600, 900), (90, 120, 160))
-        for rank in (1, 3, 10):
-            x0, y0, x1, y1 = ta.rank_box(rank)
-            self.assertGreater(y0, 22 + 84 + 8, rank)
-            self.assertGreater(y0, 120, rank)
-            self.assertLessEqual(x1, 580, rank)
-            self.assertGreater(x0, 250, rank)
-            self.assertLess(y1, 270, rank)
-            self.assertGreaterEqual(y1 - y0, 120, rank)
+        for marks in ([HOME1], [HOME10, HORROR3], [HOME1, HORROR3, NETFLIX5, COMEDY7]):
+            boxes = ta.mark_boxes([m[1] for m in marks])
+            self.assertEqual(len(boxes), len(marks))
+            for (x0, y0, x1, y1), below in zip(boxes, boxes[1:] + [None]):
+                self.assertGreater(y0, 120)
+                self.assertLessEqual(x1, 580)
+                self.assertGreater(x0, 300)
+                self.assertGreaterEqual(y1 - y0, 100)
+                if below:
+                    self.assertGreater(below[1], y1)
+            self.assertLess(boxes[-1][3], 700)
             for badge in (None, "found", "downloading"):
-                im = load(ta.poster(img(), badge, "Title", rank)).convert("RGB")
-                for x, y in ((590, 10), (480, 60), (590, 120), (300, 450), (590, 890), (10, 890)):
+                im = load(ta.poster(img(), badge, "Title", marks)).convert("RGB")
+                for x, y in ((590, 10), (480, 60), (590, 120), (200, 450), (590, 890), (10, 890)):
                     d = max(abs(a - c) for a, c in zip(im.getpixel((x, y)), base.getpixel((x, y))))
-                    self.assertLess(d, 12, (rank, badge, x, y))
-                fx0, fy0, fx1, fy1 = ta.flag_box(rank)
-                cx, cy = (fx0 + fx1) // 2, (fy0 + fy1) // 2
-                self.assertGreater(min(im.getpixel((cx, cy))), 220, (rank, badge))
-                r, g, b = im.getpixel((fx0 + 6, fy0 + 6))
-                self.assertTrue(r > 180 and g < 70 and b < 70, (rank, badge, r, g, b))
+                    self.assertLess(d, 12, (marks, badge, x, y))
+                for x0, y0, x1, y1 in boxes:
+                    self.assertGreater(len(set(rgb_pixels(im.crop((x0, y0, x1, y1))))), 30, (marks, badge))
                 if badge:
                     self.assertLess(sum(im.getpixel((30, 60))), sum(base.getpixel((30, 60))) - 60, badge)
 
-    def test_rank_number_large_enough_for_a_tv_row(self):
-        im = load(ta.poster(img((0, 0, 0)), None, "Title", 1)).convert("L")
-        x0, y0, x1, y1 = ta.rank_box(1)
-        rows = [y for y in range(y0, y1) if any(im.getpixel((x, y)) > 200 for x in range(ta.flag_box(1)[2] + 4, x1))]
+    def test_more_than_four_marks_add_a_plus_pill(self):
+        marks = [HOME1, HORROR3, NETFLIX5, COMEDY7, ("genre-drama-movie", 9, None), ("genre-action-movie", 10, None)]
+        self.assertEqual(ta.shown_marks(marks), (marks[:4], 2))
+        self.assertEqual(ta.shown_marks(marks[:4]), (marks[:4], 0))
+        x0, y0, x1, y1 = ta.plus_box(2, 4)
+        self.assertGreater(y0, ta.mark_boxes([1, 3, 5, 7])[-1][3])
+        self.assertLess(y1, 760)
+        im = load(ta.poster(img((0, 0, 0)), None, "Title", marks)).convert("L")
+        self.assertGreater(im.crop((x0, y0, x1, y1)).getextrema()[1], 200)
+        self.assertNotEqual(ta.poster(img(), None, "Title", marks), ta.poster(img(), None, "Title", marks[:4]))
+
+    def test_mark_icons_differ_per_list_and_genres_are_colour_emoji(self):
+        icons = {k: ta.mark_icon(k, logo, 80) for k, _, logo in (HOME1, HORROR3, NETFLIX5, COMEDY7)}
+        for k, ic in icons.items():
+            self.assertEqual(ic.size, (80, 80), k)
+            self.assertGreater(ic.getchannel("A").getextrema()[1], 200, k)
+        self.assertEqual(len({ic.tobytes() for ic in icons.values()}), 4)
+        self.assertEqual(set(ta.MARK_EMOJI), {"action", "animation", "comedy", "documentary", "drama", "family", "horror", "romance", "scifi", "thriller"})
+        self.assertEqual(ta.mark_icon("genre-horror-movie", None, 80).tobytes(), ta.mark_icon("genre-horror-tv", None, 80).tobytes())
+        comedy = ta.mark_icon("genre-comedy-movie", None, 80).convert("RGB")
+        self.assertTrue(any(r > 200 and g > 150 and b < 90 for r, g, b in rgb_pixels(comedy)))
+        netflix = ta.mark_icon("service-8-movie", None, 80).convert("RGB")
+        self.assertTrue(any(r > 150 and g < 60 and b < 60 for r, g, b in rgb_pixels(netflix)))
+
+    def test_mark_number_large_enough_for_a_tv_row(self):
+        im = load(ta.poster(img((0, 0, 0)), None, "Title", [HOME1])).convert("L")
+        x0, y0, x1, y1 = ta.mark_boxes([1])[0]
+        rows = [y for y in range(y0, y1) if any(im.getpixel((x, y)) > 200 for x in range(x0 + ta.MARK_ICON + 20, x1))]
         self.assertGreaterEqual(rows[-1] - rows[0], 52)
 
-    def test_rank_badge_widens_with_the_number_and_none_leaves_the_poster_unchanged(self):
-        self.assertGreater(ta.rank_box(1)[0] - ta.rank_box(10)[0], 10)
-        self.assertEqual(ta.rank_box(1)[2], ta.rank_box(10)[2])
+    def test_mark_pill_widens_with_the_number_and_no_marks_leave_the_poster_unchanged(self):
+        self.assertGreater(ta.mark_boxes([1])[0][0] - ta.mark_boxes([10])[0][0], 10)
+        self.assertEqual(ta.mark_boxes([1])[0][2], ta.mark_boxes([10])[0][2])
         for badge in (None, "found", "none"):
-            self.assertEqual(ta.poster(img(), badge, "Title", None), ta.poster(img(), badge, "Title"))
+            self.assertEqual(ta.poster(img(), badge, "Title", []), ta.poster(img(), badge, "Title"))
 
-    def test_unavailable_title_poster_keeps_the_title_clear_of_the_banner(self):
+    def test_unavailable_title_poster_keeps_the_title_clear_of_the_banner_and_marks(self):
         title = "A Very Long Unmatched Movie Title That Wraps Around"
-        for rank in (None, 7):
-            im = load(ta.poster(None, "none", title, rank)).convert("RGB")
-            x0, y0, x1, y1 = ta.title_box("none", rank)
-            if rank:
-                self.assertGreater(y0, ta.rank_box(rank)[3])
+        for marks in ([], [HOME1, HORROR3, NETFLIX5, COMEDY7, HOME10]):
+            im = load(ta.poster(None, "none", title, marks)).convert("RGB")
+            x0, y0, x1, y1 = ta.title_box("none", len(marks))
+            boxes = ta.mark_boxes([m[1] for m in marks[:4]]) + ([ta.plus_box(len(marks) - 4, 4)] if len(marks) > 4 else [])
+            for bx0, by0, bx1, by1 in boxes:
+                self.assertTrue(bx1 < x0 or bx0 > x1 or by1 < y0 or by0 > y1)
             px = rgb_pixels(im.crop((x0, y0, x1, y1)))
-            self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, rank)
-            self.assertGreater(sum(1 for p in px if min(p) > 230), 500, rank)
+            self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, marks)
+            self.assertGreater(sum(1 for p in px if min(p) > 230), 500, marks)
             red = sum(1 for r, g, b in rgb_pixels(im) if r > 150 and g < 80 and b < 80)
-            self.assertGreater(red, 40000, rank)
+            self.assertGreater(red, 40000, marks)
 
-    def test_ranked_unavailable_poster_keeps_the_band_off_the_rank_badge_and_the_title_art(self):
-        for rank in (1, 10):
-            im = load(ta.poster(img(), "none", "Title", rank)).convert("RGB")
-            x0, y0, x1, y1 = ta.rank_box(rank)
-            fx1 = ta.flag_box(rank)[2]
-            px = rgb_pixels(im.crop((fx1 + 4, y0, x1, y1 + 40)))
-            self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, rank)
-            self.assertGreater(sum(1 for r, g, b in rgb_pixels(im) if r > 150 and g < 80 and b < 80), 40000, rank)
-            px = rgb_pixels(im.crop((170, 560, 580, 880)))
-            self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, rank)
+    def test_marked_unavailable_poster_keeps_the_band_off_the_marks_and_the_title_art(self):
+        for marks in ([HOME1], [HOME10, HORROR3, NETFLIX5, COMEDY7]):
+            im = load(ta.poster(img(), "none", "Title", marks)).convert("RGB")
+            for x0, y0, x1, y1 in ta.mark_boxes([m[1] for m in marks]):
+                px = rgb_pixels(im.crop((x0 + ta.MARK_ICON + 20, y0, x1, y1)))
+                self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, marks)
+            self.assertGreater(sum(1 for r, g, b in rgb_pixels(im) if r > 150 and g < 80 and b < 80), 40000, marks)
+            px = rgb_pixels(im.crop((170, 720, 580, 880)))
+            self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, marks)
 
     def test_fanart_and_tile(self):
         self.assertIsNone(ta.fanart(None))

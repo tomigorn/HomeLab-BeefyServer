@@ -96,7 +96,7 @@ def check_line(users, libs):
 
 
 def ensure_dirs(root, names, dry, run=subprocess.run):
-    """Creates missing library folders owned like library/ (the trending root belongs to the container user)."""
+    """Creates missing library folders and originals/ owned like library/ (the trending root belongs to the container user)."""
     like = root / "library"
     missing = [root / n for n in names if not (root / n).is_dir()]
     if dry or not missing:
@@ -151,7 +151,7 @@ def main(argv):
     def say(step):
         print(f"would {step}" if dry else step)
 
-    for d in ensure_dirs(HOST_ROOT, [pathlib.PurePath(p).name for _, _, p in LIBRARIES], dry):
+    for d in ensure_dirs(HOST_ROOT, [pathlib.PurePath(p).name for _, _, p in LIBRARIES] + ["originals"], dry):
         say(f"create {d}")
 
     rc, ids, scanned, created = 0, [], False, False

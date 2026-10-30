@@ -1,3 +1,4 @@
+import base64
 import datetime
 import hashlib
 import importlib.util
@@ -72,6 +73,9 @@ class FakeIo:
         self.seerr_calls = 0
         self.shows_id = SHOWS
         self.tv = []
+        self.primary = {"real9": jpeg((200, 100, 50))}
+        self.tags = {"real9": "tag0"}
+        self.uploads = 0
 
     def scan(self):
         self.scan_movies()
@@ -119,6 +123,13 @@ class FakeIo:
         u = urllib.parse.urlsplit(path)
         q = dict(urllib.parse.parse_qsl(u.query))
         p = u.path
+        if p == "/Items" and "Ids" in q:
+            return {"Items": [{"Id": i, "Name": i, "ImageTags": {"Primary": self.tags[i]} if i in self.primary else {}} for i in q["Ids"].split(",") if i in self.tags]}
+        m = re.fullmatch(r"/Items/(\w+)/Images/Primary", p)
+        if m and method == "DELETE":
+            self.primary.pop(m.group(1), None)
+            self.tags[m.group(1)] = None
+            return None
         if p == "/Library/VirtualFolders":
             return [{"Name": "Movies", "ItemId": "movies"}, {"Name": tm.LIBRARY, "ItemId": LIB}, {"Name": tm.SHOWS_LIBRARY, **({"ItemId": self.shows_id} if self.shows_id else {})}]
         if p == "/Users":
@@ -178,6 +189,17 @@ class FakeIo:
 
     def jf_raw(self, method, path, data, content_type):
         self.calls.append((method, path))
+        m = re.fullmatch(r"/Items/(\w+)/Images/Primary", path)
+        if m and m.group(1) in self.tags:
+            i = m.group(1)
+            if method == "GET":
+                if i not in self.primary:
+                    raise urllib.error.HTTPError(path, 404, "not found", {}, None)
+                return self.primary[i]
+            self.primary[i] = base64.b64decode(data)
+            self.uploads += 1
+            self.tags[i] = f"up{self.uploads}"
+            return b""
         self.images[path] = data
         return b""
 
@@ -205,7 +227,7 @@ class Base(unittest.TestCase):
         root = pathlib.Path(self.tmp.name)
         self.paths = tr.Paths(feeds=root / "feeds", root=root / "trending", state=root / "state" / "trending.json", lock=root / "state" / "trending.lock",
                               request_state=root / "request-state.json", signal=root / "signal" / "requested")
-        for d in ("library", "shows", "clips", "cache"):
+        for d in ("library", "shows", "clips", "cache", "originals"):
             (self.paths.root / d).mkdir(parents=True)
         self.paths.feeds.mkdir()
         for c in tm.CLIPS:
@@ -259,9 +281,11 @@ class Desired(unittest.TestCase):
         p = tm.plan(lists, {"items": []}, {}, {}, {})
         by = {ph.title: ph for ph in p.placeholders.values()}
         ranked, plain = by["Ranked"], by["Plain"]
-        self.assertEqual(tr.desired(ranked, self.NoImages())["poster.jpg"], tr.art.poster(None, ranked.badge, "Ranked", 4))
-        self.assertNotEqual(tr.desired(ranked, self.NoImages())["poster.jpg"], tr.art.poster(None, ranked.badge, "Ranked"))
-        self.assertEqual(tr.desired(plain, self.NoImages())["poster.jpg"], tr.art.poster(None, plain.badge, "Plain"))
+        logos = {"home-movies": None, "service-8-movie": None}
+        self.assertEqual(tr.desired(ranked, self.NoImages(), logos)["poster.jpg"], tr.art.poster(None, ranked.badge, "Ranked", [("home-movies", 4, None)]))
+        self.assertNotEqual(tr.desired(ranked, self.NoImages(), logos)["poster.jpg"], tr.art.poster(None, ranked.badge, "Ranked"))
+        self.assertEqual(tr.desired(plain, self.NoImages(), logos)["poster.jpg"], tr.art.poster(None, plain.badge, "Plain", [("service-8-movie", 1, None)]))
+        self.assertIs(tr.desired(plain, self.NoImages(), {"service-8-movie": tr.Images.FAILED})["poster.jpg"], tr.KEEP)
 
 
 class SyncTest(Base):
@@ -379,7 +403,7 @@ class SyncTest(Base):
         self.assertIn(("POST", f"/Collections/{home}/Items?ids={self.item('Gamma')['Id']}"), changes)
         self.assertEqual(self.io.sets[home]["children"], [self.item("Alpha")["Id"], "real9", self.item("Gamma")["Id"]])
         uploads = sorted(c[1] for c in self.io.calls if c[1].startswith("/Items/") and "/Images/" in c[1])
-        self.assertEqual(uploads, [f"/Items/{home}/Images/Backdrop/0", f"/Items/{home}/Images/Primary"])
+        self.assertEqual(uploads, sorted([f"/Items/{home}/Images/Backdrop/0", f"/Items/{home}/Images/Primary", "/Items/real9/Images/Primary"]))
 
         self.paths.state.unlink()
         self.assertEqual(self.run_sync(), 0, self.out)
@@ -633,7 +657,7 @@ class SyncTest(Base):
         d = self.paths.library / "Instadocs AI Gone Wild"
         self.assertEqual(sorted(p.name for p in d.iterdir()), ["Instadocs AI Gone Wild.mp4", "movie.nfo", "poster.jpg"])
         self.assertEqual(os.stat(d / "Instadocs AI Gone Wild.mp4").st_ino, os.stat(self.paths.clips / "unavailable.mp4").st_ino)
-        self.assertEqual((d / "poster.jpg").read_bytes(), tr.art.poster(None, "none", "Instadocs: AI Gone Wild", 3))
+        self.assertEqual((d / "poster.jpg").read_bytes(), tr.art.poster(None, "none", "Instadocs: AI Gone Wild", [("home-shows", 3, None)]))
         nfo = (d / "movie.nfo").read_text()
         self.assertIn("<title>Instadocs: AI Gone Wild</title>", nfo)
         self.assertIn(f"<plot>{tm.PREFIX['none']}</plot>", nfo)
@@ -685,10 +709,6 @@ class SyncTest(Base):
         self.assertEqual(self.run_sync("--bogus"), 2)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class RankedCollections(Base):
     def home(self):
         return next(s for s in self.io.sets.values() if s["Name"] == "Top 10 Switzerland · Movies")
@@ -715,3 +735,121 @@ class RankedCollections(Base):
         home["children"] = ["real9", self.item("Beta")["Id"], self.item("Alpha")["Id"]]
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual((home["DisplayOrder"], home["children"]), ("Default", [self.item("Alpha")["Id"], self.item("Beta")["Id"], "real9"]))
+
+
+class RealArt(Base):
+    ORIGINAL = jpeg((200, 100, 50))
+
+    def badged(self):
+        return tr.art.poster(self.ORIGINAL, None, "", [("home-movies", 3, None)])
+
+    def drop_owned(self):
+        lists, coming, details, comingd = feeds()
+        lists["home"]["movies"] = lists["home"]["movies"][:2]
+        self.write_feeds(lists, coming, details, comingd)
+
+    def test_owned_title_gets_its_marks_and_the_original_is_kept_first(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual((self.paths.originals / "real9.jpg").read_bytes(), self.ORIGINAL)
+        self.assertEqual(self.io.primary["real9"], self.badged())
+        self.assertEqual(oct(os.stat(self.paths.originals / "real9.jpg").st_mode & 0o777), "0o644")
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse(any("/Images/" in c[1] for c in self.writes()))
+        self.assertEqual((self.paths.originals / "real9.jpg").read_bytes(), self.ORIGINAL)
+
+    def test_reverted_poster_is_reapplied_from_the_kept_original(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.io.primary["real9"], self.io.tags["real9"] = jpeg((1, 2, 3)), "refreshed"
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.io.primary["real9"], self.badged())
+        self.assertEqual((self.paths.originals / "real9.jpg").read_bytes(), self.ORIGINAL)
+
+    def test_changed_marks_rebuild_the_poster(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        lists, coming, details, comingd = feeds()
+        lists["rows"][0]["items"].append(entry(9, 3, "Owned"))
+        self.write_feeds(lists, coming, details, comingd)
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.io.primary["real9"], tr.art.poster(self.ORIGINAL, None, "", [("home-movies", 3, None), ("service-8-movie", 3, self.io.fetch(tr.TMDB + "w500/logo8.png"))]))
+
+    def test_dropping_out_of_every_list_restores_the_original(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.drop_owned()
+        self.assertEqual(self.run_sync("--dry-run"), 0, self.out)
+        self.assertEqual(self.io.primary["real9"], self.badged())
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.io.primary["real9"], self.ORIGINAL)
+        self.assertFalse((self.paths.originals / "real9.jpg").exists())
+        self.assertNotIn("real9", tr.read_json(self.paths.state).get("real", {}))
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse(any("/Images/" in c[1] for c in self.writes()))
+
+    def test_lost_original_refreshes_the_primary_image_only(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        (self.paths.originals / "real9.jpg").unlink()
+        self.drop_owned()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertIn(("DELETE", "/Items/real9/Images/Primary"), self.io.calls)
+        self.assertIn(("POST", "/Items/real9/Refresh?" + tr.IMAGE_REFRESH), self.io.calls)
+        self.assertNotIn("real9", tr.read_json(self.paths.state).get("real", {}))
+
+    def test_a_badged_poster_is_never_kept_as_the_original(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        (self.paths.originals / "real9.jpg").unlink()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse((self.paths.originals / "real9.jpg").exists())
+        self.assertIn(("DELETE", "/Items/real9/Images/Primary"), self.io.calls)
+        self.assertNotIn("real9", tr.read_json(self.paths.state).get("real", {}))
+
+    def test_item_gone_from_the_library_drops_its_record_but_keeps_the_original(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        tags, primary = self.io.tags.pop("real9"), self.io.primary.pop("real9")
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertNotIn("real9", tr.read_json(self.paths.state).get("real", {}))
+        self.assertEqual((self.paths.originals / "real9.jpg").read_bytes(), self.ORIGINAL)
+        self.io.tags["real9"], self.io.primary["real9"] = tags, primary
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual((self.paths.originals / "real9.jpg").read_bytes(), self.ORIGINAL)
+        self.assertEqual(self.io.primary["real9"], self.badged())
+
+    def test_lost_state_never_keeps_the_badged_poster_as_the_original(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.paths.state.unlink()
+        (self.paths.originals / "real9.jpg").unlink()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse((self.paths.originals / "real9.jpg").exists())
+        self.assertIn(("DELETE", "/Items/real9/Images/Primary"), self.io.calls)
+
+    def test_lost_state_still_restores_the_original_after_dropping_out(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.paths.state.unlink()
+        self.drop_owned()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.io.primary["real9"], self.ORIGINAL)
+        self.assertEqual(list(self.paths.originals.iterdir()), [])
+
+    def test_a_failing_item_is_logged_and_the_sync_goes_on(self):
+        self.io.fail = {r"POST /Items/real9/Refresh.*"}
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.paths.state.unlink()
+        (self.paths.originals / "real9.jpg").unlink()
+        self.paths.index.unlink()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertIn("library poster real9 failed: HTTPError", self.out)
+        self.assertTrue(self.paths.index.is_file())
+
+    def test_dry_run_keeps_no_original_and_uploads_nothing(self):
+        self.assertEqual(self.run_sync("--dry-run"), 0, self.out)
+        self.assertFalse((self.paths.originals / "real9.jpg").exists())
+        self.assertEqual(self.io.primary["real9"], self.ORIGINAL)
+        self.assertIn("would mark 1 library posters", self.out)
+
+    def test_no_originals_folder_skips_library_posters(self):
+        (self.paths.originals).rmdir()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.io.primary["real9"], self.ORIGINAL)
+        self.assertIn("originals folder missing", self.out)
+
+
+if __name__ == "__main__":
+    unittest.main()

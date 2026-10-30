@@ -159,6 +159,21 @@ class Plan(unittest.TestCase):
         ranks = {ph.title: ph.rank for ph in p.placeholders.values()}
         self.assertEqual(ranks, {"Shared Film": 3, "Show": 10, "Mystery": 7, "Other": None, "Upcoming": None})
 
+    def test_marks_one_per_list_top_10_first_then_best_rank(self):
+        l = lists(movies=[item("movie", 5, 8, "Shared Film"), item("movie", 3, 2, "Owned")], shows=[unmatched("tv", 4, "Mystery")],
+                  rows=[row("service-8-movie", "movie", "Netflix", [item("movie", 9, 1, "Other"), item("movie", 5, 5, "Shared Film"), item("movie", 3, 6, "Owned")]),
+                        row("genre-horror-movie", "movie", "Horror", [item("movie", 5, 1, "Shared Film"), item("movie", 3, 1, "Owned")], typ="genre"),
+                        row("genre-comedy-movie", "movie", "Comedy", [item("movie", 5, 5, "Shared Film")], typ="genre")])
+        p = tm.plan(l, coming(("movie", 20, "d20", "2026-11-04")), {"d20": info("movie", 20, "Upcoming", 2026)}, {"movie/3": "jf3"}, {})
+        marks = {ph.title: ph.marks for ph in p.placeholders.values()}
+        self.assertEqual(marks, {"Shared Film": [("home-movies", 8), ("genre-horror-movie", 1), ("service-8-movie", 5), ("genre-comedy-movie", 5)],
+                                 "Mystery": [("home-shows", 4)], "Other": [("service-8-movie", 1)], "Upcoming": []})
+        self.assertEqual(p.real_marks, {"jf3": [("home-movies", 2), ("genre-horror-movie", 1), ("service-8-movie", 6)]})
+
+    def test_owned_title_only_in_coming_soon_has_no_marks(self):
+        p = tm.plan(lists(), coming(("tv", 30, "d30", "2026-11-04")), {"d30": info("tv", 30, "Running Show", 2020)}, {"tv/30": "jf30"}, {})
+        self.assertEqual(p.real_marks, {})
+
     def test_coming_owned_is_real_and_without_details_skipped(self):
         c = coming(("tv", 30, "d30", "2026-11-04"), ("movie", 31, "missing", "2026-11-05"))
         p = tm.plan(lists(), c, {"d30": info("tv", 30, "Running Show", 2020)}, {"tv/30": "jf30"}, {})

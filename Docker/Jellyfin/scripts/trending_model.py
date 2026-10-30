@@ -1,5 +1,5 @@
 """Pure model of the trending libraries: the published lists (lists.json, coming-list.json) and their details become placeholder folders and 37 collections.
-plan() decides each title's placeholder (folder, state, clips, badge, Top 10 rank, sort title) or its real library item; nfo() writes its movie.nfo or tvshow.nfo, episode_nfos() a series' Season 00 episodes. No I/O: trending.py applies the plan."""
+plan() decides each title's placeholder (folder, state, clips, badge, Top 10 rank, list marks, sort title) or its real library item and its list marks; nfo() writes its movie.nfo or tvshow.nfo, episode_nfos() a series' Season 00 episodes. No I/O: trending.py applies the plan."""
 import dataclasses
 import datetime
 import copy
@@ -59,6 +59,7 @@ class Ph:
     badge: str | None
     coming_date: str | None
     rank: int | None = None
+    marks: list = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass
@@ -66,6 +67,7 @@ class Plan:
     placeholders: dict
     collections: list
     art: dict = dataclasses.field(default_factory=dict)
+    real_marks: dict = dataclasses.field(default_factory=dict)
 
 
 def collection_specs(lists):
@@ -148,6 +150,11 @@ def _state(entry, request):
     return "none", None
 
 
+def ordered_marks(found, order):
+    """[(list key, rank)]: the Top 10 first, then by best rank, ties in list order."""
+    return sorted(found, key=lambda m: (not m[0].startswith("home-"), m[1], order[m[0]]))
+
+
 def plan(lists, coming, details, owned, states):
     """Plan of placeholders {folder: Ph}, collections [(spec, [("ph", folder) | ("real", item id)])] in rank order and art {spec key: [{"p": poster, "b": backdrop}] of the first members}.
     details: {details token: tmdb_details projection} (details.json and coming.json entries); owned: {"kind/tmdb": Jellyfin item id}; states: {"kind/tmdb": (request status, mode)}.
@@ -160,7 +167,7 @@ def plan(lists, coming, details, owned, states):
     for r in lists.get("rows") or []:
         entries[r["id"]] = [e for e in r.get("items") or [] if entry_key(e)]
 
-    titles = {}
+    titles, found = {}, {}
     for i, spec in enumerate(specs, 1):
         if spec["key"] == COMING[0]:
             for rank, c in enumerate((coming or {}).get("items") or [], 1):
@@ -180,8 +187,12 @@ def plan(lists, coming, details, owned, states):
             if t["entry"] is None or (e.get("x") and not t["entry"].get("x")):
                 t["entry"] = e
             t["info"] = t["info"] or details.get(e.get("d")) or by_ref.get(key)
+            if e.get("r") and not any(k == spec["key"] for k, _ in found.get(key, ())):
+                found.setdefault(key, []).append((spec["key"], int(e["r"])))
 
     real = {key: owned[key] for key, t in titles.items() if key in owned}
+    order = {s["key"]: i for i, s in enumerate(specs)}
+    marks = {key: ordered_marks(m, order) for key, m in found.items()}
     skip = {key for key, t in titles.items() if key not in owned and t["entry"] is not None and t["entry"].get("o")}
     taken, folders, placeholders = set(), {}, {}
     for key in sorted(k for k in titles if k not in real and k not in skip):
@@ -195,7 +206,8 @@ def plan(lists, coming, details, owned, states):
         placeholders[folder] = Ph(
             key=key, kind=t["kind"], tmdb=t["tmdb"], season=(e or {}).get("s"), folder=folder, title=title, year=year, state=state, mode=mode,
             x=e.get("x") if state == "found" else None, sort_title=f"{li:02d}-{rank:02d} {title}", info=inf, files=_files(folder, t["kind"], state),
-            badge=None if state == "coming" else state, coming_date=t["date"], rank=rank if li <= len(HOME) else None)
+            badge=None if state == "coming" else state, coming_date=t["date"], rank=rank if li <= len(HOME) else None,
+            marks=marks.get(key, []))
         folders[key] = folder
 
     def member(key):
@@ -220,7 +232,7 @@ def plan(lists, coming, details, owned, states):
             keys = [entry_key(e) for e in entries[spec["key"]]]
         collections.append((spec, [m for m in map(member, keys) if m]))
         art[spec["key"]] = [art_ref(k) for k in keys if member(k)][:ART_MEMBERS]
-    return Plan(placeholders, collections, art)
+    return Plan(placeholders, collections, art, {real[k]: marks[k] for k in real if marks.get(k)})
 
 
 def _prefix(ph):

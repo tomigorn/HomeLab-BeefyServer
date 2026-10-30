@@ -1,4 +1,5 @@
 """Art for the trending library: posters with a state badge, collection posters and backdrops, the library tile. Pillow only; icons are drawn shapes."""
+import functools
 import io
 import math
 import re
@@ -7,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 SANS = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+EMOJI = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
 W, H = 600, 900
 BW, BH = 1920, 1080
 WHITE = (255, 255, 255)
@@ -16,7 +18,21 @@ BLUE = (37, 110, 230)
 DARK = (20, 22, 28)
 PILL = (10, 10, 14, 205)
 FLAG_RED = (218, 41, 28)
-RANK_TOP, RANK_H, RANK_FLAG, RANK_FONT = 132, 124, 84, 84
+MARK_TOP, MARK_H, MARK_GAP, MARK_ICON, MARK_FONT, MAX_MARKS = 132, 108, 12, 80, 80, 4
+PLUS_H, PLUS_FONT = 72, 52
+MARK_EMOJI = {
+    "action": "💥",
+    "animation": "🎨",
+    "comedy": "😂",
+    "documentary": "🎥",
+    "drama": "🎭",
+    "family": "🧸",
+    "horror": "👻",
+    "romance": "❤️",
+    "scifi": "🚀",
+    "thriller": "🔪",
+}
+SWISS = "🇨🇭"
 SERVICES = {
     "8": ("#c20a14", "#1a0002"),
     "119": ("#0091c9", "#03182a"),
@@ -376,48 +392,112 @@ def badge_none(im, p0=(0, H), p1=(W, 0), size=50, centre=None):
 
 # Low and flat band of a title-only poster, the title above it.
 LOW_BAND = ((-60, 846), (660, 534))
-# Steep band left of the rank badge, clear of the title art at the bottom of a poster.
+# Steep band left of the mark stack, clear of the title art at the bottom of a poster.
 STEEP_BAND = ((-100, 926), (290, -80))
 STEEP_TEXT = (135, 318)
 
 
-def rank_box(rank):
-    """Top right, below the clients' played/unplayed corner."""
-    w = 14 + RANK_FLAG + 14 + round(font(RANK_FONT).getlength(f"#{rank}")) + 26
-    return (W - 22 - w, RANK_TOP, W - 22, RANK_TOP + RANK_H)
+def mark_width(rank):
+    return 14 + MARK_ICON + 14 + round(font(MARK_FONT).getlength(f"#{rank}")) + 26
 
 
-def flag_box(rank):
-    x0, y0, _, y1 = rank_box(rank)
-    fy = (y0 + y1 - RANK_FLAG) // 2
-    return (x0 + 14, fy, x0 + 14 + RANK_FLAG, fy + RANK_FLAG)
+def mark_boxes(ranks):
+    """One pill per shown mark, right-aligned and stacked downwards below the clients' played/unplayed corner."""
+    out = []
+    for i, rank in enumerate(ranks):
+        y = MARK_TOP + i * (MARK_H + MARK_GAP)
+        out.append((W - 22 - mark_width(rank), y, W - 22, y + MARK_H))
+    return out
 
 
-def swiss_flag(d, box):
-    x0, y0, x1, _ = box
-    u = (x1 - x0) / 32
-    cx, cy = x0 + 16 * u, y0 + 16 * u
-    d.rounded_rectangle(box, radius=round(4 * u), fill=FLAG_RED, outline=WHITE, width=2)
-    d.rectangle((cx - 3 * u, cy - 10 * u, cx + 3 * u, cy + 10 * u), fill=WHITE)
-    d.rectangle((cx - 10 * u, cy - 3 * u, cx + 10 * u, cy + 3 * u), fill=WHITE)
+def plus_box(more, shown):
+    y = MARK_TOP + shown * (MARK_H + MARK_GAP)
+    w = 26 + round(font(PLUS_FONT).getlength(f"+{more}")) + 26
+    return (W - 22 - w, y, W - 22, y + PLUS_H)
 
 
-def rank_badge(im, rank):
-    """Swiss flag and #rank on a dark translucent pill, the rank in a Top 10 Switzerland list."""
+def shown_marks(marks):
+    """(the first MAX_MARKS marks, how many more)."""
+    return list(marks[:MAX_MARKS]), max(0, len(marks) - MAX_MARKS)
+
+
+@functools.lru_cache(maxsize=64)
+def emoji(text, size):
+    """The colour emoji, trimmed and fitted into a size x size RGBA tile; None without the emoji font."""
+    try:
+        fnt = ImageFont.truetype(EMOJI, 109)
+    except OSError:
+        return None
+    im = Image.new("RGBA", (160, 160), (0, 0, 0, 0))
+    ImageDraw.Draw(im).text((10, 10), text, font=fnt, embedded_color=True)
+    box = im.getbbox()
+    if not box:
+        return None
+    im = im.crop(box)
+    s = size / max(im.width, im.height)
+    im = im.resize((max(1, round(im.width * s)), max(1, round(im.height * s))), Image.LANCZOS)
+    tile = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    tile.paste(im, ((size - im.width) // 2, (size - im.height) // 2), im)
+    return tile
+
+
+def letter_tile(letter, colour, size):
+    tile = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tile)
+    d.rounded_rectangle((0, 0, size - 1, size - 1), radius=round(size * 0.22), fill=colour)
+    d.text((size / 2, size / 2 + 2), letter, font=font(round(size * 0.66)), fill=WHITE, anchor="mm")
+    return tile
+
+
+def mark_icon(key, logo, size):
+    """Icon of a list: the Swiss flag for Top 10, the service logo (its initial on the service colour without one), the genre emoji."""
+    key = key or ""
+    if key.startswith("home-"):
+        return emoji(SWISS, size).copy() if emoji(SWISS, size) else letter_tile("+", FLAG_RED + (255,), size)
+    m = re.match(r"genre-([a-z]+)-", key)
+    if m:
+        e = emoji(MARK_EMOJI.get(m.group(1), "🎬"), size)
+        return e.copy() if e else letter_tile(m.group(1)[:1].upper(), rgb(GENRES.get(m.group(1), OTHER)[0]) + (255,), size)
+    m = re.match(r"service-(\d+)-", key)
+    lg = decode_rgba(logo) if logo else None
+    if lg is not None:
+        tile = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        lg = cover(lg, (size, size)) if abs(lg.width / lg.height - 1) < 0.15 else contain_on(lg, size)
+        tile.paste(lg, (0, 0), lg)
+        out = rounded(tile, round(size * 0.22))
+        ImageDraw.Draw(out).rounded_rectangle((0, 0, size - 1, size - 1), radius=round(size * 0.22), outline=(255, 255, 255, 110), width=2)
+        return out
+    colour = rgb(SERVICES.get(m.group(1), OTHER)[0]) if m else rgb(OTHER[0])
+    return letter_tile("N" if m and m.group(1) == "8" else "▶", colour + (255,), size)
+
+
+def mark_stack(im, marks):
+    """Right-side stack of pills, one per list: icon and #rank; marks = [(list key, rank, logo bytes)], at most MAX_MARKS shown, then a +N pill."""
+    shown, more = shown_marks(marks)
+    if not shown:
+        return im
     layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
-    x0, y0, x1, y1 = rank_box(rank)
-    d.rounded_rectangle((x0, y0, x1, y1), radius=RANK_H // 2, fill=PILL)
-    fb = flag_box(rank)
-    swiss_flag(d, fb)
-    d.text((fb[2] + 14, (y0 + y1) // 2 + 1), f"#{rank}", font=font(RANK_FONT), fill=WHITE, anchor="lm")
+    fnt = font(MARK_FONT)
+    for (key, rank, logo), (x0, y0, x1, y1) in zip(shown, mark_boxes([m[1] for m in shown])):
+        d.rounded_rectangle((x0, y0, x1, y1), radius=MARK_H // 2, fill=PILL)
+        icon = mark_icon(key, logo, MARK_ICON)
+        iy = (y0 + y1 - MARK_ICON) // 2
+        layer.alpha_composite(icon, (x0 + 14, iy))
+        d.text((x0 + 14 + MARK_ICON + 14, (y0 + y1) // 2 + 1), f"#{rank}", font=fnt, fill=WHITE, anchor="lm")
+    if more:
+        x0, y0, x1, y1 = plus_box(more, len(shown))
+        d.rounded_rectangle((x0, y0, x1, y1), radius=PLUS_H // 2, fill=PILL)
+        d.text(((x0 + x1) // 2, (y0 + y1) // 2 + 1), f"+{more}", font=font(PLUS_FONT), fill=WHITE, anchor="mm")
     return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
 
 
-def title_box(badge, rank):
+def title_box(badge, n_marks=0):
+    if n_marks:
+        return (100, 700, W - 40, 880)
     if badge != "none":
         return (50, 250, W - 50, 650)
-    return (50, rank_box(rank)[3] + 24 if rank else 70, W - 50, 480)
+    return (50, 70, W - 50, 480)
 
 
 def title_poster(title, box=(50, 250, W - 50, 650)):
@@ -427,9 +507,11 @@ def title_poster(title, box=(50, 250, W - 50, 650)):
     return im
 
 
-def poster(base, badge, title, rank=None):
+def poster(base, badge, title, marks=()):
+    """Placeholder or library poster: state pill top left, red band when not downloadable, marks = [(list key, rank, logo bytes)] stacked on the right."""
+    marks = list(marks or ())
     pic = decode(base)
-    im = cover(pic, (W, H)) if pic is not None else title_poster(title, title_box(badge, rank))
+    im = cover(pic, (W, H)) if pic is not None else title_poster(title, title_box(badge, len(marks)))
     if badge == "found":
         im = badge_pill(im, "Download", "arrow", (255, 255, 255), (16, 16, 20))
     elif badge == "requested":
@@ -437,13 +519,13 @@ def poster(base, badge, title, rank=None):
     elif badge == "downloading":
         im = badge_pill(im, "Downloading", "arrow", BLUE, WHITE)
     elif badge == "none":
-        if pic is None:
+        if marks:
+            im = badge_none(im, *STEEP_BAND, centre=STEEP_TEXT)
+        elif pic is None:
             im = badge_none(im, *LOW_BAND, size=44)
         else:
-            im = badge_none(im, *STEEP_BAND, centre=STEEP_TEXT) if rank else badge_none(im)
-    if rank:
-        im = rank_badge(im, rank)
-    return to_jpeg(im)
+            im = badge_none(im)
+    return to_jpeg(mark_stack(im, marks))
 
 
 def fanart(base):

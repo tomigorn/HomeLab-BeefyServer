@@ -65,6 +65,7 @@ if want jellyfin; then
   check jf.trending-collections-name '^Collections & Trending$' "$(jf_api /Library/VirtualFolders | jq -r '[.[] | select(.CollectionType == "boxsets") | .Name] | first' 2>&1)"
   check jf.trending-index '^fresh [1-9]' "$(python3 -c 'import json,sys,datetime as d;a=json.load(open(sys.argv[1]));print(("fresh" if d.datetime.now(d.timezone.utc)-d.datetime.fromisoformat(a["updated"])<d.timedelta(days=9) else "stale"),len(a["items"]))' /srv/appdata/jellyfin-popular/trending-index.json 2>&1)"
   check jf.trending-dirs '^ok ok ok$' "$(test -w /srv/appdata/jellyfin/trending/library && echo -n ok || echo -n no; echo -n ' '; test -w /srv/appdata/jellyfin/trending/shows && echo -n ok || echo -n no; echo -n ' '; test -s /srv/appdata/jellyfin/trending/clips/now.mp4 && echo ok || echo no)"
+  check jf.trending-originals '^ok [0-9]+ missing 0$' "$(python3 -c 'import json,sys,pathlib as p;s=json.load(open(sys.argv[1])).get("real",{});d=p.Path(sys.argv[2]);print("ok",len(s),"missing",sum(not (d/(i+".jpg")).is_file() or not (d/(i+".badged")).is_file() for i in s))' ~/.local/state/jellyfin-trending.json /srv/appdata/jellyfin/trending/originals 2>&1)"
   check jf.trending-hide-served '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssTrendingHide = ' 2>&1)"
   check jf.trending-path '^active$' "$(jf_user_systemctl is-active jellyfin-trending.path 2>&1)"
   check jf.trending-webhook '^ok$' "$(python3 "$DIR/../../Jellyfin/scripts/trending-webhook.py" check 2>&1)"
