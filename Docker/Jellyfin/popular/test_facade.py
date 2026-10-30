@@ -469,7 +469,7 @@ P_PATHS = [
     "tv/1399/similar", "tv/1399/recommendations", "person/287", "person/287/combined_credits", "collection/10",
     "media?filter=allavailable&sort=mediaAdded&take=20", "languages", "regions", "genres/movie", "genres/tv",
     "watchproviders/regions", "watchproviders/movies?watchRegion=CH", "watchproviders/tv", "studio/2", "network/49", "keyword/9715",
-    "certifications/movie", "certifications/tv", "backdrops", "issue?take=10&skip=0", "issue/count", "issue/3",
+    "certifications/movie", "certifications/tv", "backdrops", "issue/count",
 ]
 
 
@@ -577,16 +577,20 @@ class ReadProxy(FacadeBase):
         user = {"id": 7, "email": "jane@example.com", "displayName": "Jane Doe", "apiKey": "k1", "plexToken": "p1", "jellyfinAuthToken": "j1",
                 "jellyfinDeviceId": "d1", "password": "pw", "resetPasswordGuid": "g1", "plexId": 5, "jellyfinUserId": "u1", "plexUsername": "jane",
                 "jellyfinUsername": "jane", "username": "jane", "avatar": "/a.png", "permissions": 2, "settings": {"locale": "de", "pgpKey": "x"}}
-        fixture = {"id": 550, "mediaInfo": {"id": 3, "jellyfinMediaId": "abc", "requests": [{"id": 9, "requestedBy": dict(user), "modifiedBy": dict(user),
+        fixture = {"id": 550, "mediaInfo": {"id": 3, "jellyfinMediaId": "abc", "serviceUrl": "http://radarr:7878/movie/550", "serviceUrl4k": "http://radarr4k:7878/x",
+                   "externalServiceId": 12, "externalServiceId4k": 13, "externalServiceSlug": "fight-club", "externalServiceSlug4k": "s", "requests": [{"id": 9, "requestedBy": dict(user), "modifiedBy": dict(user),
                    "media": {"issues": [{"createdBy": dict(user), "comments": [{"user": dict(user), "message": "hi"}]}]}}]},
                    "deep": [[{"a": {"b": {"settings": {"email": "x@example.com"}, "apiKey": "k2", "keep": 1}}}]], "email": "top@example.com",
                    "results": [{"user": dict(user), "title": "Dune"}, {"requestedBy": None}, {"modifiedBy": 5}]}
         out = facade.scrub(fixture, 1000001, set())
         text = json.dumps(out)
         for key in ["email", "apiKey", "plexToken", "jellyfinAuthToken", "jellyfinDeviceId", "password", "resetPasswordGuid", "plexId", "jellyfinUserId", "settings",
-                    "plexUsername", "jellyfinUsername", "username", "permissions", "avatar"]:
+                    "plexUsername", "jellyfinUsername", "username", "permissions", "avatar", "serviceUrl", "serviceUrl4k", "externalService"]:
             self.assertNotIn(f'"{key}"', text, key)
         self.assertNotIn("@", text)
+        self.assertNotIn("radarr", text)
+        self.assertNotIn('"externalService', text)
+        self.assertEqual(facade.scrub([[{"x": {"externalServiceFoo": 1, "serviceUrl": "u", "keep": 2}}]], 1000001, set()), [[{"x": {"keep": 2}}]])
         for secret in ["k1", "p1", "j1", "d1", "pw", "g1", "u1", "k2", "jane"]:
             self.assertNotIn(f'"{secret}"', text, secret)
         self.assertEqual(out["deep"], [[{"a": {"b": {"keep": 1}}}]])
@@ -617,7 +621,7 @@ class ReadProxy(FacadeBase):
         self.assertNotIn(1, [x["requestedBy"]["id"] for x in r if x["requestedBy"]])
 
     def test_seerr_non_json_and_errors_are_502_json(self):
-        bad = [test_facade_http_error(500), test_facade_http_error(502), test_facade_http_error(404), test_facade_http_error(401), socket.timeout("timed out"),
+        bad = [seerr_http_error(500), seerr_http_error(502), seerr_http_error(503), socket.timeout("timed out"),
                OSError("connection refused"), ValueError("Expecting value: <html>login</html>"), http.client.IncompleteRead(b"<html>"),
                http.client.RemoteDisconnected("gone"), UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")]
         for err in bad:
@@ -630,6 +634,26 @@ class ReadProxy(FacadeBase):
             self.seerr.answer["/api/v1/movie/550"] = value
             self.assertEqual(self.get("movie/550")[:2], (502, {"message": "Seerr is not reachable"}), value)
         self.assertEqual(self.seerr.posts, [])
+
+    def test_seerr_4xx_is_404_json(self):
+        for code in (400, 401, 403, 404, 422):
+            self.seerr.error = seerr_http_error(code)
+            for path in ["movie/999999999", "status"]:
+                self.assertEqual(self.get(path), (404, {"message": "Not found"}, []), (code, path))
+
+    def test_bugs_are_not_reported_as_seerr_down(self):
+        for err in (KeyError("x"), TypeError("x")):
+            self.seerr.error = err
+            with self.assertRaises(type(err)):
+                self.get("movie/550")
+
+    def test_issues_empty_count_proxied(self):
+        for path in ["issue", "issue?take=10&skip=0&filter=open", "issue/3"]:
+            self.assertEqual(self.get(path)[:2], (200, {"pageInfo": {"pages": 0, "pageSize": 25, "results": 0, "page": 1}, "results": []}), path)
+            self.assertEqual(self.get(path, cookie=None)[0], 401, path)
+        self.assertEqual(self.seerr.gets, [])
+        self.assertEqual(self.get("issue/count")[0], 200)
+        self.assertEqual(self.seerr.gets, [("GET", "/api/v1/issue/count", 20)])
 
     def test_watchlist_and_blocklist_empty_pages(self):
         self.assertEqual(self.get("discover/watchlist?page=1")[:2], (200, {"page": 1, "totalPages": 1, "totalResults": 0, "results": []}))
@@ -656,7 +680,7 @@ class ReadProxy(FacadeBase):
         self.assertIsNotNone(cookie_of(extra))
 
 
-def test_facade_http_error(code):
+def seerr_http_error(code):
     return urllib.error.HTTPError("http://seerr:5055/api/v1/x", code, "error", {}, io.BytesIO(b"<html>Seerr login secret-page</html>"))
 
 

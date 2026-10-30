@@ -40,7 +40,7 @@ ROUTES = [
     ("POST", r"auth/logout", "auth"),
     ("GET", r"auth/me", "auth"),
     ("GET", r"discover/watchlist", "empty_page"),
-    ("GET", r"blocklist|blacklist", "empty_page"),
+    ("GET", rf"blocklist|blacklist|issue|issue/{N}", "empty_page"),
     ("GET", r"service/(radarr|sonarr)", "synth"),
     ("GET", rf"service/(radarr|sonarr)/{N}", "synth"),
     ("GET", rf"user/{N}/quota", "synth"),
@@ -60,10 +60,10 @@ ROUTES = [
     ("GET", r"watchproviders/(regions|movies|tv)", "proxy"),
     ("GET", rf"(studio|network|keyword)/{N}", "proxy"),
     ("GET", r"certifications/(movie|tv)", "proxy"),
-    ("GET", rf"issue|issue/count|issue/{N}", "proxy"),
+    ("GET", r"issue/count", "proxy"),
 ]
 COMPILED = [(m, re.compile(rx), kind) for m, rx, kind in ROUTES]
-DROP = {"email", "apiKey", "plexToken", "jellyfinAuthToken", "jellyfinDeviceId", "password", "resetPasswordGuid", "plexId", "jellyfinUserId", "settings"}
+DROP = {"email", "apiKey", "plexToken", "jellyfinAuthToken", "jellyfinDeviceId", "password", "resetPasswordGuid", "plexId", "jellyfinUserId", "settings", "serviceUrl", "serviceUrl4k"}
 USER_KEYS = {"requestedBy", "modifiedBy", "createdBy", "user"}
 HOUSEHOLD = {"id": 0, "displayName": "Household"}
 METHOD_RE = re.compile(r"[A-Z]{1,10}")
@@ -205,7 +205,7 @@ def scrub(obj, me_uid, mine, me_name="You"):
     requester = obj.get("requestedBy")
     out = {}
     for k, v in obj.items():
-        if k in DROP:
+        if k in DROP or k.startswith("externalService"):
             continue
         if k in USER_KEYS:
             if v is None:
@@ -324,13 +324,15 @@ class Facade:
             return 503, {"message": "Requests are not set up"}
         except urllib.error.HTTPError as e:
             e.close()
+            if 400 <= e.code < 500:
+                return 404, {"message": "Not found"}
             return 502, {"message": "Seerr is not reachable"}
-        except (OSError, ValueError, KeyError, TypeError, RecursionError, http.client.HTTPException):
+        except (OSError, ValueError, RecursionError, http.client.HTTPException):
             return 502, {"message": "Seerr is not reachable"}
 
     @staticmethod
     def empty(rel):
-        """No Plex watchlist and no blocklist for app users: empty pages in Seerr's shapes."""
+        """No Plex watchlist, blocklist or issues for app users (the service user may not read issues): empty pages in Seerr's shapes."""
         if rel == "discover/watchlist":
             return {"page": 1, "totalPages": 1, "totalResults": 0, "results": []}
         return {"pageInfo": {"pages": 0, "pageSize": 25, "results": 0, "page": 1}, "results": []}
