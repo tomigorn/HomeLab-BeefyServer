@@ -130,9 +130,10 @@ class WantedTest(unittest.TestCase):
                 return cfg
             return []
 
+        tmp = self.enterContext(tempfile.TemporaryDirectory())
         for argv in ([], ["--dry-run"]):
             out = io.StringIO()
-            with mock.patch.object(mb, "api", fake), mock.patch.object(mb, "lists", lambda: LISTS), contextlib.redirect_stdout(out):
+            with mock.patch.object(mb, "api", fake), mock.patch.object(mb, "lists", lambda: LISTS), mock.patch.object(mb, "STATE_FILE", pathlib.Path(tmp) / "m.json"), contextlib.redirect_stdout(out):
                 mb.main(argv)
             self.assertNotIn("s3cr3t-value", out.getvalue())
         self.assertEqual(len(posted), 1)
