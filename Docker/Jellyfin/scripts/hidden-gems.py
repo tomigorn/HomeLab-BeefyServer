@@ -141,7 +141,7 @@ def main(argv, api=None, order=moonfin_order, raw=None, state=STATE, originals=O
             for method, ids in todo:
                 api(method, f"/Collections/{sid}/Items?ids={','.join(ids)}")
     try:
-        order([u["Id"] for u in users], {sid: want}, dry)
+        order([u["Id"] for u in users], collection_order.films_only({sid: want}, {i["Id"] for i in items if i.get("Type") == "Series"}), dry)
     except (subprocess.CalledProcessError, OSError, ValueError) as e:
         print(f"{NAME}: Moonfin order failed: {type(e).__name__}")
     try:

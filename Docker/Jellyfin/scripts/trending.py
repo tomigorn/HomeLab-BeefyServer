@@ -853,6 +853,8 @@ def sync(io, paths, now, dry_run, log):
     real_art = RealArt(io, paths, state, dry_run, log, save)
     real_art.sync(plan.real_marks, logos)
     orders = {state["sets"][spec["key"]]: [i for i in map(member_id, members) if i] for spec, members in plan.collections if spec["key"] in state.get("sets", {})}
+    series = {i for k, i in have.items() if k.startswith("tv/")} | {member_id(("ph", f)) for f, ph in plan.placeholders.items() if ph.kind == "tv"}
+    orders = co.films_only(orders, series)
     try:
         n_order = co.sync("trending", [u["Id"] for u in io.jf("GET", "/Users")], orders, dry_run, log, root=paths.moonfin, state=paths.order_state, fs=io.order_fs())
     except (subprocess.CalledProcessError, *FAILURES) as e:

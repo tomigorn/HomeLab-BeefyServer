@@ -901,9 +901,17 @@ class MoonfinOrder(Base):
             self.assertEqual(self.order(uid, "Top 10 Switzerland · Movies"), [self.item("Alpha")["Id"], self.item("Beta")["Id"], "real9"])
             self.assertEqual(self.order(uid, "Netflix · Movies"), [self.item("Beta")["Id"], self.item("Alpha")["Id"]])
             self.assertEqual(self.order(uid, "Coming soon"), [self.item("Gamma")["Id"]])
-        self.assertEqual(len(list((self.paths.moonfin / USER).iterdir())), len([s for s in self.io.sets.values() if tm.TAG in s["Tags"]]))
+        series = {i["Id"] for i in self.io.tv if i["Type"] == "Series"}
+        self.assertEqual(len(list((self.paths.moonfin / USER).iterdir())), len([s for s in self.io.sets.values() if tm.TAG in s["Tags"] and not set(s["children"]) & series]))
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertIn("nothing changed", self.out)
+
+    def test_lists_with_a_series_get_no_order(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        shows = next(s for s in self.io.sets.values() if s["Name"] == "Top 10 Switzerland · Shows")
+        self.assertTrue(any(i["Id"] in shows["children"] for i in self.io.tv if i["Type"] == "Series"))
+        self.assertFalse((self.paths.moonfin / USER / f"{shows['Id']}.json").exists())
+        self.assertTrue(self.order(USER, "Top 10 Switzerland · Movies"))
 
     def test_order_failure_is_logged_and_the_sync_succeeds(self):
         class Broken(PlainFs):

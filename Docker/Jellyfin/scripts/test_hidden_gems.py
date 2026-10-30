@@ -226,6 +226,14 @@ class MainTest(unittest.TestCase):
         run(jf, ["--dry-run"], order=orders)
         self.assertEqual(orders.calls, [(["adm", "u"], {"g": ["a", "b"]}, True)])
 
+    def test_no_order_while_a_series_is_a_member(self):
+        items = [{**i, "Type": "Series"} if n == 0 else i for n, i in enumerate(ITEMS)]
+        jf = FakeJellyfin(boxes=[{"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG]}], members={"g": ["b", "old"]}, items=items)
+        jf.meta["g"] = {"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG], "DisplayOrder": "Default", "LockData": True}
+        orders = Orders()
+        run(jf, order=orders)
+        self.assertEqual(orders.calls, [(["adm", "u"], {}, False)])
+
     def test_no_titles_writes_no_order(self):
         orders = Orders()
         run(FakeJellyfin(items=[]), order=orders)

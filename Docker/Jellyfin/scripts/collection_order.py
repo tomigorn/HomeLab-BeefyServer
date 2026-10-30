@@ -1,5 +1,6 @@
 """Moonfin collection detail order (Moonbase 2.5 `GET /Moonfin/Collections/{id}/Order`): one JSON array of item ids per user and collection in the plugin's per-user store.
 A non-empty list replaces the app's release-year order; Moonfin 2.6/2.7 drop members missing from it, so every list holds all members.
+No order for a collection with a series: with an order Moonfin 2.6 reads a home row recursively and shows every season of a series as its own card; without one it keeps the BoxSet's own order.
 Each scope (trending, gems) owns the files it wrote (state file); files of other collections are never touched. Writes as the plugin owner (sudo + setpriv)."""
 import json
 import os
@@ -44,6 +45,11 @@ def plain(i):
     if not HEX.match(v):
         raise ValueError(f"not an id: {i!r}")
     return v
+
+
+def films_only(orders, series):
+    """orders without the collections holding one of the series ids."""
+    return {c: ids for c, ids in orders.items() if not set(ids) & set(series)}
 
 
 def read_state(path):

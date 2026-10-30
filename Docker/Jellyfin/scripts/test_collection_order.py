@@ -13,6 +13,12 @@ G1 = "0123456789abcdef0123456789abcdef"
 C1, C2, OTHER = "1c1886a0678227369926dfe6eb30b94a", "5f16e6a1c3ec95a04f5bbb20209d7272", "deadbeefdeadbeefdeadbeefdeadbeef"
 
 
+class FilmsOnly(unittest.TestCase):
+    def test_collections_with_a_series_dropped(self):
+        orders = {C1: ["m1", "m2"], C2: ["m1", "s1"], G1: []}
+        self.assertEqual(co.films_only(orders, {"s1", "s9"}), {C1: ["m1", "m2"], G1: []})
+
+
 class PlainFs:
     """Same operations as co.SudoFs, without the owner change."""
 
