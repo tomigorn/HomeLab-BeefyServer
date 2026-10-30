@@ -21,6 +21,7 @@
       night: "\uD83C\uDF19 Tonight", searching: "\uD83D\uDD0D Searching", unreleased: "\uD83D\uDCC5 Not released yet", downloading: "⬇️ Downloading", requested: "✓ Requested", declined: "Declined",
       empty: "Nothing on the list right now.", found: "available",
       details: "details", seasonLong: "Season {n}",
+      tvCode: "Code for TV", tvHint: "On the TV in Moonfin, Settings, Requests sign-in (Jellyfin account): username {u}, password = this code. Valid {m} min (until {t}), once.", tvLimit: "Limit reached: 5 codes per hour", tvFailed: "Code request failed",
       none: "Not able to download", checked: "checked {d} · rechecked daily", unchecked: "not checked yet · checked tonight", unknown: "Title not identified",
       source: "Sources: Netflix Top 10 Switzerland (weekly), TMDB popularity, where to stream in Switzerland by JustWatch (via TMDB). Only titles in the library or with a release found are shown."
     },
@@ -32,6 +33,7 @@
       night: "\uD83C\uDF19 Heute Nacht", searching: "\uD83D\uDD0D Wird gesucht", unreleased: "\uD83D\uDCC5 Noch nicht erschienen", downloading: "⬇️ Lädt herunter", requested: "✓ Angefragt", declined: "Abgelehnt",
       empty: "Gerade nichts auf der Liste.", found: "verfügbar",
       details: "Details", seasonLong: "Staffel {n}",
+      tvCode: "Code für TV", tvHint: "Auf dem TV in Moonfin, Einstellungen, Requests-Anmeldung (Jellyfin-Konto): Benutzername {u}, Passwort = dieser Code. Gültig {m} Min. (bis {t}), einmal.", tvLimit: "Limite erreicht: 5 Codes pro Stunde", tvFailed: "Code-Anfrage fehlgeschlagen",
       none: "Nicht herunterladbar", checked: "geprüft {d} · täglich neu geprüft", unchecked: "noch nicht geprüft · wird heute Nacht geprüft", unknown: "Titel nicht erkannt",
       source: "Quellen: Netflix Top 10 Schweiz (wöchentlich), TMDB-Beliebtheit, Streaming-Angebot in der Schweiz von JustWatch (über TMDB). Nur Titel aus der Bibliothek oder mit gefundenem Release."
     }
@@ -415,6 +417,9 @@
     page.setAttribute("data-hss-kind", nav.kind);
     var head = el(doc, "div", "hssPopularHead padded-left padded-right");
     head.appendChild(el(doc, "h1", "sectionTitle", tr(lang, nav.label)));
+    var tvb = el(doc, "button", "hssTvCodeBtn", tr(lang, "tvCode"));
+    tvb.setAttribute("type", "button");
+    head.appendChild(tvb);
     var close = el(doc, "button", "hssPopularClose paper-icon-button-light");
     close.setAttribute("type", "button");
     close.setAttribute("aria-label", tr(lang, "close"));
@@ -454,6 +459,32 @@
     }).then(function (r) {
       return r.json().then(function (b) { return { status: r.status, body: b }; }, function () { return { status: r.status, body: {} }; });
     });
+  }
+
+  // One-time code for the Seerr facade sign-in on a TV (Smart-TV Moonfin has only username + password); the backend takes the user from the token only.
+  function tvCode(win, api) {
+    return win.fetch(api.getUrl(API + "tv-code"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Emby-Token": api.accessToken() },
+      body: "{}"
+    }).then(function (r) {
+      return r.json().then(function (b) { return { status: r.status, body: b }; }, function () { return { status: r.status, body: {} }; });
+    });
+  }
+
+  function tvCodeBox(doc, lang, r) {
+    var box = el(doc, "div", "hssTvCode padded-left padded-right");
+    box.setAttribute("role", "status");
+    var b = (r && r.body) || {};
+    if (r && r.status === 200 && typeof b.code === "string") {
+      var t = new Date(b.expires);
+      var until = isNaN(t.getTime()) ? "" : t.toLocaleTimeString(langOf(lang) === "de" ? "de-CH" : "en-GB", { hour: "2-digit", minute: "2-digit" });
+      box.appendChild(el(doc, "div", "hssTvCodeValue", b.code));
+      box.appendChild(el(doc, "div", "hssTvCodeHint", tr(lang, "tvHint", { u: b.user || "", m: b.minutes || 10, t: until })));
+    } else {
+      box.appendChild(el(doc, "div", "hssTvCodeHint", tr(lang, r && r.status === 429 ? "tvLimit" : "tvFailed")));
+    }
+    return box;
   }
 
   function hideTrending(doc, hide) {
@@ -504,6 +535,11 @@
     ".layout-tv .hssPopularPage { padding-top: 6.5em; }",
     ".hssPopularHead { display: flex; align-items: center; justify-content: space-between; }",
     ".hssPopularHead h1 { margin: 0.3em 0; font-size: 1.8em; }",
+    ".hssTvCodeBtn { margin-left: auto; margin-right: 0.6em; font: inherit; font-size: 0.85em; padding: 0.4em 0.8em; border-radius: 0.3em; border: 1px solid rgba(255, 255, 255, 0.25); background: rgba(255, 255, 255, 0.08); color: #fff; cursor: pointer; }",
+    ".hssTvCodeBtn:hover, .hssTvCodeBtn:focus { background: #00a4dc; border-color: #00a4dc; outline: none; }",
+    ".hssTvCode { margin: 0.4em 0 1em; }",
+    ".hssTvCodeValue { font: 700 2em/1.2 monospace; letter-spacing: 0.15em; user-select: all; }",
+    ".hssTvCodeHint { font-size: 0.85em; opacity: 0.85; }",
     ".hssPopularSource { margin-top: 2em; font-size: 0.8em; opacity: 0.55; }",
     ".hssTopBtn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }",
     ".hssTopBtn-icon { flex: 1 1 0; font-size: 1.05em; padding: 0.3em 0; text-align: center; }",
@@ -585,6 +621,8 @@
       var at = Array.prototype.indexOf.call(page.querySelectorAll(sel), doc.activeElement);
       var next = buildPage(doc, data, lib, lang(), tv(), states, page.getAttribute("data-hss-kind"));
       next.hssStates = states;
+      var box = page.querySelector(".hssTvCode");
+      if (box) next.querySelector(".hssPopularHead").after(box);
       var known = prefit(next, fitMemo, win.innerWidth);
       page.replaceWith(next);
       if (!known) fitMemo = { width: win.innerWidth, p: fitAll(next) };
@@ -647,6 +685,21 @@
       return !!(win.HssDetails && win.HssDetails.isOpen && win.HssDetails.isOpen());
     }
 
+    function showTvCode(btn) {
+      var a = api();
+      if (!a || btn.disabled) return;
+      btn.disabled = true;
+      tvCode(win, a).then(null, function () { return { status: 0, body: {} }; }).then(function (r) {
+        btn.disabled = false;
+        var page = doc.querySelector(".hssPopularPage");
+        if (!page) return;
+        var box = tvCodeBox(doc, lang(), r);
+        var old = page.querySelector(".hssTvCode");
+        if (old) old.replaceWith(box);
+        else page.querySelector(".hssPopularHead").after(box);
+      });
+    }
+
     function press(btn) {
       var a = api();
       if (!a || btn.disabled) return;
@@ -675,6 +728,13 @@
         var backdrop = nav.closest(".MuiDrawer-root") && nav.closest(".MuiDrawer-root").querySelector(".MuiBackdrop-root");
         if (backdrop) backdrop.click();
         openPage(nav);
+        return;
+      }
+      var tvb = t.closest(".hssTvCodeBtn");
+      if (tvb) {
+        e.preventDefault();
+        e.stopPropagation();
+        showTvCode(tvb);
         return;
       }
       var btn = t.closest(".hssTopBtn");
@@ -750,7 +810,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { CSS: CSS, hideTrending: hideTrending, actionsFor: actionsFor, detailKey: detailKey, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, prefit: prefit, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, start: start };
+    module.exports = { CSS: CSS, hideTrending: hideTrending, actionsFor: actionsFor, detailKey: detailKey, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, prefit: prefit, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, tvCode: tvCode, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {

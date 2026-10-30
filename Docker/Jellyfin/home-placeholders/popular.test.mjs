@@ -297,6 +297,93 @@ test("fitting the rows measures every row before it changes any (one layout, not
   assert.equal(d.querySelector(".hssTopScroll").style.getPropertyValue("--hss-p"), "200px");
 });
 
+test("the page header has a Code for TV button (both pages, both languages)", () => {
+  const d = doc();
+  for (const kind of ["movie", "tv"]) {
+    const b = pp.buildPage(d, DATA, LIB, "en", false, null, kind).querySelector(".hssPopularHead button.hssTvCodeBtn");
+    assert.ok(b);
+    assert.equal(b.getAttribute("type"), "button");
+    assert.equal(b.textContent, "Code for TV");
+  }
+  assert.equal(pp.buildPage(d, DATA, LIB, "de", false, null, "tv").querySelector(".hssTvCodeBtn").textContent, "Code für TV");
+});
+
+test("tvCode posts an empty body with the user's own token, never a user id", async () => {
+  const calls = [];
+  const win = { fetch: async (url, opts) => { calls.push([url, opts]); return { status: 200, json: async () => ({ code: "ABCDEFGHJK", expires: "2026-10-30T10:10:00+00:00", minutes: 10, user: "jane" }) }; } };
+  const api = { accessToken: () => "T".repeat(32), getUrl: (p) => "https://jellyfin.holy-grail.ch/" + p, getCurrentUserId: () => "u1" };
+  const r = await pp.tvCode(win, api);
+  assert.deepEqual(r, { status: 200, body: { code: "ABCDEFGHJK", expires: "2026-10-30T10:10:00+00:00", minutes: 10, user: "jane" } });
+  assert.equal(calls[0][0], "https://jellyfin.holy-grail.ch/hss-popular/tv-code");
+  assert.equal(calls[0][1].method, "POST");
+  assert.equal(calls[0][1].headers["Content-Type"], "application/json");
+  assert.equal(calls[0][1].headers["X-Emby-Token"], "T".repeat(32));
+  assert.equal(calls[0][1].body, "{}");
+});
+
+test("Code for TV shows the code, the username and how to use it; again replaces it; limit and errors say so", async () => {
+  const s = started();
+  const answers = [
+    { status: 200, body: { code: "ABCDEFGHJK", expires: "2026-10-30T10:10:00+00:00", minutes: 10, user: "jane" } },
+    { status: 200, body: { code: "MNPQRSTUVW", expires: "2026-10-30T10:11:00+00:00", minutes: 10, user: "jane" } },
+    { status: 429, body: { error: "limit" } },
+    { status: 500, body: {} }
+  ];
+  const posts = [];
+  const states = s.win.fetch;
+  s.win.fetch = (url, opts) => {
+    if (String(url) !== "hss-popular/tv-code") return states(url, opts);
+    posts.push(opts);
+    const a = answers.shift();
+    return Promise.resolve({ status: a.status, json: () => Promise.resolve(a.body) });
+  };
+  s.click(s.d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
+  await s.tick();
+  s.click(s.d.querySelector(".hssTvCodeBtn"));
+  await s.tick();
+  let box = s.d.querySelectorAll(".hssPopularPage .hssTvCode");
+  assert.equal(box.length, 1);
+  assert.equal(box[0].querySelector(".hssTvCodeValue").textContent, "ABCDEFGHJK");
+  assert.match(box[0].textContent, /jane/);
+  assert.match(box[0].textContent, /password/);
+  assert.match(box[0].textContent, /10 min/);
+  assert.equal(box[0].getAttribute("role"), "status");
+  s.click(s.d.querySelector(".hssTvCodeBtn"));
+  await s.tick();
+  box = s.d.querySelectorAll(".hssPopularPage .hssTvCode");
+  assert.equal(box.length, 1);
+  assert.equal(box[0].querySelector(".hssTvCodeValue").textContent, "MNPQRSTUVW");
+  s.click(s.d.querySelector(".hssTvCodeBtn"));
+  await s.tick();
+  box = s.d.querySelector(".hssPopularPage .hssTvCode");
+  assert.equal(box.querySelector(".hssTvCodeValue"), null);
+  assert.match(box.textContent, /5 codes per hour/);
+  s.click(s.d.querySelector(".hssTvCodeBtn"));
+  await s.tick();
+  assert.match(s.d.querySelector(".hssPopularPage .hssTvCode").textContent, /failed/i);
+  assert.equal(posts.length, 4);
+  s.win.close();
+});
+
+test("the code box survives a repaint of the page", async () => {
+  const s = started();
+  const states = s.win.fetch;
+  s.win.fetch = (url, opts) => String(url) === "hss-popular/tv-code"
+    ? Promise.resolve({ status: 200, json: () => Promise.resolve({ code: "ABCDEFGHJK", expires: "2026-10-30T10:10:00+00:00", minutes: 10, user: "jane" }) })
+    : states(url, opts);
+  s.click(s.d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
+  await s.tick();
+  s.click(s.d.querySelector(".hssTvCodeBtn"));
+  await s.tick();
+  const before = s.d.querySelector(".hssPopularPage");
+  s.click(s.d.querySelector('.hssTopBtn[data-hss-mode="night"]'));
+  await s.tick();
+  await s.tick();
+  assert.notEqual(s.d.querySelector(".hssPopularPage"), before, "the page was rebuilt");
+  assert.equal(s.d.querySelector(".hssPopularPage .hssTvCodeValue").textContent, "ABCDEFGHJK");
+  s.win.close();
+});
+
 function started() {
   const dom = new JSDOM('<html lang="en"><body><header><a class="logo" href="#/">Holy Grail</a><a class="hssPopularNav" data-hss-kind="movie" href="#/home">Popular movies</a><a class="hssPopularNav" data-hss-kind="tv" href="#/home">Popular shows</a></header>' +
     '<div class="MuiDrawer-paper"><ul><li><a class="MuiListItemButton-root Mui-selected" href="#/home">Home</a></li><li><a class="MuiListItemButton-root" href="#/home?tab=1"><span class="MuiListItemText-primary">Favourites</span></a></li></ul></div></body></html>', { url: "https://jellyfin.holy-grail.ch/web/#/home" });
