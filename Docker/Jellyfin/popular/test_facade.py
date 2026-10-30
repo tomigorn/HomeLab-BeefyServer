@@ -942,6 +942,269 @@ class CreateRequest(FacadeBase):
         self.assertEqual(self.audit()[-1]["decision"], "refused: no service user")
 
 
+class ServersAndQuota(FacadeBase):
+    def setUp(self):
+        super().setUp()
+        self.seerr = ProxySeerr()
+        self.core.seerr = self.seerr
+        out, self.cookie = self.sign_in()
+        self.uid = out["id"]
+
+    def get(self, path, cookie=True):
+        return self.call("GET", path, cookie=self.cookie if cookie is True else cookie)
+
+    def test_service_lists_two_servers_tonight_default(self):
+        for kind in ("radarr", "sonarr"):
+            status, out, _ = self.get(f"service/{kind}")
+            self.assertEqual(status, 200)
+            self.assertEqual([(s["id"], s["name"], s["isDefault"], s["is4k"], s["activeProfileId"], s["activeDirectory"]) for s in out],
+                             [(0, "🌙 Tonight · lower power cost", True, False, 0, "Library"), (1, "⚡ Now · daytime price", False, False, 0, "Library")])
+        self.assertEqual(self.seerr.gets, [])
+        self.assertEqual(self.get("service/radarr", cookie=None)[0], 401)
+
+    def test_service_details_0_1_and_unknown_404(self):
+        for kind in ("radarr", "sonarr"):
+            for sid in (0, 1):
+                status, out, _ = self.get(f"service/{kind}/{sid}")
+                self.assertEqual(status, 200)
+                self.assertEqual(out["server"]["id"], sid)
+                self.assertEqual(out["profiles"], [{"id": 0, "name": "Best found release (1080p/2160p)"}])
+                self.assertEqual(out["rootFolders"], [{"id": 0, "path": "Library", "freeSpace": None, "totalSpace": None}])
+                self.assertEqual(out["tags"], [])
+                if kind == "sonarr":
+                    self.assertEqual(out["languageProfiles"], [])
+                    self.assertEqual((out["server"]["activeAnimeProfileId"], out["server"]["activeAnimeDirectory"]), (None, None))
+                else:
+                    self.assertNotIn("languageProfiles", out)
+            status, out, _ = self.get(f"service/{kind}/2")
+            self.assertEqual((status, list(out)), (404, ["message"]))
+        self.assertEqual(self.seerr.gets, [])
+
+    def fill(self, n, user=JF_ID, day=None):
+        with self.core.db() as con:
+            for _ in range(n):
+                con.execute("INSERT INTO requests (user_id, ref, at, day, done) VALUES (?, 'x', ?, ?, 1)", (user, self.core.iso(self.now), day or self.core.day(self.now)))
+
+    def test_quota_left_and_restricted_rows(self):
+        path = f"user/{self.uid}/quota"
+        self.fill(3)
+        status, out, _ = self.get(path)
+        self.assertEqual(status, 200)
+        self.assertEqual(out, {"movie": {"days": 7, "limit": 10, "used": 3, "remaining": 7, "restricted": False},
+                               "tv": {"days": 7, "limit": 0, "used": 0, "remaining": None, "restricted": False}})
+        self.fill(7)
+        out = self.get(path)[1]
+        self.assertEqual(out, {"movie": {"days": 7, "limit": 10, "used": 10, "remaining": 0, "restricted": True},
+                               "tv": {"days": 7, "limit": 10, "used": 10, "remaining": 0, "restricted": True}})
+
+    def test_quota_daily_cap_full_is_restricted(self):
+        self.core.cfg.daily_max = 4
+        self.fill(4, user="someone-else")
+        self.fill(2)
+        out = self.get(f"user/{self.uid}/quota")[1]
+        self.assertEqual(out["movie"], {"days": 7, "limit": 10, "used": 2, "remaining": 0, "restricted": True})
+        self.assertEqual((out["tv"]["restricted"], out["tv"]["remaining"]), (True, 0))
+
+    def test_quota_follows_config(self):
+        self.core.cfg.limit, self.core.cfg.days = 5, 3
+        self.fill(1)
+        self.assertEqual(self.get(f"user/{self.uid}/quota")[1]["movie"], {"days": 3, "limit": 5, "used": 1, "remaining": 4, "restricted": False})
+
+    def test_quota_other_user_403(self):
+        for uid in (self.uid + 1, 1, 0, 99999999):
+            status, out, _ = self.get(f"user/{uid}/quota")
+            self.assertEqual((status, list(out)), (403, ["message"]), uid)
+        self.assertEqual(self.get(f"user/{self.uid}/quota", cookie=None)[0], 401)
+
+
+def fake_request(rid, status=2, kind="movie", media_status=3, by=None, created="2026-10-20T10:00:00.000Z", updated=None, is4k=False):
+    media = {"id": rid, "tmdbId": rid * 10, "mediaType": kind, "status": media_status, "status4k": 1}
+    return {"id": rid, "status": status, "type": kind, "is4k": is4k, "createdAt": created, "updatedAt": updated or created, "media": media,
+            "requestedBy": by or {"id": 20, "email": "jellyfin-popular", "displayName": "Jellyfin popular", "plexToken": "x"},
+            "modifiedBy": {"id": 1, "email": "admin@example.com", "displayName": "Admin"}, "seasons": []}
+
+
+class MineSeerr(ProxySeerr):
+    def __init__(self):
+        super().__init__()
+        self.requests, self.linked_ids, self.fetches = {}, [], []
+
+    def __call__(self, method, path, body=None, user=None):
+        if method == "GET" and path.startswith("/api/v1/request?"):
+            self.gets.append((method, path, user))
+            return {"pageInfo": {}, "results": [{"id": i} for i in self.linked_ids]}
+        if method == "GET" and path.startswith("/api/v1/request/"):
+            rid = int(path.rsplit("/", 1)[1])
+            self.fetches.append((rid, user))
+            if self.error:
+                raise self.error
+            if rid not in self.requests:
+                raise seerr_http_error(404)
+            return json.loads(json.dumps(self.requests[rid]))
+        return super().__call__(method, path, body, user)
+
+
+class MyRequests(FacadeBase):
+    def setUp(self):
+        super().setUp()
+        self.seerr = MineSeerr()
+        self.core.seerr = self.seerr
+        out, self.cookie = self.sign_in()
+        self.uid = out["id"]
+        self.me = {"id": self.uid, "displayName": "Jane Doe"}
+
+    def get(self, path, cookie=True):
+        return self.call("GET", path, cookie=self.cookie if cookie is True else cookie)
+
+    def add(self, req, mine=True):
+        self.seerr.requests[req["id"]] = req
+        if mine:
+            self.core.remember(JF_ID, req["id"])
+
+    def ids(self, path):
+        status, out, _ = self.get(path)
+        self.assertEqual(status, 200, out)
+        return [r["id"] for r in out["results"]]
+
+    def test_request_list_only_mine_paged_filtered_sorted(self):
+        for i in range(1, 6):
+            self.add(fake_request(i, created=f"2026-10-2{i}T10:00:00.000Z", updated=f"2026-10-2{6 - i}T10:00:00.000Z"))
+        self.add(fake_request(6, status=1, media_status=2))
+        self.add(fake_request(7, status=3, media_status=1))
+        self.add(fake_request(8, status=5, media_status=5))
+        self.add(fake_request(9, status=2, media_status=5))
+        self.add(fake_request(10, status=4, media_status=1))
+        self.add(fake_request(11, kind="tv", status=2, media_status=4))
+        self.add(fake_request(12, status=2, media_status=7))
+        self.add(fake_request(50), mine=False)
+        everything = [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
+        self.assertEqual(self.ids("request?take=100"), everything)
+        status, out, _ = self.get("request?take=5&skip=5")
+        self.assertEqual(out["pageInfo"], {"pages": 3, "pageSize": 5, "results": 12, "page": 2})
+        self.assertEqual([r["id"] for r in out["results"]], [7, 6, 5, 4, 3])
+        self.assertEqual(self.ids("request?take=5&skip=10"), [2, 1])
+        self.assertEqual(self.get("request")[1]["pageInfo"], {"pages": 2, "pageSize": 10, "results": 12, "page": 1})
+        self.assertEqual(self.ids("request?take=1000"), everything)
+        self.assertEqual(self.ids("request?take=100&filter=pending"), [6])
+        self.assertEqual(self.ids("request?take=100&filter=approved"), [12, 11, 9, 5, 4, 3, 2, 1])
+        self.assertEqual(self.ids("request?take=100&filter=processing"), [11, 5, 4, 3, 2, 1])
+        self.assertEqual(self.ids("request?take=100&filter=unavailable"), [11, 6, 5, 4, 3, 2, 1])
+        self.assertEqual(self.ids("request?take=100&filter=available"), [8])
+        self.assertEqual(self.ids("request?take=100&filter=completed"), [8])
+        self.assertEqual(self.ids("request?take=100&filter=deleted"), [])
+        self.assertEqual(self.ids("request?take=100&filter=failed"), [10])
+        self.assertEqual(self.ids("request?take=100&filter=bogus"), everything)
+        self.assertEqual(self.ids("request?take=3&sort=modified"), [1, 2, 3])
+        self.assertEqual(self.ids("request?take=3&sort=added"), [12, 11, 10])
+        self.assertEqual(self.ids("request?take=3&sort=modified&sortDirection=asc"), [12, 11, 10])
+        self.assertEqual(self.ids("request?take=100&mediaType=tv"), [11])
+        self.assertNotIn(50, self.ids("request?take=100"))
+
+    def test_request_list_other_requested_by_403(self):
+        for who in (1, self.uid + 1, 7):
+            status, out, _ = self.get(f"request?requestedBy={who}")
+            self.assertEqual((status, list(out)), (403, ["message"]), who)
+        self.add(fake_request(1))
+        self.assertEqual(self.ids(f"request?requestedBy={self.uid}"), [1])
+        for bad in ("x", "1.5", "-1"):
+            self.assertEqual(self.get(f"request?requestedBy={bad}")[0], 400, bad)
+        for bad in ("take=0", "take=x", "skip=-1", "skip=x", "take=-3"):
+            self.assertEqual(self.get(f"request?{bad}")[0], 400, bad)
+
+    def test_list_requests_never_leak_other_users(self):
+        other = {"id": 55, "email": "john@example.com", "displayName": "John Roe", "plexToken": "y"}
+        self.add(fake_request(1))
+        self.add(fake_request(2, by=other), mine=False)
+        self.add(fake_request(3, by=other), mine=False)
+        status, out, _ = self.get("request?take=100")
+        self.assertEqual([r["id"] for r in out["results"]], [1])
+        self.assertEqual({r["requestedBy"]["id"] for r in out["results"]}, {self.uid})
+        self.assertEqual(out["results"][0]["modifiedBy"], facade.HOUSEHOLD)
+        blob = json.dumps(out)
+        for needle in ("@", "plexToken", "John", "jellyfin-popular", "Admin"):
+            self.assertNotIn(needle, blob)
+        self.assertEqual(self.get("request/2")[0], 403)
+        self.assertEqual(self.get("request/3")[0], 403)
+        self.assertEqual(self.get("request/count")[1]["total"], 1)
+        self.assertNotIn(2, [i for i, _ in self.seerr.fetches])
+        self.assertNotIn(3, [i for i, _ in self.seerr.fetches])
+
+    def test_other_users_request_in_linked_list_still_shown_only_if_seerr_says_mine(self):
+        self.seerr.users[0]["jellyfinUserId"] = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        self.add(fake_request(1))
+        self.add(fake_request(2, by={"id": 7, "email": "jane@example.com", "displayName": "Jane Doe"}), mine=False)
+        self.seerr.linked_ids = [2]
+        self.assertEqual(self.ids("request?take=100"), [2, 1])
+        self.assertTrue(any("requestedBy=7" in p and "take=100" in p and u is None for _, p, u in self.seerr.gets))
+        self.assertTrue(all(u is None for _, u in self.seerr.fetches))
+        out = self.get("request?take=100")[1]
+        self.assertEqual([r["requestedBy"] for r in out["results"]], [self.me, self.me])
+
+    def test_no_linked_user_no_seerr_list_call(self):
+        self.add(fake_request(1))
+        self.get("request")
+        self.assertEqual([p for _, p, _ in self.seerr.gets if "/request?" in p], [])
+
+    def test_request_count_numbers(self):
+        self.add(fake_request(1, status=1, media_status=2))
+        self.add(fake_request(2, status=2, media_status=3))
+        self.add(fake_request(3, status=2, media_status=5, kind="tv"))
+        self.add(fake_request(4, status=3, media_status=1))
+        self.add(fake_request(5, status=5, media_status=5, kind="tv"))
+        self.add(fake_request(6, status=4, media_status=1))
+        self.add(fake_request(50, status=1), mine=False)
+        status, out, _ = self.get("request/count")
+        self.assertEqual((status, out), (200, {"total": 6, "movie": 4, "tv": 2, "pending": 1, "approved": 2, "declined": 1, "processing": 1, "available": 1, "completed": 1}))
+
+    def test_request_count_empty(self):
+        self.assertEqual(self.get("request/count")[1], {"total": 0, "movie": 0, "tv": 0, "pending": 0, "approved": 0, "declined": 0, "processing": 0, "available": 0, "completed": 0})
+        self.assertEqual(self.get("request")[1]["results"], [])
+
+    def test_request_by_id_only_mine(self):
+        self.add(fake_request(1, kind="tv"))
+        self.add(fake_request(2), mine=False)
+        status, out, _ = self.get("request/1")
+        self.assertEqual((status, out["id"], out["requestedBy"], out["media"]["tmdbId"]), (200, 1, self.me, 10))
+        self.assertNotIn("email", json.dumps(out))
+        self.assertEqual(self.get("request/2")[0], 403)
+        self.assertEqual(self.get("request/999")[0], 403)
+        self.assertEqual(self.get("request/1", cookie=None)[0], 401)
+
+    def test_vanished_request_is_dropped(self):
+        self.core.remember(JF_ID, 77)
+        self.add(fake_request(1))
+        self.assertEqual(self.ids("request"), [1])
+        self.assertEqual(self.get("request/77")[0], 403)
+        self.assertEqual(self.get("request/count")[1]["total"], 1)
+
+    def test_requests_cached_60_seconds(self):
+        self.add(fake_request(1))
+        self.get("request")
+        self.get("request/1")
+        self.get("request/count")
+        self.assertEqual(len(self.seerr.fetches), 1)
+        self.later(59)
+        self.get("request")
+        self.assertEqual(len(self.seerr.fetches), 1)
+        self.later(2)
+        self.get("request")
+        self.assertEqual(len(self.seerr.fetches), 2)
+
+    def test_seerr_down_is_502_json(self):
+        self.add(fake_request(1))
+        for err in (seerr_http_error(500), socket.timeout("timed out"), OSError("refused")):
+            self.seerr.error = err
+            self.facade.cache.clear()
+            for path in ("request", "request/count", "request/1"):
+                status, out, _ = self.get(path)
+                self.assertEqual((status, out), (502, {"message": "Seerr is not reachable"}), (path, err))
+
+    def test_new_request_shows_up_in_proxy_scrub_as_mine(self):
+        self.add(fake_request(9))
+        self.seerr.answer["/api/v1/movie/1"] = {"id": 1, "mediaInfo": {"requests": [{"id": 9, "requestedBy": {"id": 20, "email": "x@example.com"}}]}}
+        self.assertEqual(self.get("movie/1")[1]["mediaInfo"]["requests"][0]["requestedBy"], self.me)
+
+
 def seerr_http_error(code):
     return urllib.error.HTTPError("http://seerr:5055/api/v1/x", code, "error", {}, io.BytesIO(b"<html>Seerr login secret-page</html>"))
 

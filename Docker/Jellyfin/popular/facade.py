@@ -10,6 +10,7 @@ import pathlib
 import re
 import secrets
 import urllib.error
+import urllib.parse
 
 FIRST_UID = 1000001
 COOKIE = "connect.sid"
@@ -83,6 +84,23 @@ RATE = "Too many requests, try again in a minute"
 NO_NOW = "Download now is not available, choose Tonight"
 NOT_TAKEN = "Seerr could not take the request"
 NOT_SET_UP = "Requests are not set up"
+SERVERS = [{"id": 0, "name": "🌙 Tonight · lower power cost", "isDefault": True}, {"id": 1, "name": "⚡ Now · daytime price", "isDefault": False}]
+PROFILE = {"id": 0, "name": "Best found release (1080p/2160p)"}
+SERVICE_RE = re.compile(r"service/(radarr|sonarr)(?:/([0-9]{1,10}))?")
+QUOTA_RE = re.compile(r"user/([0-9]{1,10})/quota")
+DIGITS_RE = re.compile(r"[0-9]{1,9}")
+FETCH_TTL = datetime.timedelta(seconds=60)
+MAX_CACHED = 1024
+MAX_TAKE = 100
+DEFAULT_TAKE = 10
+SEERR_DOWN = {"message": "Seerr is not reachable"}
+NOT_YOURS = "You do not have permission to view this user's data"
+# Seerr request status: 1 pending, 2 approved, 3 declined, 4 failed, 5 completed; media status: 1 unknown, 2 pending, 3 processing, 4 partial, 5 available, 6 blocklisted, 7 deleted
+MEDIA_ANY = {1, 2, 3, 4, 5, 7}
+MEDIA_OPEN = {1, 2, 3, 4}
+FILTERS = {"approved": ({2}, MEDIA_ANY), "processing": ({2}, MEDIA_OPEN), "pending": ({1}, MEDIA_ANY), "unavailable": ({1, 2}, MEDIA_OPEN),
+           "failed": ({4}, MEDIA_ANY), "completed": ({5}, MEDIA_ANY), "available": ({5}, {5}), "deleted": ({5}, {7})}
+FILTER_ALL = ({1, 2, 3, 4, 5}, MEDIA_ANY)
 
 
 def b64(raw):
@@ -247,7 +265,7 @@ class Facade:
         self.clock = clock or core.clock
         self.sessions = Sessions(core)
         self.sessions.init()
-        self.pending, self.signins, self.checked, self.warned = {}, {}, {}, {}
+        self.pending, self.signins, self.checked, self.warned, self.cache = {}, {}, {}, {}, {}
         self.log = lambda line: print(line, flush=True)
 
     def now(self):
@@ -290,7 +308,7 @@ class Facade:
             elif (method, rel) == ("POST", "request"):
                 status, out = self.create_request(who, body, headers)
             else:
-                status, out = 404, {"message": "Not found"}
+                status, out = self.synth(rel, query, who)
             return self.rotated(who, status, out, []) + (rel, who["jf_id"])
         except Unavailable:
             return 503, {"message": "Jellyfin is not reachable"}, [], rel, None
@@ -488,8 +506,157 @@ class Facade:
         return out
 
     def mine(self, me):
-        """Seerr request ids the caller made (filled in with the request routes)."""
-        return set()
+        """Seerr request ids the caller made through the Popular rules; the proxy shows these as the caller's own."""
+        return set(self.core.requested_ids(me["jf_id"]))
+
+    # --- servers, quota, own requests --------------------------------------
+    def synth(self, rel, query, who):
+        """(status, body) of the synthesized GET routes."""
+        m = SERVICE_RE.fullmatch(rel)
+        if m:
+            return self.service(m.group(1), m.group(2))
+        m = QUOTA_RE.fullmatch(rel)
+        if m:
+            return self.quota(who, int(m.group(1)))
+        if rel not in ("request", "request/count") and not rel.startswith("request/"):
+            return 404, {"message": "Not found"}
+        try:
+            mine = self.my_requests(who)
+            if rel == "request":
+                return self.request_page(who, query, mine)
+            if rel == "request/count":
+                return 200, self.request_counts(mine)
+            rid = int(rel.rsplit("/", 1)[1])
+            hit = next((r for r in mine if r.get("id") == rid), None)
+            return (200, hit) if hit is not None else (403, {"message": NOT_YOURS})
+        except urllib.error.HTTPError as e:
+            e.close()
+            return 502, dict(SEERR_DOWN)
+        except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError, http.client.HTTPException):
+            return 502, dict(SEERR_DOWN)
+
+    @staticmethod
+    def server(kind, s):
+        out = {"id": s["id"], "name": s["name"], "is4k": False, "isDefault": s["isDefault"], "activeProfileId": PROFILE["id"], "activeDirectory": ROOT_FOLDER, "activeTags": []}
+        if kind == "sonarr":
+            out.update({"activeAnimeProfileId": None, "activeAnimeDirectory": None, "activeLanguageProfileId": None, "activeAnimeLanguageProfileId": None, "activeAnimeTags": []})
+        return out
+
+    def service(self, kind, sid):
+        if sid is None:
+            return 200, [self.server(kind, s) for s in SERVERS]
+        chosen = next((s for s in SERVERS if s["id"] == int(sid)), None)
+        if chosen is None:
+            return 404, {"message": "Not found"}
+        out = {"server": self.server(kind, chosen), "profiles": [dict(PROFILE)], "rootFolders": [{"id": 0, "path": ROOT_FOLDER, "freeSpace": None, "totalSpace": None}], "tags": []}
+        if kind == "sonarr":
+            out["languageProfiles"] = []
+        return 200, out
+
+    def quota(self, caller, uid):
+        """(status, body) of user/{id}/quota from the Popular limits; Moonfin disables Submit and says "Request limit reached" when restricted."""
+        if uid != caller["uid"]:
+            return 403, {"message": NOT_YOURS}
+        cfg = self.core.cfg
+        left, today, _ = self.core.overview(caller["jf_id"])
+        used = max(0, cfg.limit - left)
+        if left > 0 and today < cfg.daily_max:
+            return 200, {"movie": {"days": cfg.days, "limit": cfg.limit, "used": used, "remaining": left, "restricted": False},
+                         "tv": {"days": cfg.days, "limit": 0, "used": 0, "remaining": None, "restricted": False}}
+        return 200, {"movie": {"days": cfg.days, "limit": cfg.limit, "used": used, "remaining": 0, "restricted": True},
+                     "tv": {"days": cfg.days, "limit": cfg.limit, "used": cfg.limit, "remaining": 0, "restricted": True}}
+
+    def cached(self, key, load):
+        now = self.clock()
+        with self.core.lock:
+            hit = self.cache.get(key)
+        if hit and now - hit[0] < FETCH_TTL:
+            return hit[1]
+        value = load()
+        with self.core.lock:
+            if len(self.cache) >= MAX_CACHED:
+                self.cache = {k: v for k, v in self.cache.items() if now - v[0] < FETCH_TTL}
+                if len(self.cache) >= MAX_CACHED:
+                    self.cache = {}
+            self.cache[key] = (now, value)
+        return value
+
+    def fetch_request(self, rid):
+        """Seerr request by id as the admin key, None when it no longer exists."""
+        def load():
+            try:
+                out = self.core.seerr("GET", f"{API}request/{rid}")
+            except urllib.error.HTTPError as e:
+                e.close()
+                if e.code == 404:
+                    return None
+                raise
+            if not isinstance(out, dict) or out.get("id") != rid:
+                raise ValueError("unexpected request body")
+            return out
+        return self.cached(("request", rid), load)
+
+    def linked_requests(self, jf_id):
+        """Ids of the requests of the Seerr user linked to this Jellyfin user (admin key), none without a link."""
+        def load():
+            users = self.core.seerr("GET", API + "user?take=1000")
+            results = users.get("results") if isinstance(users, dict) else None
+            if not isinstance(results, list):
+                raise ValueError("unexpected user list")
+            linked = next((u for u in results if isinstance(u, dict) and str(u.get("jellyfinUserId") or "").replace("-", "").lower() == jf_id), None)
+            if linked is None or not is_int(linked.get("id")):
+                return []
+            out = self.core.seerr("GET", f"{API}request?requestedBy={linked['id']}&take={MAX_TAKE}")
+            rows = out.get("results") if isinstance(out, dict) else None
+            if not isinstance(rows, list):
+                raise ValueError("unexpected request list")
+            return [r["id"] for r in rows if isinstance(r, dict) and is_int(r.get("id"))]
+        return self.cached(("linked", jf_id), load)
+
+    def my_requests(self, caller):
+        """The caller's Seerr requests (Popular requests plus those of the linked Seerr user), scrubbed, newest first; vanished ones are dropped."""
+        ids = list(dict.fromkeys(list(self.core.requested_ids(caller["jf_id"])) + self.linked_requests(caller["jf_id"])))
+        found = [r for r in (self.fetch_request(i) for i in ids) if r is not None]
+        mine = {r["id"] for r in found}
+        return [scrub(r, caller["uid"], mine, caller["name"]) for r in found]
+
+    @staticmethod
+    def media_status(r):
+        media = r.get("media") if isinstance(r.get("media"), dict) else {}
+        status = media.get("status4k" if r.get("is4k") else "status")
+        return status if is_int(status) else 1
+
+    def request_page(self, caller, query, mine):
+        """(status, body) of GET request: Seerr's filters, sort and paging over the caller's own requests."""
+        q = {k: v[0] for k, v in urllib.parse.parse_qs(query, keep_blank_values=False).items()}
+        for k in ("take", "skip", "requestedBy"):
+            if k in q and not DIGITS_RE.fullmatch(q[k]):
+                return 400, dict(BAD_REQUEST)
+        take, skip = int(q.get("take", DEFAULT_TAKE)), int(q.get("skip", 0))
+        if take < 1:
+            return 400, dict(BAD_REQUEST)
+        take = min(take, MAX_TAKE)
+        if "requestedBy" in q and int(q["requestedBy"]) != caller["uid"]:
+            return 403, {"message": NOT_YOURS}
+        statuses, media = FILTERS.get(q.get("filter"), FILTER_ALL)
+        rows = [r for r in mine if r.get("status") in statuses and self.media_status(r) in media and (q.get("mediaType") not in ("movie", "tv") or r.get("type") == q["mediaType"])]
+        field = "updatedAt" if q.get("sort") == "modified" else None
+        key = (lambda r: (str(r.get(field) or ""), r["id"])) if field else (lambda r: r["id"])
+        if q.get("sortDirection") == "asc":
+            rows.sort(key=(lambda r: (str(r.get(field) or ""), -r["id"])) if field else key)
+        else:
+            rows.sort(key=key, reverse=True)
+        return 200, {"pageInfo": {"pages": -(-len(rows) // take), "pageSize": take, "results": len(rows), "page": -(-skip // take) + 1},
+                     "results": rows[skip:skip + take], "serviceErrors": {"radarr": [], "sonarr": []}}
+
+    def request_counts(self, mine):
+        def n(f):
+            return sum(1 for r in mine if f(r))
+        open_media = lambda r: self.media_status(r) != 5
+        return {"total": len(mine), "movie": n(lambda r: r.get("type") == "movie"), "tv": n(lambda r: r.get("type") == "tv"),
+                "pending": n(lambda r: r.get("status") == 1), "approved": n(lambda r: r.get("status") == 2), "declined": n(lambda r: r.get("status") == 3),
+                "processing": n(lambda r: r.get("status") == 2 and open_media(r)), "available": n(lambda r: r.get("status") == 2 and not open_media(r)),
+                "completed": n(lambda r: r.get("status") == 5)}
 
     def rotated(self, who, status, out, extra):
         now = self.now()
