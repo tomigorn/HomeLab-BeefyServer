@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Download now (README "Download now"): the button on Seerr's title page. Seerr admins / manage-requests on any title, everyone else only on a title with their own (not declined) request; checked against Seerr itself on every call.
 A press tags the title download-now in Radarr/Sonarr, moves its downloads out of the night categories (qBittorrent radarr-night/sonarr-night, SABnzbd movies-night/tv-night) into the normal ones and resumes the paused ones; nothing grabbed yet = a search, which grabs through the tagged normal clients.
-GET /_download-now/api?type=movie|tv&tmdb=<id>: what a press would do (no change), with the title's search (queued/started, searches ahead, last search time). POST /_download-now/api {"type","tmdbId"}: do it. The API keys stay here, the browser only sees the state."""
+GET /_download-now/api?type=movie|tv&tmdb=<id>: what a press would do (no change), with the title's search (queued/started, searches ahead, last search time). POST /_download-now/api {"type","tmdbId"}: do it. The API keys stay here, the browser only sees the state.
+GET /_download-now/origins: where each request came from (README "Request origin", origins.json of Jellyfin's popular backend); viewers of all requests get all, everyone else only their own."""
 import http.client
 import http.server
 import json
@@ -21,6 +22,7 @@ NIGHT_QBIT = {"radarr-night": "radarr", "sonarr-night": "sonarr"}
 NIGHT_SAB = {"movies-night": "movies", "tv-night": "tv"}
 PAUSED_QBIT = {"pausedDL", "stoppedDL"}
 MAY = 2 | 16  # Seerr ADMIN | MANAGE_REQUESTS
+VIEW_ALL = 2 | 16 | 16384  # ADMIN | MANAGE_REQUESTS | REQUEST_VIEW
 DECLINED = 3
 APP = {"movie": "radarr", "tv": "sonarr"}
 AUTH_HEADERS = ("X-Api-Key", "X-Api-User")
@@ -44,6 +46,7 @@ class Deps:
     sab: object
     origins: set = field(default_factory=set)
     seerr_admin: object = None
+    origins_file: object = None
 
 
 def redact(text):
@@ -206,10 +209,37 @@ def auth_of(headers):
     return out
 
 
+def read_origins(path):
+    try:
+        data = json.loads(pathlib.Path(path).read_text())
+    except (OSError, ValueError, TypeError):
+        return {}
+    reqs = data.get("requests") if isinstance(data, dict) else None
+    return {k: v for k, v in reqs.items() if isinstance(v, dict)} if isinstance(reqs, dict) else {}
+
+
+def origins(headers, deps):
+    auth = auth_of(headers)
+    try:
+        me = deps.seerr("/auth/me", auth) if auth else None
+    except ApiError:
+        me = None
+    uid = me.get("id") if isinstance(me, dict) else None
+    if not isinstance(uid, int) or isinstance(uid, bool):
+        return 403, {"error": "forbidden"}
+    reqs = read_origins(deps.origins_file) if deps.origins_file else {}
+    p = me.get("permissions")
+    if not (isinstance(p, int) and p & VIEW_ALL):
+        reqs = {k: v for k, v in reqs.items() if uid in (v.get("seerrUser"), v.get("person"))}
+    return 200, {"requests": reqs}
+
+
 def handle(method, path, headers, body, deps):
     url = urllib.parse.urlsplit(path)
     if url.path == "/_download-now/health" and method == "GET":
         return 200, {"ok": True}
+    if url.path == "/_download-now/origins" and method == "GET":
+        return origins(headers, deps)
     if url.path == "/_download-now/request":
         import my_request
         return my_request.handle(sys.modules[__name__], method, path, headers, body, deps)
@@ -340,6 +370,7 @@ def deps_from_env(env):
         qbit=qbit_client(env.get("DN_QBIT", "http://gluetun:8080") + "/api/v2"),
         sab=sab_client(env.get("DN_SAB", "http://gluetun:8081"), secret("sabnzbd.apikey")),
         origins={o.strip() for o in env.get("DN_ORIGINS", "https://requests.holy-grail.ch").split(",") if o.strip()},
+        origins_file=env.get("DN_ORIGINS_FILE") or None,
         seerr_admin=seerr_admin_client(env.get("DN_SEERR", "http://seerr:5055"), secret("seerr.apikey")) if pathlib.Path(env.get("DN_SECRETS", "/run/secrets/download-now"), "seerr.apikey").is_file() else None,
     )
 

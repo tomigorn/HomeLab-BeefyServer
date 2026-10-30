@@ -115,9 +115,12 @@ services:
       - TZ=${TZ}
       - PYTHONDONTWRITEBYTECODE=1
       - DN_ORIGINS=https://requests.holy-grail.ch
+      - DN_ORIGINS_FILE=/run/origins/origins.json
     volumes:
       - ./download-now:/app:ro
       - ./secrets/download-now:/run/secrets/download-now:ro
+      # origins.json of Jellyfin's popular backend (README "Request origin")
+      - ${APPDATA_ROOT}/jellyfin-popular-export:/run/origins:ro
     networks:
       seerr-front: {}
       movie-downloads:

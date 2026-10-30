@@ -302,6 +302,12 @@
     if ((select.getAttribute("title") || "") !== hint) { if (hint) select.setAttribute("title", hint); else select.removeAttribute("title"); }
   }
 
+  // the shown rows with their Seerr request ids (request-origin.js), [] while the list is not matched
+  function rows(doc) {
+    var list = findList(doc), current = list && match(list.rows);
+    return current ? list.rows.map(function (row, i) { return { row: row, id: current.rows[i].id }; }) : [];
+  }
+
   function titleText(entry, l) {
     if (entry && entry.size > 0) return bytes(entry.size, l) + (entry.quality ? " · " + entry.quality : "") + (entry.of > 0 ? " · " + fill(TEXT[l].of, entry.files || 0, entry.of) : "");
     return sizeText(entry, l);
@@ -357,6 +363,7 @@
   function run() {
     if (typeof document === "undefined") return;
     try { style(document); apply(document); titleFact(document); } catch (e) { /* never break Seerr */ }
+    try { window.dispatchEvent(new Event("hg-request-rows")); } catch (e) { /* no listener */ }
   }
 
   function hookXHR(XHR) {
@@ -391,7 +398,7 @@
     };
   }
 
-  var api = { titleFact: titleFact, sizeText: sizeText, ranking: ranking, bytes: bytes, remember: remember, apply: apply, state: state };
+  var api = { rows: rows, titleFact: titleFact, sizeText: sizeText, ranking: ranking, bytes: bytes, remember: remember, apply: apply, state: state };
   if (typeof window === "undefined") return;
   window.hgRequestSizes = api;
   try {
@@ -412,7 +419,7 @@
         var added = records[i].addedNodes;
         for (var n = 0; n < added.length; n++) {
           var a = added[n];
-          if (a.nodeType === 1 && !a.hasAttribute("data-hg-size") && !a.hasAttribute("data-hg-size-sort")) { run(); return; }
+          if (a.nodeType === 1 && !a.hasAttribute("data-hg-size") && !a.hasAttribute("data-hg-size-sort") && !a.hasAttribute("data-hg-origin") && !a.hasAttribute("data-hg-origin-fact")) { run(); return; }
         }
       }
     }).observe(document.body, { childList: true, subtree: true });

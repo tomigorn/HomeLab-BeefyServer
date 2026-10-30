@@ -184,7 +184,7 @@ A thin bar at the top of every Seerr page (everyone who can open Requests sees i
 
 | Part | What |
 |---|---|
-| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` (and `can-wait.js`, `menu-links.js`, `night-label.js`, `download-now.js`, `my-request.js`, `request-sizes.js`: [Can wait](#can-wait), [Menu links](#menu-links), [Night label](#night-label), [Download now](#download-now), [My request](#my-request), [Request sizes](#request-sizes)); `/_download-now/` goes to the `download-now` backend before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
+| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` (and `can-wait.js`, `menu-links.js`, `night-label.js`, `download-now.js`, `my-request.js`, `request-sizes.js`, `request-origin.js`: [Can wait](#can-wait), [Menu links](#menu-links), [Night label](#night-label), [Download now](#download-now), [My request](#my-request), [Request sizes](#request-sizes), [Request origin](#request-origin)); `/_download-now/` goes to the `download-now` backend before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
 | Jellyfin sign-in blocked | `/api/v1/auth/jellyfin` and below (password login, Quick Connect initiate/check/authenticate) answer 403 in nginx (case-insensitive); users sign in via OIDC (`/api/v1/auth/oidc/…` untouched). Quick Connect ignores `mediaServerLogin`, so a Jellyfin-linked account could otherwise get a session without the SSO step. Gap: a client on a docker network reaching `seerr:5055` directly skips the proxy. Check: `seerr.jellyfin-auth-blocked` |
 | Session gate | `usage.json`, `night-waiting.json`, `request-state.json` and `/_download-now/` (not `/health`) need a Seerr session: nginx `auth_request` asks Seerr `GET /api/v1/auth/me` with the caller's own cookie (or `X-Api-Key`/`X-Api-User`), cached 10 s per credentials; none/invalid = 401. The bar scripts render only after a 200, never on `/login`, `/setup`, `/resetpassword`, and re-check after client-side navigation (login without reload). Check: `seerr.data-needs-session` |
 | Shared code | `bar.js` + `bar.css` are one codebase with the requests bar above AudioBookRequest (fastpi, HomeLab-FastPi `Docker/Audiobook-Requests`): canonical here, vendored there unchanged; config = attributes on the `<script>` tag, app wording (disk hints, panel note) comes from `usage.json` (`indexer-usage.py`). Format: `indexer-bar/schema.md`. Change here, run both test suites, then on fastpi `Docker/Audiobook-Requests/scripts/sync-bar.sh` (fastpi's post-update check `books.bar-shared` compares the hashes) |
@@ -412,6 +412,25 @@ Requests page → every row gets a **Size** line under Profile (German **Grösse
 | Layout | line / row added inside the MutationObserver callback (before paint; title page: in the first frame the facts panel exists, measured); on wide screens (≥1280 px) every row, placeholders too, is 8.5rem instead of 7rem so the fifth line fits and nothing jumps; the controls wrap to a second line when there is no room |
 | Script | `indexer-bar/www/request-sizes.js` (injected by `seerr-proxy`) |
 | Tests | `python3 -m unittest tests.test_night_downloads` (Movie-Downloads, class `Sizes`); JS `node --test` in `tests/js` (`request-sizes.test.mjs`) |
+
+## Request origin
+
+Requests made with Jellyfin's Popular buttons get a pill in the **Requested** line of the Requests list and a **Requested via** row (German **Angefragt über**) after Size on the title page. Requests made in Seerr itself: no pill.
+
+| Pill | Made with |
+|---|---|
+| `via Jellyfin` | 🌙/⚡ on Jellyfin's Popular page (web) |
+| `via Moonfin` | Request in the Moonfin app (Seerr facade) |
+| `via TV` | playing a Popular placeholder to its end on the TV |
+| `… · Jane Doe` | Seerr shows the service user **Jellyfin popular** (the person has no Seerr account, or is not auto-approved): the real person from our audit |
+
+| Part | What |
+|---|---|
+| Requester | Jellyfin's backend requests as the person's own Seerr account where it can (Jellyfin README "Currently popular", "As whom"), so Seerr's own "by" and My request work; the service user only as fallback. Old service-user requests keep their Seerr requester (Seerr changes `requestedBy` only on pending requests), the pill shows the person |
+| Data | `/srv/appdata/jellyfin-popular-export/origins.json` (Jellyfin `popular`), mounted read-only into `download-now`; `GET /_download-now/origins` (Seerr session via `auth_request`): ADMIN / MANAGE_REQUESTS / REQUEST_VIEW get every request, everyone else only their own (`seerrUser` or `person` = them); no file = `{}` |
+| Match | Requests rows ↔ request ids from `request-sizes.js` (`hgRequestSizes.rows`); title page: Seerr's `/api/v1/movie\|tv/<id>` `mediaInfo.requests` (one read per title) |
+| Script | `indexer-bar/www/request-origin.js` (injected by `seerr-proxy`); hint: hover / tap (night label's hint box) |
+| Tests | `python3 tests/test_download_now.py` (class `Origins`); JS `node --test` in `tests/js` (`request-origin.test.mjs`); Jellyfin `popular/test_app.py` (`Attribution`, `Origins`) |
 
 ## Delete a title
 

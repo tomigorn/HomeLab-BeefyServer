@@ -31,7 +31,7 @@ if want seerr; then
   check seerr.extra-hosts '^192\.168\.1\.2$' "$(docker exec seerr getent ahostsv4 sso.holy-grail.ch 2>&1 | awk 'NR==1{print $1}')"
 fi
 if want seerr-proxy; then
-  check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js _indexer-bar/request-sizes.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '\(src\|href\)="/_indexer-bar/[a-z-]*\.\(js\|css\)"' | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
+  check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js _indexer-bar/request-origin.js _indexer-bar/request-sizes.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '\(src\|href\)="/_indexer-bar/[a-z-]*\.\(js\|css\)"' | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
   check seerr.data-needs-session '^401 401 401 401$' "$(for u in /_indexer-bar/usage.json /_indexer-bar/night-waiting.json /_indexer-bar/request-state.json '/_download-now/api?type=movie&tmdb=603'; do curl -s -m 8 -o /dev/null -w '%{http_code} ' "http://127.0.0.1:5055$u"; done | xargs 2>&1)"
   check seerr.jellyfin-auth-blocked '^403 403 403 [^4]' "$(for r in 'POST /api/v1/auth/jellyfin/quickconnect/initiate' 'POST /api/v1/auth/jellyfin' 'GET /api/v1/auth/JELLYFIN/quickconnect/check' 'GET /api/v1/auth/oidc/login/holy-grail'; do set -- $r; curl -s -m 8 -o /dev/null -w '%{http_code} ' -X $1 "http://127.0.0.1:5055$2"; done | xargs 2>&1)"
   check seerr.bar-config '^1$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -c 'bar.js" data-ib-data="/_indexer-bar/usage.json"')"
@@ -57,6 +57,9 @@ if want download-now seerr-proxy; then
   check seerr.my-request-auth '^401$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5055/_download-now/request?type=movie&tmdb=603' 2>&1)"
   check seerr.my-request-requester '^200 403 $' "$(seerr_dn_requester "$DIR/../../Seerr/secrets/api-key" /_download-now/request 2>&1)"
   check seerr.delete-keeps-files '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/my-request.js | grep -c 'data-delete-keep' 2>&1)"
+  check seerr.origins-auth '^401$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/_download-now/origins 2>&1)"
+  check seerr.origins-data '^object readable$' "$(seerr_data /_download-now/origins | jq -r '.requests|type' 2>&1) $(docker exec seerr-download-now test -r /run/origins/origins.json && echo readable || echo missing)"
+  check seerr.origin-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-origin.js | grep -c 'data-hg-origin-fact' 2>&1)"
   check seerr.title-pill-hints '^[1-9] [1-9]$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'handed to Radarr/Sonarr' 2>&1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/download-now.js | grep -c 'grabbedHint' 2>&1)"
   check seerr.download-now-script '^media-actions closest\("main"\)$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/download-now.js | grep -o 'media-actions' | head -1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/menu-links.js | grep -o 'closest("main")' | head -1)"
 fi

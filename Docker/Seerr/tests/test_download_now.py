@@ -438,6 +438,49 @@ class Handler(unittest.TestCase):
         self.assertEqual(dn.handle("GET", "/_download-now/other", {}, b"", FakeWorld().deps())[0], 404)
 
 
+class Origins(unittest.TestCase):
+    DATA = {"updated": "2026-10-31T00:00:00+00:00", "requests": {
+        "64": {"source": "tv", "name": "Jane Doe", "seerrUser": 7, "person": 7, "service": False},
+        "65": {"source": "jellyfin", "name": "John Doe", "seerrUser": 8, "person": None, "service": True},
+        "66": {"source": "moonfin", "name": "Jane Doe", "seerrUser": 8, "person": 7, "service": True}}}
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.file = pathlib.Path(self.tmp.name, "origins.json")
+        self.file.write_text(json.dumps(self.DATA))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def get(self, perms, file=None):
+        w = FakeWorld(perms=perms)
+        deps = w.deps()
+        deps.origins_file = file or self.file
+        return dn.handle("GET", "/_download-now/origins", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)
+
+    def test_viewers_see_every_request(self):
+        for perms in (2, 16, 16384 | 32):
+            self.assertEqual(self.get(perms), (200, {"requests": self.DATA["requests"]}), perms)
+
+    def test_others_see_only_their_own(self):
+        status, out = self.get(32 | 128)
+        self.assertEqual((status, sorted(out["requests"])), (200, ["64", "66"]))
+
+    def test_no_session_no_data(self):
+        self.assertEqual(self.get(None)[0], 403)
+        self.assertEqual(dn.handle("GET", "/_download-now/origins", {}, b"", FakeWorld().deps())[0], 403)
+
+    def test_missing_or_broken_file_is_empty(self):
+        self.assertEqual(self.get(2, pathlib.Path(self.tmp.name, "none.json")), (200, {"requests": {}}))
+        self.file.write_text("{oops")
+        self.assertEqual(self.get(2), (200, {"requests": {}}))
+
+    def test_only_get(self):
+        w = FakeWorld()
+        self.assertEqual(dn.handle("POST", "/_download-now/origins", {"Cookie": "connect.sid=s%3Aabc"}, b"{}", w.deps())[0], 404)
+
+
 class Redact(unittest.TestCase):
     def test_query_strings_are_cut(self):
         self.assertEqual(dn.redact("http://gluetun:8081/api?apikey=SECRET&mode=queue: timed out"), "http://gluetun:8081/api: timed out")
