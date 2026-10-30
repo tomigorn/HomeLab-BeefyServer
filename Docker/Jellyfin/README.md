@@ -682,11 +682,13 @@ Test of the **Moonfin** TV apps (Apple TV, Android TV). The server plugin **Moon
 - The apps skip a wizard question when its setting comes from the server (navigation, media bar, row style, details style).
 - Seerr points at our facade `http://jellyfin-popular:8099` (display name "Requests", rows on by default, see "Moonfin requests (Seerr facade)"); the real Seerr is never configured in Moonbase, and `SeerrWebhookSecret` is never touched. Off on purpose: push notifications (relay `push.moonfin.io` = third-party cloud), Moonfin Recommends (would replace Similar for every client), IMDb/MDBList lists and studio logos (no keys). No TMDB/MDBList key stored: Moonbase hands the server keys to every signed-in user.
 - Side effect: a Moonfin button in the stock web header (File Transformation). The web app itself is at `/Moonfin/Web/`.
-- Collection **Hidden Gems** (`scripts/hidden-gems.py`, idempotent, `--dry-run`): the 20 newest-added films and series of Movies + Shows with community rating ≥ 7.5, newest first (BoxSet `DisplayOrder` Default = insertion order; Moonfin itself sorts collection rows by name). Only the BoxSet tagged `hss-hidden-gems` is touched; not per user (the web row also hides watched titles).
+- Runs after each trending sync (`moonbase.py` in `jellyfin-popular.service` and `jellyfin-trending.service`, after `trending.py`), so collection rows follow the lists; a failure fails the unit (`journalctl --user -u jellyfin-popular`).
+- Collection **Hidden Gems** (`scripts/hidden-gems.py`, idempotent, `--dry-run`, nightly in `jellyfin-popular.service` before `moonbase.py`): the 20 newest-added films and series of Movies + Shows with community rating ≥ 7.5, newest first (BoxSet `DisplayOrder` Default = insertion order; Moonfin itself sorts collection rows by name). Only the BoxSet tagged `hss-hidden-gems` is touched; not per user (the web row also hides watched titles).
 
 | Task | Command (in `Docker/Jellyfin/`) |
 |---|---|
 | Apply defaults | `bash scripts/backup-config.sh moonbase && python3 scripts/moonbase.py` |
+| Units after a change | `cp systemd/jellyfin-popular.service systemd/jellyfin-trending.service ~/.config/systemd/user/ && systemctl --user daemon-reload` |
 | Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-moonbase`, `jf.moonbase-config`) |
 | Rollback | Dashboard → Plugins → Moonbase → Uninstall, restart (`sudo docker compose restart jellyfin`); remove the Moonbase repository. Pre-change backup: `~/backups/jellyfin/20261030-014107-pre-moonbase` |
 
