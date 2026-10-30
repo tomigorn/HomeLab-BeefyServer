@@ -31,6 +31,7 @@ fi
 if want seerr-proxy; then
   check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js _indexer-bar/request-sizes.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '\(src\|href\)="/_indexer-bar/[a-z-]*\.\(js\|css\)"' | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
   check seerr.data-needs-session '^401 401 401 401$' "$(for u in /_indexer-bar/usage.json /_indexer-bar/night-waiting.json /_indexer-bar/request-state.json '/_download-now/api?type=movie&tmdb=603'; do curl -s -m 8 -o /dev/null -w '%{http_code} ' "http://127.0.0.1:5055$u"; done | xargs 2>&1)"
+  check seerr.jellyfin-auth-blocked '^403 403 403 [^4]' "$(for r in 'POST /api/v1/auth/jellyfin/quickconnect/initiate' 'POST /api/v1/auth/jellyfin' 'GET /api/v1/auth/JELLYFIN/quickconnect/check' 'GET /api/v1/auth/oidc/login/holy-grail'; do set -- $r; curl -s -m 8 -o /dev/null -w '%{http_code} ' -X $1 "http://127.0.0.1:5055$2"; done | xargs 2>&1)"
   check seerr.bar-config '^1$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -c 'bar.js" data-ib-data="/_indexer-bar/usage.json"')"
   check seerr.bar-texts '^hint note$' "$(seerr_data /_indexer-bar/usage.json | jq -r '"\(if .storage[0].hint.en then "hint" else "no-hint" end) \(if .note.en then "note" else "no-note" end)"' 2>&1)"
   check seerr.bar-storage '^SSD HDD$' "$(seerr_data /_indexer-bar/usage.json | jq -r '[.storage[].name] | join(" ")' 2>&1)"
