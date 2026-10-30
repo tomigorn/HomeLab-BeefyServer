@@ -905,9 +905,20 @@ class MoonfinOrder(Base):
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertIn("nothing changed", self.out)
 
+    def test_order_failure_is_logged_and_the_sync_succeeds(self):
+        class Broken(PlainFs):
+            def write(self, path, data):
+                raise tr.subprocess.CalledProcessError(1, ["sudo"])
+
+        self.io.order_fs = Broken
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertIn("collection order failed: CalledProcessError", self.out)
+        self.assertTrue(self.paths.index.is_file())
+
     def test_dry_run_writes_no_order(self):
         self.assertEqual(self.run_sync("--dry-run"), 0, self.out)
         self.assertFalse(self.paths.moonfin.exists())
+        self.assertFalse(self.paths.order_state.exists())
 
 
 if __name__ == "__main__":

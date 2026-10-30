@@ -102,18 +102,35 @@ class Sync(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_sync("trending", [U1], {"../../x": ["a"]})
 
-    def test_sudo_fs_commands_keep_the_plugin_owner_and_modes(self):
+    def test_sudo_fs_runs_every_step_as_the_plugin_user(self):
         calls = []
-        fs = co.SudoFs(uid=65108, gid=65108, run=lambda cmd, **kw: calls.append(cmd))
+        fs = co.SudoFs(uid=65108, gid=65108, run=lambda cmd, **kw: calls.append((cmd, kw.get("input"))))
         d = pathlib.Path("/m/collections/u")
         fs.mkdir(d)
         fs.write(d / "c.json", b"[]")
         fs.remove(d / "c.json")
-        self.assertEqual(calls[0], ["sudo", "-n", "install", "-d", "-o", "65108", "-g", "65108", "-m", "2775", "/m/collections/u"])
-        self.assertEqual(calls[1][:9], ["sudo", "-n", "install", "-o", "65108", "-g", "65108", "-m", "0664"])
-        self.assertEqual(calls[1][-1], "/m/collections/u/.c.json.tmp")
-        self.assertEqual(calls[2], ["sudo", "-n", "mv", "-f", "-T", "/m/collections/u/.c.json.tmp", "/m/collections/u/c.json"])
-        self.assertEqual(calls[3], ["sudo", "-n", "rm", "-f", "--", "/m/collections/u/c.json"])
+        drop = ["sudo", "-n", "setpriv", "--reuid=65108", "--regid=65108", "--clear-groups"]
+        self.assertEqual(calls, [
+            (drop + ["mkdir", "-m", "2775", "--", "/m/collections/u"], None),
+            (drop + ["tee", "--", "/m/collections/u/.c.json.tmp"], b"[]"),
+            (drop + ["chmod", "0664", "--", "/m/collections/u/.c.json.tmp"], None),
+            (drop + ["mv", "-f", "-T", "--", "/m/collections/u/.c.json.tmp", "/m/collections/u/c.json"], None),
+            (drop + ["rm", "-f", "--", "/m/collections/u/c.json"], None)])
+
+    def test_failed_write_still_records_the_files_written_before(self):
+        class Breaks(PlainFs):
+            n = 0
+
+            def write(self, path, data):
+                Breaks.n += 1
+                if Breaks.n == 2:
+                    raise OSError("boom")
+                super().write(path, data)
+
+        with self.assertRaises(OSError):
+            co.sync("trending", [U1], {C1: ["a"], C2: ["b"]}, False, self.log.append, root=self.root, state=self.state, fs=Breaks())
+        self.run_sync("trending", [U1], {})
+        self.assertEqual(list((self.root / U1).iterdir()), [])
 
 
 if __name__ == "__main__":
