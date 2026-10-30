@@ -460,6 +460,15 @@ def q(value):
     return urllib.parse.quote(value, safe="")
 
 
+RANKED = {key for key, _, _ in tm.HOME} | {tm.COMING[0]}
+gems = _load("hidden_gems", HERE / "hidden-gems.py")
+
+
+def display_order(spec):
+    """Top 10 and Coming soon keep their members in rank order (owned titles at their rank), every other list sorts by sort title."""
+    return "Default" if spec["key"] in RANKED else "SortName"
+
+
 class Collections:
     def __init__(self, io, state, admin, images, dry_run, log, save):
         self.io, self.state, self.admin, self.images, self.dry_run, self.log, self.save = io, state, admin, images, dry_run, log, save
@@ -508,14 +517,15 @@ class Collections:
             sets[key] = sid
             self.metadata(sid, spec, created or own)
             if not created:
-                self.members(sid, want)
+                self.members(sid, want, spec["key"] in RANKED)
             self.artwork(sid, spec, arts, (art_refs or {}).get(key) or [])
         return sorted(set(tagged) | used)
 
     def metadata(self, sid, spec, untagged_ok):
         item = self.io.jf("GET", f"/Items/{sid}?userId={self.admin}")
         tags = list(item.get("Tags") or [])
-        if tm.TAG in tags and item.get("ForcedSortName") == spec["sort"] and item.get("DisplayOrder") == "SortName" and item.get("LockData") is True and item.get("Name") == spec["name"]:
+        order = display_order(spec)
+        if tm.TAG in tags and item.get("ForcedSortName") == spec["sort"] and item.get("DisplayOrder") == order and item.get("LockData") is True and item.get("Name") == spec["name"]:
             return
         if not untagged_ok and tm.TAG not in tags:
             raise JellyfinError(f"collection {sid} lost its tag")
@@ -525,10 +535,20 @@ class Collections:
             return
         if tm.TAG not in tags:
             tags.append(tm.TAG)
-        self.io.jf("POST", f"/Items/{sid}", {**item, "Name": spec["name"], "Tags": tags, "ForcedSortName": spec["sort"], "DisplayOrder": "SortName", "LockData": True})
+        self.io.jf("POST", f"/Items/{sid}", {**item, "Name": spec["name"], "Tags": tags, "ForcedSortName": spec["sort"], "DisplayOrder": order, "LockData": True})
 
-    def members(self, sid, want):
+    def members(self, sid, want, ordered=False):
         have = [i["Id"] for i in self.io.jf("GET", f"/Items?ParentId={sid}&userId={self.admin}&EnableImages=false&EnableUserData=false")["Items"]]
+        if ordered:
+            todo = gems.steps(have, want)
+            if todo:
+                self.changed += 1
+                if self.dry_run:
+                    self.log(f"would reorder collection {sid}: {len(todo)} steps")
+                    return
+            for method, ids in todo:
+                self.io.jf(method, f"/Collections/{sid}/Items?ids={','.join(ids)}")
+            return
         add = [i for i in want if i not in have]
         drop = [i for i in have if i not in want]
         if add or drop:

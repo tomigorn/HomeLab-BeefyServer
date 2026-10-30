@@ -360,7 +360,8 @@ class SyncTest(Base):
         self.assertEqual(sorted(tagged), sorted(s["name"] for s in specs))
         for spec in specs:
             s = tagged[spec["name"]]
-            self.assertEqual((s["ForcedSortName"], s["DisplayOrder"], s["LockData"]), (spec["sort"], "SortName", True))
+            ranked = spec["key"] in ("home-movies", "home-shows", "coming")
+            self.assertEqual((s["ForcedSortName"], s["DisplayOrder"], s["LockData"]), (spec["sort"], "Default" if ranked else "SortName", True))
             self.assertIn(f"/Items/{s['Id']}/Images/Primary", self.io.images)
             self.assertIn(f"/Items/{s['Id']}/Images/Backdrop/0", self.io.images)
         hp = self.io.sets["hp"]
@@ -376,7 +377,7 @@ class SyncTest(Base):
         changes = [c for c in self.io.calls if c[1].startswith(f"/Collections/{home}/Items")]
         self.assertEqual({c[0] for c in changes}, {"POST", "DELETE"})
         self.assertIn(("POST", f"/Collections/{home}/Items?ids={self.item('Gamma')['Id']}"), changes)
-        self.assertEqual(sorted(self.io.sets[home]["children"]), sorted([self.item("Alpha")["Id"], "real9", self.item("Gamma")["Id"]]))
+        self.assertEqual(self.io.sets[home]["children"], [self.item("Alpha")["Id"], "real9", self.item("Gamma")["Id"]])
         uploads = sorted(c[1] for c in self.io.calls if c[1].startswith("/Items/") and "/Images/" in c[1])
         self.assertEqual(uploads, [f"/Items/{home}/Images/Backdrop/0", f"/Items/{home}/Images/Primary"])
 
@@ -673,3 +674,31 @@ class SyncTest(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RankedCollections(Base):
+    def home(self):
+        return next(s for s in self.io.sets.values() if s["Name"] == "Top 10 Switzerland · Movies")
+
+    def test_owned_title_moves_to_its_rank(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        netflix = next(s for s in self.io.sets.values() if s["Name"] == "Netflix · Movies")
+        before = list(netflix["children"])
+        lists, coming, details, comingd = feeds()
+        lists["home"]["movies"] = [entry(9, 1, "Owned"), entry(1, 2, "Alpha"), entry(2, 3, "Beta", found=False)]
+        self.write_feeds(lists, coming, details, comingd)
+        self.assertEqual(self.run_sync("--dry-run"), 0, self.out)
+        self.assertEqual(self.writes(), [])
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.home()["children"], ["real9", self.item("Alpha")["Id"], self.item("Beta")["Id"]])
+        self.assertEqual(netflix["children"], before)
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse(any(c[1].startswith("/Collections/") for c in self.writes()))
+
+    def test_sort_name_ordered_top_10_switches_to_rank_order(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        home = self.home()
+        home["DisplayOrder"] = "SortName"
+        home["children"] = ["real9", self.item("Beta")["Id"], self.item("Alpha")["Id"]]
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual((home["DisplayOrder"], home["children"]), ("Default", [self.item("Alpha")["Id"], self.item("Beta")["Id"], "real9"]))
