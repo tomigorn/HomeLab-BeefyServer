@@ -380,10 +380,11 @@ def folder_of(path):
 
 @dataclasses.dataclass
 class Placed:
-    """A placeholder folder as Jellyfin lists it: item = the film or the series, files = {path in the folder: playable item or version id}."""
+    """A placeholder folder as Jellyfin lists it: item = the film or the series, files = {path in the folder: playable item or version id}, parents = series and season ids of a show."""
     item: dict
     files: dict
     ticks: list
+    parents: set = dataclasses.field(default_factory=set)
 
 
 def view(kind, items):
@@ -398,7 +399,7 @@ def view(kind, items):
     for i in items:
         p = pathlib.PurePosixPath(i.get("Path") or "")
         if i.get("Type") == "Series" and str(p.parent) == JF_SHOWS:
-            out[p.name] = Placed(i, {}, [])
+            out[p.name] = Placed(i, {}, [], {i["Id"]})
             series[i["Id"]] = p.name
     for i in items:
         if i.get("Type") != "Episode" or i.get("SeriesId") not in series:
@@ -409,6 +410,8 @@ def view(kind, items):
         except ValueError:
             continue
         out[folder].files[rel] = i["Id"]
+        if i.get("SeasonId"):
+            out[folder].parents.add(i["SeasonId"])
         if i.get("RunTimeTicks"):
             out[folder].ticks.append(i["RunTimeTicks"])
     return out
@@ -602,8 +605,13 @@ def upsert_hide(io, source, dry_run):
     return True
 
 
+def index_parents(placeholders, placed):
+    """Series and season ids of the show placeholders: the TV hook unmarks these only."""
+    return sorted({p for folder, pl in placed.items() if folder in placeholders for p in pl.parents})
+
+
 def write_index(paths, placed, placeholders, now, dry_run):
-    data = {"items": index_items(placeholders, placed)}
+    data = {"items": index_items(placeholders, placed), "parents": index_parents(placeholders, placed)}
     old = read_json(paths.index)
     try:
         recent = now - aware(old["updated"]) < INDEX_MAX_AGE

@@ -91,7 +91,7 @@ class FakeIo:
             items.append(series)
             for f in sorted(d.rglob("*.mp4")):
                 ep = f"{path}/{f.relative_to(d).as_posix()}"
-                items.append({"Id": sid(ep), "Type": "Episode", "Name": f.stem, "Path": ep, "SeriesId": series["Id"], "ParentId": sid(path, "season"), "RunTimeTicks": 120000000, "ProviderIds": {}})
+                items.append({"Id": sid(ep), "Type": "Episode", "Name": f.stem, "Path": ep, "SeriesId": series["Id"], "SeasonId": sid(path, "season"), "ParentId": sid(path, "season"), "RunTimeTicks": 120000000, "ProviderIds": {}})
         self.tv = items
 
     def scan_movies(self):
@@ -546,6 +546,11 @@ class SyncTest(Base):
         rec = {"x": "x7", "t": "Delta", "modes": {now: "now", night: "night"}, "rt": 120000000}
         self.assertEqual((idx["items"][now], idx["items"][night]), (rec, rec))
         self.assertNotIn(self.series("Delta")["Id"], idx["items"])
+        season = next(i for i in self.io.tv if i["Id"] == now)["SeasonId"]
+        self.assertIn(self.series("Delta")["Id"], idx["parents"])
+        self.assertIn(season, idx["parents"])
+        self.assertTrue(set(idx["parents"]).isdisjoint(idx["items"]))
+        self.assertEqual(idx["parents"], sorted(idx["parents"]))
         (single,) = self.episodes("Epsilon").values()
         self.assertEqual(idx["items"][single], {"x": None, "t": "Epsilon", "modes": {}, "rt": 120000000})
 
