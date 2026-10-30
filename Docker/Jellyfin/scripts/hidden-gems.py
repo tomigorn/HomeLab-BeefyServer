@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Keeps the collection "Hidden Gems": the newest-added films and series of the real libraries with a community rating of 7.5 or more, 20 titles, newest first.
-Only the BoxSet tagged hss-hidden-gems is touched. Idempotent. Usage: hidden-gems.py [--dry-run]"""
+Only the BoxSet tagged hss-hidden-gems is touched; its Moonfin detail order (collection_order.py) is written for every user. Idempotent. Usage: hidden-gems.py [--dry-run]"""
 import pathlib
 import sys
 import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import collection_order  # noqa: E402
 import jellyfin_api  # noqa: E402
 
 NAME = "Hidden Gems"
@@ -45,13 +46,18 @@ def steps(have, want):
     return out
 
 
-def main(argv, api=None):
+def moonfin_order(users, orders, dry):
+    collection_order.sync("gems", users, orders, dry, print)
+
+
+def main(argv, api=None, order=moonfin_order):
     if any(a != "--dry-run" for a in argv):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     api = api or jellyfin_api.api
     dry = "--dry-run" in argv
-    admin = next(u["Id"] for u in api("GET", "/Users") if u["Policy"]["IsAdministrator"])
+    users = api("GET", "/Users")
+    admin = next(u["Id"] for u in users if u["Policy"]["IsAdministrator"])
     items = api("GET", f"/Items?userId={admin}&Recursive=true&IncludeItemTypes=Movie,Series&MinCommunityRating={MIN_RATING}&SortBy=DateCreated,SortName&SortOrder=Descending"
                        "&Limit=200&Fields=Path,DateCreated&EnableImages=false&EnableUserData=false")["Items"]
     want = pick(items)
@@ -83,6 +89,7 @@ def main(argv, api=None):
         if not dry:
             for method, ids in todo:
                 api(method, f"/Collections/{sid}/Items?ids={','.join(ids)}")
+    order([u["Id"] for u in users], {sid: want}, dry)
     verb = "would change" if dry else "changed"
     print(f"{NAME}: {verb} ({len(want)} titles, {len(todo)} steps)" if changes else f"{NAME}: unchanged ({len(want)} titles)")
     return 0

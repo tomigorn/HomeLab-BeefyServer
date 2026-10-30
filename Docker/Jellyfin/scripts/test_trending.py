@@ -23,7 +23,8 @@ import trending_model as tm  # noqa: E402
 NOW = datetime.datetime(2026, 10, 29, 12, 0, tzinfo=datetime.timezone.utc)
 LIB = "lib0"
 SHOWS = "shows0"
-ADMIN = "admin0"
+ADMIN = "ad000000000000000000000000000000"
+USER = "a1000000000000000000000000000000"
 INJ = "inj0"
 
 
@@ -55,6 +56,17 @@ def feeds(updated=None):
 
 def sid(*parts):
     return hashlib.md5("|".join(parts).encode()).hexdigest()
+
+
+class PlainFs:
+    def mkdir(self, path):
+        path.mkdir()
+
+    def write(self, path, data):
+        path.write_bytes(data)
+
+    def remove(self, path):
+        path.unlink()
 
 
 class FakeIo:
@@ -133,7 +145,7 @@ class FakeIo:
         if p == "/Library/VirtualFolders":
             return [{"Name": "Movies", "ItemId": "movies"}, {"Name": tm.LIBRARY, "ItemId": LIB}, {"Name": tm.SHOWS_LIBRARY, **({"ItemId": self.shows_id} if self.shows_id else {})}]
         if p == "/Users":
-            return [{"Id": "u1", "Policy": {"IsAdministrator": False}}, {"Id": ADMIN, "Policy": {"IsAdministrator": True}}]
+            return [{"Id": USER, "Policy": {"IsAdministrator": False}}, {"Id": ADMIN, "Policy": {"IsAdministrator": True}}]
         if p == "/Plugins":
             return [{"Name": "JavaScript Injector", "Id": INJ}]
         if p == f"/Plugins/{INJ}/Configuration":
@@ -164,7 +176,7 @@ class FakeIo:
             return {"Items": self.owned + json.loads(json.dumps(self.library + [i for i in self.tv if i["Type"] == "Series"]))}
         if p == "/Collections" and method == "POST":
             self.n += 1
-            new = f"set{self.n}"
+            new = f"5e7{self.n:029x}"
             self.sets[new] = {"Id": new, "Name": q["name"], "Tags": [], "DisplayOrder": "PremiereDate", "LockData": False, "children": [i for i in q.get("ids", "").split(",") if i]}
             return {"Id": new}
         m = re.fullmatch(r"/Collections/(\w+)/Items", p)
@@ -217,6 +229,9 @@ class FakeIo:
         import contextlib
         return contextlib.nullcontext()
 
+    def order_fs(self):
+        return PlainFs()
+
     def sleep(self, s):
         pass
 
@@ -226,7 +241,9 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         root = pathlib.Path(self.tmp.name)
         self.paths = tr.Paths(feeds=root / "feeds", root=root / "trending", state=root / "state" / "trending.json", lock=root / "state" / "trending.lock",
-                              request_state=root / "request-state.json", signal=root / "signal" / "requested")
+                              request_state=root / "request-state.json", signal=root / "signal" / "requested",
+                              moonfin=root / "Moonfin" / "collections", order_state=root / "state" / "order.json")
+        (root / "Moonfin").mkdir()
         for d in ("library", "shows", "clips", "cache", "originals"):
             (self.paths.root / d).mkdir(parents=True)
         self.paths.feeds.mkdir()
@@ -477,16 +494,16 @@ class SyncTest(Base):
         self.assertNotEqual(tr.sort_key("01-02 Animals"), tr.sort_key("0000000101 animals"))
 
     def test_failed_tag_update_keeps_the_new_collection(self):
-        self.io.fail = {r"POST /Items/set1"}
+        self.io.fail = {r"POST /Items/5e70{28}1"}
         self.assertEqual(self.run_sync(), 1, self.out)
-        self.assertEqual(json.loads(self.paths.state.read_text())["sets"], {"home-movies": "set1"})
+        self.assertEqual(json.loads(self.paths.state.read_text())["sets"], {"home-movies": "5e7" + "0" * 28 + "1"})
         self.io.fail = set()
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(len([c for c in self.io.calls if c[1].startswith("/Collections?")]), 3)
         self.assertEqual(len([s for s in self.io.sets.values() if tm.TAG in s["Tags"]]), 4)
         self.assertEqual(len(self.io.sets), 5)
         hide = next(s for s in self.io.injector["CustomJavaScripts"] if s["Name"] == "Trending hidden")["Script"]
-        self.assertIn('"set1"', hide)
+        self.assertIn('"5e7' + "0" * 28 + '1"', hide)
 
     def test_pending_item_refresh_survives_a_failed_run(self):
         self.assertEqual(self.run_sync(), 0, self.out)
@@ -849,6 +866,26 @@ class RealArt(Base):
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(self.io.primary["real9"], self.ORIGINAL)
         self.assertIn("originals folder missing", self.out)
+
+
+class MoonfinOrder(Base):
+    def order(self, uid, name):
+        sid = next(s["Id"] for s in self.io.sets.values() if s["Name"] == name)
+        return json.loads((self.paths.moonfin / uid / f"{sid}.json").read_text())
+
+    def test_every_user_gets_every_list_in_rank_order_owned_titles_included(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        for uid in (USER, ADMIN):
+            self.assertEqual(self.order(uid, "Top 10 Switzerland · Movies"), [self.item("Alpha")["Id"], self.item("Beta")["Id"], "real9"])
+            self.assertEqual(self.order(uid, "Netflix · Movies"), [self.item("Beta")["Id"], self.item("Alpha")["Id"]])
+            self.assertEqual(self.order(uid, "Coming soon"), [self.item("Gamma")["Id"]])
+        self.assertEqual(len(list((self.paths.moonfin / USER).iterdir())), len([s for s in self.io.sets.values() if tm.TAG in s["Tags"]]))
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertIn("nothing changed", self.out)
+
+    def test_dry_run_writes_no_order(self):
+        self.assertEqual(self.run_sync("--dry-run"), 0, self.out)
+        self.assertFalse(self.paths.moonfin.exists())
 
 
 if __name__ == "__main__":

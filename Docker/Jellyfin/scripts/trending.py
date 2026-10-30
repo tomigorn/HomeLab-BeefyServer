@@ -16,6 +16,7 @@ import os
 import pathlib
 import re
 import shutil
+import subprocess
 import sys
 import time
 import unicodedata
@@ -26,6 +27,7 @@ import urllib.request
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import collection_order as co  # noqa: E402
 import trending_art as art  # noqa: E402
 import trending_model as tm  # noqa: E402
 
@@ -72,6 +74,8 @@ class Paths:
     lock: pathlib.Path = STATE_DIR / "jellyfin-trending.lock"
     request_state: pathlib.Path = pathlib.Path("/srv/appdata/indexer-bar/request-state.json")
     signal: pathlib.Path = pathlib.Path("/srv/appdata/jellyfin-popular-signal/requested")
+    moonfin: pathlib.Path = co.ROOT
+    order_state: pathlib.Path = co.STATE
 
     @property
     def library(self):
@@ -134,6 +138,9 @@ class Io:
 
     def sleep(self, s):
         time.sleep(s)
+
+    def order_fs(self):
+        return co.SudoFs()
 
 
 @contextlib.contextmanager
@@ -845,6 +852,12 @@ def sync(io, paths, now, dry_run, log):
     set_ids = cols.sync(plan.collections, member_id, plan.art)
     real_art = RealArt(io, paths, state, dry_run, log, save)
     real_art.sync(plan.real_marks, logos)
+    orders = {state["sets"][spec["key"]]: [i for i in map(member_id, members) if i] for spec, members in plan.collections if spec["key"] in state.get("sets", {})}
+    try:
+        n_order = co.sync("trending", [u["Id"] for u in io.jf("GET", "/Users")], orders, dry_run, log, root=paths.moonfin, state=paths.order_state, fs=io.order_fs())
+    except (subprocess.CalledProcessError, *FAILURES) as e:
+        log(f"collection order failed: {type(e).__name__}")
+        n_order = 0
     all_placed = {f: pl for k in KINDS for f, pl in placed[k].items() if f in by_kind[k]}
     index_changed, n_index = write_index(paths, all_placed, plan.placeholders, now, dry_run)
     hidden_ids = set(index_items(plan.placeholders, all_placed)) | {pl.item["Id"] for pl in all_placed.values()}
@@ -864,7 +877,7 @@ def sync(io, paths, now, dry_run, log):
     if state != read_json(paths.state):
         save()
 
-    changes = len(added) + len(restructured) + len(touched) + n_removed + refreshed + cols.changed + hide_changed + real_art.changed
+    changes = len(added) + len(restructured) + len(touched) + n_removed + refreshed + cols.changed + hide_changed + real_art.changed + n_order
     if dry_run:
         log(f"would change {cols.changed} collection settings, index {'would change' if index_changed else 'unchanged'} ({n_index} ids), hide entry {'would change' if hide_changed else 'unchanged'}")
     elif changes:

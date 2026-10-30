@@ -110,9 +110,17 @@ class FakeJellyfin:
 ITEMS = [item("a", 8.0, "2026-10-30T00:00:00Z"), item("b", 7.9, "2026-10-29T00:00:00Z")]
 
 
-def run(jf, argv=()):
+class Orders:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, users, orders, dry):
+        self.calls.append((users, orders, dry))
+
+
+def run(jf, argv=(), order=None):
     with contextlib.redirect_stdout(io.StringIO()) as out:
-        code = hg.main(list(argv), api=jf)
+        code = hg.main(list(argv), api=jf, order=order or Orders())
     return code, out.getvalue()
 
 
@@ -160,7 +168,7 @@ class MainTest(unittest.TestCase):
             return out
 
         with contextlib.redirect_stdout(io.StringIO()):
-            hg.main([], api=spy)
+            hg.main([], api=spy, order=Orders())
         self.assertEqual(jf.members["g"], ["a", "b"])
         self.assertNotIn(0, sizes)
 
@@ -175,6 +183,21 @@ class MainTest(unittest.TestCase):
         code, out = run(jf, ["--dry-run"])
         self.assertEqual([c for c in jf.calls if c[0] != "GET"], [])
         self.assertIn("would create", out)
+
+    def test_moonfin_order_newest_first_for_every_user(self):
+        jf = FakeJellyfin(boxes=[{"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG]}], members={"g": ["b", "old"]}, items=ITEMS)
+        jf.meta["g"] = {"Id": "g", "Name": hg.NAME, "Tags": [hg.TAG], "DisplayOrder": "Default", "LockData": True}
+        orders = Orders()
+        run(jf, order=orders)
+        self.assertEqual(orders.calls, [(["adm", "u"], {"g": ["a", "b"]}, False)])
+        orders = Orders()
+        run(jf, ["--dry-run"], order=orders)
+        self.assertEqual(orders.calls, [(["adm", "u"], {"g": ["a", "b"]}, True)])
+
+    def test_no_titles_writes_no_order(self):
+        orders = Orders()
+        run(FakeJellyfin(items=[]), order=orders)
+        self.assertEqual(orders.calls, [])
 
     def test_no_titles_no_empty_collection(self):
         jf = FakeJellyfin(items=[])
