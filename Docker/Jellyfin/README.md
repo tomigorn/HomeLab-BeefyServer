@@ -726,7 +726,7 @@ Smart-TV Moonfin (Samsung/Tizen) has no Quick Connect: it sends username + passw
 
 | | |
 |---|---|
-| Code | 10 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no 0/O/1/I/L), `secrets.choice` (CSPRNG), about 49 bits; valid 10 min, once; a new code replaces the previous one |
+| Code | 10 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789` (no 0/O/1/I/L), `secrets.choice` (CSPRNG), about 49 bits; valid 10 min, once; a new code replaces the previous one; when it runs out the page shows "Code expired" instead |
 | Issue | `POST /hss-popular/tv-code` body `{}`, the user only from their own token (`/Users/Me`), browser Origin only, never a user id from the client; 5 codes per user per hour (429, counted in the refusal counters, not one audit line each); shares the 10 POSTs per user per minute of `request` |
 | Storage | memory only, HMAC-SHA256 under a random per-process key, bound to the Jellyfin user id and name; consumed atomically under a lock. A restart drops every code (codes live 10 min, nothing worth persisting, nothing on disk) |
 | Sign-in | username matched case-insensitively against the code's user, then Jellyfin is asked for that user id (disabled/deleted → 403, renamed → 401); same session, cookie, permissions and 5 sign-ins per hour as Quick Connect, never admin |

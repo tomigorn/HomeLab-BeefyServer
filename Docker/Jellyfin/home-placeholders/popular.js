@@ -21,7 +21,7 @@
       night: "\uD83C\uDF19 Tonight", searching: "\uD83D\uDD0D Searching", unreleased: "\uD83D\uDCC5 Not released yet", downloading: "⬇️ Downloading", requested: "✓ Requested", declined: "Declined",
       empty: "Nothing on the list right now.", found: "available",
       details: "details", seasonLong: "Season {n}",
-      tvCode: "Code for TV", tvHint: "On the TV in Moonfin, Settings, Requests sign-in (Jellyfin account): username {u}, password = this code. Valid {m} min (until {t}), once.", tvLimit: "Limit reached: 5 codes per hour", tvFailed: "Code request failed",
+      tvCode: "Code for TV", tvHint: "On the TV in Moonfin, Settings, Requests sign-in (Jellyfin account): username {u}, password = this code. Valid {m} min (until {t}), once.", tvLimit: "Limit reached: 5 codes per hour", tvExpired: "Code expired: get a new one", tvFailed: "Code request failed",
       none: "Not able to download", checked: "checked {d} · rechecked daily", unchecked: "not checked yet · checked tonight", unknown: "Title not identified",
       source: "Sources: Netflix Top 10 Switzerland (weekly), TMDB popularity, where to stream in Switzerland by JustWatch (via TMDB). Only titles in the library or with a release found are shown."
     },
@@ -33,7 +33,7 @@
       night: "\uD83C\uDF19 Heute Nacht", searching: "\uD83D\uDD0D Wird gesucht", unreleased: "\uD83D\uDCC5 Noch nicht erschienen", downloading: "⬇️ Lädt herunter", requested: "✓ Angefragt", declined: "Abgelehnt",
       empty: "Gerade nichts auf der Liste.", found: "verfügbar",
       details: "Details", seasonLong: "Staffel {n}",
-      tvCode: "Code für TV", tvHint: "Auf dem TV in Moonfin, Einstellungen, Requests-Anmeldung (Jellyfin-Konto): Benutzername {u}, Passwort = dieser Code. Gültig {m} Min. (bis {t}), einmal.", tvLimit: "Limite erreicht: 5 Codes pro Stunde", tvFailed: "Code-Anfrage fehlgeschlagen",
+      tvCode: "Code für TV", tvHint: "Auf dem TV in Moonfin, Einstellungen, Requests-Anmeldung (Jellyfin-Konto): Benutzername {u}, Passwort = dieser Code. Gültig {m} Min. (bis {t}), einmal.", tvLimit: "Limite erreicht: 5 Codes pro Stunde", tvExpired: "Code abgelaufen: neuen anfordern", tvFailed: "Code-Anfrage fehlgeschlagen",
       none: "Nicht herunterladbar", checked: "geprüft {d} · täglich neu geprüft", unchecked: "noch nicht geprüft · wird heute Nacht geprüft", unknown: "Titel nicht erkannt",
       source: "Quellen: Netflix Top 10 Schweiz (wöchentlich), TMDB-Beliebtheit, Streaming-Angebot in der Schweiz von JustWatch (über TMDB). Nur Titel aus der Bibliothek oder mit gefundenem Release."
     }
@@ -481,6 +481,11 @@
       var until = isNaN(t.getTime()) ? "" : t.toLocaleTimeString(langOf(lang) === "de" ? "de-CH" : "en-GB", { hour: "2-digit", minute: "2-digit" });
       box.appendChild(el(doc, "div", "hssTvCodeValue", b.code));
       box.appendChild(el(doc, "div", "hssTvCodeHint", tr(lang, "tvHint", { u: b.user || "", m: b.minutes || 10, t: until })));
+      var left = isNaN(t.getTime()) ? (b.minutes || 10) * 60000 : t.getTime() - Date.now();
+      (doc.defaultView || window).setTimeout(function () {
+        box.textContent = "";
+        box.appendChild(el(doc, "div", "hssTvCodeHint", tr(lang, "tvExpired")));
+      }, Math.min(Math.max(0, left), 2147483647));
     } else {
       box.appendChild(el(doc, "div", "hssTvCodeHint", tr(lang, r && r.status === 429 ? "tvLimit" : "tvFailed")));
     }

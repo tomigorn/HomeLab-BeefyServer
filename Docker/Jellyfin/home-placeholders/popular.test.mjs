@@ -310,10 +310,10 @@ test("the page header has a Code for TV button (both pages, both languages)", ()
 
 test("tvCode posts an empty body with the user's own token, never a user id", async () => {
   const calls = [];
-  const win = { fetch: async (url, opts) => { calls.push([url, opts]); return { status: 200, json: async () => ({ code: "ABCDEFGHJK", expires: "2026-10-30T10:10:00+00:00", minutes: 10, user: "jane" }) }; } };
+  const win = { fetch: async (url, opts) => { calls.push([url, opts]); return { status: 200, json: async () => ({ code: "ABCDEFGHJK", expires: "2099-10-30T10:10:00+00:00", minutes: 10, user: "jane" }) }; } };
   const api = { accessToken: () => "T".repeat(32), getUrl: (p) => "https://jellyfin.holy-grail.ch/" + p, getCurrentUserId: () => "u1" };
   const r = await pp.tvCode(win, api);
-  assert.deepEqual(r, { status: 200, body: { code: "ABCDEFGHJK", expires: "2026-10-30T10:10:00+00:00", minutes: 10, user: "jane" } });
+  assert.deepEqual(r, { status: 200, body: { code: "ABCDEFGHJK", expires: "2099-10-30T10:10:00+00:00", minutes: 10, user: "jane" } });
   assert.equal(calls[0][0], "https://jellyfin.holy-grail.ch/hss-popular/tv-code");
   assert.equal(calls[0][1].method, "POST");
   assert.equal(calls[0][1].headers["Content-Type"], "application/json");
@@ -324,8 +324,8 @@ test("tvCode posts an empty body with the user's own token, never a user id", as
 test("Code for TV shows the code, the username and how to use it; again replaces it; limit and errors say so", async () => {
   const s = started();
   const answers = [
-    { status: 200, body: { code: "ABCDEFGHJK", expires: "2026-10-30T10:10:00+00:00", minutes: 10, user: "jane" } },
-    { status: 200, body: { code: "MNPQRSTUVW", expires: "2026-10-30T10:11:00+00:00", minutes: 10, user: "jane" } },
+    { status: 200, body: { code: "ABCDEFGHJK", expires: "2099-10-30T10:10:00+00:00", minutes: 10, user: "jane" } },
+    { status: 200, body: { code: "MNPQRSTUVW", expires: "2099-10-30T10:11:00+00:00", minutes: 10, user: "jane" } },
     { status: 429, body: { error: "limit" } },
     { status: 500, body: {} }
   ];
@@ -365,11 +365,31 @@ test("Code for TV shows the code, the username and how to use it; again replaces
   s.win.close();
 });
 
+test("the code turns into an expired note when it runs out", async () => {
+  const s = started();
+  const states = s.win.fetch;
+  const expires = new Date(Date.now() + 80).toISOString();
+  s.win.fetch = (url, opts) => String(url) === "hss-popular/tv-code"
+    ? Promise.resolve({ status: 200, json: () => Promise.resolve({ code: "ABCDEFGHJK", expires, minutes: 10, user: "jane" }) })
+    : states(url, opts);
+  s.click(s.d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
+  await s.tick();
+  s.click(s.d.querySelector(".hssTvCodeBtn"));
+  await s.tick();
+  assert.equal(s.d.querySelector(".hssPopularPage .hssTvCodeValue").textContent, "ABCDEFGHJK");
+  await new Promise((r) => setTimeout(r, 200));
+  const box = s.d.querySelector(".hssPopularPage .hssTvCode");
+  assert.equal(box.querySelector(".hssTvCodeValue"), null);
+  assert.doesNotMatch(box.textContent, /ABCDEFGHJK/);
+  assert.match(box.textContent, /expired/i);
+  s.win.close();
+});
+
 test("the code box survives a repaint of the page", async () => {
   const s = started();
   const states = s.win.fetch;
   s.win.fetch = (url, opts) => String(url) === "hss-popular/tv-code"
-    ? Promise.resolve({ status: 200, json: () => Promise.resolve({ code: "ABCDEFGHJK", expires: "2026-10-30T10:10:00+00:00", minutes: 10, user: "jane" }) })
+    ? Promise.resolve({ status: 200, json: () => Promise.resolve({ code: "ABCDEFGHJK", expires: "2099-10-30T10:10:00+00:00", minutes: 10, user: "jane" }) })
     : states(url, opts);
   s.click(s.d.querySelector('.hssPopularNav[data-hss-kind="tv"]'));
   await s.tick();
