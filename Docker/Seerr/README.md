@@ -285,9 +285,22 @@ Status icons, for every open request (pending or approved, not available). Every
 | not released | 📅 (+🌙) |
 | download/import problem, Seerr failed | ⚠️ |
 
-Status icons (◌ ✅ ◐) come first, in the same purple circle/pill. ✅ never combines; ◐ combines with 🌙🧭📅 and with ◌ (series: some episodes here, more downloading now); a download paused for the night shows 🌙 instead of ◌. ◐ hints: 🌙 alone adds "the rest downloads at night", 🧭 reads "searched again tonight (04:17)", 📅 reads "next episode 11 Nov". Overview of all rows: Claude-Mockups `seerr-all-badges`; percent from Seerr's `downloadStatus` sizes, left out when unknown. Same on every card: Discover, search, collections, person pages. Title-page pills stay Seerr's.
+Status icons (◌ ✅ ◐) come first, in the same purple circle/pill. ✅ never combines; ◐ combines with 🌙🧭📅 and with ◌ (series: some episodes here, more downloading now); a download paused for the night shows 🌙 instead of ◌. ◐ hints: 🌙 alone adds "the rest downloads at night", 🧭 reads "searched again tonight (04:17)", 📅 reads "next episode 11 Nov". Overview of all rows: Claude-Mockups `seerr-all-badges`; percent from Seerr's `downloadStatus` sizes, left out when unknown. Same on every card: Discover, search, collections, person pages. Title-page pills stay Seerr's look, but every state carries a hint (below).
 
 Order ⚠️⏳🔍🌙🧭📅, combined. Placements: status badges (title page, request cards, Requests list; after "Requested"/"Pending"), Discover cards (in Seerr's status circle: one icon = the 26px circle, two = a pill). Pills with Seerr's own spinner/progress get nothing of ours (its popup shows the download). **Partially Available** pills are sky blue (`#0284c7`, not Seerr's green) and start with ◐; never ✅ inside. One merged hint on the whole badge / pill, e.g. 🌙🧭 "Waiting for the night · No release found yet — searched again in tonight's scheduled search (04:17), downloads at night when found": shown in a static box anchored to the badge on mouse hover or keyboard focus, for every pill whether Seerr gives it a popup or not (users without Manage Requests get none): above a status pill (below it when Seerr's cursor-following popup opens above), below a card badge; never follows the mouse, nothing of ours inside Seerr's popup, no move handlers, `aria-describedby`, Escape closes; no `title` tooltips; touch only: the first tap shows it, a second tap opens the link or card as usual, mouse clicks go straight through. While a 🔍/🔎 shows, the page reads `request-state.json` every 15 s and swaps the icon in place (spinner, 🧭, 🌙 when the search ends).
+
+**Title-page pill hints** (`night-label.js`, `.media-status`): the pill always has a static hint, also where Seerr's popup exists or no icon of ours applies. Icons of ours (🌙 🔍 ◐ …) merge into the hint as above; otherwise by the pill's text (EN / DE):
+
+| Pill | Symbol | Hint |
+|---|---|---|
+| Processing + Seerr's spinner | Seerr's spinner | Downloading now — 40 % (the percent is Seerr's own bar behind the pill; none while 0) / Lädt gerade herunter — 40 % |
+| Processing, no download | - | Processing — handed to Radarr/Sonarr / Wird verarbeitet — an Radarr/Sonarr übergeben |
+| Requested | - | Requested — approved, waiting for the search / Angefragt — freigegeben, wartet auf die Suche |
+| Pending | ⏳ | Waiting for approval / Wartet auf Freigabe |
+| Available | ✅ | Available in Jellyfin / In Jellyfin verfügbar |
+| Partially available | ◐ | Partly available (+ missing part's state) |
+| Declined | - | Declined — an admin refused the request / Abgelehnt — ein Admin hat die Anfrage abgelehnt |
+| Unknown, Deleted | - | Unknown — Seerr has no state for it · Deleted — removed from Jellyfin (DE: Unbekannt — …, Gelöscht — …) |
 
 | Part | What |
 |---|---|
@@ -315,7 +328,7 @@ Why not in the Manage panel any more: requesters have no Manage button. One plac
 | nothing grabbed yet, file missing | the button; note "Nothing grabbed yet. Searches now …" |
 | search queued / running (Radarr runs searches one after the other, minutes each) | chip "🔍 Waiting for other searches (n ahead)" / "🔍 Searching… (started HH:MM)", no button; asks the backend every 15 s until done or the page is left |
 | searched, nothing found | chip "🧭 No release found yet (searched HH:MM) — searched again in tonight's scheduled search (04:17); downloads at night when found" + secondary **⚡ Search again now — at daytime power price** |
-| grabbed, title tagged `download-now` | chip "✅ Downloading" |
+| grabbed, title tagged `download-now` | chip "◌ Downloading" (drawn spinner, never ✅ = available), static hint "Downloading now at the daytime power price (started with Download now)" (tap / hover / focus, same box as the status badges) |
 | already downloading, downloaded, not in Radarr/Sonarr, not allowed | nothing (Seerr's status badge says the rest) |
 
 A press: tag `download-now` on the title (Radarr/Sonarr) → the title's unfinished night downloads move to the normal category (qBittorrent `radarr-night`→`radarr`, `sonarr-night`→`sonarr`; SABnzbd `movies-night`→`movies`, `tv-night`→`tv`), paused ones resume → nothing grabbed: `MoviesSearch` / `SeriesSearch`, the grab goes to the tagged normal clients. Out of the night categories `night-downloads.py` never pauses or queues them again. **Search finds nothing:** `night-downloads.py` (every 2 min) removes `download-now` again (searched, nothing queued, no search running, no file), so a later find (tonight's 04:17 search, RSS) downloads at night; the title shows 🌙🧭. Feedback in place of the button: ✅ Started / ✅ Searching / Already downloading / ❌ Failed; the 🌙 label goes at once (`night-label.js` `release`). Items paused by hand in a normal category stay paused.

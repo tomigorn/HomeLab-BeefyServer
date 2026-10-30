@@ -21,6 +21,11 @@
     en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", locale: "en-GB" },
     de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", locale: "de-CH" },
   };
+  var TITLE = {
+    en: { requested: "Requested — approved, waiting for the search", processing: "Processing — handed to Radarr/Sonarr", declined: "Declined — an admin refused the request", unknown: "Unknown — Seerr has no state for it", deleted: "Deleted — removed from Jellyfin" },
+    de: { requested: "Angefragt — freigegeben, wartet auf die Suche", processing: "Wird verarbeitet — an Radarr/Sonarr übergeben", declined: "Abgelehnt — ein Admin hat die Anfrage abgelehnt", unknown: "Unbekannt — Seerr kennt keinen Status", deleted: "Gelöscht — aus Jellyfin entfernt" },
+  };
+  var TITLE_RE = [["requested", /^(Requested|Angefragt)$/], ["processing", /^(Processing|Verarbeiten)$/], ["declined", /^(Declined|Abgelehnt)$/], ["unknown", /^(Unknown|Unbekannt)$/], ["deleted", /^(Deleted|Gelöscht)$/]];
   var FRESH = 5 * 60 * 1000;
   var SEARCH = "🔍";
   var WAIT = "🔎";
@@ -30,7 +35,7 @@
   var PART = /^(4K\s)?(Partially Available|Teilweise verfügbar)$/i;
   var MEDIA_LINK = /^\/(movie|tv)\/(\d+)$/;
   var EPISODE = /^(.*): (?:Season|Staffel) (\d+) (?:Episode|Folge) (\d+)$/;
-  var GERMAN = /^(Verarbeiten|Verfügbar|Teilweise verfügbar|Angefragt|Ausstehend|Gelöscht)$/;
+  var GERMAN = /^(Verarbeiten|Verfügbar|Teilweise verfügbar|Angefragt|Ausstehend|Gelöscht|Abgelehnt|Unbekannt)$/;
   var POSTER = /\/t\/p\/[^/]+(\/[^/?&\s"]+)/;
   var CAP = 1500;
   var BAR = "div.relative.h-6.overflow-hidden.rounded-full.bg-gray-700";
@@ -198,7 +203,7 @@
       var tip = doc.getElementById("hg-flag-tip");
       if (tip && tip.__for === el) hideTip(doc);
     });
-    el.addEventListener("focus", function () { if (el.__hgHint) showTip(doc, el); });
+    el.addEventListener("focus", function () { if (el.__hgHint && el.__hgPt !== "touch") showTip(doc, el); });
     el.addEventListener("blur", function () { var tip = doc.getElementById("hg-flag-tip"); if (tip && tip.__for === el) hideTip(doc); });
     el.addEventListener("click", function (ev) {
       var touch = el.__hgPt === "touch";
@@ -247,6 +252,22 @@
     var T = STATUS[l];
     if (kind === "spin") { var pct = progress(m); return [SPIN, T.spin + (pct === null ? "" : " — " + pct + " %")]; }
     return kind === "avail" ? ["✅", T.avail] : [HALF, T.part];
+  }
+
+  // Seerr's own progress bar behind the pill (0 = unknown)
+  function overlayPct(badge) {
+    var o = badge.querySelector(":scope > div.absolute.left-0.top-0.z-10"), w = o && /(\d+(?:\.\d+)?)\s*%/.exec(o.style && o.style.width || "");
+    return w && +w[1] > 0 ? Math.min(100, Math.round(+w[1])) : null;
+  }
+
+  // title page pill: [symbol or "", hint] for the states that carry no icon of ours; with a download running Seerr's own spinner stays the symbol
+  function titleState(badge, text, spinning, m, l) {
+    var t = text.replace(/^4K\s/, "");
+    if (spinning) { var pct = overlayPct(badge) !== null ? overlayPct(badge) : progress(m); return ["", STATUS[l].spin + (pct === null ? "" : " — " + pct + " %")]; }
+    if (PENDING.test(t)) return ["⏳", LIVE[l].pending];
+    if (/^(Available|Verfügbar)$/.test(t)) return ["✅", STATUS[l].avail];
+    for (var i = 0; i < TITLE_RE.length; i++) if (TITLE_RE[i][1].test(t)) return ["", TITLE[l][TITLE_RE[i][0]]];
+    return null;
   }
 
   function half(doc) {
@@ -447,8 +468,22 @@
     return t;
   }
 
-  function setFlags(doc, b, place, f, l, part) {
-    var list = part ? [[HALF, STATUS[l].part]].concat(flagList(f, l, true, true)) : flagList(f, l), want = list.map(function (x) { return x[0]; }).join(""), same = want + "|" + (list.length ? merged(list, l) : "");
+  function setFlags(doc, b, place, f, l, part, extra) {
+    var list = part ? [[HALF, STATUS[l].part]].concat(flagList(f, l, true, true)) : flagList(f, l), only = null;
+    if (!list.length && extra) { if (extra[0]) list = [extra]; else only = extra[1]; }
+    if (only) {
+      var gone = b.querySelectorAll("[data-hg-flag-own]");
+      for (var g = 0; g < gone.length; g++) gone[g].parentNode.removeChild(gone[g]);
+      b.removeAttribute("data-hg-flags");
+      b.__hgFlagsKey = null;
+      b.__hgOnly = true;
+      b.style.cursor = "help";
+      if (b.__hgHint !== only) tapHint(doc, b, only, true);
+      return;
+    }
+    if (b.__hgOnly && !list.length && b.getAttribute("data-hg-night") === null) { b.__hgOnly = false; b.style.cursor = ""; tapHint(doc, b, "", true); }
+    if (list.length) b.__hgOnly = false;
+    var want = list.map(function (x) { return x[0]; }).join(""), same = want + "|" + (list.length ? merged(list, l) : "");
     if ((b.getAttribute("data-hg-flags") || "") === want && (!want || b.__hgFlagsKey === same)) return;
     b.__hgFlagsKey = same;
     var old = b.querySelectorAll("[data-hg-flag-own]");
@@ -515,7 +550,11 @@
       if (badge.querySelector("svg animateTransform") || badge.querySelector(":scope > div.absolute.left-0.top-0.z-10")) f = { moon: false, compass: false, cal: false };
       if (part || (m && m.status === 4)) f.imported = false;
       if (/^(4K\s)?(Available|Verfügbar)$/.test(text)) f = { moon: false, compass: false, cal: false };
-      setFlags(doc, badge, seen[k][1], f, lang(doc, text.replace(/^4K\s/, "")), part);
+      var extra = null, spin = !!(badge.querySelector("svg animateTransform") || badge.querySelector(":scope > div.absolute.left-0.top-0.z-10"));
+      if (badge.closest(".media-status") && badge.getAttribute("data-hg-night") === null) {
+        extra = titleState(badge, text, spin, m, lang(doc, text.replace(/^4K\s/, "")));
+      }
+      setFlags(doc, badge, seen[k][1], f, lang(doc, text.replace(/^4K\s/, "")), part, extra);
     }
   }
 
@@ -698,7 +737,7 @@
     return flagList(flags(key, requestSets(state.requests, Date.now()), state.media[key]), lang(document));
   }
 
-  var api = { lang: function () { return lang(document); }, icons: icons, hintText: function (list) { return merged(list, lang(document)); }, hint: function (el, text) { tapHint(document, el, text); }, requestSets: requestSets, flags: flags, waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
+  var api = { spinner: function () { return spinner(document); }, lang: function () { return lang(document); }, icons: icons, hintText: function (list) { return merged(list, lang(document)); }, hint: function (el, text) { tapHint(document, el, text); }, requestSets: requestSets, flags: flags, waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
   if (typeof window === "undefined") return;
   window.hgNightLabel = api;
   try {

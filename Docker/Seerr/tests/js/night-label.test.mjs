@@ -309,7 +309,7 @@ test("the request is downloaded or switched to Download now while the page is op
   assert.equal(visibleText(w, b), "Requested");
   assert.equal(b.querySelectorAll("[data-hg-flag-own]").length, 0);
   assert.equal(b.hasAttribute("title"), false);
-  assert.equal(b.hasAttribute("data-hg-hint"), false);
+  assert.equal(b.getAttribute("data-hg-hint"), "Requested — approved, waiting for the search", "no icon of ours left, the plain state hint stays");
 });
 
 test("Discover cards: 🌙 in the 26px circle, 🌙📅 side by side in a pill, 📅 alone, nothing for others; re-renders add nothing twice", async () => {
@@ -676,12 +676,12 @@ test("every reachable state maps to a badge, on cards and on the Requested pill"
 const partPill = (key, text = "Partially Available") => `<a href="/${key}?manage=1" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap transition cursor-pointer !no-underline bg-green-500/80 border border-green-500 !text-green-100 hover:bg-green-500 false overflow-hidden"><div class="relative z-20 flex items-center false"><span>${text}</span></div></a>`;
 const pillIcons = (b) => [...b.querySelectorAll("[data-hg-flag-own]")].map((e) => e.querySelector("[data-hg-half]") ? "◐" : e.querySelector("[data-hg-spin]") ? "◌" : e.querySelector("[data-hg-search]") ? "🔍" : e.textContent).join("");
 
-test("a pill with Seerr's own download spinner gets no second spinner and no hint of ours", async () => {
+test("a pill with Seerr's own download spinner gets no second spinner; the title page pill a hint, request cards none", async () => {
   const w = rsPage(header(badge("movie/550", "Processing", "")) + requestCard("movie/550", "Fight"), "/movie/550", live({ queue: { "movie/550": { state: "downloading" } } }));
   await settle();
   for (const b of w.document.querySelectorAll('a[href$="?manage=1"]')) {
     assert.equal(b.querySelector("[data-hg-flag-own]"), null);
-    assert.equal(b.hasAttribute("data-hg-hint"), false);
+    assert.equal(b.hasAttribute("data-hg-hint"), !!b.closest(".media-status"));
     assert.equal(b.querySelectorAll("svg").length, 1);
   }
 });
@@ -859,4 +859,85 @@ test("login page: no data is fetched (the JSON needs a Seerr session)", async ()
   night("", fakeXHR({}, { value: fresh([]) }, calls), "/login");
   await settle();
   assert.deepEqual(calls.filter((u) => u.startsWith("/_indexer-bar/")), []);
+});
+
+const at60 = (html) => html.replace("width: 0%;", "width: 60%;");
+const TITLE_STATES = [
+  { name: "requested", html: () => plainBadge("movie/900"), icons: "", en: "Requested — approved, waiting for the search" },
+  { name: "pending", html: () => pendingBadge("movie/900"), icons: "⏳", en: "Waiting for approval" },
+  { name: "processing, no download", html: () => plainBadge("movie/900", "Processing"), icons: "", en: "Processing — handed to Radarr/Sonarr" },
+  { name: "processing, downloading", html: () => at60(badge("movie/550", "Processing", "")), icons: "", en: "Downloading now — 60 %" },
+  { name: "available", html: () => plainBadge("movie/900", "Available"), icons: "✅", en: "Available in Jellyfin" },
+  { name: "partially available", html: () => partPill("movie/900"), icons: "◐", en: "Partly available" },
+  { name: "declined", html: () => plainBadge("movie/900", "Declined"), icons: "", en: "Declined — an admin refused the request" },
+  { name: "unknown", html: () => plainBadge("movie/900", "Unknown"), icons: "", en: "Unknown — Seerr has no state for it" },
+  { name: "deleted", html: () => plainBadge("movie/900", "Deleted"), icons: "", en: "Deleted — removed from Jellyfin" },
+];
+
+for (const s of TITLE_STATES) {
+  test(`title page pill "${s.name}": hint${s.icons ? " and symbol " + s.icons : ""}`, async () => {
+    const key = s.name === "processing, downloading" ? "/movie/550" : "/movie/900";
+    const w = rsPage(header(s.html()), key, live());
+    await settle();
+    const b = w.document.querySelector(".media-status a");
+    assert.equal(flagTip(b), s.en);
+    assert.equal(pillIcons(b), s.icons);
+    assert.equal(b.hasAttribute("title"), false);
+  });
+}
+
+test("title page pill hint: mouse hover shows it above the pill once, touch needs a first tap, no flicker", async () => {
+  const w = rsPage(header(at60(badge("movie/550", "Processing", ""))), "/movie/550", live());
+  await settle();
+  const ev = (t, type) => { const e = new w.MouseEvent(t, { bubbles: true, cancelable: true }); Object.defineProperty(e, "pointerType", { value: type }); return e; };
+  const pill = w.document.querySelector(".media-status a");
+  pill.dispatchEvent(ev("pointerenter", "mouse"));
+  assert.equal(visibleTip(w), "Downloading now — 60 %");
+  pill.dispatchEvent(ev("pointerleave", "mouse"));
+  assert.equal(visibleTip(w), null);
+  const tap = ev("click", "touch");
+  pill.dispatchEvent(ev("pointerdown", "touch"));
+  pill.dispatchEvent(tap);
+  assert.equal(visibleTip(w), "Downloading now — 60 %");
+  assert.equal(tap.defaultPrevented, true, "the first tap only shows the hint");
+  const before = pill.getAttribute("data-hg-hint");
+  await settle();
+  assert.equal(pill.getAttribute("data-hg-hint"), before);
+  pill.dispatchEvent(ev("pointerdown", "touch"));
+  const second = ev("click", "touch");
+  pill.dispatchEvent(second);
+  assert.equal(second.defaultPrevented, false, "the second tap goes through");
+});
+
+test("title page pill hints in German", async () => {
+  for (const [html, de] of [[at60(badge("movie/550", "Verarbeiten", "")), "Lädt gerade herunter — 60 %"], [plainBadge("movie/900", "Verfügbar"), "In Jellyfin verfügbar"], [plainBadge("movie/900", "Angefragt"), "Angefragt — freigegeben, wartet auf die Suche"], [plainBadge("movie/900", "Abgelehnt"), "Abgelehnt — ein Admin hat die Anfrage abgelehnt"]]) {
+    const w = rsPage(header(html), html.includes("550") ? "/movie/550" : "/movie/900", live());
+    await settle();
+    assert.equal(flagTip(w.document.querySelector(".media-status a")), de);
+  }
+});
+
+test("title page pill: the hint follows the state (spinner ends, hint goes to Available)", async () => {
+  const w = rsPage(header(badge("movie/900", "Processing", "")), "/movie/900", live());
+  await settle();
+  const b = w.document.querySelector(".media-status a");
+  assert.equal(flagTip(b), "Downloading now");
+  w.document.querySelector(".media-status").innerHTML = plainBadge("movie/900", "Available");
+  await settle();
+  const a = w.document.querySelector(".media-status a");
+  assert.equal(flagTip(a), "Available in Jellyfin");
+  assert.equal(pillIcons(a), "✅");
+});
+
+test("touch tap: the browser focuses the link before the click, the first tap still only shows the hint", async () => {
+  const w = rsPage(header(plainBadge("movie/900")), "/movie/900", live());
+  await settle();
+  const ev = (t, type) => { const e = new w.MouseEvent(t, { bubbles: true, cancelable: true }); Object.defineProperty(e, "pointerType", { value: type }); return e; };
+  const pill = w.document.querySelector(".media-status a");
+  pill.dispatchEvent(ev("pointerdown", "touch"));
+  pill.dispatchEvent(new w.FocusEvent("focus"));
+  const tap = ev("click", "touch");
+  pill.dispatchEvent(tap);
+  assert.equal(tap.defaultPrevented, true);
+  assert.equal(visibleTip(w), "Requested — approved, waiting for the search");
 });
