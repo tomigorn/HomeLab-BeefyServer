@@ -635,6 +635,7 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 - List rows removed from the layout leave their tagged BoxSets behind: delete them by hand, tagged only (`jf.trending-collections` stays red until then).
 - `jellyfin_quickconnect.logout` never deletes devices (owner rule): only `POST /Sessions/Logout`. `GET /Devices?userId=` ignores its filter, never bulk-delete.
 - Never `POST /Users/New` (401 but creates), never `DELETE /Library/VirtualFolders`.
+- Own "Trending" library: not possible (live test 2026-10-30, not migrated). A homevideos library of folder BoxSets (`X [boxset]/collection.xml`) resolves them, Android TV, Swiftfin and Moonfin list them, but the web lists nothing (its tabs filter `Folder,Photo,PhotoAlbum,Video` / `Folder,Movie,Series`), the lists still show in Collections & Trending on web, Moonfin and Swiftfin (`IncludeItemTypes=BoxSet` returns every BoxSet server-wide), and without `SortBy` their titles come in date order, not rank. The lists stay in Collections & Trending.
 
 ### Rollback
 | Piece | How |
