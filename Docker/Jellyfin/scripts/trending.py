@@ -541,6 +541,7 @@ class Collections:
         self.io.jf("POST", f"/Items/{sid}", {**item, "Name": spec["name"], "Tags": tags, "ForcedSortName": spec["sort"], "DisplayOrder": order, "LockData": True})
 
     def members(self, sid, want, ordered=False):
+        """Ranked lists (ordered) keep their members when want is empty, so a list never goes empty."""
         have = [i["Id"] for i in self.io.jf("GET", f"/Items?ParentId={sid}&userId={self.admin}&EnableImages=false&EnableUserData=false")["Items"]]
         if ordered:
             todo = gems.steps(have, want)

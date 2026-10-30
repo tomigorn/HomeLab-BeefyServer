@@ -386,6 +386,14 @@ class SyncTest(Base):
         self.assertFalse(any(c[1].startswith("/Collections?") for c in self.io.calls))
         self.assertEqual(len([s for s in self.io.sets.values() if tm.TAG in s["Tags"]]), 4)
 
+    def test_ranked_list_keeps_its_members_when_nothing_is_wanted(self):
+        calls = []
+        io = type("Io", (), {"jf": lambda self, m, path, body=None: calls.append((m, path)) or {"Items": [{"Id": "a"}, {"Id": "b"}]}})()
+        col = tr.Collections(io, {}, ADMIN, None, False, lambda *_: None, lambda: None)
+        col.members("s1", [], ordered=True)
+        self.assertEqual([c[0] for c in calls], ["GET"])
+        self.assertEqual(col.changed, 0)
+
     def test_hide_entry_lists_library_sets_and_placeholders(self):
         self.assertEqual(self.run_sync(), 0, self.out)
         entry_ = next(s for s in self.io.injector["CustomJavaScripts"] if s["Name"] == "Trending hidden")
