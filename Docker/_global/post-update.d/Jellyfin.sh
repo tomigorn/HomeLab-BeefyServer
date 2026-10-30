@@ -91,6 +91,21 @@ if want popular jellyfin; then
   check jf.popular-hook-refusals '^403 404$' "$(docker exec jellyfin-popular python3 -c 'import urllib.request as u,urllib.error as e
 try: u.urlopen(u.Request("http://127.0.0.1:8098/hook/x", b"{}", method="POST"), timeout=5)
 except e.HTTPError as x: print(x.code, end="")' 2>&1) $(curl "${POP_POST[@]}" https://jellyfin.holy-grail.ch/hss-popular/hook/x)"
+  # Seerr facade for Moonfin (8099): internal only, so every check runs inside the container
+  FACADE_PY='import urllib.request as u,urllib.error as e,json
+def c(m,p,h={}):
+ try: return u.urlopen(u.Request("http://127.0.0.1:8099/api/v1/"+p,b"{}" if m=="POST" else None,h,method=m),timeout=5)
+ except e.HTTPError as x: return x'
+  check jf.facade-status '^200 true$' "$(docker exec jellyfin-popular python3 -c "$FACADE_PY
+r=c('GET','status')
+print(r.status, json.dumps('version' in json.load(r)))" 2>&1)"
+  check jf.facade-public '^false false$' "$(docker exec jellyfin-popular python3 -c "$FACADE_PY
+d=json.load(c('GET','settings/public'))
+print(json.dumps(d['movie4kEnabled']), json.dumps(d['series4kEnabled']))" 2>&1)"
+  check jf.facade-refusals '^403 403 401 404 401 403$' "$(docker exec jellyfin-popular python3 -c "$FACADE_PY
+print(c('GET','auth/me').code, c('GET','auth/me',{'Cookie':'connect.sid=s%3Aforged.sig'}).code, c('POST','auth/jellyfin').code, c('GET','settings/radarr').code, c('GET','service/radarr').code, c('DELETE','request/1').code)" 2>&1)"
+  check jf.facade-unpublished '^0$' "$(docker inspect -f '{{json .NetworkSettings.Ports}}' jellyfin-popular 2>&1 | grep -c 8099)"
+  check jf.facade-secret '^600 65128$' "$(stat -c '%a %u' "$DIR/../../Jellyfin/secrets/popular/facade.secret" 2>&1)"
   check jf.popular-timer '^active$' "$(jf_user_systemctl is-active jellyfin-popular.timer 2>&1)"
   # fastpi Traefik route jellyfin.holy-grail.ch/hss-popular/ (HomeLab-FastPi Docker/Traefik/traefik/dynamic/jellyfin-popular.yml)
   check jf.popular-route '^\{"ok": true\} 200$' "$(curl -s -m 10 -w ' %{http_code}' https://jellyfin.holy-grail.ch/hss-popular/health 2>&1)"

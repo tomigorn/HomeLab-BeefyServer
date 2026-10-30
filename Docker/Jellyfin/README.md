@@ -572,6 +572,7 @@ Any signed-in Jellyfin user may press a button; no Seerr login or `streaming-req
 | Server | 16 worker threads + 32 queued connections (more are closed at once; `pids_limit` 64), 10 s socket timeout (slow or silent clients are dropped), Content-Length checked (invalid → 400), Seerr/Jellyfin calls 8 s; a request holds only its own user's lock, so a slow Seerr blocks nobody else |
 | Accepted | the backend is reachable from the internet (no Authentik on `/hss-popular/`, Jellyfin apps have no SSO) and holds Seerr's admin API key (Seerr has no scoped keys): high-value, so the pre-auth surface is health + refusals only. A user can spend their own 10 requests on listed titles; an admin removes or declines in Seerr as usual (declined titles stay refused). `POST request` needs the browser Origin `https://jellyfin.holy-grail.ch` (`POP_ORIGINS` = `PUBLISHED_SERVER_URL`); `GET state` / `details` check only the token. `/hss-popular/` exists only on the public path, so a client on LAN-direct `:8096` gets Jellyfin's 404 there. The Samsung Tizen app bundles its own web client (no injected scripts, and its page origin is not the server: a request would get 403) |
 | TV hook | second listener `:8098` in `jellyfin-popular` (POST only, Docker network only), path `/hook/<secret>`; trusts only that secret, user from the event; same `send()` as the page (allow-list, limits, audit `via: tv`); a stop at runtime − 2 s … runtime + 30 s requests, anything else only resets. Key `hss-popular-hook` resets the placeholder and is a full-admin Jellyfin key (Jellyfin has no narrower key) in a container that serves 8097 publicly; dry-run flag `/state/hook-dry-run` (testing only) |
+| Seerr facade | second listener `:8099` in `jellyfin-popular` (`popular/facade.py`), `jellyfin` network only, not published, no Traefik route: Seerr API subset for Moonfin, see "Moonfin requests (Seerr facade)". Identity only from its own signed cookie (HMAC key `secrets/popular/facade.secret`); sign-in = a real Jellyfin Quick Connect code that Moonbase approves in-process as the calling user, Jellyfin re-checked every 60 s; passwords are never forwarded; reads by a non-admin Seerr service user, deny-by-default path list, user fields scrubbed; never Seerr user id 1 or the ADMIN bit; the only write is `POST request`, through the same `send()` (allow-list, limits, audit); body ≤ 2 KiB, own pool 8 + 16, 10 s socket timeout, Seerr 8 s; tokens/cookies/handles/queries never logged. Accepted: the Seerr admin key stays in the container, as today; another container on the `jellyfin` network (seerr) needs a valid cookie, and a sign-in needs an in-Jellyfin approval |
 | Edge | CrowdSec already covers the route: `real-ip@file` + `crowdsec@file` sit on the `websecure` entrypoint (HomeLab-FastPi `Traefik/traefik/traefik.yml`), the router adds `default-rate-limit@file`. Prepared, not applied (edge change, attended): a tighter limit for `/hss-popular/request` only (own `rateLimit` middleware, e.g. average 10/min, burst 5, per real client IP) in `jellyfin-popular.yml`. The backend counts refusals instead of logging them, so a flood costs no disk |
 | Verified 2026-10-29 | public path → `{"ok": true}`; real browser button press (owner session, Quick Connect test device, request rewritten to `check`) → 200 requestable with the browser's Origin; tampered id 403, extra `season` 400, no token 401, API key as token 401. A real Seerr request was not made in the test (it would have downloaded at once in the low tariff) |
 
@@ -681,6 +682,31 @@ Test of the **Moonfin** TV apps (Apple TV, Android TV). The server plugin **Moon
 | Apply defaults | `bash scripts/backup-config.sh moonbase && python3 scripts/moonbase.py` |
 | Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-moonbase`, `jf.moonbase-config`) |
 | Rollback | Dashboard → Plugins → Moonbase → Uninstall, restart (`sudo docker compose restart jellyfin`); remove the Moonbase repository. Pre-change backup: `~/backups/jellyfin/20261030-014107-pre-moonbase` |
+
+## Moonfin requests (Seerr facade) (2026-10-30)
+Moonfin's Seerr screens (discover, details, request dialog, my requests) talk to the facade instead of Seerr. Every request still follows the Popular rules (allow-list, 10 per user per 7 days, 30 per day, audit). Moonbase's Seerr URL has to be `http://jellyfin-popular:8099`, set by `scripts/moonbase.py`.
+
+| | |
+|---|---|
+| Where | `popular/facade.py`, listener `:8099` in `jellyfin-popular`, `jellyfin` network only (no `ports`, no labels). Off (`facade off: no key` in the log) when `secrets/popular/facade.secret` is missing |
+| Who | signed-in Jellyfin users, by Quick Connect (Moonbase approves the code); every user gets Seerr permissions 8224 (request) and a synthetic id ≥ 1000001, never admin |
+| Endpoints | `GET` discover, search, details, genres, quota, own requests, service info; `POST request` (movie, TV season on the allow-list); sign-in/out under `auth/`; everything else 404 (GET) or 403 |
+| Errors | JSON only, never HTML, never a redirect: 401 no/forged/expired cookie, 403 not allowed (4K, title not listed, other write), 429 sign-in limits, 502 Seerr down, 503 Jellyfin down |
+| Quota | the quota row shows the Popular limit; `restricted` makes Moonfin disable Submit and show "Request limit reached" |
+| Refused request | Moonfin's details page shows nothing when a request is refused; the visible signal is the quota row (`restricted`) |
+| Unsupported | Smart-TV / Samsung Moonfin (password-only sign-in) cannot sign in to the facade |
+| Deviation | deny-by-default: only the listed read paths exist, other Seerr screens stay empty on purpose |
+| Seerr service user | `jellyfin-popular`: local Seerr user, permissions 160 (REQUEST + AUTO_APPROVE), created once (2026-10-30, owner-approved) via `core.service_user(create=True)`. Random password `secrets.token_urlsafe(32)`, never stored or logged; the facade and Popular use the Seerr API key + `X-Api-User` impersonation, so no password file exists |
+| Recreate service user | `sudo docker exec jellyfin-popular python3 -c 'import app; print(app.make_core().service_user(create=True)["id"])'` |
+| Stray device | a sign-in that times out after Jellyfin issued the token can leave an `hss-seerr-*` device row; accepted. The facade always calls `/Sessions/Logout` with the token it got (in a `finally`), so no valid token lingers. Devices are never deleted |
+
+| Task | Command (in `Docker/Jellyfin/`) |
+|---|---|
+| Tests | `cd popular && python3 -m unittest test_app test_facade` |
+| Deploy | `bash scripts/backup-config.sh seerr-facade && sudo docker compose up -d --no-deps popular` |
+| Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.facade-*`) |
+| Logs | `sudo docker logs jellyfin-popular \| grep facade` (`facade refused …` = a Moonfin path we do not serve) |
+| Rotate key | replace `secrets/popular/facade.secret` (64 hex, 600, uid 65128), redeploy: everyone is signed out and signs in again |
 
 ## IMDb link and rating (2026-10-25)
 - Film and series pages (web) show an **IMDb** and **TMDB** link row (`ExternalUrls`, built from `ProviderIds`); all 9 items have both IDs, nothing to fix. Apps show no link row.

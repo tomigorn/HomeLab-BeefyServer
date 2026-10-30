@@ -67,7 +67,7 @@ services:
 # lists in Seerr. fastpi Traefik routes jellyfin.holy-grail.ch/hss-popular/ here;
 # the published port only answers fastpi (DOCKER-USER guard). TV requests: the
 # Webhooks plugin posts playback events to jellyfin-popular:8098/hook/<secret>,
-# on the jellyfin network only (not published).
+# on the jellyfin network only (not published). Seerr facade for Moonfin: 8099, jellyfin network only.
   popular:
     image: python:3.15.2-alpine3.24
     container_name: jellyfin-popular
@@ -90,6 +90,8 @@ services:
       - POP_HOOK_SECRET_FILE=/run/secrets/popular/hook.secret
       - POP_JELLYFIN_KEY_FILE=/run/secrets/popular/jellyfin.apikey
       - POP_SIGNAL=/signal/requested
+      - POP_FACADE_PORT=8099
+      - POP_FACADE_SECRET_FILE=/run/secrets/popular/facade.secret
     volumes:
       - ./popular:/app:ro
       - ./secrets/popular:/run/secrets/popular:ro
