@@ -691,7 +691,7 @@ Moonfin's Seerr screens (discover, details, request dialog, my requests) talk to
 | Where | `popular/facade.py`, listener `:8099` in `jellyfin-popular`, `jellyfin` network only (no `ports`, no labels). Off (`facade off: no key` in the log) when `secrets/popular/facade.secret` is missing |
 | Who | signed-in Jellyfin users, by Quick Connect (Moonbase approves the code); every user gets Seerr permissions 8224 (request) and a synthetic id ≥ 1000001, never admin |
 | Endpoints | `GET` discover, search, details, genres, quota, own requests, service info; `POST request` (movie, TV season on the allow-list); sign-in/out under `auth/`; everything else 404 (GET) or 403 |
-| Errors | JSON only, never HTML, never a redirect: 401 no/forged/expired cookie, 403 not allowed (4K, title not listed, other write), 429 sign-in limits, 502 Seerr down, 503 Jellyfin down |
+| Errors | JSON only, never HTML, never a redirect: 400 bad body, 401 not signed in, 403 refused (4K, title not listed, quota, other write), 404 unknown or unsupported path, 409 already requested or available, 413 body too big, 415 wrong content type, 429 rate limit (sign-in limits, more than 10 requests per minute), 502 Seerr error, 503 Jellyfin unreachable or "Requests are not set up" |
 | Quota | the quota row shows the Popular limit; `restricted` makes Moonfin disable Submit and show "Request limit reached" |
 | Refused request | Moonfin's details page shows nothing when a request is refused; the visible signal is the quota row (`restricted`) |
 | Unsupported | Smart-TV / Samsung Moonfin (password-only sign-in) cannot sign in to the facade |
