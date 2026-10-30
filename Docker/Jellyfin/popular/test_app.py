@@ -240,13 +240,24 @@ class Remembered(Base):
         return self.core.allow()[x]
 
     def test_send_returns_created_and_remembers_it(self):
-        code, body = self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        log = {"user": "tomigorn", "userId": "70d44a367988405d8792444c1c716d9a"}
+        code, body = self.core.send({"id": "70d44a367988405d8792444c1c716d9a", "name": "tomigorn"}, self.entry(), "night", False, log)
         self.assertEqual(code, 200)
         created_id = 900 + len(self.seerr.posts)
         self.assertEqual(body["request"], {"id": created_id})
         self.assertEqual((body["ok"], body["state"], body["left"]), (True, "requested", 9))
         self.assertEqual(self.core.requested_ids("70d44a367988405d8792444c1c716d9a"), [created_id])
         self.assertEqual(self.core.requested_ids(self.GUEST["id"]), [])
+
+    def test_page_answer_has_no_seerr_request(self):
+        self.seerr.users[0]["email"] = "jane@example.com"
+        inner = self.seerr
+        self.core.seerr = lambda m, path, body=None, user=None: {"id": 5, "requestedBy": {"id": 7, "email": "jane@example.com"}} if (m, path) == ("POST", "/api/v1/request") else inner(m, path, body, user)
+        code, body = self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.assertEqual(code, 200)
+        self.assertNotIn("request", body)
+        self.assertNotIn("@", json.dumps(body))
+        self.assertEqual(self.core.requested_ids("70d44a367988405d8792444c1c716d9a"), [5])
 
     def test_send_without_create_service_never_creates_user(self):
         log = {"user": "guest", "userId": self.GUEST["id"], "entry": "movie/101", "mode": "night", "via": "moonfin"}

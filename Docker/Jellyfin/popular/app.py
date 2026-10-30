@@ -537,7 +537,9 @@ class Core:
             return 403, {"error": "not in the current list"}
         log.update(title=entry["title"], ref=entry["ref"])
         with self.user_lock(user["id"]):
-            return self.send(user, entry, mode, req.get("check"), log)
+            code, out = self.send(user, entry, mode, req.get("check"), log)
+        out.pop("request", None)
+        return code, out
 
     def send(self, user, entry, mode, check, log, create_service=True):
         details = self.seerr("GET", f"/api/v1/{entry['kind']}/{entry['tmdb']}?language=en")

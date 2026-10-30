@@ -430,7 +430,10 @@ class Facade:
             e.close()
             self.core.audit(**log, decision=f"seerr error: HTTP {e.code}")
             return 500, {"message": NOT_TAKEN}
-        except (OSError, ValueError, http.client.HTTPException) as e:
+        except self.core.NoServiceUser:
+            self.core.audit(**log, decision="dry-run: refused: no service user")
+            return 503, {"message": NOT_SET_UP}
+        except (OSError, ValueError, http.client.HTTPException, KeyError, TypeError, AttributeError) as e:
             self.core.audit(**log, decision=f"seerr error: {type(e).__name__}")
             return 500, {"message": NOT_TAKEN}
         me = {"id": caller["uid"], "displayName": caller["name"]}
@@ -442,7 +445,7 @@ class Facade:
         return self.refusal(code, res)
 
     def dry_refusal(self, jf_id, kind, mode, log):
-        """The refusal the real request would get from the limits or the missing download-now tag, else None (dry run only)."""
+        """The refusal the real request would get from the limits or the missing download-now tag, else None (dry run only); raises NoServiceUser like the real path."""
         left, today, _ = self.core.overview(jf_id)
         if left <= 0:
             self.core.audit(**log, decision="dry-run: refused: user limit")
@@ -453,6 +456,7 @@ class Facade:
         if mode == "now" and self.core.now_tag(kind) is None:
             self.core.audit(**log, decision="dry-run: refused: no download-now tag")
             return self.refusal(503, {"error": "download now unavailable"})
+        self.core.seerr_user(jf_id, create=False)
         return None
 
     def refusal(self, code, res):

@@ -918,6 +918,23 @@ class CreateRequest(FacadeBase):
         self.assertEqual(self.post(self.MOVIE)[0], 201)
         self.assertEqual(self.requests(), [])
 
+    def test_dry_run_no_service_user_503_like_real_path(self):
+        self.seerr.users = [u for u in self.seerr.users if u["id"] != 20]
+        real = self.post(self.MOVIE)
+        self.core.cfg.dry_flag.touch()
+        self.assertEqual(self.post(self.MOVIE), real)
+        self.assertEqual(real[:2], (503, {"message": "Requests are not set up"}))
+        self.assertEqual(self.seerr.posts, [])
+
+    def test_odd_seerr_bodies_are_500_message(self):
+        for odd in ({"no": "results"}, [1, 2], {"mediaInfo": "x"}):
+            self.tearDown()
+            self.setUp()
+            inner = self.seerr
+            self.core.seerr = lambda m, path, body=None, user=None, odd=odd: odd if m == "GET" and path.startswith(("/api/v1/user", "/api/v1/movie/")) else inner(m, path, body, user)
+            self.assertEqual(self.post(self.MOVIE), (500, {"message": "Seerr could not take the request"}, []), odd)
+            self.assertEqual((self.requests(), self.core.overview(JF_ID)[0]), ([], 10), odd)
+
     def test_no_service_user_created_by_facade_request(self):
         self.seerr.users = [u for u in self.seerr.users if u["id"] != 20]
         self.post(self.MOVIE)
