@@ -292,6 +292,13 @@ class Desired(unittest.TestCase):
         def get(self, size, path):
             return None
 
+    def test_coming_soon_poster_carries_its_date_until_the_day_passed(self):
+        coming = {"items": [{"d": "c5", "date": "2026-11-04", "kind": "tv", "ref": "tv/5", "tmdb": 5, "s": 1, "e": 5}]}
+        p = tm.plan({"home": {"movies": [], "shows": []}, "rows": []}, coming, {"c5": {"t": {"en": "Gamma"}, "ref": "tv/5"}}, {}, {})
+        ph = next(iter(p.placeholders.values()))
+        self.assertEqual(tr.desired(ph, self.NoImages(), {}, datetime.date(2026, 10, 30))["poster.jpg"], tr.art.poster(None, ph.badge, "Gamma", [], "Wed 4 Nov · S01E05"))
+        self.assertEqual(tr.desired(ph, self.NoImages(), {}, datetime.date(2026, 11, 5))["poster.jpg"], tr.art.poster(None, ph.badge, "Gamma", []))
+
     def test_poster_carries_the_rank_and_unranked_posters_are_unchanged(self):
         lists = {"home": {"movies": [entry(1, 4, "Ranked")], "shows": []},
                  "rows": [{"id": "service-8-movie", "kind": "movie", "type": "service", "name": {"en": "Netflix", "de": "Netflix"}, "logo": None, "items": [entry(2, 1, "Plain")]}]}
@@ -802,6 +809,26 @@ class RealArt(Base):
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(self.io.primary["real9"], self.badged())
         self.assertEqual((self.paths.originals / "real9.jpg").read_bytes(), self.ORIGINAL)
+
+    def coming_owned(self, date, listed=True):
+        lists, coming, details, comingd = feeds()
+        if not listed:
+            lists["home"]["movies"] = lists["home"]["movies"][:2]
+        coming["items"].append({"d": "c9", "date": date, "kind": "movie", "pop": 1.0, "ref": "movie/9", "tmdb": 9})
+        comingd["entries"]["c9"] = {"t": {"en": "Owned"}, "p": {"en": "/p9.jpg"}, "ref": "movie/9", "y": 2026}
+        self.write_feeds(lists, coming, details, comingd)
+
+    def test_owned_coming_soon_title_gets_the_date_pill_and_loses_it_after_the_day(self):
+        self.coming_owned("2026-11-05")
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.io.primary["real9"], tr.art.poster(self.ORIGINAL, None, "", [("home-movies", 3, None)], "Thu 5 Nov"))
+        self.coming_owned("2026-11-05", listed=False)
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.io.primary["real9"], tr.art.poster(self.ORIGINAL, None, "", [], "Thu 5 Nov"))
+        self.coming_owned("2026-10-28", listed=False)
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.io.primary["real9"], self.ORIGINAL)
+        self.assertFalse((self.paths.originals / "real9.jpg").exists())
 
     def test_changed_marks_rebuild_the_poster(self):
         self.assertEqual(self.run_sync(), 0, self.out)

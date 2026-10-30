@@ -137,6 +137,27 @@ class Art(unittest.TestCase):
                 if badge:
                     self.assertLess(sum(im.getpixel((30, 60))), sum(base.getpixel((30, 60))) - 60, badge)
 
+    def test_date_pill_bottom_left_clear_of_the_marks_and_the_state_pill(self):
+        base = Image.new("RGB", (600, 900), (90, 120, 160))
+        for label in ("Thu 5 Nov", "Wed 4 Nov · S01E05", "Wed 29 Sep 2027 · S12E104"):
+            x0, y0, x1, y1 = ta.date_box(label)
+            self.assertGreaterEqual(x0, 20)
+            self.assertLessEqual(x1, 580)
+            self.assertGreaterEqual(y0, 720)
+            self.assertLessEqual(y1, 880)
+            self.assertGreaterEqual(y1 - y0, 70)
+            for badge, marks in ((None, []), ("found", [HOME1, HORROR3, NETFLIX5, COMEDY7])):
+                plain = load(ta.poster(img(), badge, "Title", marks)).convert("RGB")
+                im = load(ta.poster(img(), badge, "Title", marks, label)).convert("RGB")
+                self.assertGreater(len(set(rgb_pixels(im.crop((x0, y0, x1, y1))))), 30, label)
+                self.assertLess(sum(mean(im, (x0 + 40, y0 + 8, x1 - 40, y0 + 14))), sum(mean(base, (x0 + 40, y0 + 8, x1 - 40, y0 + 14))) - 120, label)
+                for x, y in ((590, 10), (30, 60), (300, 450), (590, 890), (10, 890)):
+                    d = max(abs(a - c) for a, c in zip(im.getpixel((x, y)), plain.getpixel((x, y))))
+                    self.assertLess(d, 12, (label, badge, x, y))
+                for bx0, by0, bx1, by1 in ta.mark_boxes([m[1] for m in marks]):
+                    self.assertLess(by1, y0)
+        self.assertEqual(ta.poster(img(), None, "Title", [], None), ta.poster(img(), None, "Title"))
+
     def test_more_than_four_marks_add_a_plus_pill(self):
         marks = [HOME1, HORROR3, NETFLIX5, COMEDY7, ("genre-drama-movie", 9, None), ("genre-action-movie", 10, None)]
         self.assertEqual(ta.shown_marks(marks), (marks[:4], 2))

@@ -501,6 +501,36 @@ def mark_stack(im, marks):
     return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
 
 
+DATE_H, DATE_ICON, DATE_FONTS, DATE_BOTTOM = 80, 50, (42, 38, 34, 30), H - 24
+CALENDAR = "\U0001F4C5"
+
+
+def date_font(label):
+    """The largest date font that keeps the pill inside the poster's left and right margins."""
+    for size in DATE_FONTS:
+        if 14 + DATE_ICON + 12 + font(size).getlength(label) + 24 <= W - 44:
+            return size
+    return DATE_FONTS[-1]
+
+
+def date_box(label):
+    """Bottom-left pill of the release date, below the mark stack and the state pill."""
+    w = 14 + DATE_ICON + 12 + round(font(date_font(label)).getlength(label)) + 24
+    return (22, DATE_BOTTOM - DATE_H, 22 + w, DATE_BOTTOM)
+
+
+def date_pill(im, label):
+    layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    x0, y0, x1, y1 = date_box(label)
+    d.rounded_rectangle((x0, y0, x1, y1), radius=DATE_H // 2, fill=PILL)
+    icon = emoji(CALENDAR, DATE_ICON)
+    if icon is not None:
+        layer.alpha_composite(icon, (x0 + 14, (y0 + y1 - DATE_ICON) // 2))
+    d.text((x0 + 14 + DATE_ICON + 12, (y0 + y1) // 2 + 1), label, font=font(date_font(label)), fill=WHITE, anchor="lm")
+    return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
+
+
 def title_box(badge, n_marks=0):
     if n_marks:
         return (100, 700, W - 40, 880)
@@ -516,8 +546,8 @@ def title_poster(title, box=(50, 250, W - 50, 650)):
     return im
 
 
-def poster(base, badge, title, marks=()):
-    """Placeholder or library poster: state pill top left, red band when not downloadable, marks = [(list key, rank, logo bytes)] stacked on the right."""
+def poster(base, badge, title, marks=(), date=None):
+    """Placeholder or library poster: state pill top left, red band when not downloadable, marks = [(list key, rank, logo bytes)] stacked on the right, date = release date label bottom left."""
     marks = list(marks or ())
     pic = decode(base)
     im = cover(pic, (W, H)) if pic is not None else title_poster(title, title_box(badge, len(marks)))
@@ -534,7 +564,8 @@ def poster(base, badge, title, marks=()):
             im = badge_none(im, *LOW_BAND, size=44)
         else:
             im = badge_none(im)
-    return to_jpeg(mark_stack(im, marks))
+    im = mark_stack(im, marks)
+    return to_jpeg(date_pill(im, date) if date else im)
 
 
 def fanart(base):

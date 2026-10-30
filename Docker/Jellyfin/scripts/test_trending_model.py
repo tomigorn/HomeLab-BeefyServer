@@ -1,3 +1,4 @@
+import datetime
 import pathlib
 import sys
 import unittest
@@ -171,6 +172,27 @@ class Plan(unittest.TestCase):
         self.assertEqual(marks, {"Shared Film": [("home-movies", 8), ("genre-horror-movie", 1), ("service-8-movie", 5), ("genre-comedy-movie", 5)],
                                  "Mystery": [("home-shows", 4)], "Other": [("service-8-movie", 1)], "Upcoming": []})
         self.assertEqual(p.real_marks, {"jf3": [("home-movies", 2), ("genre-horror-movie", 1), ("service-8-movie", 6)]})
+
+    def test_coming_soon_members_carry_their_date_and_next_episode(self):
+        c = coming(("tv", 30, "d30", "2026-11-04"), ("tv", 31, "d31", "2026-11-11"), ("movie", 20, "d20", "2026-11-05"))
+        c["items"][1].update(s=1, e=5)
+        details = {"d30": info("tv", 30, "Running Show", 2020), "d31": info("tv", 31, "New Show", 2026), "d20": info("movie", 20, "Upcoming", 2026)}
+        p = tm.plan(lists(), c, details, {"tv/30": "jf30"}, {})
+        phs = {ph.title: ph for ph in p.placeholders.values()}
+        self.assertEqual((phs["New Show"].coming_date, phs["New Show"].coming_ep), ("2026-11-11", (1, 5)))
+        self.assertEqual((phs["Upcoming"].coming_date, phs["Upcoming"].coming_ep), ("2026-11-05", None))
+        self.assertEqual(p.real_dates, {"jf30": ("2026-11-04", None)})
+
+    def test_date_label_like_the_web_cards_until_the_day_passed(self):
+        today = datetime.date(2026, 10, 30)
+        self.assertEqual(tm.date_label("2026-11-04", (1, 5), today), "Wed 4 Nov · S01E05")
+        self.assertEqual(tm.date_label("2026-11-05", None, today), "Thu 5 Nov")
+        self.assertEqual(tm.date_label("2026-11-04", (2, None), today), "Wed 4 Nov · S02")
+        self.assertEqual(tm.date_label("2027-01-04", None, today), "Mon 4 Jan 2027")
+        self.assertEqual(tm.date_label("2026-10-30", None, today), "Fri 30 Oct")
+        self.assertIsNone(tm.date_label("2026-10-29", (1, 1), today))
+        self.assertIsNone(tm.date_label(None, None, today))
+        self.assertIsNone(tm.date_label("soon", None, today))
 
     def test_owned_title_only_in_coming_soon_has_no_marks(self):
         p = tm.plan(lists(), coming(("tv", 30, "d30", "2026-11-04")), {"d30": info("tv", 30, "Running Show", 2020)}, {"tv/30": "jf30"}, {})

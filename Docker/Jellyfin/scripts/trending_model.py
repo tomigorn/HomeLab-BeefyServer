@@ -63,6 +63,7 @@ class Ph:
     coming_date: str | None
     rank: int | None = None
     marks: list = dataclasses.field(default_factory=list)
+    coming_ep: tuple | None = None
 
 
 @dataclasses.dataclass
@@ -71,6 +72,7 @@ class Plan:
     collections: list
     art: dict = dataclasses.field(default_factory=dict)
     real_marks: dict = dataclasses.field(default_factory=dict)
+    real_dates: dict = dataclasses.field(default_factory=dict)
 
 
 def collection_specs(lists):
@@ -119,6 +121,23 @@ def folder_name(title, year, taken, kind="movie"):
         n += 1
     taken.add(name.casefold())
     return name
+
+
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def date_label(iso, ep, today):
+    """Poster date of a Coming soon title like the web card (en-GB): "Wed 4 Nov · S01E05", the year only when it is not this year; None once the day has passed."""
+    try:
+        d = datetime.date.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return None
+    if d < today:
+        return None
+    text = f"{WEEKDAYS[d.weekday()]} {d.day} {MONTHS[d.month - 1]}" + (f" {d.year}" if d.year != today.year else "")
+    if ep and isinstance(ep[0], int):
+        text += f" · S{ep[0]:02d}" + (f"E{ep[1]:02d}" if isinstance(ep[1], int) else "")
+    return text
 
 
 def _date_text(iso):
@@ -183,6 +202,8 @@ def plan(lists, coming, details, owned, states):
                 key = f"{c['kind']}/{c['tmdb']}"
                 t = titles.setdefault(key, {"kind": c["kind"], "tmdb": int(c["tmdb"]), "first": (i, rank), "entry": None, "info": None, "date": None})
                 t["date"] = t["date"] or c.get("date")
+                if "ep" not in t:
+                    t["ep"] = (c["s"], c.get("e")) if isinstance(c.get("s"), int) else None
                 t["info"] = t["info"] or inf
                 t.setdefault("coming_rank", rank)
             continue
@@ -213,7 +234,7 @@ def plan(lists, coming, details, owned, states):
             key=key, kind=t["kind"], tmdb=t["tmdb"], season=(e or {}).get("s"), folder=folder, title=title, year=year, state=state, mode=mode,
             x=e.get("x") if state == "found" else None, sort_title=f"{li:02d}-{rank:02d} {title}", info=inf, files=_files(folder, t["kind"], state),
             badge=None if state == "coming" else state, coming_date=t["date"], rank=rank if li <= len(HOME) else None,
-            marks=marks.get(key, []))
+            marks=marks.get(key, []), coming_ep=t.get("ep"))
         folders[key] = folder
 
     def member(key):
@@ -238,7 +259,8 @@ def plan(lists, coming, details, owned, states):
             keys = [entry_key(e) for e in entries[spec["key"]]]
         collections.append((spec, [m for m in map(member, keys) if m]))
         art[spec["key"]] = [art_ref(k) for k in keys if member(k)][:ART_MEMBERS]
-    return Plan(placeholders, collections, art, {real[k]: marks[k] for k in real if marks.get(k)})
+    dates = {real[k]: (t["date"], t.get("ep")) for k, t in titles.items() if k in real and "coming_rank" in t and t["date"]}
+    return Plan(placeholders, collections, art, {real[k]: marks[k] for k in real if marks.get(k)}, dates)
 
 
 def _prefix(ph):

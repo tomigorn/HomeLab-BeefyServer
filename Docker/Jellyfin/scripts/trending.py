@@ -275,13 +275,14 @@ def with_logos(marks, logos):
     return None if any(lg is Images.FAILED for _, _, lg in out) else out
 
 
-def desired(ph, images, logos):
-    """{path in the folder: bytes | None (absent) | KEEP} for the folder's own non-video files."""
+def desired(ph, images, logos, today=None):
+    """{path in the folder: bytes | None (absent) | KEEP} for the folder's own non-video files; a Coming soon title's poster carries its date until today has passed it."""
     out = {tm.nfo_name(ph): tm.nfo(ph).encode()}
     out.update({name: xml.encode() for name, xml in tm.episode_nfos(ph).items()})
     base = images.get("w780", poster_path(ph))
     marks = with_logos(ph.marks, logos)
-    out["poster.jpg"] = KEEP if base is Images.FAILED or marks is None else art.poster(base, ph.badge, ph.title, marks)
+    date = tm.date_label(ph.coming_date, ph.coming_ep, today) if today else None
+    out["poster.jpg"] = KEEP if base is Images.FAILED or marks is None else art.poster(base, ph.badge, ph.title, marks, date)
     back = images.get("w1280", (ph.info or {}).get("b"))
     out["fanart.jpg"] = KEEP if back is Images.FAILED else art.fanart(back)
     return out
@@ -623,11 +624,12 @@ class RealArt:
     def badged(self, iid):
         return iid in self.held or (self.dir / f"{iid}.badged").exists()
 
-    def sync(self, real_marks, logos):
+    def sync(self, real_marks, logos, dates=None, today=None):
         if not self.dir.is_dir():
             self.log(f"originals folder missing ({self.dir}), library posters skipped: run trending-setup.py")
             return
-        ids = sorted(set(real_marks) | set(self.held) | {p.stem for p in self.dir.glob("*.badged")})
+        labels = {iid: label for iid, (date, ep) in (dates or {}).items() if today and (label := tm.date_label(date, ep, today))}
+        ids = sorted(set(real_marks) | set(labels) | set(self.held) | {p.stem for p in self.dir.glob("*.badged")})
         items = {}
         for i in range(0, len(ids), 50):
             chunk = ",".join(ids[i:i + 50])
@@ -638,8 +640,8 @@ class RealArt:
             try:
                 if item is None:
                     self.drop(iid)
-                elif iid in real_marks:
-                    n_mark += self.mark(iid, item, real_marks[iid], logos)
+                elif iid in real_marks or iid in labels:
+                    n_mark += self.mark(iid, item, real_marks.get(iid, []), logos, labels.get(iid))
                 elif self.badged(iid):
                     n_restore += self.restore(iid)
             except (JellyfinError, *FAILURES) as e:
@@ -665,7 +667,7 @@ class RealArt:
         items = self.io.jf("GET", f"/Items?Ids={iid}&Recursive=true&CollapseBoxSetItems=false&EnableUserData=false")["Items"]
         return ((items[0] if items else {}).get("ImageTags") or {}).get("Primary")
 
-    def mark(self, iid, item, marks, logos):
+    def mark(self, iid, item, marks, logos, date=None):
         marks = with_logos(marks, logos)
         if marks is None:
             return 0
@@ -685,7 +687,7 @@ class RealArt:
             if art.decode(data) is None:
                 return 0
             write_atomic(f, data)
-        poster = art.poster(f.read_bytes(), None, "", marks)
+        poster = art.poster(f.read_bytes(), None, "", marks, date)
         digest = hashlib.sha256(poster).hexdigest()
         rec = self.held.get(iid) or {}
         if rec.get("digest") == digest and rec.get("tag") == (item.get("ImageTags") or {}).get("Primary"):
@@ -794,7 +796,8 @@ def sync(io, paths, now, dry_run, log):
 
     added, restructured, touched = [], [], []
     logos = {spec["key"]: images.get("w500", spec.get("logo")) for spec, _ in plan.collections}
-    files = {folder: desired(ph, images, logos) for folder, ph in plan.placeholders.items()}
+    today = now.astimezone().date()
+    files = {folder: desired(ph, images, logos, today) for folder, ph in plan.placeholders.items()}
     for folder, ph in plan.placeholders.items():
         new, structure, content = sync_folder(paths.dir(kinds[folder]) / folder, ph, files[folder], clips, True)
         if new:
@@ -851,7 +854,7 @@ def sync(io, paths, now, dry_run, log):
 
     set_ids = cols.sync(plan.collections, member_id, plan.art)
     real_art = RealArt(io, paths, state, dry_run, log, save)
-    real_art.sync(plan.real_marks, logos)
+    real_art.sync(plan.real_marks, logos, plan.real_dates, today)
     orders = {state["sets"][spec["key"]]: [i for i in map(member_id, members) if i] for spec, members in plan.collections if spec["key"] in state.get("sets", {})}
     series = {i for k, i in have.items() if k.startswith("tv/")} | {member_id(("ph", f)) for f, ph in plan.placeholders.items() if ph.kind == "tv"}
     orders = co.films_only(orders, series)
