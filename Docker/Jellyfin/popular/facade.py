@@ -291,6 +291,10 @@ class TvCodes:
     def digest(self, jf_id, code):
         return hmac.new(self.key, f"{jf_id}:{code}".encode(), hashlib.sha256).digest()
 
+    def tag(self, name):
+        """A short keyed hash of the folded name for the container log: repeated failures of one name line up, a code typed as the name never shows."""
+        return hmac.new(self.key, b"name:" + tv_fold(name).encode(), hashlib.sha256).hexdigest()[:8]
+
     def issue(self, jf_id, name):
         """(code, expires) for this Jellyfin user, replacing their previous code, or None after TV_ISSUE_PER_HOUR codes in the last hour."""
         now = self.clock()
@@ -319,9 +323,11 @@ class TvCodes:
         self.failed_all = [t for t in self.failed_all if now - t < TV_GLOBAL_WINDOW]
 
     def consume(self, username, code):
-        """(outcome, Jellyfin user id or None, brake): outcome ok (code used up), failed, lockout (this failure locked the name: its code is burnt), locked or busy; brake = this failure used up the global budget."""
+        """(outcome, Jellyfin user id or None, brake): outcome ok (code used up), empty (no name or code: never counted), failed, lockout (this failure locked the name: its code is burnt), locked or busy; brake = this failure used up the global budget."""
         now = self.clock()
         fold, given = tv_fold(username), tv_normal(code)
+        if not fold or not given:
+            return "empty", None, False
         with self.lock:
             self.prune(now)
             if len(self.failed_all) >= TV_FAILS_GLOBAL:
@@ -930,17 +936,19 @@ class Facade:
             self.core.reject("facade password")
             return 400, {"message": "Bad request"}, [], None
         username = data.get("username") if "username" in data else data.get("email")
-        name = shown_name(username)
         outcome, jf_id, brake = self.codes.consume(username, data.get("password"))
-        log = {"user": name, "userId": jf_id, "via": "moonfin-tv"}
+        log = {"user": shown_name(username), "userId": jf_id, "via": "moonfin-tv"}
         if brake:
-            self.core.audit(**log, decision="tv code: brake")
+            self.core.audit(user=None, userId=None, via="moonfin-tv", decision="tv code: brake")
         if outcome in ("busy", "locked"):
             self.core.reject("tv code " + outcome)
             return 429, {"message": TV_BUSY if outcome == "busy" else TV_LOCKED}, [], None
+        if outcome == "empty":
+            self.core.reject("facade password")
+            return 401, {"message": TV_FAIL}, [], None
         if outcome != "ok":
             self.core.reject("facade password")
-            self.log(f"facade tv code {outcome} {json.dumps(name)}")
+            self.log(f"facade tv code {outcome} {self.codes.tag(username)}")
             return (429, {"message": TV_LOCKED}, [], None) if outcome == "lockout" else (401, {"message": TV_FAIL}, [], None)
         user = self.jellyfin_user(jf_id)
         if user is None:

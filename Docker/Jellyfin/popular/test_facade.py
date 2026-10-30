@@ -1600,8 +1600,9 @@ class TvCode(FacadeBase):
         self.assertEqual(self.login("jane", code)[:2], (429, {"message": facade.TV_LOCKED}))
         self.later(15 * 60)
         self.assertEqual(self.login("jane", code)[0], 401)
-        self.assertEqual(self.lines.count('facade tv code lockout "jane"'), 1)
-        self.assertEqual(self.lines.count('facade tv code failed "Jane"'), 4)
+        tag = self.facade.codes.tag("jane")
+        self.assertEqual(self.lines.count(f"facade tv code lockout {tag}"), 1)
+        self.assertEqual(self.lines.count(f"facade tv code failed {tag}"), 5)
         self.assertNotIn("lockout", pathlib.Path(self.tmp.name, "audit.jsonl").read_text())
 
     def test_issuing_a_new_code_lifts_the_lockout(self):
@@ -1634,6 +1635,7 @@ class TvCode(FacadeBase):
         self.later(60)
         self.assertEqual(self.login("jane", code)[0], 200)
         self.assertEqual([a["decision"] for a in self.audit()].count("tv code: brake"), 1)
+        self.assertEqual([a["user"] for a in self.audit() if a["decision"] == "tv code: brake"], [None])
         self.assertEqual(facade.TV_FAILS_GLOBAL, 20)
 
     def test_disabled_or_renamed_user_gets_no_session(self):
@@ -1668,17 +1670,48 @@ class TvCode(FacadeBase):
             self.assertNotIn(secret, text)
         audit = {a["decision"]: a for a in self.audit()}
         self.assertEqual((audit["tv code: issued"]["userId"], audit["tv code: issued"]["user"]), (JANE_POP_ID, "jane"))
-        self.assertIn('facade tv code failed "jane"', self.lines)
+        self.assertIn(f"facade tv code failed {self.facade.codes.tag('jane')}", self.lines)
         self.assertNotIn("tv code: failed", audit)
         self.assertEqual(audit["tv code: sign-in"]["userId"], JANE_POP_ID)
         self.assertIn("facade POST auth/jellyfin 200 " + JANE_POP_ID, self.lines)
 
-    def test_audit_name_of_a_failure_is_cut_and_printable(self):
+    def test_failure_log_never_shows_the_typed_name(self):
+        code = self.code()
+        self.login(code, "WRONGCODE2")
         self.login("x\n" * 50, "WRONGCODE2")
-        line = [l for l in self.lines if l.startswith("facade tv code failed")][-1]
-        self.assertEqual(line, 'facade tv code failed "' + "x" * 50 + '"')
-        self.login("y" * 100, "WRONGCODE2")
-        self.assertEqual(self.lines[-2], 'facade tv code failed "' + "y" * 64 + '"')
+        failed = [l for l in self.lines if l.startswith("facade tv code")]
+        self.assertEqual(len(failed), 2)
+        for line in failed:
+            self.assertRegex(line, r"^facade tv code failed [0-9a-f]{8}$")
+        self.assertNotIn(code, "\n".join(self.lines) + self.out.getvalue())
+        self.assertEqual(self.facade.codes.tag(" JANE "), self.facade.codes.tag("jane"))
+        self.assertNotEqual(facade.TvCodes(self.facade.clock).tag("jane"), self.facade.codes.tag("jane"))
+
+    def test_empty_name_or_code_is_401_and_never_counts(self):
+        code = self.code()
+        bodies = [{}, {"username": "", "password": ""}, {"username": "jane"}, {"username": "jane", "password": ""}, {"username": " ", "password": "WRONGCODE2"},
+                  {"password": "WRONGCODE2"}, {"username": "jane", "password": " - "}, {"email": "", "password": "x"}, {"username": "jane", "password": None}, {"username": None, "password": None}]
+        for body in bodies:
+            self.assertEqual(self.call("POST", "auth/jellyfin", body=json.dumps(body).encode())[:2], (401, {"message": facade.TV_FAIL}), body)
+        self.assertEqual(self.call("POST", "auth/local", body=b"{}")[:2], (401, {"message": facade.TV_FAIL}))
+        codes = self.facade.codes
+        self.assertEqual((codes.fails, codes.locked, codes.failed_all), ({}, {}, []))
+        self.assertEqual([l for l in self.lines if l.startswith("facade tv code")], [])
+        self.assertEqual(self.core.rejected().get("facade password"), len(bodies) + 1)
+        self.assertEqual(self.login("jane", code)[0], 200)
+
+    def test_issue_refusals_are_counted_not_audited_and_rate_limited(self):
+        for _ in range(5):
+            self.code()
+        for _ in range(5):
+            self.assertEqual(self.issue()[:2], (429, {"error": "limit"}))
+        self.assertEqual(self.issue()[:2], (429, {"error": "slow down"}))
+        decisions = [a["decision"] for a in self.audit()]
+        self.assertEqual(decisions.count("tv code: issued"), 5)
+        self.assertNotIn("tv code: refused: issue limit", decisions)
+        self.assertEqual(self.core.rejected().get("tv code issue limit"), 5)
+        self.later(60)
+        self.assertEqual(self.issue()[:2], (429, {"error": "limit"}))
 
 
 if __name__ == "__main__":

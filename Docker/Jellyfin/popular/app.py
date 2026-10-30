@@ -563,6 +563,8 @@ class Core:
             return 401, {"error": "sign in to Jellyfin"}
         if user["disabled"]:
             return 403, {"error": "account disabled"}
+        if not self.rate_ok(user["id"]):
+            return 429, {"error": "slow down"}
         try:
             req = json.loads(body)
         except (ValueError, RecursionError):
@@ -573,7 +575,7 @@ class Core:
             return 503, {"error": "TV sign-in is off"}
         got = self.tv_codes.issue(user["id"], user["name"])
         if got is None:
-            self.audit(user=user["name"], userId=user["id"], via="moonfin-tv", decision="tv code: refused: issue limit")
+            self.reject("tv code issue limit")
             return 429, {"error": "limit"}
         code, expires = got
         self.audit(user=user["name"], userId=user["id"], via="moonfin-tv", decision="tv code: issued")
