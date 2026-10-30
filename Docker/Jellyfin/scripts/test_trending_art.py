@@ -99,8 +99,9 @@ class Art(unittest.TestCase):
             self.assertGreater(y0, 22 + 84 + 8, rank)
             self.assertGreater(y0, 120, rank)
             self.assertLessEqual(x1, 580, rank)
-            self.assertGreater(x0, 300, rank)
-            self.assertLess(y1, 250, rank)
+            self.assertGreater(x0, 250, rank)
+            self.assertLess(y1, 270, rank)
+            self.assertGreaterEqual(y1 - y0, 120, rank)
             for badge in (None, "found", "downloading"):
                 im = load(ta.poster(img(), badge, "Title", rank)).convert("RGB")
                 for x, y in ((590, 10), (480, 60), (590, 120), (300, 450), (590, 890), (10, 890)):
@@ -113,6 +114,12 @@ class Art(unittest.TestCase):
                 self.assertTrue(r > 180 and g < 70 and b < 70, (rank, badge, r, g, b))
                 if badge:
                     self.assertLess(sum(im.getpixel((30, 60))), sum(base.getpixel((30, 60))) - 60, badge)
+
+    def test_rank_number_large_enough_for_a_tv_row(self):
+        im = load(ta.poster(img((0, 0, 0)), None, "Title", 1)).convert("L")
+        x0, y0, x1, y1 = ta.rank_box(1)
+        rows = [y for y in range(y0, y1) if any(im.getpixel((x, y)) > 200 for x in range(ta.flag_box(1)[2] + 4, x1))]
+        self.assertGreaterEqual(rows[-1] - rows[0], 52)
 
     def test_rank_badge_widens_with_the_number_and_none_leaves_the_poster_unchanged(self):
         self.assertGreater(ta.rank_box(1)[0] - ta.rank_box(10)[0], 10)
