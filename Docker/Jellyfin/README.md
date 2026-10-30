@@ -697,7 +697,7 @@ Moonfin's Seerr screens (discover, details, request dialog, my requests) talk to
 | Unsupported | Smart-TV / Samsung Moonfin (password-only sign-in) cannot sign in to the facade |
 | Deviation | deny-by-default: only the listed read paths exist, other Seerr screens stay empty on purpose |
 | Seerr service user | `jellyfin-popular`: local Seerr user, permissions 160 (REQUEST + AUTO_APPROVE), created once (2026-10-30, owner-approved) via `core.service_user(create=True)`. Random password `secrets.token_urlsafe(32)`, never stored or logged; the facade and Popular use the Seerr API key + `X-Api-User` impersonation, so no password file exists |
-| Recreate service user | `sudo docker exec jellyfin-popular python3 -c 'import app; print(app.make_core().service_user(create=True)["id"])'` |
+| Recreate service user | `sudo docker exec -w /app jellyfin-popular python3 -c 'import app; s = app.make_core().service_user(create=True); print(s["id"], s["permissions"], s.get("userType"))'` |
 | Stray device | a sign-in that times out after Jellyfin issued the token can leave an `hss-seerr-*` device row; accepted. The facade always calls `/Sessions/Logout` with the token it got (in a `finally`), so no valid token lingers. Devices are never deleted |
 
 | Task | Command (in `Docker/Jellyfin/`) |
