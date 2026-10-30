@@ -95,8 +95,8 @@ window for your own account, then close it again. On beefy:
 cd ~/Projects/Docker/Jellyfin && sudo docker compose stop jellyfin
 C=/srv/appdata/jellyfin/data
 sudo sqlite3 $C/data/jellyfin.db ".backup $C/data/jellyfin.db.bak-pre-seerr"
-sudo sqlite3 $C/data/jellyfin.db "SELECT quote(Password), quote(AuthenticationProviderId) FROM Users WHERE Username='jane';" | sudo tee /root/jf-auth.sav
-sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Username='jane';"
+sudo sqlite3 $C/data/jellyfin.db "SELECT quote(Password), quote(AuthenticationProviderId) FROM Users WHERE Username='<admin-user>';" | sudo tee /root/jf-auth.sav
+sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Username='<admin-user>';"
 sudo docker compose start jellyfin
 # set a temporary password (API key: secrets/api-key in the Jellyfin project), user id from GET /Users
 JK=$(cat ~/Projects/Docker/Jellyfin/secrets/api-key); U=<your user id>
@@ -114,7 +114,7 @@ WEB 1080p`, series type `anime`, same root `/data/media/tv`; see `../Movie-Downl
 ```bash
 cd ~/Projects/Docker/Jellyfin && sudo docker compose stop jellyfin
 PW=$(sudo cut -d'|' -f1 /root/jf-auth.sav); PR=$(sudo cut -d'|' -f2 /root/jf-auth.sav)
-sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET Password=$PW, AuthenticationProviderId=$PR WHERE Username='jane';"
+sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET Password=$PW, AuthenticationProviderId=$PR WHERE Username='<admin-user>';"
 sudo rm /root/jf-auth.sav && sudo docker compose start jellyfin
 # every user must show OidcPasswordDisabledProvider again:
 curl -s -H "Authorization: MediaBrowser Token=$JK" http://127.0.0.1:8096/Users | grep -o '"AuthenticationProviderId":"[^"]*"'

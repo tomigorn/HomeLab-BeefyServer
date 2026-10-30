@@ -304,15 +304,15 @@ C=/srv/appdata/jellyfin/data
 sudo cp -a $C/plugins/configurations/Jellyfin.Plugin.Oidc.xml{,.bak-recovery}
 sudo sed -i 's#<Enabled>true</Enabled>#<Enabled>false</Enabled>#' $C/plugins/configurations/Jellyfin.Plugin.Oidc.xml
 sudo sqlite3 $C/data/jellyfin.db ".backup $C/data/jellyfin.db.bak-recovery"
-sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Name='jane' AND AuthenticationProviderId='Jellyfin.Plugin.Oidc.Identity.OidcPasswordDisabledProvider';"
+sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET AuthenticationProviderId='Jellyfin.Server.Implementations.Users.DefaultAuthenticationProvider' WHERE Name='<admin-user>' AND AuthenticationProviderId='Jellyfin.Plugin.Oidc.Identity.OidcPasswordDisabledProvider';"
 docker compose start jellyfin
 ```
 
 Then, from your PC: `ssh -L 8096:127.0.0.1:8096 beefy` and open
 `http://localhost:8096` (the LAN address is firewalled to fastpi only). The local `admin` user was deleted on
-2026-10-19 (Holy Grail is the only login), so first give `jane` a password:
-`sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET Password=NULL WHERE Name='jane';"`
-(empty password, set a new one right after signing in). Sign in as `jane`. Fix
+2026-10-19 (Holy Grail is the only login), so first give the admin a password (replace `<admin-user>` with the admin account's user name):
+`sudo sqlite3 $C/data/jellyfin.db "UPDATE Users SET Password=NULL WHERE Name='<admin-user>';"`
+(empty password, set a new one right after signing in). Sign in as `<admin-user>`. Fix
 the problem, then put it back: Plugins -> OIDC Authentication -> enable, "Local
 password sign-in" = **Disable for all users**, save (the plugin switches the user
 back to the disabled provider). Check with
