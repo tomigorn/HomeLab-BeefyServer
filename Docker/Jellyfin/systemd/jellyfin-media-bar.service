@@ -1,0 +1,8 @@
+[Unit]
+Description=Moonfin media bar per user: unwatched films and unstarted series in a private "For you" set
+
+[Service]
+Type=oneshot
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/media-bar.py
+Nice=10
+TimeoutStartSec=10min

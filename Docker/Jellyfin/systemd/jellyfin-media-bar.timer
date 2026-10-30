@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh the per-user Moonfin media bar sets every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
