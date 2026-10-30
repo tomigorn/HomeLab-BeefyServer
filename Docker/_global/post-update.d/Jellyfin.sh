@@ -41,6 +41,7 @@ if want jellyfin; then
   check jf.home-upcoming-pop '^true$' "$(jf_api /Plugins/f5a34f7b2e8a4e6aa7223a216a81b374/Configuration | jq -c '[.CustomJavaScripts[] | select(.Name == "Home upcoming") | .Enabled] | first' 2>&1)"
   check jf.studio-logos '^[1-9]' "$(jf_api '/Studios?Recursive=true&EnableImageTypes=Logo&ImageTypeLimit=1' | jq '[.Items[] | select(.ImageTags.Logo)] | length' 2>&1)"
   check jf.studio-logos-timer '^active$' "$(jf_user_systemctl is-active jellyfin-studio-logos.timer 2>&1)"
+  check jf.studio-cards '^ok [1-9][0-9]* cards$' "$(python3 "$DIR/../../Jellyfin/scripts/studio-cards.py" --check 2>&1 | tail -1)"
   check jf.upcoming-cards-served '^2$' "$(jf_api /JavaScriptInjector/private.js | grep -o -E 'function upcoming(Series|Dates)' | sort -u | wc -l)"
   check jf.home-sections-config '^unchanged$' "$(python3 "$DIR/../../Jellyfin/scripts/home-sections.py" --dry-run 2>&1 | tail -1)"
   check jf.home-sections-locked '^\{"Enabled":true,"AllowUserOverride":false' "$(jf_api /HomeScreen/Meta | jq -c . 2>&1)"
