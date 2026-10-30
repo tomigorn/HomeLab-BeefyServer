@@ -44,7 +44,7 @@ SERVER = {
 DEFAULTS = {
     "navbarPosition": "left",
     "mediaBarMode": "moonfin",
-    "mediaBarSourceType": "random",
+    "mediaBarSourceType": "recentlyAdded",  # Latest = unwatched while HidePlayedInLatest is on
     "mediaBarAutoAdvance": True,
     "homeRowsStyle": "v2",
     "detailScreenStyle": "modern",

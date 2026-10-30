@@ -139,9 +139,14 @@ class WantedTest(unittest.TestCase):
         self.assertEqual(len(posted), 1)
         self.assertEqual(posted[0]["SeerrWebhookSecret"], "s3cr3t-value")
 
-    def test_media_bar_random_and_auto_advancing(self):
+    def test_media_bar_newest_unwatched_and_auto_advancing(self):
         d = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)["DefaultUserSettings"]
-        self.assertEqual((d["mediaBarSourceType"], d["mediaBarAutoAdvance"]), ("random", True))
+        self.assertEqual((d["mediaBarSourceType"], d["mediaBarAutoAdvance"]), ("recentlyAdded", True))
+
+    def test_media_bar_previous_default_follows_and_own_choice_stays(self):
+        new = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)["DefaultUserSettings"]
+        settings = {"tv": {"mediaBarSourceType": "random"}, "mobile": {"mediaBarSourceType": "recentlyReleased"}}
+        self.assertEqual(mb.adopt(settings, {"mediaBarSourceType": "random"}, {"mediaBarSourceType": new["mediaBarSourceType"]}), {"tv": {"mediaBarSourceType": "recentlyAdded"}})
 
     def test_row_toggles_for_the_web_order(self):
         d = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)["DefaultUserSettings"]
