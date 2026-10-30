@@ -11,7 +11,7 @@ _spec.loader.exec_module(tw)
 
 SECRET = "hookSecret_x-1"
 URL = "http://jellyfin-popular:8098/hook/hookSecret_x-1"
-EVENTS = ["Play", "Progress", "Pause", "Resume", "Stop"]
+EVENTS = ["Play", "Progress", "Pause", "Resume", "Stop", "MarkPlayed"]
 FLOPPY = {"Id": "f1", "Name": "Tracker anna", "Url": "http://192.168.1.102:8012/webhook/jellyfin/floppytok", "UserId": "a" * 32, "Format": "Default", "Events": ["Play", "Stop", "MarkPlayed", "MarkUnplayed"]}
 
 
@@ -85,7 +85,7 @@ class CliTest(unittest.TestCase):
         code, text = self.run_cli(["check"], config)
         self.assertEqual((code, text.strip()), (0, "ok"))
         for broken in ({"Hooks": [FLOPPY]}, tw.upsert_hook({"Hooks": []}, "http://jellyfin-popular:8098/hook/other"),
-                       {"Hooks": [dict(config["Hooks"][1], Events=["Play"])]}, {"Hooks": [dict(config["Hooks"][1], UserId="a" * 32)]}):
+                       {"Hooks": [dict(config["Hooks"][1], Events=["Play"])]}, {"Hooks": [dict(config["Hooks"][1], Events=EVENTS[:5])]}, {"Hooks": [dict(config["Hooks"][1], UserId="a" * 32)]}):
             code, text = self.run_cli(["check"], broken)
             self.assertEqual(code, 1, broken)
             self.assertNotIn(SECRET, text)

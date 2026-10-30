@@ -18,7 +18,7 @@ PORT = 8098
 PREFIX = "/hook/"
 PLUGIN = "Webhooks"
 NAME = "Trending requests"
-EVENTS = ["Play", "Progress", "Pause", "Resume", "Stop"]
+EVENTS = ["Play", "Progress", "Pause", "Resume", "Stop", "MarkPlayed"]
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]+")
 SECRET_FILE = pathlib.Path(__file__).resolve().parent.parent / "secrets" / "popular" / "hook.secret"
 
