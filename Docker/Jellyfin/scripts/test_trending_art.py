@@ -133,7 +133,7 @@ class Art(unittest.TestCase):
             red = sum(1 for r, g, b in rgb_pixels(im) if r > 150 and g < 80 and b < 80)
             self.assertGreater(red, 40000, rank)
 
-    def test_ranked_unavailable_poster_keeps_the_band_off_the_rank_badge(self):
+    def test_ranked_unavailable_poster_keeps_the_band_off_the_rank_badge_and_the_title_art(self):
         for rank in (1, 10):
             im = load(ta.poster(img(), "none", "Title", rank)).convert("RGB")
             x0, y0, x1, y1 = ta.rank_box(rank)
@@ -141,6 +141,8 @@ class Art(unittest.TestCase):
             px = rgb_pixels(im.crop((fx1 + 4, y0, x1, y1 + 40)))
             self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, rank)
             self.assertGreater(sum(1 for r, g, b in rgb_pixels(im) if r > 150 and g < 80 and b < 80), 40000, rank)
+            px = rgb_pixels(im.crop((170, 560, 580, 880)))
+            self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, rank)
 
     def test_fanart_and_tile(self):
         self.assertIsNone(ta.fanart(None))

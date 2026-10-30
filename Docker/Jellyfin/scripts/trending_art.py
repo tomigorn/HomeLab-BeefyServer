@@ -353,7 +353,7 @@ def badge_pill(im, label, icon, ring, glyph):
     return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
 
 
-def badge_none(im, p0=(0, H), p1=(W, 0), size=50):
+def badge_none(im, p0=(0, H), p1=(W, 0), size=50, centre=None):
     """Red band along the line p0 to p1 with NOT ABLE TO DOWNLOAD; the default runs corner to corner."""
     ang = math.degrees(math.atan2(p0[1] - p1[1], p1[0] - p0[0]))
     band = 150
@@ -369,17 +369,20 @@ def badge_none(im, p0=(0, H), p1=(W, 0), size=50):
     ld = ImageDraw.Draw(layer)
     ld.text((500, 80), "NOT ABLE TO DOWNLOAD", font=font(size), fill=WHITE, anchor="mm")
     layer = layer.rotate(ang, expand=True, resample=Image.BICUBIC)
-    cx, cy = (p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2
+    cx, cy = centre or ((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2)
     im.paste(layer, (int(2 * cx - layer.width) // 2, int(2 * cy - layer.height) // 2), layer)
     return im
 
 
-# Low and flat band: keeps the title of a title-only poster and the rank badge clear.
+# Low and flat band of a title-only poster, the title above it.
 LOW_BAND = ((-60, 846), (660, 534))
+# Steep band left of the rank badge, clear of the title art at the bottom of a poster.
+STEEP_BAND = ((-100, 926), (290, -80))
+STEEP_TEXT = (135, 318)
 
 
 def rank_box(rank):
-    """Box of the rank badge: top right, below the corner where clients draw their played/unplayed marker, clear of the top-left pill."""
+    """Top right, below the clients' played/unplayed corner."""
     w = 14 + RANK_FLAG + 14 + round(font(RANK_FONT).getlength(f"#{rank}")) + 26
     return (W - 22 - w, RANK_TOP, W - 22, RANK_TOP + RANK_H)
 
@@ -434,7 +437,10 @@ def poster(base, badge, title, rank=None):
     elif badge == "downloading":
         im = badge_pill(im, "Downloading", "arrow", BLUE, WHITE)
     elif badge == "none":
-        im = badge_none(im) if pic is not None and not rank else badge_none(im, *LOW_BAND, size=44)
+        if pic is None:
+            im = badge_none(im, *LOW_BAND, size=44)
+        else:
+            im = badge_none(im, *STEEP_BAND, centre=STEEP_TEXT) if rank else badge_none(im)
     if rank:
         im = rank_badge(im, rank)
     return to_jpeg(im)
