@@ -68,6 +68,7 @@ if want jellyfin; then
   check jf.trending-hide-served '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssTrendingHide = ' 2>&1)"
   check jf.trending-path '^active$' "$(jf_user_systemctl is-active jellyfin-trending.path 2>&1)"
   check jf.trending-webhook '^ok$' "$(python3 "$DIR/../../Jellyfin/scripts/trending-webhook.py" check 2>&1)"
+  check jf.hidden-gems '^1 Hidden Gems Default$' "$(jf_api '/Items?Recursive=true&IncludeItemTypes=BoxSet&Tags=hss-hidden-gems&Fields=DisplayOrder&EnableImages=false' | jq -r '"\(.Items | length) \([.Items[] | "\(.Name) \(.DisplayOrder)"] | join(","))"' 2>&1)"
   # Moonbase (Moonfin apps): Seerr = our facade, the Similar override and the push relay stay off; left nav and the list rows are the defaults
   check jf.plugin-moonbase '^Active 2\.' "$(jf_plugin 'Moonbase')"
   check jf.moonbase-config '^\[true,"http://jellyfin-popular:8099",false,"","left",true,false,true\]$' "$(jf_api /Plugins/8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b/Configuration | jq -c '[.SeerrEnabled,.SeerrUrl,.RecommendationsProviderEnabled,.PushRelayUrl,.DefaultUserSettings.navbarPosition,([.DefaultUserSettings.homeSections[]? | select(.kind == "pluginDynamic")] | length > 0),.DefaultUserSettings.mergeContinueWatchingNextUp,.DefaultUserSettings.displaySeerrRows]' 2>&1)"
