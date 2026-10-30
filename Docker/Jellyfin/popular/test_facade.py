@@ -1140,6 +1140,32 @@ class MyRequests(FacadeBase):
         out = self.get("request?take=100")[1]
         self.assertEqual([r["requestedBy"] for r in out["results"]], [self.me, self.me])
 
+    def test_other_users_requests_in_media_never_appear(self):
+        other = {"id": 55, "displayName": "John Roe"}
+        mine_nested = {"id": 1, "status": 2, "requestedBy": {"id": 20}}
+        r1 = fake_request(1)
+        r1["media"]["requests"] = [mine_nested, {"id": 777, "status": 4, "requestedBy": other}, {"id": True, "status": 2}]
+        r2 = fake_request(2)
+        r2["media"]["requests"] = [{"id": 888, "status": 3, "requestedBy": other}]
+        self.add(r1)
+        self.add(r2)
+        for path in ("request?take=100", "request/1", "request/2"):
+            out = self.get(path)[1]
+            blob = json.dumps(out)
+            for needle in ("777", "888", "John"):
+                self.assertNotIn(needle, blob, path)
+        media = self.get("request/1")[1]["media"]
+        self.assertEqual([x["id"] for x in media["requests"]], [1])
+        self.assertEqual(media["requests"][0]["requestedBy"], self.me)
+        self.assertEqual(self.get("request/2")[1]["media"]["requests"], [])
+
+    def test_page_number_follows_seerr_formula(self):
+        for i in range(1, 8):
+            self.add(fake_request(i))
+        self.assertEqual(self.get("request?take=5&skip=3")[1]["pageInfo"], {"pages": 2, "pageSize": 5, "results": 7, "page": 2})
+        self.assertEqual(self.get("request?take=5&skip=0")[1]["pageInfo"]["page"], 1)
+        self.assertEqual(self.get("request?take=5&skip=5")[1]["pageInfo"]["page"], 2)
+
     def test_no_linked_user_no_seerr_list_call(self):
         self.add(fake_request(1))
         self.get("request")

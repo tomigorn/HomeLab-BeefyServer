@@ -618,7 +618,16 @@ class Facade:
         ids = list(dict.fromkeys(list(self.core.requested_ids(caller["jf_id"])) + self.linked_requests(caller["jf_id"])))
         found = [r for r in (self.fetch_request(i) for i in ids) if r is not None]
         mine = {r["id"] for r in found}
-        return [scrub(r, caller["uid"], mine, caller["name"]) for r in found]
+        return [self.own_media(scrub(r, caller["uid"], mine, caller["name"]), mine) for r in found]
+
+    @staticmethod
+    def own_media(request, mine):
+        """The request with media.requests cut down to the caller's own requests."""
+        media = request.get("media")
+        if isinstance(media, dict) and "requests" in media:
+            rows = media["requests"] if isinstance(media["requests"], list) else []
+            media["requests"] = [x for x in rows if isinstance(x, dict) and is_int(x.get("id")) and x["id"] in mine]
+        return request
 
     @staticmethod
     def media_status(r):
