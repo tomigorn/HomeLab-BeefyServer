@@ -68,7 +68,7 @@
       var it = items[i];
       var tmdb = it && it.ProviderIds && it.ProviderIds.Tmdb;
       if (!tmdb || (it.Type !== "Movie" && it.Type !== "Series")) continue;
-      out[(it.Type === "Movie" ? "movie/" : "tv/") + tmdb] = { id: it.Id, server: it.ServerId || "" };
+      out[(it.Type === "Movie" ? "movie/" : "tv/") + tmdb] = { id: it.Id, server: it.ServerId || "", type: it.Type };
     }
     return out;
   }
@@ -180,7 +180,13 @@
     else poster.appendChild(el(doc, "div", "hssTopNoPoster", name));
     if (it.k === "tv" && it.s) poster.appendChild(el(doc, "div", "hssTopSeason", tr(lang, "season") + it.s));
     c.appendChild(poster);
-    if (entry.jf) return c;
+    if (entry.jf) {
+      // Play on TV (details.js, window.HssPlayTv); its click handler keeps the card link from opening.
+      var P = (doc.defaultView || {}).HssPlayTv;
+      var pb = !tv && P && P.button(doc, { id: entry.jf.id, type: entry.jf.type || (it.k === "tv" ? "Series" : "Movie"), name: name }, lang);
+      if (pb) c.appendChild(el(doc, "div", "hssTopActions")).appendChild(pb);
+      return c;
+    }
     if (!it.x) {
       poster.appendChild(el(doc, "div", "hssTopBanner", tr(lang, "none")));
     } else {
@@ -192,8 +198,9 @@
     return c;
   }
 
-  function rowKey(entries, lang, states) {
-    return langOf(lang) + "|" + entries.map(function (e) {
+  function rowKey(entries, lang, states, doc) {
+    var play = doc && doc.defaultView && doc.defaultView.HssPlayTv ? "p" : "";
+    return langOf(lang) + play + "|" + entries.map(function (e) {
       var st = states && states.entries && e.item.x ? states.entries[e.item.x] : null;
       return [e.item.k, e.item.id, e.item.s, e.item.r, e.jf ? e.jf.id : "", st ? st.state + st.badge : ""].join(":");
     }).join(",") + "|" + (states ? states.left + ":" + !!states.dailyFull : "");
@@ -267,7 +274,7 @@
         if (sec) sec.remove();
         continue;
       }
-      var key = rowKey(entries, lang, states);
+      var key = rowKey(entries, lang, states, doc);
       if (sec && sec.getAttribute("data-hss-client") === key) continue;
       if (!sec) {
         sec = el(doc, "div", "verticalSection hssTopRow " + h.id);
@@ -724,6 +731,8 @@
     doc.addEventListener("click", function (e) {
       var t = e.target && e.target.closest ? e.target : null;
       if (!t) return;
+      // Play on TV (details.js) handles its own clicks; this listener runs first (injector order).
+      if (t.closest(".hssPlayTv, .hssPlayMenu")) return;
       var nav = t.closest(".hssPopularNav");
       if (nav) {
         e.preventDefault();
@@ -763,7 +772,7 @@
       else if (!t.closest(".hssPopularPage") && t.closest("a[href], .headerHomeButton, .headerBackButton, .emby-tab-button")) closePage(false);
     }, true);
     win.addEventListener("keydown", function (e) {
-      if (!doc.querySelector(".hssPopularPage") || detailsOpen()) return;
+      if (!doc.querySelector(".hssPopularPage") || detailsOpen() || doc.querySelector(".hssPlayMenu")) return;
       if (!BACK_KEYS[e.key] && !BACK_CODES[e.keyCode]) return;
       if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
       e.preventDefault();
@@ -815,7 +824,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { CSS: CSS, hideTrending: hideTrending, actionsFor: actionsFor, detailKey: detailKey, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, prefit: prefit, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, tvCode: tvCode, start: start };
+    module.exports = { CSS: CSS, hideTrending: hideTrending, actionsFor: actionsFor, detailKey: detailKey, fitPoster: fitPoster, fitAll: fitAll, libraryMap: libraryMap, visible: visible, card: card, fillRow: fillRow, rowKey: rowKey, prefit: prefit, posterUrl: posterUrl, syncHome: syncHome, extraRows: extraRows, navLinks: navLinks, buildPage: buildPage, request: request, tvCode: tvCode, start: start };
   } else if (window.MutationObserver && document.body) {
     start(window);
   } else if (window.MutationObserver) {

@@ -536,6 +536,19 @@ A Jellyfin-like details page on top of the page, for titles not in the library. 
 | History | no history entry (same as the Popular page). Jellyfin's router (`@remix-run/router` history) keeps its own `idx` in `history.state`; a foreign entry would make its back/forward deltas wrong. Hardware back of the Android app is a route change there: overlay and page close |
 | Security | every TMDB text via `textContent`; image paths `^/[A-Za-z0-9_.-]+$` (checked when written and in the browser); external links `rel="noopener noreferrer"`; no key in the browser |
 
+### Play on TV (2026-10-30)
+Owned titles get **▶ Play on TV** / **▶ Auf TV abspielen**: starts the title on one of the user's TVs (e.g. Moonfin on the Apple TV). Code in `home-placeholders/details.js` (`window.HssPlayTv`, injector entry "Title details").
+
+| | |
+|---|---|
+| Where | Popular pages and Top 10 rows: owned cards, under the poster; Coming soon: cards of owned titles (earlier seasons in the library); details overlay when opened with an owned title (`play`; today it opens only for titles not in the library). Web and phone layout; hidden in the TV layout |
+| TVs | `GET /Sessions?ControllableByUserId=<me>` with the user's own token, then only the user's own sessions (`UserId`; the filter also returns other users' TVs): active, `SupportsRemoteControl`, not the browser's own device (`ApiClient.deviceId()`); label `DeviceName · Client` ("Apple TV · Moonfin"), a busy TV shows "now playing: …". None = "No TV online. Open Moonfin on the TV first." |
+| Plays | film: from its resume point (`UserData.PlaybackPositionTicks`); series: the episode in progress (`/Users/<me>/Items/Resume?ParentId=`), else Next Up, else the first regular episode (not a special); `POST /Sessions/<id>/Playing?playCommand=PlayNow&itemIds=…[&startPositionTicks=…]`. Then "Playing on …" for 4 s |
+| Keys | Escape / TV back close only the menu (focus back on the button), also on a Popular page (`popular.js` leaves Play on TV clicks and keys alone); a second press, a click elsewhere, scrolling or any URL change closes it; the card link is not followed |
+| Not built | "Open remote": Jellyfin's remote page needs its internal playback manager, which an injected script cannot reach; use the cast icon in the header |
+| Deploy | `bash scripts/backup-config.sh play-on-tv && python3 scripts/popular-ui.py && python3 scripts/home-placeholders.py`, then reload the browser |
+| Tests | jsdom, `home-placeholders/` (command under "Home screen sections"): `details.test.mjs` "play on TV", `popular.test.mjs` "owned card: Play on TV", `home-layout.test.mjs` "an owned title has Play on TV" |
+
 ### Sources
 
 | Rows | Source | Terms |

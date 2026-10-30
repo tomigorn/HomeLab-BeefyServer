@@ -1,5 +1,6 @@
 (function () {
   // Details overlay for titles not in the library (Popular pages, Top 10 rows, Coming soon), Jellyfin README "Details overlay".
+  // Also "Play on TV" for owned titles (window.HssPlayTv, README "Play on TV"): the user's own remote-controllable sessions, PlayNow with the user's token.
   // Data: GET hss-popular/details?id=<opaque id> (precomputed nightly, see scripts/tmdb_details.py); without it a minimal overlay from the caller's data.
   var API = "hss-popular/details";
   var TMDB_IMG = "https://image.tmdb.org/t/p/";
@@ -27,8 +28,20 @@
     return String(lang || "").toLowerCase().indexOf("de") === 0 ? "de" : "en";
   }
 
-  function tr(lang, key, vars) {
-    var s = TEXT[langOf(lang)][key] || TEXT.en[key] || key;
+  var PLAY_TEXT = {
+    en: {
+      play: "\u25B6 Play on TV", playLabel: "Play on TV", pick: "Play on", none: "No TV online. Open Moonfin on the TV first.", looking: "Looking for TVs\u2026", starting: "Starting\u2026",
+      started: "Playing on {d}", failed: "Could not start playback on {d}", nothing: "Nothing to play", busy: "now playing: {t}", unreachable: "Could not list the TVs"
+    },
+    de: {
+      play: "\u25B6 Auf TV abspielen", playLabel: "Auf TV abspielen", pick: "Abspielen auf", none: "Kein TV online. Zuerst Moonfin auf dem TV öffnen.", looking: "TVs werden gesucht\u2026", starting: "Wird gestartet\u2026",
+      started: "Läuft auf {d}", failed: "Wiedergabe auf {d} fehlgeschlagen", nothing: "Nichts zum Abspielen", busy: "spielt gerade: {t}", unreachable: "TVs konnten nicht geladen werden"
+    }
+  };
+
+  function tr(lang, key, vars, table) {
+    table = table || TEXT;
+    var s = table[langOf(lang)][key] || table.en[key] || key;
     for (var k in vars || {}) s = s.split("{" + k + "}").join(String(vars[k]));
     return s;
   }
@@ -150,6 +163,10 @@
       var a = opts.actions(doc);
       if (a) actions.appendChild(a);
     }
+    if (opts.play && !doc.documentElement.classList.contains("layout-tv")) {
+      var pb = playButton(doc, opts.play, lang);
+      if (pb) actions.appendChild(pb);
+    }
     body.appendChild(actions);
     if (info) {
       var text = pick(info.o, lang);
@@ -267,6 +284,98 @@
     }
   }
 
+  // target: {id, type: "Movie" | "Series" | "Episode", name}.
+  function playButton(doc, target, lang) {
+    if (!target || !target.id) return null;
+    styles(doc);
+    var b = el(doc, "button", "hssPlayTv", tr(lang, "play", null, PLAY_TEXT));
+    b.setAttribute("type", "button");
+    b.setAttribute("data-hss-play", String(target.id));
+    b.setAttribute("data-hss-play-type", target.type || "Movie");
+    b.setAttribute("aria-label", (target.name ? target.name + ": " : "") + tr(lang, "playLabel", null, PLAY_TEXT));
+    return b;
+  }
+
+  function sessionLabel(s) {
+    return [s.DeviceName, s.Client].filter(Boolean).join(" \u00b7 ");
+  }
+
+  // The user's own other active sessions that take remote commands (ControllableByUserId also lists other users' TVs); the browser's own session is not a target.
+  function remoteTargets(list, ownDevice, me) {
+    return (list || []).filter(function (s) { return s && s.Id && s.UserId === me && s.SupportsRemoteControl && s.IsActive !== false && (!ownDevice || s.DeviceId !== ownDevice); });
+  }
+
+  function getJson(win, a, path, query) {
+    return win.fetch(a.getUrl(path, query), { headers: { "X-Emby-Token": a.accessToken() } }).then(function (r) {
+      if (r.status !== 200) throw new Error("HTTP " + r.status);
+      return r.json();
+    });
+  }
+
+  function firstItem(r) {
+    return (r && r.Items && r.Items[0]) || null;
+  }
+
+  function ticksOf(it) {
+    var t = it && it.UserData && it.UserData.PlaybackPositionTicks;
+    return typeof t === "number" && t > 0 ? t : 0;
+  }
+
+  // Film: from its resume point. Series: the episode in progress, else Next Up, else the first regular episode (not a special).
+  function resolvePlay(win, a, target) {
+    var u = a.getCurrentUserId();
+    if (target.type !== "Series") return getJson(win, a, "Users/" + u + "/Items/" + target.id).then(function (it) { return { id: target.id, ticks: ticksOf(it) }; });
+    return getJson(win, a, "Users/" + u + "/Items/Resume", { ParentId: target.id, Limit: 1, IncludeItemTypes: "Episode", Recursive: true }).then(firstItem).then(function (it) {
+      return it || getJson(win, a, "Shows/NextUp", { SeriesId: target.id, UserId: u, Limit: 1 }).then(firstItem);
+    }).then(function (it) {
+      return it || getJson(win, a, "Shows/" + target.id + "/Episodes", { UserId: u, Limit: 50, IsMissing: false }).then(function (r) {
+        var eps = (r && r.Items) || [];
+        return eps.filter(function (e) { return e.ParentIndexNumber > 0; })[0] || eps[0] || null;
+      });
+    }).then(function (it) { return it && it.Id ? { id: it.Id, ticks: ticksOf(it) } : null; });
+  }
+
+  function playUrl(a, sessionId, play) {
+    var q = { playCommand: "PlayNow", itemIds: play.id };
+    if (play.ticks) q.startPositionTicks = play.ticks;
+    return a.getUrl("Sessions/" + encodeURIComponent(sessionId) + "/Playing", q);
+  }
+
+  function playMenu(doc, lang) {
+    var m = el(doc, "div", "hssPlayMenu focuscontainer");
+    m.setAttribute("role", "dialog");
+    m.setAttribute("aria-label", tr(lang, "pick", null, PLAY_TEXT));
+    m.appendChild(el(doc, "div", "hssPlayMenuTitle", tr(lang, "pick", null, PLAY_TEXT)));
+    m.appendChild(el(doc, "div", "hssPlayMenuList"));
+    var st = el(doc, "div", "hssPlayMenuStatus", tr(lang, "looking", null, PLAY_TEXT));
+    st.setAttribute("role", "status");
+    m.appendChild(st);
+    return m;
+  }
+
+  function fillMenu(doc, m, lang, sessions) {
+    var list = m.querySelector(".hssPlayMenuList");
+    while (list.firstChild) list.removeChild(list.firstChild);
+    sessions.forEach(function (s) {
+      var b = el(doc, "button", "hssPlayTarget");
+      b.setAttribute("type", "button");
+      b.appendChild(el(doc, "span", "hssPlayTargetName", sessionLabel(s)));
+      if (s.NowPlayingItem && s.NowPlayingItem.Name) b.appendChild(el(doc, "span", "hssPlayTargetSub", tr(lang, "busy", { t: s.NowPlayingItem.Name }, PLAY_TEXT)));
+      b.hssSession = s;
+      list.appendChild(b);
+    });
+    m.querySelector(".hssPlayMenuStatus").textContent = sessions.length ? "" : tr(lang, "none", null, PLAY_TEXT);
+  }
+
+  function placeMenu(win, m, btn) {
+    var r = btn.getBoundingClientRect();
+    var w = win.innerWidth || 0;
+    var h = win.innerHeight || 0;
+    m.style.left = Math.max(8, Math.min(r.left, w - (m.offsetWidth || 280) - 8)) + "px";
+    if (h && r.bottom + 220 > h && r.top > 220) m.style.bottom = Math.max(8, h - r.top + 4) + "px";
+    else m.style.top = Math.max(8, r.bottom + 4) + "px";
+  }
+
   var CSS = [
     ".hssDetails { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 1300; overflow-y: auto; overflow-x: hidden; background: #101010; color: #fff; padding-bottom: 3em; }",
     ".hssDetailsBackdrop { position: absolute; top: 0; left: 0; right: 0; height: 62vh; background: #181818 center top / cover no-repeat; }",
@@ -304,6 +413,16 @@
     ".hssCastName { margin-top: 0.4em; font-weight: 600; font-size: 0.9em; }",
     ".hssCastRole { font-size: 0.8em; opacity: 0.7; }",
     ".layout-tv .hssDetailsMain { padding-top: 22vh; }",
+    ".hssPlayTv { display: inline-flex; align-items: center; margin-top: 0.45em; padding: 0.45em 0.8em; border: 0; border-radius: 0.3em; background: #00a4dc; color: #fff; font: inherit; font-size: 0.9em; font-weight: 600; cursor: pointer; white-space: nowrap; }",
+    ".hssPlayTv:hover, .hssPlayTv:focus { background: #0cb5f0; outline: none; box-shadow: 0 0 0 0.15em #fff; }",
+    ".hssDetailsActions .hssPlayTv { font-size: 1em; padding: 0.55em 1em; margin-top: 1.1em; }",
+    ".layout-tv .hssPlayTv { display: none !important; }",
+    ".hssPlayMenu { position: fixed; z-index: 1400; min-width: 14em; max-width: min(22em, 92vw); padding: 0.6em; border-radius: 0.4em; background: #202020; color: #fff; box-shadow: 0 0.4em 1.5em rgba(0, 0, 0, 0.7); }",
+    ".hssPlayMenuTitle { font-weight: 700; margin-bottom: 0.4em; }",
+    ".hssPlayTarget { display: block; width: 100%; margin: 0.15em 0; padding: 0.5em 0.6em; border: 0; border-radius: 0.3em; background: rgba(255, 255, 255, 0.08); color: inherit; font: inherit; text-align: left; cursor: pointer; }",
+    ".hssPlayTarget:hover, .hssPlayTarget:focus { background: #00a4dc; outline: none; } .hssPlayTarget[disabled] { opacity: 0.5; cursor: default; }",
+    ".hssPlayTargetName { display: block; font-weight: 600; } .hssPlayTargetSub { display: block; font-size: 0.8em; opacity: 0.75; }",
+    ".hssPlayMenuStatus { margin-top: 0.3em; font-size: 0.9em; opacity: 0.85; } .hssPlayMenuStatus:empty { display: none; }",
     "@media (max-width: 700px) { .hssDetailsMain { grid-template-columns: 1fr; gap: 1em; padding-top: 18vh; } .hssDetailsPoster { width: 45vw; margin: 0 auto; } .hssDetailsBody { padding-top: 0; } .hssDetailsTitle { font-size: 1.8em; } .hssDetailsBackdrop { height: 40vh; } }"
   ].join("\n");
 
@@ -324,6 +443,7 @@
     var cur = null;
     var seq = 0;
     var watch = null;
+    var menu = null;
 
     function lang() { return doc.documentElement.lang || win.navigator.language || "en"; }
     function tv() { return doc.documentElement.classList.contains("layout-tv"); }
@@ -337,7 +457,7 @@
     }
 
     function show(info, loading) {
-      var node = build(doc, info, { lang: cur.lang, line: cur.opts.line, fallback: cur.opts.fallback, actions: cur.opts.actions, loading: loading });
+      var node = build(doc, info, { lang: cur.lang, line: cur.opts.line, fallback: cur.opts.fallback, actions: cur.opts.actions, play: cur.opts.play, loading: loading });
       var box = node.querySelector(".hssTrailerBox");
       if (box) box.hssLang = cur.lang;
       var had = cur.node && cur.node.contains(doc.activeElement);
@@ -390,6 +510,95 @@
       if (had || tv()) focusIn(cur.node);
     }
 
+    function closeMenu(refocus) {
+      if (!menu) return false;
+      var m = menu;
+      menu = null;
+      if (m.timer) win.clearTimeout(m.timer);
+      if (m.watch) win.clearInterval(m.watch);
+      m.node.remove();
+      if (refocus && m.btn.isConnected) m.btn.focus();
+      return true;
+    }
+
+    function openMenu(btn) {
+      if (menu && menu.btn === btn) return closeMenu(true);
+      closeMenu(false);
+      var a = win.ApiClient;
+      if (!a || !a.accessToken) return;
+      styles(doc);
+      var m = { btn: btn, lang: lang(), href: win.location.href, target: { id: btn.getAttribute("data-hss-play"), type: btn.getAttribute("data-hss-play-type") } };
+      m.node = playMenu(doc, m.lang);
+      menu = m;
+      doc.body.appendChild(m.node);
+      placeMenu(win, m.node, btn);
+      // Jellyfin's router changes the route without hashchange: close on any URL change.
+      m.watch = win.setInterval(function () { if (menu === m && win.location.href !== m.href) closeMenu(false); }, 250);
+      var me = a.getCurrentUserId();
+      var own = typeof a.deviceId === "function" ? a.deviceId() : null;
+      getJson(win, a, "Sessions", { ControllableByUserId: me }).then(function (list) {
+        if (menu !== m) return;
+        fillMenu(doc, m.node, m.lang, remoteTargets(list, own, me));
+        var f = m.node.querySelector(".hssPlayTarget");
+        if (f) f.focus();
+      }, function () {
+        if (menu === m) m.node.querySelector(".hssPlayMenuStatus").textContent = tr(m.lang, "unreachable", null, PLAY_TEXT);
+      });
+    }
+
+    function choose(tb) {
+      var m = menu;
+      var a = win.ApiClient;
+      var s = tb.hssSession;
+      if (!m || !a || !s) return;
+      var all = m.node.querySelectorAll(".hssPlayTarget");
+      var set = function (off) { for (var i = 0; i < all.length; i++) all[i].disabled = off; };
+      var status = m.node.querySelector(".hssPlayMenuStatus");
+      var name = sessionLabel(s);
+      set(true);
+      status.textContent = tr(m.lang, "starting", null, PLAY_TEXT);
+      resolvePlay(win, a, m.target).then(function (play) {
+        if (!play) {
+          status.textContent = tr(m.lang, "nothing", null, PLAY_TEXT);
+          set(false);
+          return;
+        }
+        return win.fetch(playUrl(a, s.Id, play), { method: "POST", headers: { "X-Emby-Token": a.accessToken() } }).then(function (r) {
+          if (r.status < 200 || r.status > 299) throw new Error("HTTP " + r.status);
+          if (menu !== m) return;
+          status.textContent = tr(m.lang, "started", { d: name }, PLAY_TEXT);
+          m.timer = win.setTimeout(function () { if (menu === m) closeMenu(true); }, 4000);
+        });
+      }).then(null, function () {
+        if (menu !== m) return;
+        status.textContent = tr(m.lang, "failed", { d: name }, PLAY_TEXT);
+        set(false);
+      });
+    }
+
+    doc.addEventListener("click", function (e) {
+      var t = e.target && e.target.closest ? e.target : null;
+      if (!t) return;
+      var pb = t.closest(".hssPlayTv");
+      var tb = !pb && menu && t.closest(".hssPlayMenu .hssPlayTarget");
+      if (pb || tb) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (pb) openMenu(pb);
+        else choose(tb);
+        return;
+      }
+      if (menu && !t.closest(".hssPlayMenu")) closeMenu(false);
+    }, true);
+    win.addEventListener("keydown", function (e) {
+      if (!menu) return;
+      if (!BACK_KEYS[e.key] && !BACK_CODES[e.keyCode]) return;
+      if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      closeMenu(true);
+    }, true);
+
     doc.addEventListener("click", function (e) {
       var t = e.target && e.target.closest ? e.target : null;
       if (!t || !cur || !t.closest(".hssDetails")) return;
@@ -413,16 +622,22 @@
       e.stopImmediatePropagation();
       close(true);
     }, true);
-    win.addEventListener("hashchange", function () { close(false); });
+    win.addEventListener("hashchange", function () { closeMenu(false); close(false); });
+    win.addEventListener("popstate", function () { closeMenu(false); });
+    // Fixed position: a scrolled page or row would leave the menu behind.
+    doc.addEventListener("scroll", function (e) { if (menu && !(e.target && e.target.closest && e.target.closest(".hssPlayMenu"))) closeMenu(false); }, true);
     win.addEventListener("message", function (e) { if (cur) onMessage(win, e); });
 
     var api = { open: open, close: close, refresh: refresh, isOpen: function () { return !!cur; } };
     win.HssDetails = api;
+    win.HssPlayTv = PLAY;
     return api;
   }
 
+  var PLAY = { button: playButton, targets: remoteTargets, label: sessionLabel };
+
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { CSS: CSS, trailers: trailers, embedUrl: embedUrl, build: build, start: start };
+    module.exports = { CSS: CSS, trailers: trailers, embedUrl: embedUrl, build: build, start: start, playTv: PLAY };
   } else if (!window.HssDetails) {
     start(window);
   }

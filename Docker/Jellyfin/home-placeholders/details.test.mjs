@@ -236,3 +236,212 @@ test("the source has no characters outside the BMP (the injector config drops th
   assert.equal(/[\u{10000}-\u{10FFFF}]/u.test(src), false);
   assert.doesNotMatch(src, /innerHTML\s*=\s*[^'"]/, "innerHTML only for fixed markup");
 });
+
+const pt = dt.playTv;
+const SESSIONS = [
+  { Id: "sOwn", UserId: "u1", DeviceId: "dev-browser", DeviceName: "Firefox", Client: "Jellyfin Web", SupportsRemoteControl: true, IsActive: true },
+  { Id: "sAtv", UserId: "u1", DeviceId: "dev-atv", DeviceName: "Apple TV", Client: "Moonfin", SupportsRemoteControl: true, IsActive: true },
+  { Id: "sSony", UserId: "u1", DeviceId: "dev-sony", DeviceName: "Sony BRAVIA", Client: "Moonfin", SupportsRemoteControl: true, IsActive: true, NowPlayingItem: { Name: "Ice Age" } },
+  { Id: "sPhone", UserId: "u1", DeviceId: "dev-phone", DeviceName: "Pixel", Client: "Jellyfin Android", SupportsRemoteControl: false, IsActive: true },
+  { Id: "sOld", UserId: "u1", DeviceId: "dev-old", DeviceName: "Old TV", Client: "Moonfin", SupportsRemoteControl: true, IsActive: false },
+  { Id: "sOther", UserId: "u2", DeviceId: "dev-other", DeviceName: "Samsung TV", Client: "Moonfin", SupportsRemoteControl: true, IsActive: true, NowPlayingItem: { Name: "Secret" } }
+];
+
+test("play on TV: button in English and German with the item id and type; none without an id", () => {
+  const d = dom().document;
+  const b = pt.button(d, { id: "jf121", type: "Movie", name: "Ikiru" }, "en");
+  assert.equal(b.tagName, "BUTTON");
+  assert.equal(b.getAttribute("type"), "button");
+  assert.equal(b.textContent, "▶ Play on TV");
+  assert.equal(b.getAttribute("data-hss-play"), "jf121");
+  assert.equal(b.getAttribute("data-hss-play-type"), "Movie");
+  assert.equal(b.getAttribute("aria-label"), "Ikiru: Play on TV");
+  assert.equal(pt.button(d, { id: "jf9", type: "Series" }, "de-CH").textContent, "▶ Auf TV abspielen");
+  assert.equal(pt.button(d, null, "en"), null);
+  assert.equal(pt.button(d, { type: "Movie" }, "en"), null);
+  assert.ok(d.getElementById("hss-details-style"), "styles come with the button");
+  assert.match(dt.CSS, /\.layout-tv \.hssPlayTv \{ display: none !important; \}/);
+});
+
+test("play on TV: only the user's own other active sessions that take remote control, labelled device · client", () => {
+  const t = pt.targets(SESSIONS, "dev-browser", "u1");
+  assert.deepEqual(t.map((s) => s.Id), ["sAtv", "sSony"]);
+  assert.deepEqual(t.map(pt.label), ["Apple TV · Moonfin", "Sony BRAVIA · Moonfin"]);
+  assert.deepEqual(pt.targets(null, "x", "u1"), []);
+  assert.deepEqual(pt.targets(SESSIONS, "dev-browser", "u2").map((s) => s.Id), ["sOther"], "another user's TVs are never listed for u1");
+});
+
+function playWin(cls, routes, before) {
+  const win = dom('<div id="card"></div>', cls);
+  const calls = [];
+  win.ApiClient = { getCurrentUserId: () => "u1", accessToken: () => "tok", deviceId: () => "dev-browser", getUrl: (p, q) => p + (q ? "?" + new URLSearchParams(q) : "") };
+  win.fetch = (url, opts) => {
+    calls.push([(opts && opts.method) || "GET", url, opts && opts.headers && opts.headers["X-Emby-Token"]]);
+    const hit = Object.keys(routes).find((k) => url.startsWith(k));
+    const body = hit ? routes[hit] : null;
+    const status = body === undefined || body === null ? 404 : typeof body === "number" ? body : 200;
+    return Promise.resolve({ status, json: () => Promise.resolve(body) });
+  };
+  if (before) before(win);
+  dt.start(win);
+  const tick = () => new Promise((r) => setTimeout(r, 20));
+  return { win, d: win.document, calls, tick };
+}
+
+const MOVIE_ROUTES = { "Sessions?": SESSIONS, "Users/u1/Items/jf121": { Id: "jf121", UserData: { PlaybackPositionTicks: 4200000000 } }, "Sessions/sAtv/Playing": 204 };
+
+test("play on TV: the button lists the TVs, picking one starts the film where the user stopped, then confirms", async () => {
+  const { win, d, calls, tick } = playWin("", MOVIE_ROUTES);
+  const b = pt.button(d, { id: "jf121", type: "Movie", name: "Ikiru" }, "en");
+  d.getElementById("card").appendChild(b);
+  let below = 0;
+  d.addEventListener("click", () => below++);
+  b.click();
+  assert.equal(below, 0, "nothing below sees the click (no card link followed)");
+  assert.ok(d.querySelector(".hssPlayMenu"));
+  await tick();
+  assert.deepEqual(calls[0], ["GET", "Sessions?ControllableByUserId=u1", "tok"]);
+  const opts = [...d.querySelectorAll(".hssPlayMenu .hssPlayTarget")];
+  assert.deepEqual(opts.map((o) => o.querySelector(".hssPlayTargetName").textContent), ["Apple TV · Moonfin", "Sony BRAVIA · Moonfin"]);
+  assert.equal(opts[1].querySelector(".hssPlayTargetSub").textContent, "now playing: Ice Age");
+  assert.equal(d.activeElement, opts[0]);
+  opts[0].click();
+  await tick();
+  assert.deepEqual(calls.slice(1), [
+    ["GET", "Users/u1/Items/jf121", "tok"],
+    ["POST", "Sessions/sAtv/Playing?playCommand=PlayNow&itemIds=jf121&startPositionTicks=4200000000", "tok"]
+  ]);
+  assert.equal(d.querySelector(".hssPlayMenuStatus").textContent, "Playing on Apple TV · Moonfin");
+  win.close();
+});
+
+test("play on TV: a series resumes its in-progress episode, else Next Up, else the first episode", async () => {
+  const resume = playWin("", { "Sessions?": SESSIONS, "Users/u1/Items/Resume": { Items: [{ Id: "ep5", UserData: { PlaybackPositionTicks: 900 } }] }, "Sessions/sAtv/Playing": 204 });
+  let b = pt.button(resume.d, { id: "jfShow", type: "Series" }, "en");
+  resume.d.body.appendChild(b);
+  b.click();
+  await resume.tick();
+  resume.d.querySelector(".hssPlayTarget").click();
+  await resume.tick();
+  assert.deepEqual(resume.calls.map((c) => c[1]).slice(1), ["Users/u1/Items/Resume?ParentId=jfShow&Limit=1&IncludeItemTypes=Episode&Recursive=true", "Sessions/sAtv/Playing?playCommand=PlayNow&itemIds=ep5&startPositionTicks=900"]);
+  resume.win.close();
+  const next = playWin("", { "Sessions?": SESSIONS, "Users/u1/Items/Resume": { Items: [] }, "Shows/NextUp": { Items: [{ Id: "ep6" }] }, "Sessions/sAtv/Playing": 204 });
+  b = pt.button(next.d, { id: "jfShow", type: "Series" }, "en");
+  next.d.body.appendChild(b);
+  b.click();
+  await next.tick();
+  next.d.querySelector(".hssPlayTarget").click();
+  await next.tick();
+  assert.deepEqual(next.calls.map((c) => c[1]).slice(2), ["Shows/NextUp?SeriesId=jfShow&UserId=u1&Limit=1", "Sessions/sAtv/Playing?playCommand=PlayNow&itemIds=ep6"]);
+  next.win.close();
+  const firstEp = playWin("", { "Sessions?": SESSIONS, "Users/u1/Items/Resume": { Items: [] }, "Shows/NextUp": { Items: [] }, "Shows/jfShow/Episodes": { Items: [{ Id: "sp1", ParentIndexNumber: 0 }, { Id: "ep1", ParentIndexNumber: 1 }] }, "Sessions/sAtv/Playing": 204 });
+  b = pt.button(firstEp.d, { id: "jfShow", type: "Series" }, "en");
+  firstEp.d.body.appendChild(b);
+  b.click();
+  await firstEp.tick();
+  firstEp.d.querySelector(".hssPlayTarget").click();
+  await firstEp.tick();
+  assert.deepEqual(firstEp.calls.map((c) => c[1]).slice(3), ["Shows/jfShow/Episodes?UserId=u1&Limit=50&IsMissing=false", "Sessions/sAtv/Playing?playCommand=PlayNow&itemIds=ep1"]);
+  firstEp.win.close();
+});
+
+test("play on TV: no TV online = the hint to open Moonfin first (German too); a failed start says so", async () => {
+  const none = playWin("", { "Sessions?": [SESSIONS[0], SESSIONS[3]] });
+  none.d.documentElement.lang = "de";
+  const b = pt.button(none.d, { id: "jf121", type: "Movie" }, "de");
+  none.d.body.appendChild(b);
+  b.click();
+  await none.tick();
+  assert.equal(none.d.querySelectorAll(".hssPlayTarget").length, 0);
+  assert.equal(none.d.querySelector(".hssPlayMenuStatus").textContent, "Kein TV online. Zuerst Moonfin auf dem TV öffnen.");
+  none.win.close();
+  const en = playWin("", { "Sessions?": [] });
+  const e = pt.button(en.d, { id: "jf121", type: "Movie" }, "en");
+  en.d.body.appendChild(e);
+  e.click();
+  await en.tick();
+  assert.equal(en.d.querySelector(".hssPlayMenuStatus").textContent, "No TV online. Open Moonfin on the TV first.");
+  en.win.close();
+  const fail = playWin("", { "Sessions?": SESSIONS, "Users/u1/Items/jf121": { Id: "jf121" }, "Sessions/sAtv/Playing": 500 });
+  const f = pt.button(fail.d, { id: "jf121", type: "Movie" }, "en");
+  fail.d.body.appendChild(f);
+  f.click();
+  await fail.tick();
+  fail.d.querySelector(".hssPlayTarget").click();
+  await fail.tick();
+  assert.equal(fail.calls[2][1], "Sessions/sAtv/Playing?playCommand=PlayNow&itemIds=jf121", "no resume point = from the start");
+  assert.equal(fail.d.querySelector(".hssPlayMenuStatus").textContent, "Could not start playback on Apple TV · Moonfin");
+  assert.equal(fail.d.querySelector(".hssPlayTarget").disabled, false, "can try again");
+  fail.win.close();
+});
+
+test("play on TV: Escape closes only the menu and gives the focus back; a click elsewhere closes it", async () => {
+  const { win, d, tick } = playWin("", MOVIE_ROUTES);
+  const api = win.HssDetails;
+  api.open({ fallback: { title: "X" }, play: { id: "jf121", type: "Movie" } });
+  const b = d.querySelector(".hssDetails .hssDetailsActions .hssPlayTv");
+  assert.ok(b, "the overlay shows the button for an owned title");
+  b.focus();
+  b.click();
+  await tick();
+  win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", keyCode: 27, bubbles: true, cancelable: true }));
+  assert.equal(d.querySelector(".hssPlayMenu"), null);
+  assert.ok(d.querySelector(".hssDetails"), "the overlay stays");
+  assert.equal(d.activeElement, b);
+  b.click();
+  await tick();
+  d.querySelector(".hssDetailsTitle").click();
+  assert.equal(d.querySelector(".hssPlayMenu"), null);
+  win.close();
+});
+
+test("play on TV: the overlay shows no button without an owned title or in the TV layout", () => {
+  const d = dom().document;
+  assert.equal(dt.build(d, MOVIE, { lang: "en" }).querySelector(".hssPlayTv"), null);
+  assert.ok(dt.build(d, MOVIE, { lang: "en", play: { id: "jf1", type: "Movie" } }).querySelector(".hssDetailsActions .hssPlayTv"));
+  const tv = dom("", "layout-tv").document;
+  assert.equal(dt.build(tv, MOVIE, { lang: "en", play: { id: "jf1", type: "Movie" } }).querySelector(".hssPlayTv"), null);
+});
+
+test("play on TV: a second press closes the menu, a route change without hashchange closes it, Backspace in a field is left alone", async () => {
+  const { win, d, tick } = playWin("", MOVIE_ROUTES);
+  const b = pt.button(d, { id: "jf121", type: "Movie" }, "en");
+  d.body.appendChild(b);
+  b.click();
+  await tick();
+  b.click();
+  assert.equal(d.querySelector(".hssPlayMenu"), null);
+  b.click();
+  await tick();
+  const input = d.createElement("input");
+  d.body.appendChild(input);
+  input.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Backspace", keyCode: 8, bubbles: true, cancelable: true }));
+  assert.ok(d.querySelector(".hssPlayMenu"));
+  win.history.pushState({}, "", "#/details?id=x");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(d.querySelector(".hssPlayMenu"), null);
+  win.close();
+});
+
+test("play on TV on a Popular page (popular.js first, as served): the page stays open, Escape closes only the menu", async () => {
+  const pp = createRequire(import.meta.url)("./popular.js");
+  const { win, d, tick } = playWin("", MOVIE_ROUTES, (w) => pp.start(w));
+  const page = d.createElement("div");
+  page.className = "hssPopularPage";
+  const a = d.createElement("a");
+  a.className = "hssTopCard";
+  a.setAttribute("href", "#/details?id=jf121");
+  page.appendChild(a);
+  d.body.appendChild(page);
+  const b = pt.button(d, { id: "jf121", type: "Movie" }, "en");
+  a.appendChild(b);
+  b.click();
+  await tick();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.ok(d.querySelector(".hssPopularPage"), "page still open after the click");
+  assert.ok(d.querySelector(".hssPlayMenu"));
+  win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "Escape", keyCode: 27, bubbles: true, cancelable: true }));
+  assert.equal(d.querySelector(".hssPlayMenu"), null);
+  assert.ok(d.querySelector(".hssPopularPage"), "Escape closed only the menu");
+  win.close();
+});

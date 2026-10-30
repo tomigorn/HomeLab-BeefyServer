@@ -30,7 +30,7 @@ function doc(html = "") {
 }
 
 test("library map by TMDB id and type", () => {
-  assert.deepEqual(LIB, { "movie/121": { id: "jf121", server: "srv" }, "tv/999": { id: "jf999", server: "srv" } });
+  assert.deepEqual(LIB, { "movie/121": { id: "jf121", server: "srv", type: "Movie" }, "tv/999": { id: "jf999", server: "srv", type: "Series" } });
 });
 
 test("a row shows titles the user has or that can be requested, nothing else", () => {
@@ -763,4 +763,32 @@ test("hideTrending without data does nothing", () => {
   assert.equal(pp.hideTrending(d, undefined), 0);
   assert.equal(pp.hideTrending(d, {}), 0);
   assert.equal(d.querySelectorAll(".hssTrendingHidden").length, 0);
+});
+
+test("owned card: Play on TV under the poster (desktop and phone), not in the TV layout, never on titles not in the library", () => {
+  const d = doc();
+  d.defaultView.HssPlayTv = dt.playTv;
+  const card = pp.card(d, { item: OWNED, jf: LIB["movie/121"] }, "en", false, null);
+  const b = card.querySelector(".hssTopActions .hssPlayTv");
+  assert.ok(b);
+  assert.equal(b.getAttribute("data-hss-play"), "jf121");
+  assert.equal(b.getAttribute("data-hss-play-type"), "Movie");
+  assert.equal(b.getAttribute("aria-label"), "The Return of the King: Play on TV");
+  assert.equal(pp.card(d, { item: OWNED, jf: LIB["movie/121"] }, "en", true, null).querySelector(".hssPlayTv"), null);
+  assert.equal(pp.card(d, { item: FOUND, jf: null }, "en", false, null).querySelector(".hssPlayTv"), null);
+  const show = pp.card(d, { item: { ...FOUND, id: 999 }, jf: LIB["tv/999"] }, "de", false, null).querySelector(".hssPlayTv");
+  assert.equal(show.getAttribute("data-hss-play-type"), "Series");
+  assert.equal(show.textContent, "\u25B6 Auf TV abspielen");
+  const bare = doc();
+  assert.equal(pp.card(bare, { item: OWNED, jf: LIB["movie/121"] }, "en", false, null).querySelector(".hssPlayTv"), null, "without details.js: no button");
+});
+
+test("a row repaints once the Play on TV helper is there", () => {
+  const d = doc('<div class="sec"><div class="sectionTitleContainer"></div><div class="hssTopScroll"></div></div>');
+  const sec = d.querySelector(".sec");
+  const entries = [{ item: OWNED, jf: LIB["movie/121"] }];
+  pp.fillRow(sec, entries, "en", false, null);
+  assert.equal(sec.querySelector(".hssPlayTv"), null);
+  d.defaultView.HssPlayTv = dt.playTv;
+  assert.notEqual(pp.rowKey(entries, "en", null, d), pp.rowKey(entries, "en", null, doc()));
 });

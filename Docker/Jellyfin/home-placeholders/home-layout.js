@@ -301,6 +301,9 @@
       var texts = card.querySelectorAll(".cardText bdi");
       texts[0].textContent = c.name;
       texts[1].textContent = comingLine(c, lang, now);
+      var P = jf && !tv && (doc.defaultView || {}).HssPlayTv;
+      var pb = P && P.button(doc, { id: jf.Id, type: jf.Type, name: jf.Name || c.name }, lang);
+      if (pb) card.querySelector(".cardBox").appendChild(doc.createElement("div")).appendChild(pb).parentNode.className = "hssComingActions";
       return card;
     };
   }
@@ -316,6 +319,7 @@
     ".hssComingCard { cursor: default; }",
     "button.hssComingCard { margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: inherit; }",
     ".hssComingOpen { cursor: pointer; }",
+    ".hssComingActions { text-align: center; }",
     // My List: a full-width tinted band with compact posters, the strongest divider.
     '.verticalSection.MyList:not(.hide), [data-hss-placeholder="MyList"] { position: relative; margin: 1.6em 0 1.8em; padding: 0.9em 0 0.5em; background: linear-gradient(100deg, rgba(0, 164, 220, 0.20), rgba(170, 92, 195, 0.16) 55%, rgba(170, 92, 195, 0.05)); border-top: 1px solid rgba(255, 255, 255, 0.10); border-bottom: 1px solid rgba(255, 255, 255, 0.10); }',
     '.verticalSection.MyList .sectionTitle, [data-hss-placeholder="MyList"] .sectionTitle { text-transform: uppercase; letter-spacing: 0.12em; font-size: 1.05em; font-weight: 700; }',
@@ -508,7 +512,7 @@
           var ctx = { lib: c.lib, info: win.HssUpcomingInfo };
           tools.syncRow(container, COMING, c.items, TEXT[langOf(lang)].coming, api, comingCard(lang, null, ctx), function (x) {
             var jf = matchComing(x, ctx.info, ctx.lib);
-            return x.key + "@" + x.at + "@" + x.episode + "@" + langOf(lang) + "@" + (jf ? jf.Id : "");
+            return x.key + "@" + x.at + "@" + x.episode + "@" + langOf(lang) + "@" + (jf ? jf.Id : "") + (win.HssPlayTv ? "@p" : "");
           });
         }
         var b = rowOf(container, BYW);
