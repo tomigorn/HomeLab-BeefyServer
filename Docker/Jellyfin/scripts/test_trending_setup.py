@@ -21,6 +21,23 @@ class LibraryOptionsTest(unittest.TestCase):
             self.assertIs(o[key], False, key)
         self.assertIn("Intro Skipper", o["DisabledMediaSegmentProviders"])
 
+    def test_shows_library_options(self):
+        o = ts.library_options(None, "tvshows")
+        self.assertEqual(sorted(x["Type"] for x in o["TypeOptions"]), ["Episode", "Season", "Series"])
+        for x in o["TypeOptions"]:
+            self.assertEqual((x["MetadataFetchers"], x["ImageFetchers"]), ([], []), x["Type"])
+        for key in ("EnableRealtimeMonitor", "EnableInternetProviders", "EnableTrickplayImageExtraction", "EnableChapterImageExtraction", "EnableAutomaticSeriesGrouping"):
+            self.assertIs(o[key], False, key)
+        self.assertEqual(o["LocalMetadataReaderOrder"], ["Nfo"])
+        self.assertIn("Intro Skipper", o["DisabledMediaSegmentProviders"])
+        self.assertEqual(ts.library_options(o, "tvshows"), o)
+
+    def test_film_library_keeps_its_series_grouping_flag(self):
+        self.assertIs(ts.library_options({"EnableAutomaticSeriesGrouping": True})["EnableAutomaticSeriesGrouping"], True)
+
+    def test_libraries(self):
+        self.assertEqual(ts.LIBRARIES, [("Trending items", "movies", "/config/trending/library"), ("Trending shows", "tvshows", "/config/trending/shows")])
+
     def test_existing_options_keep_unrelated_keys(self):
         o = ts.library_options({"PathInfos": [{"Path": "/x"}], "EnableRealtimeMonitor": True, "Other": 1})
         self.assertEqual(o["PathInfos"], [{"Path": "/x"}])
@@ -91,10 +108,12 @@ class MainTest(unittest.TestCase):
         from contextlib import redirect_stdout
         from unittest import mock
         calls = []
+        self.bodies = {}
         seq = iter(folders_after_create)
 
         def api(method, path, body=None):
             calls.append((method, path))
+            self.bodies[path] = body
             if path == "/Library/VirtualFolders" and method == "GET":
                 return next(seq)
             if path == "/Users":
@@ -110,22 +129,36 @@ class MainTest(unittest.TestCase):
         return rc, calls, out.getvalue()
 
     def test_present_unresolved_folder_is_never_recreated_or_hidden(self):
-        rc, calls, out = self.run_main([[{"Name": "Trending items"}]])
+        rc, calls, out = self.run_main([[{"Name": "Trending items"}, {"Name": "Trending shows"}]])
         self.assertEqual(rc, 1)
         self.assertFalse([c for c in calls if c[0] == "POST"])
         self.assertIn("unresolved", out)
 
     def test_create_without_resolved_id_exits_before_writing_users(self):
-        rc, calls, out = self.run_main([[], [{"Name": "Trending items"}]])
+        rc, calls, out = self.run_main([[], [{"Name": "Trending items"}], [{"Name": "Trending items"}, {"Name": "Trending shows"}]])
         self.assertEqual(rc, 1)
         self.assertFalse([c for c in calls if c[1].startswith("/Users/")])
+
+    def test_creates_the_shows_library_next_to_the_film_library_and_hides_both(self):
+        movies = {"Name": "Trending items", "ItemId": "t", "LibraryOptions": ts.library_options(None)}
+        shows = {"Name": "Trending shows", "ItemId": "s", "LibraryOptions": ts.library_options(None, "tvshows")}
+        rc, calls, out = self.run_main([[movies], [movies, shows]])
+        self.assertEqual(rc, 0, out)
+        creates = [c[1] for c in calls if c[1].startswith("/Library/VirtualFolders?")]
+        self.assertEqual(len(creates), 1)
+        self.assertIn("name=Trending+shows", creates[0])
+        self.assertIn("collectionType=tvshows", creates[0])
+        self.assertIn("paths=%2Fconfig%2Ftrending%2Fshows", creates[0])
+        self.assertIn("refreshLibrary=false", creates[0])
+        self.assertEqual(self.bodies["/Users/u/Configuration"]["MyMediaExcludes"], ["t", "s"])
 
 
 class CountTest(unittest.TestCase):
     def test_summary(self):
-        users = [{"Configuration": {"MyMediaExcludes": ["t"]}}, {"Configuration": {}}]
-        self.assertEqual(ts.check_line(users, "t"), (False, "1 of 2 users see Trending items"))
-        self.assertEqual(ts.check_line(users[:1], "t"), (True, "all 1 users hide Trending items"))
+        users = [{"Configuration": {"MyMediaExcludes": ["t", "s"]}}, {"Configuration": {"MyMediaExcludes": ["t"]}}]
+        libs = {"Trending items": "t", "Trending shows": "s"}
+        self.assertEqual(ts.check_line(users, libs), (False, "1 of 2 users see Trending shows"))
+        self.assertEqual(ts.check_line(users[:1], libs), (True, "all 1 users hide Trending items and Trending shows"))
 
 
 if __name__ == "__main__":

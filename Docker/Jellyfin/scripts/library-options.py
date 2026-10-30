@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from jellyfin_api import api  # noqa: E402
-from trending_model import LIBRARY  # noqa: E402
+from trending_model import LIBRARIES  # noqa: E402
 
 WANT = {"movies": {"AutomaticallyAddToCollection": True}}
 
@@ -16,7 +16,7 @@ def wanted(folders):
     """[(library id, full LibraryOptions)] for every library whose options differ from WANT."""
     out = []
     for f in folders:
-        if f.get("Name") == LIBRARY:
+        if f.get("Name") in LIBRARIES.values():
             continue
         want = WANT.get(f.get("CollectionType"))
         if want and any(f["LibraryOptions"].get(k) != v for k, v in want.items()):

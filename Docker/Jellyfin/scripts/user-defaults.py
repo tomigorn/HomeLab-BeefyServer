@@ -13,7 +13,7 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from trending_model import hidden as hide, library_id  # noqa: E402
+from trending_model import LIBRARIES, hidden as hide, library_id  # noqa: E402
 
 # Original language = no language preference + the track flagged default (original-audio.py flags the original track).
 # A user can change all of it under Jellyfin Settings.
@@ -37,8 +37,9 @@ def adopted_config(config):
     return {**config, **{key: True for key in REMEMBER}}
 
 
-def plan(users, handled, lib_id=None):
-    """users from GET /Users, handled = ids already done (None = first run), lib_id = the Trending library every user hides. Returns ([(id, config)], handled ids)."""
+def plan(users, handled, lib_ids=()):
+    """users from GET /Users, handled = ids already done (None = first run), lib_ids = the trending libraries every user hides (one id or a list). Returns ([(id, config)], handled ids)."""
+    lib_ids = [lib_ids] if isinstance(lib_ids, str) or lib_ids is None else list(lib_ids)
     updates = []
     for u in users:
         old = u["Configuration"]
@@ -46,7 +47,7 @@ def plan(users, handled, lib_id=None):
             new = old
         else:
             new = adopted_config(old) if handled is None else new_user_config(old)
-        if lib_id:
+        for lib_id in lib_ids:
             new = hide(new, lib_id)
         if new != old:
             updates.append((u["Id"], new))
@@ -80,8 +81,8 @@ def main():
 
     users = api("GET", "/Users")
     handled = load_state(args.state)
-    lib_id = library_id(api("GET", "/Library/VirtualFolders"))
-    updates, handled_now = plan(users, handled, lib_id)
+    folders = api("GET", "/Library/VirtualFolders")
+    updates, handled_now = plan(users, handled, [library_id(folders, name) for name in LIBRARIES.values()])
     names = {u["Id"]: u["Name"] for u in users}
     for uid, config in updates:
         print(f"{'would set' if args.dry_run else 'set'} {label(handled, uid)} for {names[uid]}")

@@ -645,6 +645,12 @@ test("hideTrending hides library tile, list collections and placeholders", () =>
   assert.match(pp.CSS, /\.hssTrendingHidden \{ display: none !important; \}/);
 });
 
+test("hideTrending hides both trending libraries when lib is a list", () => {
+  const d = doc('<div class="card" data-id="lib1"></div><div class="card" data-id="lib2"></div><div class="card" data-id="ep1"></div><div class="card" data-id="real1"></div>');
+  assert.equal(pp.hideTrending(d, { lib: ["lib1", "lib2"], sets: [], items: ["ep1"] }), 3);
+  assert.deepEqual([...d.querySelectorAll(".hssTrendingHidden")].map((e) => e.getAttribute("data-id")), ["lib1", "lib2", "ep1"]);
+});
+
 test("hideTrending without data does nothing", () => {
   const d = doc('<div class="card" data-id="lib1"></div>');
   assert.equal(pp.hideTrending(d, undefined), 0);

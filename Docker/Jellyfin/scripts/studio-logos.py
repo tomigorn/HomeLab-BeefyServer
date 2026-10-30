@@ -17,6 +17,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 NAME = "Home networks"
+# trending.py placeholders (Trending items, Trending shows) are not library titles.
+TRENDING_PATH = "/config/trending/"
 PLUGIN = "JavaScript Injector"
 SEERR = "http://127.0.0.1:5055"
 SEERR_KEY = HERE.parent.parent / "Seerr" / "secrets" / "api-key"
@@ -206,9 +208,8 @@ def main(argv, api=None, seerr=_seerr, fetch=_fetch, upload=_upload, cache_file=
     dry = "--dry-run" in argv
     if api is None:
         api = jellyfin_api.api
-    fields = "Recursive=true&CollapseBoxSetItems=false&Fields=Studios,ProviderIds&EnableImages=false&EnableUserData=false"
-    movies = api("GET", f"/Items?IncludeItemTypes=Movie&{fields}")["Items"]
-    series = api("GET", f"/Items?IncludeItemTypes=Series&{fields}")["Items"]
+    fields = "Recursive=true&CollapseBoxSetItems=false&Fields=Studios,ProviderIds,Path&EnableImages=false&EnableUserData=false"
+    movies, series = ([i for i in api("GET", f"/Items?IncludeItemTypes={kind}&{fields}")["Items"] if not (i.get("Path") or "").startswith(TRENDING_PATH)] for kind in ("Movie", "Series"))
     studios = api("GET", "/Studios?Recursive=true&EnableImageTypes=Logo&ImageTypeLimit=1")["Items"]
     try:
         cache = json.loads(cache_file.read_text())

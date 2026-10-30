@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Creates the hidden "Trending items" movie library, hides it for every user and renames the Collections library.
+"""Creates the hidden libraries "Trending items" (movies) and "Trending shows" (tvshows), hides them for every user and renames the Collections library.
 Idempotent. Usage: trending-setup.py [--dry-run | --check]  (--check exits 1 when a user still sees the library)"""
 import base64
 import copy
@@ -10,9 +10,11 @@ import sys
 import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from trending_model import COLLECTIONS_NAME, LIBRARY, find_library, hidden, library_id  # noqa: E402
+from trending_model import COLLECTIONS_NAME, LIBRARY, SHOWS_LIBRARY, find_library, hidden, library_id  # noqa: E402
 
 PATH = "/config/trending/library"
+LIBRARIES = [(LIBRARY, "movies", PATH), (SHOWS_LIBRARY, "tvshows", "/config/trending/shows")]
+TYPES = {"movies": ("Movie",), "tvshows": ("Series", "Season", "Episode")}
 OLD_COLLECTIONS = "Collections"
 SEERR_SETTINGS = pathlib.Path("/srv/appdata/seerr/settings.json")
 LISTS = pathlib.Path("/srv/appdata/jellyfin-popular/lists.json")
@@ -29,13 +31,19 @@ WANT = {
     "SaveLocalMetadata": False,
     "MetadataSavers": [],
     "LocalMetadataReaderOrder": ["Nfo"],
-    "TypeOptions": [{"Type": "Movie", "MetadataFetchers": [], "MetadataFetcherOrder": [], "ImageFetchers": [], "ImageFetcherOrder": [], "ImageOptions": [], "SimilarItemProviders": [], "SimilarItemProviderOrder": []}],
 }
 
 
-def library_options(existing):
+def type_options(kind):
+    return {"Type": kind, "MetadataFetchers": [], "MetadataFetcherOrder": [], "ImageFetchers": [], "ImageFetcherOrder": [], "ImageOptions": [], "SimilarItemProviders": [], "SimilarItemProviderOrder": []}
+
+
+def library_options(existing, collection_type="movies"):
     out = copy.deepcopy(existing) if existing else {}
     out.update(copy.deepcopy(WANT))
+    out["TypeOptions"] = [type_options(k) for k in TYPES[collection_type]]
+    if collection_type == "tvshows":
+        out["EnableAutomaticSeriesGrouping"] = False
     disabled = list(out.get("DisabledMediaSegmentProviders") or [])
     if "Intro Skipper" not in disabled:
         disabled.append("Intro Skipper")
@@ -70,11 +78,13 @@ def tile_posters(lists_file, cache):
     return out
 
 
-def check_line(users, lib_id):
-    seeing = sum(lib_id not in (u["Configuration"].get("MyMediaExcludes") or []) for u in users)
-    if seeing:
-        return False, f"{seeing} of {len(users)} users see Trending items"
-    return True, f"all {len(users)} users hide Trending items"
+def check_line(users, libs):
+    """libs = {library name: id}; ok only when every user hides every library."""
+    for name, lib_id in libs.items():
+        seeing = sum(lib_id not in (u["Configuration"].get("MyMediaExcludes") or []) for u in users)
+        if seeing:
+            return False, f"{seeing} of {len(users)} users see {name}"
+    return True, f"all {len(users)} users hide {' and '.join(libs)}"
 
 
 def seerr_enabled():
@@ -84,7 +94,8 @@ def seerr_enabled():
         text = subprocess.run(["sudo", "-n", "cat", str(SEERR_SETTINGS)], capture_output=True, text=True, check=True).stdout
     except FileNotFoundError:
         return False
-    return any(lib.get("name") == LIBRARY and lib.get("enabled") for lib in json.loads(text).get("jellyfin", {}).get("libraries", []))
+    names = {name for name, _, _ in LIBRARIES}
+    return any(lib.get("name") in names and lib.get("enabled") for lib in json.loads(text).get("jellyfin", {}).get("libraries", []))
 
 
 def main(argv):
@@ -92,45 +103,56 @@ def main(argv):
 
     dry = "--dry-run" in argv
     folders = api("GET", "/Library/VirtualFolders")
-    lib = library_id(folders)
     users = api("GET", "/Users")
     if "--check" in argv:
-        if lib is None:
-            print("Trending items library missing")
+        libs = {name: library_id(folders, name) for name, _, _ in LIBRARIES}
+        missing = [name for name, lib_id in libs.items() if lib_id is None]
+        if missing:
+            print(f"{' and '.join(missing)} library missing")
             return 1
-        ok, line = check_line(users, lib)
+        ok, line = check_line(users, libs)
         print(line)
         return 0 if ok else 1
 
     def say(step):
         print(f"would {step}" if dry else step)
 
-    present = find_library(folders)
-    if present is not None and lib is None:
-        print(f"{LIBRARY} exists but is unresolved (no ItemId); run a library scan, then rerun")
-        return 1
-    if present is None:
-        say(f"create library {LIBRARY} at {PATH}")
-        if not dry:
-            q = urllib.parse.urlencode({"name": LIBRARY, "collectionType": "movies", "paths": PATH, "refreshLibrary": "false"})
-            api("POST", f"/Library/VirtualFolders?{q}", {"LibraryOptions": library_options(None)})
+    rc, ids = 0, []
+    for name, collection_type, path in LIBRARIES:
+        present, lib = find_library(folders, name), library_id(folders, name)
+        if present is not None and lib is None:
+            print(f"{name} exists but is unresolved (no ItemId); run a library scan, then rerun")
+            rc = 1
+            continue
+        if present is None:
+            say(f"create library {name} at {path}")
+            if dry:
+                continue
+            q = urllib.parse.urlencode({"name": name, "collectionType": collection_type, "paths": path, "refreshLibrary": "false"})
+            api("POST", f"/Library/VirtualFolders?{q}", {"LibraryOptions": library_options(None, collection_type)})
             folders = api("GET", "/Library/VirtualFolders")
-            lib = library_id(folders)
+            lib = library_id(folders, name)
             if lib is None:
-                print(f"{LIBRARY} was created but has no ItemId yet; users not changed, rerun after a library scan")
-                return 1
-    else:
-        folder = next(f for f in folders if f.get("ItemId") == lib)
-        if library_options(folder["LibraryOptions"]) != folder["LibraryOptions"]:
-            say("update library options")
-            if not dry:
-                api("POST", "/Library/VirtualFolders/LibraryOptions", {"Id": lib, "LibraryOptions": library_options(folder["LibraryOptions"])})
+                print(f"{name} was created but has no ItemId yet; users not changed for it, rerun after a library scan")
+                rc = 1
+                continue
+        else:
+            folder = next(f for f in folders if f.get("ItemId") == lib)
+            want = library_options(folder["LibraryOptions"], collection_type)
+            if want != folder["LibraryOptions"]:
+                say(f"update {name} options")
+                if not dry:
+                    api("POST", "/Library/VirtualFolders/LibraryOptions", {"Id": lib, "LibraryOptions": want})
+        ids.append((name, lib))
 
     for u in users:
-        if lib is None or lib not in (u["Configuration"].get("MyMediaExcludes") or []):
-            say(f"hide {LIBRARY} for {u['Name']}")
+        config = u["Configuration"]
+        for _, lib in ids:
+            config = hidden(config, lib)
+        if config != u["Configuration"]:
+            say(f"hide {', '.join(n for n, _ in ids)} for {u['Name']}")
             if not dry:
-                api("POST", f"/Users/{u['Id']}/Configuration", hidden(u["Configuration"], lib))
+                api("POST", f"/Users/{u['Id']}/Configuration", config)
 
     if any(f["Name"] == OLD_COLLECTIONS and f.get("CollectionType") == "boxsets" for f in folders):
         say(f"rename {OLD_COLLECTIONS} to {COLLECTIONS_NAME}")
@@ -147,9 +169,9 @@ def main(argv):
             api_raw("POST", f"/Items/{coll['Id']}/Images/Primary", base64.b64encode(library_tile(COLLECTIONS_NAME, tile_posters(LISTS, CACHE)[:3])), "image/jpeg")
 
     if seerr_enabled():
-        print(f"WARNING: Seerr has {LIBRARY} enabled; untick it in Seerr's Jellyfin libraries")
+        print("WARNING: Seerr has a trending library enabled; untick Trending items and Trending shows in Seerr's Jellyfin libraries")
         return 1
-    return 0
+    return rc
 
 
 if __name__ == "__main__":

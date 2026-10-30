@@ -21,6 +21,7 @@ import trending_model as tm  # noqa: E402
 
 NOW = datetime.datetime(2026, 10, 29, 12, 0, tzinfo=datetime.timezone.utc)
 LIB = "lib0"
+SHOWS = "shows0"
 ADMIN = "admin0"
 INJ = "inj0"
 
@@ -36,13 +37,17 @@ def entry(tid, rank, title, found=True, x=True, d=None):
             "o": False, "u": False, "s": None, "t": {"en": title, "de": title}, "y": 2026, "p": {"en": f"/p{tid}.jpg"}}
 
 
+def show(tid, rank, title, found=True):
+    return {**entry(tid, rank, title, found), "k": "tv", "s": 1}
+
+
 def feeds(updated=None):
     stamp = (updated or NOW).astimezone().replace(tzinfo=None).isoformat(timespec="seconds")
-    lists = {"updated": stamp, "home": {"movies": [entry(1, 1, "Alpha"), entry(2, 2, "Beta", found=False), entry(9, 3, "Owned")], "shows": []},
+    lists = {"updated": stamp, "home": {"movies": [entry(1, 1, "Alpha"), entry(2, 2, "Beta", found=False), entry(9, 3, "Owned")], "shows": [show(7, 1, "Delta"), show(8, 2, "Epsilon", found=False)]},
              "rows": [{"id": "service-8-movie", "kind": "movie", "name": {"en": "Netflix"}, "logo": "/logo8.png", "items": [entry(2, 1, "Beta", found=False), entry(1, 2, "Alpha")]}]}
     coming = {"updated": stamp, "items": [{"d": "c5", "date": "2026-11-04", "kind": "movie", "pop": 1.0, "ref": "movie/5", "tmdb": 5}]}
     details = {"updated": stamp, "entries": {f"d{i}": {"t": {"en": t}, "p": {"en": f"/p{i}.jpg"}, "b": f"/b{i}.jpg", "ref": f"movie/{i}", "y": 2026, "o": {"en": f"Plot {t}"}}
-                                            for i, t in ((1, "Alpha"), (2, "Beta"))}}
+                                            for i, t in ((1, "Alpha"), (2, "Beta"), (7, "Delta"), (8, "Epsilon"))}}
     comingd = {"updated": stamp, "entries": {"c5": {"t": {"en": "Gamma"}, "p": {"en": "/p5.jpg"}, "ref": "movie/5", "y": 2026}}}
     return lists, coming, details, comingd
 
@@ -65,8 +70,31 @@ class FakeIo:
         self.fail = set()
         self.on_seerr = None
         self.seerr_calls = 0
+        self.shows_id = SHOWS
+        self.tv = []
 
     def scan(self):
+        self.scan_movies()
+        self.scan_shows()
+
+    def scan_shows(self):
+        items = []
+        for d in sorted(self.paths.shows.iterdir()):
+            if d.is_symlink() or not d.is_dir():
+                continue
+            nfo = (d / "tvshow.nfo").read_text() if (d / "tvshow.nfo").exists() else ""
+            m = re.search(r"<sorttitle>(.*?)</sorttitle>", nfo)
+            words = [w for w in (m.group(1) if m else d.name).casefold().replace("-", "").split() if w not in ("the", "a", "an")]
+            path = f"{tr.JF_SHOWS}/{d.name}"
+            series = {"Id": sid(path), "Type": "Series", "Name": d.name, "Path": path, "ParentId": SHOWS, "ProviderIds": {},
+                      "SortName": re.sub(r"\d+", lambda n: n.group().zfill(10), " ".join(words))}
+            items.append(series)
+            for f in sorted(d.rglob("*.mp4")):
+                ep = f"{path}/{f.relative_to(d).as_posix()}"
+                items.append({"Id": sid(ep), "Type": "Episode", "Name": f.stem, "Path": ep, "SeriesId": series["Id"], "ParentId": sid(path, "season"), "RunTimeTicks": 100000000, "ProviderIds": {}})
+        self.tv = items
+
+    def scan_movies(self):
         items = []
         for d in sorted(self.paths.library.iterdir()):
             if d.is_symlink() or not d.is_dir():
@@ -92,7 +120,7 @@ class FakeIo:
         q = dict(urllib.parse.parse_qsl(u.query))
         p = u.path
         if p == "/Library/VirtualFolders":
-            return [{"Name": "Movies", "ItemId": "movies"}, {"Name": tm.LIBRARY, "ItemId": LIB}]
+            return [{"Name": "Movies", "ItemId": "movies"}, {"Name": tm.LIBRARY, "ItemId": LIB}, {"Name": tm.SHOWS_LIBRARY, **({"ItemId": self.shows_id} if self.shows_id else {})}]
         if p == "/Users":
             return [{"Id": "u1", "Policy": {"IsAdministrator": False}}, {"Id": ADMIN, "Policy": {"IsAdministrator": True}}]
         if p == "/Plugins":
@@ -103,7 +131,10 @@ class FakeIo:
             self.injector = body
             return None
         if p == f"/Items/{LIB}/Refresh":
-            self.scan()
+            self.scan_movies()
+            return None
+        if p == f"/Items/{SHOWS}/Refresh":
+            self.scan_shows()
             return None
         if re.fullmatch(r"/Items/\w+/Refresh", p):
             return None
@@ -113,10 +144,13 @@ class FakeIo:
             return {"Items": [{k: v for k, v in s.items() if k != "children"} for s in self.sets.values()]}
         if p == "/Items" and q.get("ParentId") == LIB:
             return {"Items": json.loads(json.dumps(self.library))}
+        if p == "/Items" and q.get("ParentId") == SHOWS:
+            assert q.get("IncludeItemTypes") == "Series,Episode", path
+            return {"Items": json.loads(json.dumps(self.tv))}
         if p == "/Items" and q.get("ParentId") in self.sets:
             return {"Items": [{"Id": i} for i in self.sets[q["ParentId"]]["children"]]}
         if p == "/Items" and q.get("IncludeItemTypes") == "Movie,Series":
-            return {"Items": self.owned + json.loads(json.dumps(self.library))}
+            return {"Items": self.owned + json.loads(json.dumps(self.library + [i for i in self.tv if i["Type"] == "Series"]))}
         if p == "/Collections" and method == "POST":
             self.n += 1
             new = f"set{self.n}"
@@ -171,7 +205,7 @@ class Base(unittest.TestCase):
         root = pathlib.Path(self.tmp.name)
         self.paths = tr.Paths(feeds=root / "feeds", root=root / "trending", state=root / "state" / "trending.json", lock=root / "state" / "trending.lock",
                               request_state=root / "request-state.json", signal=root / "signal" / "requested")
-        for d in ("library", "clips", "cache"):
+        for d in ("library", "shows", "clips", "cache"):
             (self.paths.root / d).mkdir(parents=True)
         self.paths.feeds.mkdir()
         for c in tm.CLIPS:
@@ -202,6 +236,16 @@ class Base(unittest.TestCase):
 
     def item(self, title):
         return next(i for i in self.io.library if i["Name"] == f"{title} (2026)")
+
+    def show_dir(self, title):
+        return self.paths.shows / f"{title} (2026)"
+
+    def series(self, title):
+        return next(i for i in self.io.tv if i["Type"] == "Series" and i["Name"] == f"{title} (2026)")
+
+    def episodes(self, title):
+        s = self.series(title)
+        return {i["Path"].rsplit("/", 1)[1]: i["Id"] for i in self.io.tv if i.get("SeriesId") == s["Id"]}
 
 
 class SyncTest(Base):
@@ -330,7 +374,7 @@ class SyncTest(Base):
         entry_ = next(s for s in self.io.injector["CustomJavaScripts"] if s["Name"] == "Trending hidden")
         self.assertTrue(entry_["Script"].startswith("window.HssTrendingHide = "))
         hide = json.loads(entry_["Script"][len("window.HssTrendingHide = "):].rstrip().rstrip(";"))
-        self.assertEqual(hide["lib"], LIB)
+        self.assertEqual(hide["lib"], [LIB, SHOWS])
         self.assertEqual(sorted(hide["sets"]), sorted(s["Id"] for s in self.io.sets.values() if tm.TAG in s["Tags"]))
         self.assertIn(self.item("Alpha")["Id"], hide["items"])
         self.assertNotIn("real9", hide["items"])
@@ -361,6 +405,7 @@ class SyncTest(Base):
     def test_dry_run_writes_nothing(self):
         self.assertEqual(self.run_sync("--dry-run"), 0, self.out)
         self.assertEqual(list(self.paths.library.iterdir()), [])
+        self.assertEqual(list(self.paths.shows.iterdir()), [])
         self.assertEqual(list(self.paths.cache.iterdir()), [])
         self.assertFalse(self.paths.index.exists())
         self.assertFalse(self.paths.state.exists())
@@ -408,10 +453,19 @@ class SyncTest(Base):
     def test_pending_library_refresh_survives_a_failed_run(self):
         self.io.fail = {rf"POST /Items/{LIB}/Refresh\?.*"}
         self.assertEqual(self.run_sync(), 1, self.out)
-        self.assertTrue(json.loads(self.paths.state.read_text())["pending"]["library"])
+        self.assertEqual(json.loads(self.paths.state.read_text())["pending"]["libs"], ["movie", "tv"])
         self.io.fail = set()
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(len([c for c in self.io.calls if c[1].startswith(f"/Items/{LIB}/Refresh")]), 1)
+        self.assertNotIn("pending", json.loads(self.paths.state.read_text()))
+
+    def test_pending_from_the_old_state_format_refreshes_the_film_library(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        state = json.loads(self.paths.state.read_text())
+        state["pending"] = {"library": True, "items": []}
+        self.paths.state.write_text(json.dumps(state))
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual([c[1] for c in self.io.calls if "/Refresh" in c[1]], [f"/Items/{LIB}/Refresh?{tr.LIB_REFRESH}"])
         self.assertNotIn("pending", json.loads(self.paths.state.read_text()))
 
     def test_no_placeholders_refuses_and_keeps_folders(self):
@@ -443,6 +497,102 @@ class SyncTest(Base):
         os.utime(self.paths.signal, (1, 1))
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(self.io.seerr_calls, 1)
+
+    def test_series_placeholder_is_a_show_with_specials(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        d = self.show_dir("Delta")
+        self.assertFalse((self.paths.library / "Delta (2026)").exists())
+        for f in ("tvshow.nfo", "poster.jpg", "fanart.jpg"):
+            self.assertTrue((d / f).is_file(), f)
+        self.assertFalse((d / "movie.nfo").exists())
+        nfo = (d / "tvshow.nfo").read_text()
+        self.assertIn("<sorttitle>02-01 Delta</sorttitle>", nfo)
+        self.assertIn(f"<dateadded>{tm.DATE_ADDED}</dateadded>", nfo)
+        season = d / "Season 00"
+        self.assertEqual(sorted(p.name for p in season.iterdir()), ["S00E01 - ⬇ Download series now.mp4", "S00E01 - ⬇ Download series now.nfo",
+                                                                    "S00E02 - 🌙 Download series tonight · lower power cost.mp4", "S00E02 - 🌙 Download series tonight · lower power cost.nfo"])
+        self.assertEqual(os.stat(season / "S00E01 - ⬇ Download series now.mp4").st_ino, os.stat(self.paths.clips / "now.mp4").st_ino)
+        self.assertEqual(os.stat(season / "S00E02 - 🌙 Download series tonight · lower power cost.mp4").st_ino, os.stat(self.paths.clips / "night.mp4").st_ino)
+        self.assertIn("<title>⬇ Download series now</title>", (season / "S00E01 - ⬇ Download series now.nfo").read_text())
+        e = self.show_dir("Epsilon") / "Season 00"
+        self.assertEqual(sorted(p.name for p in e.iterdir()), ["S00E01.mp4", "S00E01.nfo"])
+        self.assertEqual(os.stat(e / "S00E01.mp4").st_ino, os.stat(self.paths.clips / "unavailable.mp4").st_ino)
+        self.assertEqual(len([c for c in self.io.calls if c[1].startswith(f"/Items/{SHOWS}/Refresh?Recursive=true")]), 1)
+
+    def test_series_index_maps_episodes_to_modes(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        idx = json.loads(self.paths.index.read_text())
+        eps = self.episodes("Delta")
+        now, night = eps["S00E01 - ⬇ Download series now.mp4"], eps["S00E02 - 🌙 Download series tonight · lower power cost.mp4"]
+        rec = {"x": "x7", "t": "Delta", "modes": {now: "now", night: "night"}}
+        self.assertEqual((idx["items"][now], idx["items"][night]), (rec, rec))
+        self.assertNotIn(self.series("Delta")["Id"], idx["items"])
+        (single,) = self.episodes("Epsilon").values()
+        self.assertEqual(idx["items"][single], {"x": None, "t": "Epsilon", "modes": {}})
+
+    def test_series_collections_hide_and_owned(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        home = next(s for s in self.io.sets.values() if s["Name"] == "Top 10 Switzerland · Shows")
+        self.assertEqual(home["children"], [self.series("Delta")["Id"], self.series("Epsilon")["Id"]])
+        hide = next(s for s in self.io.injector["CustomJavaScripts"] if s["Name"] == "Trending hidden")["Script"]
+        for i in [self.series("Delta")["Id"], *self.episodes("Delta").values()]:
+            self.assertIn(f'"{i}"', hide)
+        self.io.tv[0]["ProviderIds"] = {"Tmdb": "7"}
+        self.assertNotIn("tv/7", tr.owned(self.io, LIB))
+
+    def test_second_run_with_series_changes_nothing(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        before = {p: p.stat().st_mtime_ns for p in self.paths.shows.rglob("*")}
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual({p: p.stat().st_mtime_ns for p in self.paths.shows.rglob("*")}, before)
+        self.assertEqual(self.writes(), [])
+
+    def test_series_requested_restructures_and_refreshes_the_series(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.io.media = [{"mediaType": "tv", "tmdbId": 7, "status": 3, "seasons": [{"seasonNumber": 1, "status": 3}], "requests": []}]
+        self.assertEqual(self.run_sync(), 0, self.out)
+        season = self.show_dir("Delta") / "Season 00"
+        self.assertEqual(sorted(p.name for p in season.iterdir()), ["S00E01.mp4", "S00E01.nfo"])
+        self.assertEqual(os.stat(season / "S00E01.mp4").st_ino, os.stat(self.paths.clips / "requested.mp4").st_ino)
+        self.assertIn(tm.PREFIX["now"], (self.show_dir("Delta") / "tvshow.nfo").read_text())
+        self.assertIn(("POST", f"/Items/{SHOWS}/Refresh?{tr.LIB_REFRESH}"), self.io.calls)
+        self.assertIn(("POST", f"/Items/{self.series('Delta')['Id']}/Refresh?{tr.ITEM_REFRESH}"), self.io.calls)
+        self.assertFalse(any(c[1].startswith(f"/Items/{LIB}/Refresh") for c in self.io.calls))
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.writes(), [])
+
+    def test_migrates_movie_type_series_placeholders(self):
+        old = self.paths.library / "Delta (2026)"
+        old.mkdir()
+        (old / "movie.nfo").write_text("<movie><sorttitle>02-01 Delta</sorttitle></movie>")
+        (old / "Delta (2026) - ⬇ Download series now.mp4").hardlink_to(self.paths.clips / "now.mp4")
+        self.io.scan()
+        old_id = self.item("Delta")["Id"]
+        self.io.sets["oldset"] = {"Id": "oldset", "Name": "Top 10 Switzerland · Shows", "Tags": [tm.TAG], "ForcedSortName": "02 Top 10 Switzerland · Shows",
+                                  "DisplayOrder": "SortName", "LockData": True, "children": [old_id]}
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse(old.exists())
+        self.assertEqual(self.io.sets["oldset"]["children"], [self.series("Delta")["Id"], self.series("Epsilon")["Id"]])
+        self.assertNotIn(old_id, [i["Id"] for i in self.io.library])
+        calls = self.io.calls
+        add = calls.index(("POST", f"/Collections/oldset/Items?ids={self.series('Delta')['Id']},{self.series('Epsilon')['Id']}"))
+        lib_refreshes = [i for i, c in enumerate(calls) if c[1].startswith(f"/Items/{LIB}/Refresh")]
+        shows_refresh = next(i for i, c in enumerate(calls) if c[1].startswith(f"/Items/{SHOWS}/Refresh"))
+        self.assertLess(shows_refresh, add)
+        self.assertGreater(lib_refreshes[-1], add)
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.writes(), [])
+
+    def test_unresolved_shows_library_writes_folders_and_changes_nothing_in_jellyfin(self):
+        self.io.shows_id = None
+        old = self.paths.library / "Delta (2026)"
+        old.mkdir()
+        (old / "Delta (2026).mp4").hardlink_to(self.paths.clips / "unavailable.mp4")
+        self.assertEqual(self.run_sync(), 1, self.out)
+        self.assertIn("Trending shows", self.out)
+        self.assertTrue((self.show_dir("Delta") / "tvshow.nfo").is_file())
+        self.assertTrue(old.is_dir())
+        self.assertEqual(self.writes(), [])
 
     def test_usage(self):
         self.assertEqual(self.run_sync("--bogus"), 2)

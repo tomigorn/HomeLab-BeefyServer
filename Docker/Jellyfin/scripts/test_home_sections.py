@@ -30,6 +30,10 @@ class Libs(unittest.TestCase):
                    {"Name": "Shows", "CollectionType": "tvshows", "ItemId": "t1"}]
         self.assertEqual(hs.libraries(folders), {"movies": "m1", "tvshows": "t1"})
 
+    def test_trending_shows_library_is_not_the_tv_default(self):
+        folders = [{"Name": "Shows", "CollectionType": "tvshows", "ItemId": "t1"}, {"Name": "Trending shows", "CollectionType": "tvshows", "ItemId": "x"}]
+        self.assertEqual(hs.libraries(folders), {"tvshows": "t1"})
+        self.assertEqual(hs.libraries(folders[::-1]), {"tvshows": "t1"})
 
     def test_folder_without_item_id_is_skipped(self):
         folders = [{"Name": "Collections & Trending", "CollectionType": "boxsets"}, {"Name": "Movies", "CollectionType": "movies", "ItemId": "m1"}]

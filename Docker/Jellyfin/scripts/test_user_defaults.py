@@ -61,6 +61,11 @@ class PlanTest(unittest.TestCase):
         done = user("a", MyMediaExcludes=["t"])
         self.assertEqual(ud.plan([done], {"a"}, "t")[0], [])
 
+    def test_plan_hides_both_trending_libraries(self):
+        updates, _ = ud.plan([user("a")], {"a"}, ["t", "s"])
+        self.assertEqual(updates, [("a", {**STOCK, "MyMediaExcludes": ["t", "s"]})])
+        self.assertEqual(ud.plan([user("a", MyMediaExcludes=["s"])], {"a"}, [None, "s"])[0], [])
+
     def test_unresolved_library_id_writes_nothing(self):
         self.assertEqual(ud.plan([user("a")], {"a"}, None)[0], [])
         self.assertNotIn("MyMediaExcludes", ud.plan([user("n")], {"a"}, None)[0][0][1])

@@ -337,12 +337,14 @@
     return GENRE_SPARE[h % GENRE_SPARE.length];
   }
 
-  // cards: {studios, networks} from studio-logos.py (window.HssStudios / HssNetworks); none = no row.
+  // cards: {studios, networks} from studio-logos.py (window.HssStudios / HssNetworks); none = no row. cards.hide = window.HssTrendingHide: its placeholders count for nothing.
   function loadDiscover(api, userId, cards) {
     var path = "Users/" + userId + "/Items";
+    var skip = {};
+    ((cards && cards.hide && cards.hide.items) || []).forEach(function (id) { skip[id] = true; });
     function titles(type) {
       return api.getJSON(api.getUrl(path, { IncludeItemTypes: type, Recursive: true, Fields: "Studios,Genres", EnableImageTypes: "Backdrop", ImageTypeLimit: 1, EnableUserData: false }))
-        .then(function (r) { return (r && r.Items) || []; });
+        .then(function (r) { return ((r && r.Items) || []).filter(function (i) { return !skip[i.Id]; }); });
     }
     return Promise.all([
       api.getJSON(api.getUrl("UserViews", { userId: userId })).then(function (r) { return (r && r.Items) || []; }),
@@ -874,7 +876,7 @@
   }
 
   function cardsOf(win) {
-    return { studios: win.HssStudios, networks: win.HssNetworks };
+    return { studios: win.HssStudios, networks: win.HssNetworks, hide: win.HssTrendingHide };
   }
 
   var BACK_KEYS = { Escape: 1, Esc: 1, Backspace: 1, GoBack: 1, BrowserBack: 1 };

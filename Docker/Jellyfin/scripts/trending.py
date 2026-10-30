@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trending sync: fills the hidden "Trending items" library with one placeholder folder per listed title not in the library (movie.nfo, poster.jpg, fanart.jpg, clips as hard links), keeps the 37 collections (BoxSets tagged hss-trending) in step,
+"""Trending sync: fills the hidden libraries "Trending items" (films: movie.nfo, poster.jpg, fanart.jpg, clips as hard links) and "Trending shows" (series: tvshow.nfo, art, clips as Season 00 episodes) with one placeholder folder per listed title not in the library, keeps the 37 collections (BoxSets tagged hss-trending) in step,
 writes the request index for the TV hook (/srv/appdata/jellyfin-popular/trending-index.json) and the JavaScript Injector entry "Trending hidden" (window.HssTrendingHide).
 Inputs: lists.json, coming-list.json, details.json, coming.json, Seerr media (read only), request-state.json. Never prints API keys.
 Exit 0 ok, 1 inputs stale (> 9 days) or Jellyfin error (published state kept), 2 usage. Usage: trending.py [--dry-run]"""
@@ -31,6 +31,9 @@ import trending_model as tm  # noqa: E402
 
 STATE_DIR = pathlib.Path.home() / ".local" / "state"
 JF_PATH = "/config/trending/library"
+JF_SHOWS = "/config/trending/shows"
+JF_ROOT = {"movie": JF_PATH, "tv": JF_SHOWS}
+KINDS = ("movie", "tv")
 NAME = "Trending hidden"
 PLUGIN = "JavaScript Injector"
 TMDB = "https://image.tmdb.org/t/p/"
@@ -72,6 +75,13 @@ class Paths:
     @property
     def library(self):
         return self.root / "library"
+
+    @property
+    def shows(self):
+        return self.root / "shows"
+
+    def dir(self, kind):
+        return self.shows if kind == "tv" else self.library
 
     @property
     def clips(self):
@@ -176,7 +186,7 @@ def load_feeds(paths, now):
 
 
 def own_path(path):
-    return (path or "").startswith(JF_PATH + "/")
+    return any((path or "").startswith(root + "/") for root in JF_ROOT.values())
 
 
 def owned(io, lib_id):
@@ -248,8 +258,9 @@ def poster_path(ph):
 
 
 def desired(ph, images):
-    """{file name: bytes | None (absent) | KEEP} for the folder's own non-video files."""
-    out = {"movie.nfo": tm.nfo(ph).encode()}
+    """{path in the folder: bytes | None (absent) | KEEP} for the folder's own non-video files."""
+    out = {tm.nfo_name(ph): tm.nfo(ph).encode()}
+    out.update({name: xml.encode() for name, xml in tm.episode_nfos(ph).items()})
     base = images.get("w780", poster_path(ph))
     out["poster.jpg"] = KEEP if base is Images.FAILED else art.poster(base, ph.badge, ph.title)
     back = images.get("w1280", (ph.info or {}).get("b"))
@@ -263,6 +274,14 @@ def sync_folder(folder, ph, files, clips, dry_run):
     new = not folder.is_dir() or folder.is_symlink()
     if new and not dry_run:
         folder.mkdir()
+    want = ph.files
+    subdirs = sorted({str(pathlib.PurePosixPath(n).parent) for n in [*files, *want]} - {"."})
+    for sub in subdirs:
+        d = folder / sub
+        if d.is_symlink():
+            raise Refused(f"symlink in a placeholder folder: {d}")
+        if not dry_run:
+            d.mkdir(exist_ok=True)
     content = False
     for name, data in files.items():
         f = folder / name
@@ -279,8 +298,15 @@ def sync_folder(folder, ph, files, clips, dry_run):
             content = True
             if not dry_run:
                 write_atomic(f, data)
-    want = ph.files
-    have = set() if new else {p.name for p in folder.iterdir() if p.name.endswith(".mp4")}
+    for sub in subdirs:
+        d = folder / sub
+        for p in sorted(d.iterdir()) if d.is_dir() else []:
+            name = f"{sub}/{p.name}"
+            if p.name.endswith(".nfo") and name not in files and (p.is_file() or p.is_symlink()):
+                content = True
+                if not dry_run:
+                    p.unlink()
+    have = set() if new else {p.relative_to(folder).as_posix() for p in [*folder.glob("*.mp4"), *(x for s in subdirs if (folder / s).is_dir() for x in (folder / s).glob("*.mp4"))]}
     structure = have != set(want)
     for name in have - set(want):
         if not dry_run:
@@ -341,13 +367,51 @@ def sort_key(text):
     return re.sub(r"\d+", lambda m: str(int(m.group())), "".join(words))
 
 
-def listing(io, lib_id):
-    return io.jf("GET", f"/Items?ParentId={lib_id}&Recursive=true&IncludeItemTypes=Movie&CollapseBoxSetItems=false&Fields=Path,MediaSources,SortName&EnableImages=false&EnableUserData=false")["Items"]
+def listing(io, lib_id, kind="movie"):
+    types = "Series,Episode" if kind == "tv" else "Movie"
+    fields = "Path,SortName" if kind == "tv" else "Path,MediaSources,SortName"
+    return io.jf("GET", f"/Items?ParentId={lib_id}&Recursive=true&IncludeItemTypes={types}&CollapseBoxSetItems=false&Fields={fields}&EnableImages=false&EnableUserData=false")["Items"]
 
 
 def folder_of(path):
     p = pathlib.PurePosixPath(path or "")
     return p.parent.name if str(p.parent.parent) == JF_PATH else None
+
+
+@dataclasses.dataclass
+class Placed:
+    """A placeholder folder as Jellyfin lists it: item = the film or the series, files = {path in the folder: playable item or version id}."""
+    item: dict
+    files: dict
+    ticks: list
+
+
+def view(kind, items):
+    """{folder: Placed} of one trending library listing."""
+    out = {}
+    if kind == "movie":
+        for f, i in by_folder(items).items():
+            sources = i.get("MediaSources") or []
+            out[f] = Placed(i, {pathlib.PurePosixPath(ms.get("Path") or "").name: ms["Id"] for ms in sources}, [i["RunTimeTicks"]] if i.get("RunTimeTicks") else [])
+        return out
+    series = {}
+    for i in items:
+        p = pathlib.PurePosixPath(i.get("Path") or "")
+        if i.get("Type") == "Series" and str(p.parent) == JF_SHOWS:
+            out[p.name] = Placed(i, {}, [])
+            series[i["Id"]] = p.name
+    for i in items:
+        if i.get("Type") != "Episode" or i.get("SeriesId") not in series:
+            continue
+        folder = series[i["SeriesId"]]
+        try:
+            rel = pathlib.PurePosixPath(i.get("Path") or "").relative_to(f"{JF_SHOWS}/{folder}").as_posix()
+        except ValueError:
+            continue
+        out[folder].files[rel] = i["Id"]
+        if i.get("RunTimeTicks"):
+            out[folder].ticks.append(i["RunTimeTicks"])
+    return out
 
 
 def by_folder(items):
@@ -360,29 +424,31 @@ def by_folder(items):
     return out
 
 
-def signature(items):
-    return {f: sorted(pathlib.PurePosixPath(ms.get("Path") or "").name for ms in i.get("MediaSources") or []) for f, i in by_folder(items).items()}
+def signature(placed):
+    return {f: sorted(p.files) for f, p in placed.items()}
 
 
 def wanted_signature(placeholders):
     return {f: sorted(ph.files) for f, ph in placeholders.items()}
 
 
-def index_items(placeholders, items):
+def covers(have, want):
+    return all(have.get(f) == w for f, w in want.items())
+
+
+def index_items(placeholders, placed):
+    """{playable id: {x, t, modes {version or episode id: now | night}}}: a film's item and version ids, a series' episode ids."""
     out = {}
-    for folder, item in by_folder(items).items():
+    for folder, pl in placed.items():
         ph = placeholders.get(folder)
         if ph is None:
             continue
-        modes = {}
-        for ms in item.get("MediaSources") or []:
-            clip = ph.files.get(pathlib.PurePosixPath(ms.get("Path") or "").name)
-            if clip in MODE:
-                modes[ms["Id"]] = MODE[clip]
+        modes = {fid: MODE[ph.files[name]] for name, fid in pl.files.items() if ph.files.get(name) in MODE}
         rec = {"x": ph.x, "t": ph.title, "modes": modes}
-        out[item["Id"]] = rec
-        for ms in item.get("MediaSources") or []:
-            out[ms["Id"]] = rec
+        if ph.kind != "tv":
+            out[pl.item["Id"]] = rec
+        for fid in pl.files.values():
+            out[fid] = rec
     return out
 
 
@@ -516,9 +582,9 @@ def upsert_hide(io, source, dry_run):
     return True
 
 
-def write_index(paths, lib_id, items, placeholders, now, dry_run):
-    ticks = sorted(t for t in (i.get("RunTimeTicks") for f, i in by_folder(items).items() if f in placeholders) if t)
-    data = {"library": lib_id, "runtimeTicks": ticks[0] if ticks else TICKS, "items": index_items(placeholders, items)}
+def write_index(paths, lib_id, placed, placeholders, now, dry_run):
+    ticks = sorted(t for f, pl in placed.items() if f in placeholders for t in pl.ticks)
+    data = {"library": lib_id, "runtimeTicks": ticks[0] if ticks else TICKS, "items": index_items(placeholders, placed)}
     old = read_json(paths.index)
     try:
         recent = now - aware(old["updated"]) < INDEX_MAX_AGE
@@ -531,9 +597,22 @@ def write_index(paths, lib_id, items, placeholders, now, dry_run):
     return True, len(data["items"])
 
 
+def wait_settled(io, lib_id, kind, want, settled):
+    deadline = time.monotonic() + POLL_TIMEOUT
+    while True:
+        placed = view(kind, listing(io, lib_id, kind))
+        if settled(signature(placed), want):
+            return placed
+        if time.monotonic() >= deadline:
+            raise JellyfinError(f"{tm.LIBRARIES[kind]} refresh did not settle in {POLL_TIMEOUT} s")
+        io.sleep(POLL_EVERY)
+
+
 def sync(io, paths, now, dry_run, log):
     lists, coming, details = load_feeds(paths, now)
-    lib_id = tm.library_id(io.jf("GET", "/Library/VirtualFolders"))
+    folders = io.jf("GET", "/Library/VirtualFolders")
+    lib_ids = {k: tm.library_id(folders, tm.LIBRARIES[k]) for k in KINDS}
+    lib_id = lib_ids["movie"]
     if not lib_id:
         raise JellyfinError(f"library {tm.LIBRARY} missing or unresolved (run trending-setup.py)")
     have = owned(io, lib_id)
@@ -545,6 +624,8 @@ def sync(io, paths, now, dry_run, log):
     clips = clip_stats(paths)
     images = Images(io, paths.cache, dry_run, log)
     state = read_json(paths.state)
+    kinds = {folder: ph.kind if ph.kind in KINDS else "movie" for folder, ph in plan.placeholders.items()}
+    by_kind = {k: {f: ph for f, ph in plan.placeholders.items() if kinds[f] == k} for k in KINDS}
 
     def save():
         if not dry_run:
@@ -554,53 +635,51 @@ def sync(io, paths, now, dry_run, log):
     added, restructured, touched = [], [], []
     files = {folder: desired(ph, images) for folder, ph in plan.placeholders.items()}
     for folder, ph in plan.placeholders.items():
-        new, structure, content = sync_folder(paths.library / folder, ph, files[folder], clips, True)
+        new, structure, content = sync_folder(paths.dir(kinds[folder]) / folder, ph, files[folder], clips, True)
         if new:
             added.append(folder)
         elif structure:
             restructured.append(folder)
+            if content and kinds[folder] == "tv":
+                touched.append(folder)
         elif content:
             touched.append(folder)
-    removed = remove_stale(paths.library, set(plan.placeholders), True, lambda m: None)
+    removed = {k: remove_stale(paths.dir(k), set(by_kind[k]), True, lambda m: None) for k in KINDS}
     pending = state.get("pending") or {}
-    lib_pending = bool(added or restructured or removed or pending.get("library"))
+    old_libs = set(pending.get("libs") or []) | ({"movie"} if pending.get("library") else set())
+    lib_pending = {k for k in KINDS if k in old_libs or any(kinds[f] == k for f in added + restructured)}
     refresh_items = sorted(set(touched) | set(pending.get("items") or []))
-    if lib_pending or refresh_items:
-        state["pending"] = {"library": lib_pending, "items": refresh_items}
+    if lib_pending or any(removed.values()) or refresh_items:
+        state["pending"] = {"libs": sorted(lib_pending | {k for k in KINDS if removed[k]}), "items": refresh_items}
         save()
     for folder, ph in plan.placeholders.items():
-        sync_folder(paths.library / folder, ph, files[folder], clips, dry_run)
-    remove_stale(paths.library, set(plan.placeholders), dry_run, log)
+        sync_folder(paths.dir(kinds[folder]) / folder, ph, files[folder], clips, dry_run)
     verb = "would " if dry_run else ""
-    log(f"{len(plan.placeholders)} placeholders: {verb}add {len(added)}, {verb}restructure {len(restructured)}, {verb}update {len(touched)}, {verb}remove {len(removed)}")
+    n_removed = sum(len(r) for r in removed.values())
+    log(f"{len(plan.placeholders)} placeholders: {verb}add {len(added)}, {verb}restructure {len(restructured)}, {verb}update {len(touched)}, {verb}remove {n_removed}")
+    missing = [tm.LIBRARIES[k] for k in KINDS if not lib_ids[k]]
+    if missing:
+        raise JellyfinError(f"library {', '.join(missing)} missing or unresolved (run trending-setup.py, then a library scan)")
 
-    items = listing(io, lib_id)
-    want_sig = wanted_signature(plan.placeholders)
+    placed = {k: view(k, listing(io, lib_ids[k], k)) for k in KINDS}
+    want = {k: wanted_signature(by_kind[k]) for k in KINDS}
     refreshed = 0
+    for k in KINDS:
+        if k in lib_pending or not covers(signature(placed[k]), want[k]):
+            if dry_run:
+                log(f"would refresh {tm.LIBRARIES[k]}")
+                continue
+            io.jf("POST", f"/Items/{lib_ids[k]}/Refresh?{LIB_REFRESH}")
+            refreshed += 1
+            placed[k] = wait_settled(io, lib_ids[k], k, want[k], covers)
+    ids = {f: pl.item for k in KINDS for f, pl in placed[k].items() if f in by_kind[k]}
     if dry_run:
-        if lib_pending or signature(items) != want_sig:
-            log("would refresh the library")
         log(f"would refresh {len(refresh_items)} items")
     else:
-        if lib_pending or signature(items) != want_sig:
-            io.jf("POST", f"/Items/{lib_id}/Refresh?{LIB_REFRESH}")
-            refreshed += 1
-            deadline = time.monotonic() + POLL_TIMEOUT
-            while True:
-                items = listing(io, lib_id)
-                if signature(items) == want_sig:
-                    break
-                if time.monotonic() >= deadline:
-                    raise JellyfinError(f"library refresh did not settle in {POLL_TIMEOUT} s")
-                io.sleep(POLL_EVERY)
-        ids = by_folder(items)
         for folder in refresh_items:
             if folder in ids:
                 io.jf("POST", f"/Items/{ids[folder]['Id']}/Refresh?{ITEM_REFRESH}")
                 refreshed += 1
-        if state.pop("pending", None) is not None:
-            save()
-    ids = by_folder(items)
     for folder, ph in plan.placeholders.items():
         sn = (ids.get(folder) or {}).get("SortName")
         if sn is not None and folder not in refresh_items and sort_key(sn) != sort_key(ph.sort_title):
@@ -613,13 +692,26 @@ def sync(io, paths, now, dry_run, log):
         return ref if kind == "real" else (ids.get(ref) or {}).get("Id")
 
     set_ids = cols.sync(plan.collections, member_id, plan.art)
-    index_changed, n_index = write_index(paths, lib_id, items, plan.placeholders, now, dry_run)
-    placeholder_ids = sorted(k for k in index_items(plan.placeholders, items))
-    hide_changed = upsert_hide(io, hide_script({"lib": lib_id, "sets": set_ids, "items": placeholder_ids}), dry_run)
+    all_placed = {f: pl for k in KINDS for f, pl in placed[k].items() if f in by_kind[k]}
+    index_changed, n_index = write_index(paths, lib_id, all_placed, plan.placeholders, now, dry_run)
+    hidden_ids = set(index_items(plan.placeholders, all_placed)) | {pl.item["Id"] for pl in all_placed.values()}
+    hide_changed = upsert_hide(io, hide_script({"lib": [lib_ids[k] for k in KINDS], "sets": set_ids, "items": sorted(hidden_ids)}), dry_run)
+
+    for k in KINDS:
+        gone = remove_stale(paths.dir(k), set(by_kind[k]), dry_run, log)
+        if gone or signature(placed[k]) != want[k]:
+            if dry_run:
+                log(f"would refresh {tm.LIBRARIES[k]} after removing {len(gone)}")
+                continue
+            io.jf("POST", f"/Items/{lib_ids[k]}/Refresh?{LIB_REFRESH}")
+            refreshed += 1
+            wait_settled(io, lib_ids[k], k, want[k], lambda have, w: have == w)
+    if not dry_run and state.pop("pending", None) is not None:
+        save()
     if state != read_json(paths.state):
         save()
 
-    changes = len(added) + len(restructured) + len(touched) + len(removed) + refreshed + cols.changed + hide_changed
+    changes = len(added) + len(restructured) + len(touched) + n_removed + refreshed + cols.changed + hide_changed
     if dry_run:
         log(f"would change {cols.changed} collection settings, index {'would change' if index_changed else 'unchanged'} ({n_index} ids), hide entry {'would change' if hide_changed else 'unchanged'}")
     elif changes:

@@ -630,6 +630,15 @@ test("discover: loads four rows with the user's session in four requests, logos 
   assert.equal(api.calls.find(([p]) => p === "UserViews")[1].userId, "u1");
 });
 
+test("discover: trending placeholders (window.HssTrendingHide items) count for no studio, network or genre", async () => {
+  const api = discoverApi([film("a", ["Pixar"], ["Comedy"], 8), film("ph1", ["Pixar"], ["Horror"], 9)], [series("ph2", ["HBO"], ["Western"], 9)], {});
+  const rows = await es.loadDiscover(api, "u1", { studios: [PIX], networks: [{ name: "HBO", ids: ["id-HBO"] }], hide: { lib: ["l1", "l2"], items: ["ph1", "ph2"] } });
+  assert.deepEqual(rows[STU].map((c) => c.items), [["a"]]);
+  assert.deepEqual(rows[NET], []);
+  assert.deepEqual(rows[MGEN].map((c) => c.Name), ["Comedy"]);
+  assert.deepEqual(rows[SGEN], []);
+});
+
 test("discover: no networks list = empty Networks row, two movie libraries = no parent filter, empty library = three requests", async () => {
   const api = discoverApi([film("a", ["Walt Disney Pictures"], ["Comedy"], 8)], [series("x", ["HBO"], ["Drama"], 8)], {}, [...VIEWS, { Id: "lib-m2", CollectionType: "movies" }]);
   const rows = await es.loadDiscover(api, "u1", { studios: [DIS] });

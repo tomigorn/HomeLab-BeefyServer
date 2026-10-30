@@ -26,6 +26,8 @@ import tmdb_details  # noqa: E402
 
 NAME = "Currently popular"
 PLUGIN = "JavaScript Injector"
+# Placeholder folders of trending.py (Trending items, Trending shows): never owned titles.
+TRENDING_PATH = "/config/trending/"
 COUNTRY = "CH"
 TSV_URL = "https://www.netflix.com/tudum/top10/data/all-weeks-countries.tsv"
 SEERR = "http://127.0.0.1:5055"
@@ -262,8 +264,9 @@ class Io:
 
     def owned(self):
         import jellyfin_api
-        items = jellyfin_api.api("GET", "/Items?Recursive=true&IncludeItemTypes=Movie,Series&CollapseBoxSetItems=false&Fields=ProviderIds&EnableImages=false&EnableUserData=false")["Items"]
-        return {("movie/" if i["Type"] == "Movie" else "tv/") + i["ProviderIds"]["Tmdb"]: i["Id"] for i in items if (i.get("ProviderIds") or {}).get("Tmdb")}
+        items = jellyfin_api.api("GET", "/Items?Recursive=true&IncludeItemTypes=Movie,Series&CollapseBoxSetItems=false&Fields=ProviderIds,Path&EnableImages=false&EnableUserData=false")["Items"]
+        return {("movie/" if i["Type"] == "Movie" else "tv/") + i["ProviderIds"]["Tmdb"]: i["Id"] for i in items
+                if (i.get("ProviderIds") or {}).get("Tmdb") and not (i.get("Path") or "").startswith(TRENDING_PATH)}
 
     def _plugin_path(self):
         import jellyfin_api

@@ -174,7 +174,7 @@ class FakeJellyfin:
                 return None
             return self.config
         if path.startswith("/Items?"):
-            assert "CollapseBoxSetItems=false" in path, path
+            assert "CollapseBoxSetItems=false" in path and "Fields=Studios,ProviderIds,Path" in path, path
             kind = "Movie" if "IncludeItemTypes=Movie" in path else "Series"
             return {"Items": [i for i in self.items if i["Type"] == kind]}
         if path.startswith("/Studios?"):
@@ -203,6 +203,14 @@ class Main(unittest.TestCase):
         self.calls.append(ref)
         kind, tmdb = ref.split(":")
         return {"productionCompanies": [{"id": 3, "name": "Pixar", "logoPath": "/pixar.png"}]} if kind == "movie" else {"networks": [{"id": 49, "name": "HBO", "logoPath": "/hbo.png"}]}
+
+    def test_trending_placeholders_are_not_counted(self):
+        ph = {**show("4546", ["HBO"]), "Path": "/config/trending/shows/X (2026)"}
+        jf = FakeJellyfin([ph, {**movie("862", ["Pixar"]), "Path": "/config/trending/library/Y (2026)/Y (2026).mp4"}], [studio("Pixar"), studio("HBO")])
+        code, text = self.run_main(jf, [], self.seerr, self.cache)
+        self.assertEqual(code, 0)
+        self.assertEqual((jf.uploads, self.calls), ([], []))
+        self.assertIn("0 studios, 0 networks", text)
 
     def test_adds_logos_and_the_networks_entry_then_nothing_on_rerun(self):
         jf = FakeJellyfin([movie("862", ["Pixar"]), show("4546", ["HBO"])], [studio("Pixar"), studio("HBO")])

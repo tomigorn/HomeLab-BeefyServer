@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from jellyfin_api import api  # noqa: E402
-from trending_model import LIBRARY  # noqa: E402
+from trending_model import LIBRARIES  # noqa: E402
 
 PLUGIN_ID = "b8298e012697407ab44daa8dc795e850"
 # Because You Watched, Upcoming Shows/Movies (one "Coming soon" row) and the studio rows are built in the browser (home-layout.js, empty-sections.js); By Studio is gone (owner 2026-10-29). The arrs stay configured: Coming soon reads the plugin's Upcoming results.
@@ -32,7 +32,7 @@ def arr_key(xml):
 
 
 def libraries(folders):
-    return {v["CollectionType"]: v["ItemId"] for v in folders if v["Name"] != LIBRARY and v.get("ItemId")}
+    return {v["CollectionType"]: v["ItemId"] for v in folders if v["Name"] not in LIBRARIES.values() and v.get("ItemId")}
 
 
 def apply(cfg, types, libs, arr):

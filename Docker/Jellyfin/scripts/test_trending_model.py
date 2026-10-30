@@ -102,10 +102,10 @@ class Plan(unittest.TestCase):
     def test_states_and_files(self):
         l = lists(movies=[item("movie", 1, 1, "Found", f="2160p", x="tok1", d="d1"), item("movie", 2, 2, "Nothing"), item("movie", 3, 3, "Req Night", f="1080p", x="tok3"),
                           item("movie", 4, 4, "Downloading", f="1080p", x="tok4"), item("movie", 5, 5, "Declined", f="1080p", x="tok5")],
-                  shows=[item("tv", 10, 1, "Show", f="1080p", x="tok10", season=2)])
+                  shows=[item("tv", 10, 1, "Show", f="1080p", x="tok10", season=2), item("tv", 11, 2, "Asked", f="1080p", x="tok11")])
         c = coming(("movie", 20, "d20", "2026-11-04"))
         details = {"d1": info("movie", 1, "Found", 2026), "d20": info("movie", 20, "Upcoming", 2026)}
-        states = {"movie/3": ("requested", "night"), "movie/4": ("downloading", "now"), "movie/5": ("declined", None), "movie/1": (None, None)}
+        states = {"tv/11": ("requested", "night"), "movie/3": ("requested", "night"), "movie/4": ("downloading", "now"), "movie/5": ("declined", None), "movie/1": (None, None)}
         p = tm.plan(l, c, details, {}, states)
         by = {ph.key: ph for ph in p.placeholders.values()}
 
@@ -116,7 +116,11 @@ class Plan(unittest.TestCase):
 
         ph = by["tv/10"]
         self.assertEqual((ph.state, ph.badge, ph.season), ("found", "found", 2))
-        self.assertEqual(ph.files, {f"{ph.folder} - ⬇ Download series now.mp4": "now", f"{ph.folder} - 🌙 Download series tonight · lower power cost.mp4": "night"})
+        self.assertEqual(ph.files, {"Season 00/S00E01 - ⬇ Download series now.mp4": "now", "Season 00/S00E02 - 🌙 Download series tonight · lower power cost.mp4": "night"})
+
+        ph = by["tv/11"]
+        self.assertEqual((ph.state, ph.mode), ("requested", "night"))
+        self.assertEqual(ph.files, {"Season 00/S00E01.mp4": "requested"})
 
         ph = by["movie/2"]
         self.assertEqual((ph.state, ph.badge, ph.x), ("none", "none", None))
@@ -221,6 +225,66 @@ class Nfo(unittest.TestCase):
         self.assertIsNone(root.find("year"))
         self.assertIsNone(root.find("rating"))
         self.assertTrue(tm.nfo(ph).startswith("<?xml"))
+
+
+class Shows(unittest.TestCase):
+    def ph(self, state="found", mode=None):
+        l = lists(shows=[item("tv", 7, 2, "Show", f="1080p", x="tok", d="d7")])
+        states = {"tv/7": (state, mode)} if state in ("requested", "downloading") else {}
+        if state == "none":
+            l["home"]["shows"][0].update(f=None, n=True, x=None)
+        p = tm.plan(l, coming(), {"d7": info("tv", 7, "Show", 2024, overview="Series overview.")}, {}, states)
+        return next(iter(p.placeholders.values()))
+
+    def test_libraries_per_kind(self):
+        self.assertEqual(tm.LIBRARIES, {"movie": "Trending items", "tv": "Trending shows"})
+        folders = [{"Name": "Trending items", "ItemId": "m"}, {"Name": "Trending shows", "ItemId": "s"}]
+        self.assertEqual((tm.library_id(folders), tm.library_id(folders, tm.SHOWS_LIBRARY)), ("m", "s"))
+
+    def test_tvshow_nfo(self):
+        root = ET.fromstring(tm.nfo(self.ph()).encode())
+        self.assertEqual(root.tag, "tvshow")
+        self.assertEqual((root.findtext("title"), root.findtext("sorttitle"), root.findtext("year")), ("Show", "02-02 Show", "2026"))
+        self.assertEqual(root.findtext("plot"), "⬇ Not downloaded — open Specials, choose ⬇ now or 🌙 tonight and press Play\n\nSeries overview.")
+        self.assertEqual(root.findtext("dateadded"), tm.DATE_ADDED)
+        self.assertEqual([g.text for g in root.findall("genre")], ["Drama", "Thriller"])
+        self.assertEqual(len(root.findall("trailer")), 2)
+        self.assertEqual(len(root.findall("actor")), 2)
+        self.assertIsNone(root.find("uniqueid"))
+
+    def test_episode_nfos_found(self):
+        eps = tm.episode_nfos(self.ph())
+        self.assertEqual(list(eps), ["Season 00/S00E01 - ⬇ Download series now.nfo", "Season 00/S00E02 - 🌙 Download series tonight · lower power cost.nfo"])
+        roots = [ET.fromstring(x.encode()) for x in eps.values()]
+        self.assertEqual([r.tag for r in roots], ["episodedetails", "episodedetails"])
+        self.assertEqual([r.findtext("title") for r in roots], ["⬇ Download series now", "🌙 Download series tonight · lower power cost"])
+        self.assertEqual([(r.findtext("season"), r.findtext("episode")) for r in roots], [("0", "1"), ("0", "2")])
+        self.assertEqual([r.findtext("showtitle") for r in roots], ["Show", "Show"])
+        self.assertTrue(all(r.findtext("dateadded") == tm.DATE_ADDED for r in roots))
+        self.assertIn("now", roots[0].findtext("plot"))
+        self.assertIn("tonight", roots[1].findtext("plot"))
+        self.assertIsNone(roots[0].find("uniqueid"))
+
+    def test_episode_nfo_single_clip_titles(self):
+        def one(state, mode=None):
+            (name, xml), = tm.episode_nfos(self.ph(state, mode)).items()
+            self.assertEqual(name, "Season 00/S00E01.nfo")
+            return ET.fromstring(xml.encode())
+        self.assertEqual(one("none").findtext("title"), "Not able to download yet — checked daily")
+        self.assertEqual(one("requested", "night").findtext("title"), "✓ Requested — downloading tonight")
+        self.assertEqual(one("downloading").findtext("title"), "✓ Requested — downloading now")
+        self.assertEqual(one("none").findtext("plot"), "Series overview.")
+
+    def test_movie_has_no_episode_nfos(self):
+        l = lists(movies=[item("movie", 1, 1, "Film", f="1080p", x="tok")])
+        self.assertEqual(tm.episode_nfos(next(iter(tm.plan(l, coming(), {}, {}, {}).placeholders.values()))), {})
+
+    def test_coming_series_single_episode(self):
+        p = tm.plan(lists(), coming(("tv", 40, "d40", "2026-11-04")), {"d40": info("tv", 40, "New Show", 2026)}, {}, {})
+        ph = next(iter(p.placeholders.values()))
+        self.assertEqual(ph.files, {"Season 00/S00E01.mp4": "coming"})
+        (xml,) = tm.episode_nfos(ph).values()
+        self.assertEqual(ET.fromstring(xml.encode()).findtext("title"), "Coming soon — 4 Nov 2026")
 
 
 class FolderNames(unittest.TestCase):

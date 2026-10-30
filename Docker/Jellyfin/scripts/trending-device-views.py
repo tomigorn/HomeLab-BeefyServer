@@ -14,7 +14,9 @@ sys.path.insert(0, str(HERE))
 
 COLLECTIONS_VIEW = "Collections & Trending"
 TOP_MOVIES = "Top 10 Switzerland · Movies"
-SCREENS = ("media", "collections", "list", "details", "movies", "search")
+TOP_SHOWS = "Top 10 Switzerland · Shows"
+SCREENS = ("media", "collections", "list", "details", "movies", "search", "shows", "series", "recent")
+ATV_NO_LATEST = ("boxsets", "playlists", "livetv")
 DROP_KEYS = {"UserId", "AccessToken", "Token", "User", "ApiKey", "api_key", "Path"}
 SF_FIELDS = "MediaSources,ParentId,ChannelInfo"
 SF_PAGE = 50
@@ -35,6 +37,9 @@ SOURCES = {
         "details": SF + "Extensions/JellyfinAPI/BaseItemDto/BaseItemDto.swift (getFullItem), " + SF + "Views/ItemContentGroupView/ItemContentGroupProvider.swift",
         "movies": SF + "Coordinators/Tabs/MainTabView.swift, " + SF + "Objects/Libraries/ItemLibrary.swift",
         "search": SF + "ViewModels/SearchViewModel.swift, " + SF + "ViewModels/ContentGroupViewModel/SearchContentGroupProvider.swift",
+        "shows": SF + "Views/ItemContentGroupView/ItemContentGroupProvider.swift, " + SF + "ViewModels/ContentGroupViewModel/ItemTypeContentGroupProvider.swift",
+        "series": SF + "ViewModels/ItemViewModel/SeriesItemViewModel.swift, " + SF + "ViewModels/SeasonItemViewModel.swift",
+        "recent": SF + "Objects/Libraries/RecentlyAddedLibrary.swift",
     },
     "androidtv": {
         "media": ATV + "data/repository/UserViewsRepository.kt",
@@ -43,6 +48,9 @@ SOURCES = {
         "details": ATV + "ui/itemdetail/FullDetailsFragmentHelper.kt",
         "movies": ATV + "ui/browsing/BrowseGridFragment.java, " + ATV + "ui/browsing/BrowsingUtils.kt",
         "search": ATV + "ui/search/SearchRepository.kt, " + ATV + "ui/search/SearchViewModel.kt",
+        "shows": ATV + "ui/browsing/CollectionFragment.kt",
+        "series": ATV + "ui/itemdetail/FullDetailsFragment.java, " + ATV + "ui/itemhandling/ItemRowAdapterHelper.kt",
+        "recent": ATV + "ui/home/HomeFragmentLatestRow.kt",
     },
 }
 
@@ -100,6 +108,19 @@ def is_found(item):
     return (bool(sources) and "⬇ Download" in sources[0].get("Name", "")) or (item.get("Overview") or "").startswith("⬇ Not downloaded")
 
 
+def series_page(get, series_id, params, fields):
+    """The series item, its seasons and the episodes of Specials (season 0, where the trending placeholders keep their clips)."""
+    out = {"item": get("series", f"/Items/{series_id}", params)}
+    out["seasons"] = get("series", f"/Shows/{series_id}/Seasons", params)
+    specials = next((s for s in out["seasons"].get("Items", []) if s.get("IndexNumber") == 0), None)
+    out["episodes"] = get("series", f"/Shows/{series_id}/Episodes", {**params, "seasonId": specials["Id"], "fields": fields}) if specials else {"Items": [], "TotalRecordCount": 0}
+    return out
+
+
+def first_id(page):
+    return next((i["Id"] for i in page.get("Items", [])), None)
+
+
 def capture_swiftfin(get, user_id):
     out = {}
     base = {"userId": user_id, "enableUserData": "true", "fields": SF_FIELDS, "sortBy": "SortName", "sortOrder": "Ascending", "limit": SF_PAGE, "startIndex": 0}
@@ -127,6 +148,11 @@ def capture_swiftfin(get, user_id):
     out["details"] = details
     out["movies"] = items("movies", includeItemTypes="Movie", recursive="true")
     out["search"] = {t: items("search", searchTerm=found["Name"], includeItemTypes=t, recursive="true") for t in ("Movie", "Series", "BoxSet,UserView")}
+    tops = next(i for i in out["collections"]["Items"] if i.get("Name") == TOP_SHOWS)
+    out["shows"] = {t: items("shows", parentId=tops["Id"], includeItemTypes=t, recursive="true") for t in ("Movie", "Series", "Video")}
+    sid = first_id(out["shows"]["Series"])
+    out["series"] = series_page(get, sid, {"userId": user_id}, "Overview,MediaSources") if sid else {}
+    out["recent"] = items("recent", includeItemTypes="Movie,Series", recursive="true", sortBy="DateCreated", sortOrder="Descending")
     return out
 
 
@@ -157,6 +183,16 @@ def capture_androidtv(get, user_id):
     out["movies"] = items("movies", parentId=movies["Id"], includeItemTypes="Movie", recursive="true", **grid)
     search = {"searchTerm": found["Name"], "limit": 25, "imageTypeLimit": 1, "fields": ATV_FIELDS, "recursive": "true", "enableTotalRecordCount": "false"}
     out["search"] = {t: get("search", "/Items", {**search, "includeItemTypes": t}) for t in ("Movie", "Series", "BoxSet")}
+    tops = next(i for i in out["collections"]["Items"] if i.get("Name") == TOP_SHOWS)
+    out["shows"] = {
+        "Movie": items("shows", parentId=tops["Id"], includeItemTypes="Movie"),
+        "Series": items("shows", parentId=tops["Id"], includeItemTypes="Series"),
+        "Other": items("shows", parentId=tops["Id"], excludeItemTypes="Movie,Series"),
+    }
+    sid = first_id(out["shows"]["Series"])
+    out["series"] = series_page(get, sid, {}, ATV_FIELDS) if sid else {}
+    out["recent"] = {v["Name"]: get("recent", "/Items/Latest", {"parentId": v["Id"], "limit": 50, "fields": ATV_FIELDS, "imageTypeLimit": 1, "groupItems": "true"})
+                     for v in views.get("Items", []) if v.get("CollectionType") not in ATV_NO_LATEST}
     return out
 
 

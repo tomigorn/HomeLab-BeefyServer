@@ -1,5 +1,5 @@
-"""Pure model of the trending library: the published lists (lists.json, coming-list.json) and their details become placeholder folders and 37 collections.
-plan() decides each title's placeholder (folder, state, clips, badge, sort title) or its real library item; nfo() writes its movie.nfo. No I/O: trending.py applies the plan."""
+"""Pure model of the trending libraries: the published lists (lists.json, coming-list.json) and their details become placeholder folders and 37 collections.
+plan() decides each title's placeholder (folder, state, clips, badge, sort title) or its real library item; nfo() writes its movie.nfo or tvshow.nfo, episode_nfos() a series' Season 00 episodes. No I/O: trending.py applies the plan."""
 import dataclasses
 import datetime
 import copy
@@ -7,6 +7,9 @@ import re
 import xml.etree.ElementTree as ET
 
 LIBRARY = "Trending items"
+SHOWS_LIBRARY = "Trending shows"
+LIBRARIES = {"movie": LIBRARY, "tv": SHOWS_LIBRARY}
+SEASON = "Season 00"
 TAG = "hss-trending"
 COLLECTIONS_NAME = "Collections & Trending"
 PREFIX = {
@@ -14,6 +17,12 @@ PREFIX = {
     "night": "✓ Requested — downloading tonight",
     "now": "✓ Requested — downloading now",
     "none": "Not able to download yet — checked daily",
+}
+TV_FOUND = "⬇ Not downloaded — open Specials, choose ⬇ now or 🌙 tonight and press Play"
+EPISODES = {
+    "now": ("S00E01 - ⬇ Download series now", "⬇ Download series now", "Plays 10 s: at the end the series is requested and downloads now. Back cancels."),
+    "night": ("S00E02 - 🌙 Download series tonight · lower power cost", "🌙 Download series tonight · lower power cost",
+              "Plays 10 s: at the end the series is requested and downloads tonight, when power costs less. Back cancels."),
 }
 CLIPS = ("now", "night", "unavailable", "requested", "coming")
 HOME = (("home-movies", "movies", "Top 10 Switzerland · Movies"), ("home-shows", "shows", "Top 10 Switzerland · Shows"))
@@ -93,11 +102,18 @@ def _date_text(iso):
 
 
 def _files(folder, kind, state):
-    noun = "series" if kind == "tv" else "movie"
+    """{path relative to the placeholder folder: clip}; a series keeps its clips as Season 00 episodes."""
+    if kind == "tv":
+        if state == "found":
+            return {f"{SEASON}/{EPISODES[m][0]}.mp4": m for m in ("now", "night")}
+        return {f"{SEASON}/S00E01.mp4": _clip(state)}
     if state == "found":
-        return {f"{folder} - ⬇ Download {noun} now.mp4": "now", f"{folder} - 🌙 Download {noun} tonight · lower power cost.mp4": "night"}
-    clip = {"none": "unavailable", "requested": "requested", "downloading": "requested", "coming": "coming"}[state]
-    return {f"{folder}.mp4": clip}
+        return {f"{folder} - ⬇ Download movie now.mp4": "now", f"{folder} - 🌙 Download movie tonight · lower power cost.mp4": "night"}
+    return {f"{folder}.mp4": _clip(state)}
+
+
+def _clip(state):
+    return {"none": "unavailable", "requested": "requested", "downloading": "requested", "coming": "coming"}[state]
 
 
 def _state(entry, request):
@@ -195,17 +211,26 @@ def _prefix(ph):
         return PREFIX["night" if ph.mode == "night" else "now"]
     if ph.state == "downloading":
         return PREFIX["now"]
+    if ph.state == "found" and ph.kind == "tv":
+        return TV_FOUND
     return PREFIX[ph.state]
 
 
-def nfo(ph):
-    """movie.nfo of a placeholder (UTF-8 XML, <movie> root): title, sort title, plot behind the state prefix, year, genres, ratings, trailers, cast, an old date added; never a <uniqueid>."""
-    inf = ph.info or {}
-    root = ET.Element("movie")
+def _xml(root):
+    ET.indent(root)
+    return '<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
 
-    def add(parent, tag, value):
-        if value is not None and value != "":
-            ET.SubElement(parent, tag).text = str(value)
+
+def _add(parent, tag, value):
+    if value is not None and value != "":
+        ET.SubElement(parent, tag).text = str(value)
+
+
+def nfo(ph):
+    """movie.nfo (<movie>) or tvshow.nfo (<tvshow>) of a placeholder, UTF-8 XML: title, sort title, plot behind the state prefix, year, genres, ratings, trailers, cast, an old date added; never a <uniqueid>."""
+    inf = ph.info or {}
+    root = ET.Element("tvshow" if ph.kind == "tv" else "movie")
+    add = _add
 
     add(root, "title", ph.title)
     add(root, "sorttitle", ph.sort_title)
@@ -226,16 +251,41 @@ def nfo(ph):
         add(a, "role", c.get("c"))
         add(a, "thumb", THUMB + c["p"] if c.get("p") else None)
     add(root, "dateadded", DATE_ADDED)
-    ET.indent(root)
-    return '<?xml version="1.0" encoding="utf-8" standalone="yes"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
+    return _xml(root)
 
 
-def library_id(folders):
-    return next((f.get("ItemId") for f in folders if f["Name"] == LIBRARY), None)
+def nfo_name(ph):
+    return "tvshow.nfo" if ph.kind == "tv" else "movie.nfo"
 
 
-def find_library(folders):
-    return next((f for f in folders if f["Name"] == LIBRARY), None)
+def episode_nfos(ph):
+    """{Season 00 path: episode NFO} of a series placeholder, one per clip; {} for a film."""
+    if ph.kind != "tv":
+        return {}
+    overview = ((ph.info or {}).get("o") or {}).get("en")
+    out = {}
+    for n, (path, clip) in enumerate(ph.files.items(), 1):
+        if clip in EPISODES:
+            _, title, plot = EPISODES[clip]
+        else:
+            title, plot = _prefix(ph), overview
+        root = ET.Element("episodedetails")
+        _add(root, "title", title)
+        _add(root, "showtitle", ph.title)
+        _add(root, "season", 0)
+        _add(root, "episode", n)
+        _add(root, "plot", plot)
+        _add(root, "dateadded", DATE_ADDED)
+        out[path[:-len(".mp4")] + ".nfo"] = _xml(root)
+    return out
+
+
+def library_id(folders, name=LIBRARY):
+    return next((f.get("ItemId") for f in folders if f["Name"] == name), None)
+
+
+def find_library(folders, name=LIBRARY):
+    return next((f for f in folders if f["Name"] == name), None)
 
 
 def hidden(config, lib_id):

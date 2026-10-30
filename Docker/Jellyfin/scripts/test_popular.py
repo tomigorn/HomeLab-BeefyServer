@@ -189,6 +189,21 @@ class OwnedQuery(unittest.TestCase):
         self.assertIn("CollapseBoxSetItems=false", seen[0])
 
 
+    def test_trending_placeholders_never_count_as_owned(self):
+        import jellyfin_api
+        seen = []
+        items = [{"Type": "Series", "Id": "ph", "ProviderIds": {"Tmdb": "5"}, "Path": "/config/trending/shows/X (2026)"},
+                 {"Type": "Movie", "Id": "pm", "ProviderIds": {"Tmdb": "6"}, "Path": "/config/trending/library/Y (2026)/Y (2026).mp4"},
+                 {"Type": "Series", "Id": "s", "ProviderIds": {"Tmdb": "7"}, "Path": "/media/tv/Z"}]
+        real = jellyfin_api.api
+        jellyfin_api.api = lambda method, path, body=None: seen.append(path) or {"Items": items}
+        try:
+            self.assertEqual(pop.Io().owned(), {"tv/7": "s"})
+        finally:
+            jellyfin_api.api = real
+        self.assertIn("Path", seen[0])
+
+
 class FakeIo:
     def __init__(self):
         self.searches, self.scripts, self.tsv_fetches = [], [], 0
