@@ -36,6 +36,7 @@ case $1 in
     case "$*" in
       *"{{.Name}} {{.Config.Image}}"*) echo "/demo-app $ref cid$gen 0 app $D/Demo/compose.yaml" ;;
       "inspect -f {{.Image}} demo-app") echo "$id" ;;
+      "inspect -f {{.Config.Image}} {{.Image}} demo-app") echo "$ref $id" ;;
       *"{{.State.Status}}|"*) echo "running|nohc|$id|cid$gen|0" ;;
       *"com.docker.compose.service"*) echo app ;;
       "inspect -f {{.State.Status}} {{.Image}} demo-app") echo "running $id" ;;
@@ -51,7 +52,8 @@ case $1 in
       "ps --format") echo "demo-app Up" ;;
       pull*) new=$(awk -v r="$ref" '$1==r {print $2}' "$D/pullmap"); [[ -n $new ]] && settag "$new" "$ref"; : ;;
       up*) id=$(lookup "$ref"); [[ -n $id ]] || { echo "Error: no such image $ref"; exit 1; }
-           read -r _ _ gen < "$D/ctr"; echo "$id $ref $((gen + 1))" > "$D/ctr"; echo " Container demo-app Recreated"
+           read -r _ cref gen < "$D/ctr"
+           [[ -e $D/keepctr && $cref == "$ref" && " $* " != *" --force-recreate "* ]] && exit 0; echo "$id $ref $((gen + 1))" > "$D/ctr"; echo " Container demo-app Recreated"
            [[ -e $D/migrate && $id != sha:old ]] && echo migrated > "$D/data/db/app.db"; : ;;
       *) : ;;
     esac ;;
@@ -69,7 +71,7 @@ setup() {  # setup <env ref> <container ref>; tags/pullmap come from the test
   printf 'services:\n  app:\n    image: ${APP_IMAGE}\n' > "$T/Demo/compose.yaml"
   echo "APP_IMAGE=$1" > "$T/Demo/.env"
   echo "sha:old ${2:-$1} 1" > "$T/ctr"
-  : > "$T/pullmap"; : > "$T/log"; rm -rf "$T/backups" "$T/data"; rm -f "$T/configfail" "$T/runfail" "$T/restorefail" "$T/migrate"
+  : > "$T/pullmap"; : > "$T/log"; rm -rf "$T/backups" "$T/data"; rm -f "$T/configfail" "$T/runfail" "$T/restorefail" "$T/migrate" "$T/keepctr"
 }
 run() { out=$(cd "$T" && "$U" "$T/Demo" "$@" 2>&1); rc=$?; }
 ctr() { cat "$T/ctr"; }
@@ -117,6 +119,20 @@ grep -q "^rollback.invalid/img:$TODAY-demo sha:old$" "$T/tags" && ok "old image 
 [[ $(grep -c '^rollback.invalid/img:.*-demo ' "$T/tags") == 3 ]] && ! grep -q '2026-10-01-demo' "$T/tags" && ok "oldest beyond ROLLBACK_KEEP untagged" || bad "keep last N" "$(cat "$T/tags")"
 grep -q 'rollback.invalid/img:2026-10-01-other' "$T/tags" && ok "other projects' rollback tags untouched" || bad "other project untouched"
 grep -n "^tag sha:old rollback.invalid/img:" "$T/log" | head -1 | grep -q . && [[ $(grep -n "^tag sha:old rollback.invalid/img:" "$T/log" | cut -d: -f1) -lt $(grep -n "^compose pull" "$T/log" | cut -d: -f1) ]] && ok "tagged before the pull" || bad "tagged before the pull" "$(cat "$T/log")"
+
+echo "shared tag already moved by another project's pull: the container is recreated on it"
+for m in pull recreate; do
+  setup img:1; printf 'img:1 sha:new\n' > "$T/tags"; echo "sha:old img:1 1" > "$T/ctr"; touch "$T/keepctr"
+  CHECK=true run $m
+  [[ $rc == 0 && $(ctr) == "sha:new img:1 "* ]] && ok "$m: container on the new image" || bad "$m: container on the new image" "rc=$rc $(ctr) $out"
+  [[ $out == *"image UPDATED"* ]] && ok "$m: reported as UPDATED" || bad "$m: reported as UPDATED" "$out"
+  grep -q "^compose up -d --no-deps --force-recreate app" "$T/log" && ok "$m: only the stale service force-recreated" || bad "$m: force-recreate of the stale service" "$(grep 'compose up' "$T/log")"
+done
+
+echo "container already on the tag's image: no forced recreate"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; touch "$T/keepctr"
+CHECK=true run pull
+[[ $rc == 0 ]] && ! grep -q -- "--force-recreate" "$T/log" && ok "nothing forced" || bad "nothing forced" "rc=$rc $(grep 'compose up' "$T/log")"
 
 echo "rollback tag of a registry ref with a port and a path"
 setup reg.example:5000/team/img:1; printf 'reg.example:5000/team/img:1 sha:old\n' > "$T/tags"

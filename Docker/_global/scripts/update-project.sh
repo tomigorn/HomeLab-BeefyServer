@@ -119,6 +119,20 @@ if [[ -n $bkfail ]]; then
 fi
 
 docker compose up -d --remove-orphans ${SERVICES:+--no-deps $SERVICES} 2>&1 | grep -E 'Recreat|Creat|Error|error' | head -8
+# compose keeps a container whose tag another project's pull already moved to a new image
+stale=""
+for n in "${!oldid[@]}"; do
+  IFS='|' read -r _ _ _ _ svc _ <<< "${oldid[$n]}"
+  [[ -n ${SERVICES:-} && " $SERVICES " != *" $svc "* ]] && continue
+  read -r cref cimg < <(docker inspect -f '{{.Config.Image}} {{.Image}}' "$n" 2>/dev/null) || continue
+  [[ -z $cref || $cref == *@* || $cref == sha256:* ]] && continue
+  want=$(docker image inspect -f '{{.Id}}' "$cref" 2>/dev/null) || continue
+  [[ -n $want && $want != "$cimg" && " $stale " != *" $svc "* ]] && stale+=" $svc"
+done
+if [[ -n $stale ]]; then
+  echo "  stale :$stale (tag already on a newer image, force-recreated)"
+  docker compose up -d --no-deps --force-recreate $stale 2>&1 | grep -E 'Recreat|Creat|Error|error' | head -8
+fi
 
 sleep "${WAIT:-45}"
 ok=1; svcs=""; changed=0
