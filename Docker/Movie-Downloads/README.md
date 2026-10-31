@@ -296,6 +296,17 @@ Priority (set 2026-10-26, owner):
 - `scripts/treasure-maps.sh` reads the key from `secrets/treasure-maps.apikey` (gitignored, 600) on every run, enables the indexer and is idempotent. New key: replace the file, re-run the script. A rejected key makes it exit 1 and change nothing.
 - **Enabled and in use** (priority 27, RSS on, grab limit 400/day, no search limit). Account was replaced after the 2026-10-19 block (duplicate after the site migration).
 
+### FlareSolverr
+Local image `flaresolverr-local:v3.5.2` (`flaresolverr/Dockerfile`): upstream v3.5.2 plus the Debian security updates. Upstream's image shipped Chromium 152 (8 critical, 292 high CVEs) and Chromium runs `--no-sandbox` on 1337x/EZTV pages, in gluetun's namespace next to qBittorrent (localhost needs no login) and Prowlarr (security scan 2026-10-31). Auto-update skips it (local build).
+
+| Step | Command (in `Docker/Movie-Downloads`) |
+|---|---|
+| Rebuild (Debian patches, or a new upstream digest in `FROM`) | `sudo docker build --network host --pull --no-cache -t flaresolverr-local:v3.5.2 flaresolverr/` |
+| Driver copy (undetected_chromedriver patches it in place, owned 65119) | `sudo docker run --rm --entrypoint cat flaresolverr-local:v3.5.2 /app/chromedriver > /tmp/cd && sudo install -o 65119 -g 65119 -m 0755 /tmp/cd /srv/appdata/flaresolverr/chromedriver` |
+| Apply | `sudo docker compose up -d --no-deps flaresolverr` |
+| Check | `sudo ../_global/scripts/post-update-check.sh Movie-Downloads` (`md.flaresolverr-chromium`: Chromium = driver major, at least 156) |
+| Rollback | `image: ghcr.io/flaresolverr/flaresolverr:v3.5.2` without `build:`, driver from `~/backups/sec-2026-10-31/chromedriver-v3.5.2-upstream`, apply |
+
 ### Treasure Maps rules
 
 Provider terms (owner, 2026-10-28), account upgraded to Supporter, valid until **2031-11-17**:

@@ -79,6 +79,9 @@ fi
 if want recyclarr; then
   check md.recyclarr-config '^15 4 \* \* \* ok$' "$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' movie-recyclarr | sed -n 's/^CRON_SCHEDULE=//p') $(docker exec movie-recyclarr sh -c 'test -r /config/recyclarr.yml && test -d /config/custom-formats && test -r /config/secrets.yml && echo ok' 2>&1)"
 fi
+if want flaresolverr; then
+  check md.flaresolverr-chromium '^(15[6-9]|1[6-9][0-9]|[2-9][0-9]{2}) match$' "$(v=$(docker exec movie-flaresolverr sh -c 'chromium --version; /app/chromedriver --version' 2>&1 | grep -oE ' [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | cut -d. -f1 | xargs); set -- $v; [ "$#" = 2 ] && [ "$1" = "$2" ] && echo "$1 match" || echo "mismatch $v")"
+fi
 if want prowlarr; then
   check md.prowlarr-auth '^External$' "$(md_auth prowlarr)"
   check md.prowlarr-torrent-indexers '^min5=4 min1=4$' "$(md_arr prowlarr 9696 /api/v1/indexer | jq -r '[.[] | select(.enable) | [.fields[] | select(.name | endswith("inimumSeeders")) | .value][0] | select(. != null)] | "min5=\([.[] | select(. == 5)] | length) min1=\([.[] | select(. == 1)] | length)"' 2>&1)"
