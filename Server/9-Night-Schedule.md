@@ -22,6 +22,7 @@ beefy sleeps (S5) and its timers cannot wake it. Everything recurring runs in on
 | 04:21-04:29 | subtitle-check 04:21 (subtitles changed since the last run, SSD only; findings to the queue-watchdog digest), Seerr jellyfin-full-scan 04:22, Jellyfin trickplay 04:24, backup to fastpi 04:26 (`10-Backup.md`), Wed floppy-abs-key-rotate 04:27, Thu flaresolverr-rebuild 04:27 (window waits for it), Sun fstrim 04:26, Sun xfs/e2 scrub 04:28/04:29 |
 | 04:30-04:44 | anacron 04:30 (`cron.daily` 04:35: chkrootkit, rkhunter), Jellyfin chapters 04:30, Seerr availability-sync 04:30, image-cache 04:32, segments 04:33, apt-daily-upgrade 04:34, Sun blocklisted-tags 04:34, man-db 04:36, Jellyfin studio-logos 04:38, Jellyfin popular lists 04:39 (Prowlarr release checks, never grabs), tmpfiles-clean 04:40, update-notifier 04:41 (Sun motd 04:42), launchpadlib cache clean 04:43 (user), Jellyfin daily tasks 04:35-04:44 |
 | 04:45 | window releases (after the listed jobs), idle watcher powers off ~15 min later |
+| 04:46-05:50 | subtitle-translate (`Docker/Subtitle-Translate`): translated German/English subtitles, one title at a time, no new title after 05:50; holds beefy awake while it runs (only when nobody holds it) |
 
 fastpi pulls from beefy at 04:02-04:20 (never wakes it: `fetch_nowake`).
 
