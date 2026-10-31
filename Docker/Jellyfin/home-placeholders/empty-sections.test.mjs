@@ -1037,6 +1037,13 @@ test("studio list: picking a title or the close button closes the page", async (
   await open();
   win.document.querySelector(".hssList .hssListClose").dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
   assert.equal(win.document.querySelector(".hssList"), null);
+  await open();
+  const tv = win.document.createElement("button");
+  tv.setAttribute("data-hss-play", "x");
+  win.document.querySelector(".hssList .card").appendChild(tv);
+  tv.dispatchEvent(new win.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.ok(win.document.querySelector(".hssList"), "the Play on TV icon of a card (details.js) leaves the list open");
   win.close();
 });
 

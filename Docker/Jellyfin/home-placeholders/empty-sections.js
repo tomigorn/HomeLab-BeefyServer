@@ -934,7 +934,7 @@
         return;
       }
       if (t.closest(".hssListClose")) closeList(doc, true);
-      else if (t.closest(".hssList .card")) win.setTimeout(function () { closeList(doc, false); }, 0);
+      else if (t.closest(".hssList .card") && !t.closest("[data-hss-play]")) win.setTimeout(function () { closeList(doc, false); }, 0);
     }, true);
     win.addEventListener("keydown", function (e) {
       var t = e.target;
