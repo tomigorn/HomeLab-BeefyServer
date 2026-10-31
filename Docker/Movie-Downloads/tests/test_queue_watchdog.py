@@ -358,6 +358,14 @@ class Routing(unittest.TestCase):
                          [("subtitle_repaired", "bazarr", "The Hunt (2012) · en"), ("subtitle_suspect", "bazarr", "Show (2019) S01E02 · de")])
         self.assertEqual(list(self.events.glob("*.json")), [])
 
+    def test_forced_sync_events_go_to_the_digest(self):
+        (self.events / "1.json").write_text(json.dumps({"app": "bazarr", "kind": "subtitle_forced_synced", "title": "Film (2020) · de", "reasons": ["shifted -1.65 s"]}))
+        (self.events / "2.json").write_text(json.dumps({"app": "bazarr", "kind": "subtitle_forced_unverified", "title": "Show (2019) S01E02 · en", "reasons": ["parts disagree"]}))
+        self.go({"radarr": fake()}, T0)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(sorted(e["kind"] for e in digest(self.dir)), ["subtitle_forced_synced", "subtitle_forced_unverified"])
+        self.assertEqual(list(self.events.glob("*.json")), [])
+
     def test_subtitle_check_events_dir_is_watched_by_default(self):
         self.assertIn("/srv/appdata/bazarr/subtitle-check/events", qw.DEFAULT_EVENTS.split(":"))
 

@@ -1,0 +1,39 @@
+[Unit]
+Description=Forced-subtitle sync: offset-only shift of each forced subtitle to the full subtitle of the same title (both SSD branches), unclear ones reported
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+RequiresMountsFor=/srv/video /srv/.disks/ssd-hot /srv/.disks/ssd-hot2
+
+[Service]
+Type=oneshot
+User=buntu
+UMask=0002
+Environment=FS_STATE=/srv/appdata/bazarr/subtitle-check
+# Same branches as subtitle-check; text only, the cold HDD is never read; shifted files are written through the mergerfs path.
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/forced-sync.py --scan /srv/.disks/ssd-hot/media=/srv/video/media /srv/.disks/ssd-hot2/media=/srv/video/media
+NoNewPrivileges=true
+PrivateTmp=true
+# Parses subtitle files from releases (untrusted): buntu, sandboxed, no network; writes only its state dir and shifted subtitles.
+ReadWritePaths=/srv/appdata/bazarr/subtitle-check /srv/video/media
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
