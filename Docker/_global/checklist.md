@@ -6,3 +6,4 @@
 | Antivirus | ❌ | ❌ | | | |
 | Dependency-Track | ❌ | ❌ | | | |
 | Floppy | ❌ | ❌ | | | |
+| Subtitle-Translate | ❌ | ❌ | | | |

@@ -182,6 +182,17 @@ Hooks in SABnzbd / qBittorrent (`hook/download-integrity.py` runs first, then `h
 | Reaches sso (extra_hosts + DOCKER-USER rule) | compose, docker-user-guard.sh | both | `dt.sso-reach`: → 192.168.1.2 200 | |
 | `/tmp` tmpfs with `exec` (zstd native lib) | `docker-compose.v5.yaml` | compose | `dt.tmp-exec`: mount options of /tmp → no noexec | apiserver dies at start without it |
 
+## Subtitle-Translate
+
+| Customization | Where | Reapply | Verify | Update can break |
+|---|---|---|---|---|
+| Both containers healthy (LibreTranslate healthcheck translates, Lingarr answers) | compose | compose | `st.healthy`: → healthy healthy | healthcheck tools (bash `/dev/tcp`, venv python) gone from the image |
+| Offline models, only `LT_LANGUAGES`, no model updates | `/srv/appdata/libretranslate`, `.env` | `Subtitle-Translate/scripts/install-models.sh` | `st.libretranslate-translates`: en→de "Good morning" → Guten Morgen | model format or language codes (`zh-Hans`) change |
+| No egress: internal network | compose | compose | `st.no-egress`: network subtitle-translate-internal → internal=true | |
+| Lingarr login + API key (onboarding done, `AUTH_ENABLED=true`) | Lingarr DB, compose | `Subtitle-Translate/scripts/lingarr-setup.sh` | `st.lingarr-auth`: anonymous / API key → 401 200 | onboarding reset, new auth model |
+| Lingarr content API the script uses (`POST /api/translate/content`, positions) | `scripts/subtitle-translate.py` | - | `st.lingarr-content`: two lines → positions 0,1 | request/response fields renamed |
+| Nightly job 04:46 | `systemd/subtitle-translate.timer` | README "Deploy" | `st.timer`: → active | |
+
 ## Cup-Agent
 
 | Customization | Where | Reapply | Verify | Update can break |
