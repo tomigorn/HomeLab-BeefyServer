@@ -132,6 +132,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Bazarr post-processing subtitle-check.py | Bazarr config | `scripts/subtitle-check-setup.sh` | `md.bazarr-postprocessing`: → true /scripts/subtitle-check.py ok | image drops python3 |
 | Bazarr mod common only, utf8, ffsubsync on original audio, standard frame-rate ratios only (golden-section search off) | Bazarr config | subtitle-check-setup.sh, language-policy.sh | `md.bazarr-mod-common`: → common; `md.bazarr-utf8`: → true; `md.bazarr-subsync`: → true true false false | settings keys renamed; a reset puts `gss` back to Bazarr's default true |
 | Bazarr language profiles | Bazarr DB | language-policy.sh | `md.bazarr-profiles`: → ≥ 22 profiles | |
+| Bazarr minimum score movies 80 (TRaSH; Bazarr default 70), series 90 | Bazarr config | language-policy.sh | `md.bazarr-min-score`: → 80 90 | a reset puts movies back to 70 |
 | Bazarr forced subtitles only when the audio has that language (`audio_only_include` on every forced item, full subtitles always) | Bazarr DB | language-policy.sh (all profiles), language-policy-hook.sh (`bz-*` profiles) | `md.bazarr-forced-audio-only`: → forced=audio-only full=always | profile item keys renamed |
 | VPN port forward to qBittorrent | gluetun + `scripts/qbit-port.sh` | gluetun restart | `md.vpn-port-forward`: vpn-status → true tun0 connected | gluetun control API auth change |
 | Idle watcher reads the VPN tunnel | `Server/8-Idle-Watcher` | – | `md.idle-vpn-probe`: probe_error → 0 | gluetun interface rename |

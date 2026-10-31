@@ -118,6 +118,7 @@ if want bazarr; then
   check md.bazarr-subsync '^true true false false$' "$(md_bz /system/settings | jq -r '.subsync | "\(.use_subsync) \(.use_original_language) \(.no_fix_framerate) \(.gss)"' 2>&1)"
   check md.bazarr-backup-daily '^Daily 14 4$' "$(md_bz /system/settings | jq -r '.backup | "\(.frequency) \(.retention) \(.hour)"' 2>&1)"
   check md.bazarr-profiles '^(2[2-9]|[3-9][0-9]) profiles$' "$(md_bz /system/languages/profiles | jq -r '"\(length) profiles"' 2>&1)"
+  check md.bazarr-min-score '^80 90$' "$(md_bz /system/settings | jq -r '.general | "\(.minimum_score_movie) \(.minimum_score)"' 2>&1)"
   check md.bazarr-forced-audio-only '^forced=audio-only full=always$' "$(md_bz /system/languages/profiles | jq -r '[.[].items[]] | "forced=\(if all(.[] | select(.forced == "True"); .audio_only_include == "True") then "audio-only" else "ALWAYS" end) full=\(if any(.[] | select(.forced != "True"); .audio_only_include == "True" or .audio_exclude == "True") then "AUDIO-BOUND" else "always" end)"' 2>&1)"
 fi
 if want gluetun vpn-status qbittorrent; then

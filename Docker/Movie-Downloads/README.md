@@ -1088,9 +1088,10 @@ Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scor
 - Providers: **YIFY Subtitles** (no account, movies only) and **OpenSubtitles.com**
   (free account, username/password in Bazarr; `use_hash` on, AI-translated and
   machine-translated subtitles **off**). Still possible: **SubDL** and **SubSource**
-  (API keys).
+  (API keys). Podnapisi is gone from Bazarr 1.6 (its settings section is deleted on start).
 - Missing-subs search every 24 h for movies and series (series was still 6 h until 2026-10-20): providers that hash the file read it,
   which would wake the HDD for demoted movies.
+- Minimum score: movies 80 (TRaSH; was 70: 3 of 7 subtitles below 80 were from another cut, measured 2026-10-31), series 90. Below it nothing is downloaded and the next search tries again.
 - OpenSubtitles.com free account: daily download limit. Hit → `DownloadLimitExceeded`, Bazarr throttles the provider for 6 h (`/srv/appdata/bazarr/config/throttled_providers.dat`); subtitles of imports in that window come with the next search.
 
 ### Subtitle tracks and sync

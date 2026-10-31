@@ -223,6 +223,7 @@ bz "$B/system/settings" -X POST "${ARGS[@]}" \
   --data-urlencode "settings-subsync-use_original_language=true" \
   --data-urlencode "settings-subsync-no_fix_framerate=false" \
   --data-urlencode "settings-subsync-gss=false" \
+  --data-urlencode "settings-general-minimum_score_movie=80" \
   --data-urlencode "settings-subsync-use_subsync_threshold=false" \
   --data-urlencode "settings-subsync-use_subsync_movie_threshold=false"
 DEFAULT=$(bz "$B/system/languages/profiles" | py 'import json,sys; print([p["profileId"] for p in json.load(sys.stdin) if p["name"]=="English + German"][0])')
@@ -230,7 +231,7 @@ bz "$B/system/settings" -X POST \
   --data-urlencode "settings-general-serie_default_profile=$DEFAULT" \
   --data-urlencode "settings-general-movie_default_profile=$DEFAULT"
 bz "$B/system/languages/profiles" | py 'import json,sys; [print("   profile", p["profileId"], p["name"], "tag", p["tag"], [i["language"]+("+f" if i["forced"]=="True" else "")+("(audio)" if i["audio_only_include"]=="True" else "") for i in p["items"]]) for p in json.load(sys.stdin)]'
-bz "$B/system/settings" | py 'import json,sys; d=json.load(sys.stdin); g=d["general"]; o=d["opensubtitlescom"]; print("   subsync:", d["subsync"]["use_subsync"], "original audio:", d["subsync"]["use_original_language"], "framerate fix:", not d["subsync"]["no_fix_framerate"], "any ratio (gss):", d["subsync"]["gss"]); print("   tags:", g["serie_tag_enabled"], g["movie_tag_enabled"], "defaults:", g["serie_default_profile"], g["movie_default_profile"], "| opensubtitles ai:", o["include_ai_translated"], "machine:", o["include_machine_translated"], "hash:", o["use_hash"])'
+bz "$B/system/settings" | py 'import json,sys; d=json.load(sys.stdin); g=d["general"]; o=d["opensubtitlescom"]; print("   subsync:", d["subsync"]["use_subsync"], "original audio:", d["subsync"]["use_original_language"], "framerate fix:", not d["subsync"]["no_fix_framerate"], "any ratio (gss):", d["subsync"]["gss"], "min score movies/series:", g["minimum_score_movie"], g["minimum_score"]); print("   tags:", g["serie_tag_enabled"], g["movie_tag_enabled"], "defaults:", g["serie_default_profile"], g["movie_default_profile"], "| opensubtitles ai:", o["include_ai_translated"], "machine:", o["include_machine_translated"], "hash:", o["use_hash"])'
 
 # The hook reaches Bazarr with this key (compose mounts secrets/hook at /secrets:ro).
 install -d -m 2750 -g hook-secret "$HERE/../secrets/hook"   # radarr + sonarr read it via the hook-secret group
