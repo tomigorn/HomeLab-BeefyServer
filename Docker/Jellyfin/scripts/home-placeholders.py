@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upsert the home scripts into the JavaScript Injector plugin config: home-placeholders/empty-sections.js (empty Home Screen Sections keep their heading, our rows) and home-layout.js (row groups, My List band, Because you watched, Coming soon).
+"""Upsert the home scripts into the JavaScript Injector plugin config: home-placeholders/empty-sections.js (empty Home Screen Sections keep their heading, our rows), home-layout.js (row groups, My List band, Because you watched, Coming soon) and continue-remove.js (remove from Continue watching).
 
   home-placeholders.py
 """
@@ -11,6 +11,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 SOURCES = {
     "Empty home sections": HERE.parent / "home-placeholders" / "empty-sections.js",
     "Home layout": HERE.parent / "home-placeholders" / "home-layout.js",
+    "Continue watching remove": HERE.parent / "home-placeholders" / "continue-remove.js",
 }
 
 _spec = importlib.util.spec_from_file_location("tracker_link", HERE / "tracker-link.py")
