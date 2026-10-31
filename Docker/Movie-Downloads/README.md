@@ -1120,9 +1120,23 @@ Per language (profile items, `scripts/language-policy.sh` and `scripts/language-
 
 | Sync limit | Effect | Fix |
 |---|---|---|
-| Bazarr never syncs forced subtitles | a forced track is off by the source's offset (*More Than Honey*: 1.65 s late) | Bazarr → the title → subtitle → Tools → Adjust Times |
+| Bazarr never syncs forced subtitles | a forced track is off by the source's offset (*More Than Honey*: 1.65 s late) | `scripts/forced-sync.py` (nightly, below); by hand: Bazarr → the title → subtitle → Tools → Adjust Times |
 | ffsubsync applies one offset + one speed factor | a subtitle from another cut (TV broadcast, other edition) is off after the cut | other subtitle, or shift per part |
 | golden-section search (`gss`) | finds non-standard speed factors (1.02, 1.08) that wreck a subtitle; off since 2026-10-31 | `md.bazarr-subsync` checks it |
+
+**Forced sync** (`scripts/forced-sync.py`, `systemd/forced-sync.timer` daily 04:23, `Persistent=false`, sandboxed like the subtitle check):
+
+| | |
+|---|---|
+| What | each `*.forced.srt` on both SSD branches is shifted by one constant offset (no speed change) to the full subtitle of the same title: same language, else English, else German |
+| Accepted when | per third of the cues the edges match the reference (≥ 50 %, clear peak) and the thirds agree within 0.3 s; under 0.15 s = in sync, nothing written |
+| Left alone, reported once | no reference, fewer than 5 cues, no clear peak, thirds disagree, offset over 30 s (digest `subtitle_forced_synced` / `subtitle_forced_unverified`) |
+| Original | `/srv/appdata/bazarr/subtitle-check/backup/` (same as the subtitle check) |
+| State | `forced-sync-state.json` (file + reference mtime and size): a file is looked at again only when it or its reference changed; log `forced-sync.log`, last run `forced-sync-status.json` |
+| By hand | `sudo systemctl start forced-sync.service`, or `scripts/forced-sync.py --dry-run --scan <branch>=<merged>` |
+| Install | `sudo install -m 0644 systemd/forced-sync.service systemd/forced-sync.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now forced-sync.timer` |
+| Tests | `python3 tests/test_forced_sync.py` |
+| Not done | no audio reference (needs audio reads, would spin up the HDD); a forced file without a text reference stays as it is |
 
 - Re-sync one subtitle: Bazarr → the title → subtitle → Sync (reference = an audio track or another subtitle), or `PATCH /api/subtitles?action=sync&reference=a:<n>`.
 - Wrong subtitle: Bazarr → History → blacklist it; Bazarr deletes it and searches again.
