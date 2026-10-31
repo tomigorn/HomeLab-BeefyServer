@@ -1,0 +1,26 @@
+[Unit]
+Description=Rotate the floppy-sync ABS API key 45 days before it expires, Telegram alert when it fails or expires within 30 days
+Documentation=file:///home/buntu/Projects/Docker/Floppy/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root-owned copy (README "Install"), never the buntu-writable repo file.
+ExecStart=/usr/bin/python3 -I /usr/local/lib/floppy-abs-push/abs-key-rotate.py auto
+StateDirectory=floppy-abs-key
+StateDirectoryMode=0755
+ReadWritePaths=/home/buntu/Projects/Docker/Floppy/secrets
+TimeoutStartSec=5min
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+UMask=0077

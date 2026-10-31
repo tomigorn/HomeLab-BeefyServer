@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly floppy-sync ABS key rotation check (Wed 04:27, maintenance window)
+
+[Timer]
+OnCalendar=Wed *-*-* 04:27:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target
