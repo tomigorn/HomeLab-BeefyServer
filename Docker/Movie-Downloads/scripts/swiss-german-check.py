@@ -74,7 +74,9 @@ def check_app(app, cfg):
     check("one allowed quality group (a Swiss German release replaces a better non-Swiss file)", len(allowed) == 1 and len(allowed[0].get("items", [])) > 10, [i.get("name") for i in allowed])
     check("upgrades on, until Swiss German + 2160p", sw["upgradeAllowed"] and sw["cutoffFormatScore"] == score.get("Audio: Swiss German", 0) + score.get("Resolution: 2160p", 0), sw["cutoffFormatScore"])
     check("Audio: Swiss German = 1000000", score.get("Audio: Swiss German") == 1000000, score.get("Audio: Swiss German"))
-    check("German (dub only) and Language: Not Original = 0", score.get("German") == 0 and score.get("Language: Not Original") == 0, (score.get("German"), score.get("Language: Not Original")))
+    # Radarr: own `Language: Not Original (sound film)` (silent films exempt) replaced the TRaSH one.
+    no = "Language: Not Original (sound film)" if app == "radarr" else "Language: Not Original"
+    check(f"German (dub only) and {no} = 0", score.get("German") == 0 and score.get(no) == 0, (score.get("German"), score.get(no)))
     check("rejects (LQ, BR-DISK, Upscaled, DV w/o HDR) <= -2000000", all(score.get(n, 0) <= -2000000 for n in ("LQ", "BR-DISK", "Upscaled", "DV (w/o HDR fallback)")))
     res = [score.get(f"Resolution: {r}", 0) for r in ("2160p", "1080p", "720p", "SD")]
     # Sonarr gives DVD a resolution (480p, so Resolution: SD); Radarr does not, hence its own Resolution: DVD.

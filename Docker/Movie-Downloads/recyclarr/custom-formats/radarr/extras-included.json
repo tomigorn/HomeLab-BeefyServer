@@ -1,0 +1,19 @@
+{
+  "trash_id": "f64c4e49e58637dc3454cd83cf8afaf4",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "Extras: included",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+    {
+      "name": "Film plus extras (+, incl., with, and ... after the year)",
+      "implementation": "ReleaseTitleSpecification",
+      "negate": false,
+      "required": true,
+      "fields": {
+        "value": "(?<=\\b[12]\\d{3}\\b).*(?:(?:\\+[ ._-]*|\\b(?:incl(?:uding|udes)?|inkl|with|w|plus|and)[ ._/-]+|&[ ._-]*)(?:the[ ._-]+)?(?:all[ ._-]+)?(?:extras|bonus(?:[ ._-]?(?:disc|discs|features|material|content))?|featurettes?|special[ ._-]features|behind[ ._-]the[ ._-]scenes)|\\b(?:extras|bonus[ ._-]?(?:disc|features|material)|special[ ._-]features|featurettes)[ ._-]+incl(?:uded)?)\\b"
+      }
+    }
+  ]
+}

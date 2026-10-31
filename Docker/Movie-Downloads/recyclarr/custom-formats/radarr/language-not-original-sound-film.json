@@ -1,0 +1,30 @@
+{
+  "trash_id": "407b19e75520927cd8551b168bd6ae63",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "Language: Not Original (sound film)",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+    {
+      "name": "Not Original",
+      "implementation": "LanguageSpecification",
+      "negate": true,
+      "required": true,
+      "fields": {
+        "value": -2,
+        "exceptLanguage": false
+      }
+    },
+    {
+      "name": "Film from 1930 on (silent films exempt)",
+      "implementation": "YearSpecification",
+      "negate": false,
+      "required": true,
+      "fields": {
+        "min": 1930,
+        "max": 3000
+      }
+    }
+  ]
+}
