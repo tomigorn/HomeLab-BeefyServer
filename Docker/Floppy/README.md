@@ -71,7 +71,7 @@ Files under `secrets/` (gitignored); `docker inspect` shows no value. How-to: `.
 | `secrets/floppy_redis_password` | `65126:65125 0440` | redis (config on tmpfs), floppy builds `REDIS_URL` in its compose `entrypoint` |
 | `secrets/floppy_oidc_providers` | `65125:65125 0400` | allauth `SOCIALACCOUNT_PROVIDERS_FILE`; written from fastpi by `provision-tracker-sso.py` |
 | `secrets/floppy_seerr_webhook_secret` | `65125:65125 0400` | `SEERR_GLOBAL_WEBHOOK_SECRET_FILE`; Seerr gets it from `../Seerr/scripts/seerr-webhook.py apply` |
-| `secrets/floppy-sync-abs-key` | `root:root 0600` | ABS API key of the service user `floppy-sync`, read only by `floppy-abs-push` (`LoadCredential`), never by Floppy; `sudo scripts/abs-push.py store-key` |
+| `secrets/floppy-sync-abs-key` | `root:root 0600` | ABS API key of the service user `floppy-sync` (expires after 365 days, rotated automatically, see "Key rotation"), read only by `floppy-abs-push` (`LoadCredential`) and `floppy-abs-key-rotate`, never by Floppy; `sudo scripts/abs-push.py store-key` |
 
 ## Deploy
 
@@ -152,15 +152,15 @@ ABS 2.37 sends no progress events (notifications: backups, podcast downloads, RS
 
 | | |
 |---|---|
-| Install | `sudo install -d -m 0755 /usr/local/lib/floppy-abs-push && sudo install -o root -g root -m 0644 scripts/abs-push.py scripts/abs-push-apply.py /usr/local/lib/floppy-abs-push/ && sudo install -m 0644 systemd/floppy-abs-push.* /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now floppy-abs-push.timer` |
-| Root-owned copy | the unit runs `/usr/local/lib/floppy-abs-push/abs-push*.py` (root:root 644), not the buntu-writable repo files: after every change to `scripts/abs-push*.py` repeat the first two `install` commands (post-update check `floppy.abs-push-root-copy`) |
-| Key | ABS (as an admin) → Settings → Users → add `floppy-sync`, type Admin, random password; Settings → API Keys → Add, name `floppy-sync`, no expiry, acting as `floppy-sync`; then `ssh -t beefy 'sudo ~/Projects/Docker/Floppy/scripts/abs-push.py store-key'` (hidden prompt; checks `GET /api/me` = `floppy-sync`, admin, active, else stores nothing) |
+| Install | `sudo install -d -m 0755 /usr/local/lib/floppy-abs-push && sudo install -o root -g root -m 0644 scripts/abs-push.py scripts/abs-push-apply.py scripts/abs-key-rotate.py /usr/local/lib/floppy-abs-push/ && sudo install -m 0644 systemd/floppy-abs-push.* systemd/floppy-abs-key-rotate.* /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now floppy-abs-push.timer floppy-abs-key-rotate.timer` |
+| Root-owned copy | the unit runs `/usr/local/lib/floppy-abs-push/abs-push*.py` (root:root 644), not the buntu-writable repo files: after every change to `scripts/abs-push*.py` or `scripts/abs-key-rotate.py` repeat the first two `install` commands (post-update check `floppy.abs-push-root-copy`) |
+| Key | ABS (as an admin) → Settings → Users → add `floppy-sync`, type Admin, random password; Settings → API Keys → Add, name `floppy-sync`, acting as `floppy-sync` (expiry: the rotation sets 365 days); then `ssh -t beefy 'sudo ~/Projects/Docker/Floppy/scripts/abs-push.py store-key'` (hidden prompt; checks `GET /api/me` = `floppy-sync`, admin, active, else stores nothing) |
 | targets | root (`ExecStartPre=+`): active Floppy usernames minus `abr`, `audiobook-importer`, `floppy-sync`, `root` and `/etc/floppy-abs-push/exclude` → `targets.json` |
 | fetch | `DynamicUser`, key via `LoadCredential`, HTTPS to the fixed ABS URL only, **GET only** (client refuses any other method, paths outside `/api/` and redirects; tested); `/api/me` (must be `floppy-sync`), `/api/users`, `/api/users/<id>` per matching active non-root user (mediaProgress), then (only when a `lastUpdate` changed or a cover is >20 h old) every item + cover → spool `/var/lib/floppy-abs-push/pending/` |
 | apply | root (`docker exec` into floppy): lists the targets again itself and refuses a spool file whose name is no target or whose `payload.user` differs (the spool is written by the unprivileged fetch step); `scripts/abs-push-apply.py` runs Floppy's `AudiobookshelfImporter` on the spool, stores covers in Floppy's cover cache; spool → state only after `RESULT ok` |
 | Logs | `journalctl -u floppy-abs-push -n 20 -o cat` (`targets: N`, then one line per user: rows, imported, covers, warnings) |
 | Selftest | `sudo scripts/abs-push.py selftest` → `ok dry-run` (synthetic book, rolled back) |
-| Tests | `cd scripts && python3 -m unittest test_abs_push` |
+| Tests | `cd scripts && python3 -m unittest test_abs_push test_abs_key_rotate` |
 
 Why admin: ABS 2.37 returns another user's mediaProgress only from `GET /api/users/:id` (and the list from `GET /api/users`), both `isAdminOrUp`; a `user`/`guest` key gets 403. Admin (not root) is the minimum.
 
@@ -168,7 +168,9 @@ Why admin: ABS 2.37 returns another user's mediaProgress only from `GET /api/use
 
 | | |
 |---|---|
-| Rotate | ABS → Settings → API Keys → Add a new `floppy-sync` key (acting as `floppy-sync`), `ssh -t beefy 'sudo ~/Projects/Docker/Floppy/scripts/abs-push.py store-key'`, `sudo systemctl start floppy-abs-push` → `ok …`, then delete the old key in ABS |
+| Key rotation | ABS API keys can expire: the key expires after 365 days. Timer `floppy-abs-key-rotate` (Wed 04:27, maintenance window) runs `scripts/abs-key-rotate.py auto` (root-owned copy): 45 days before expiry (or when it never expires) it creates a new `floppy-sync` key with the old one, checks expiry ≈ 365 days and `/api/me` = `floppy-sync` admin, stores it, deletes the old key with the new one; a failed check deletes the new key, the old stays. Its ABS client allows only `/api/me` and `/api/api-keys` |
+| Alert | Telegram straight from beefy (`_global/scripts/oob-alert.sh`): rotation failed, or < 30 days left. State `/var/lib/floppy-abs-key/status.json` (`key-id` = current key id); post-update check `floppy.abs-key-rotate` |
+| Rotate now | `sudo python3 -I /usr/local/lib/floppy-abs-push/abs-key-rotate.py rotate` → `ok rotated=True days_left=365`. By hand without the script: ABS → Settings → API Keys → Add a new `floppy-sync` key (acting as `floppy-sync`, 365 days), `ssh -t beefy 'sudo ~/Projects/Docker/Floppy/scripts/abs-push.py store-key'`, delete the old key in ABS, `echo <new key id> \| sudo tee /var/lib/floppy-abs-key/key-id` |
 | Revoke (leak) | ABS → Settings → API Keys → delete `floppy-sync` (or Users → `floppy-sync` → disable); `sudo rm Docker/Floppy/secrets/floppy-sync-abs-key`; `sudo systemctl disable --now floppy-abs-push.timer` |
 
 Seerr name = Seerr display name (the Jellyfin username), case-insensitive. Test: mark a film played in Jellyfin → it shows as completed in the member's Tracker; `sudo docker logs floppy 2>&1 | grep -i -E "webhook_finished|Seerr accepted|Audiobookshelf" | tail`.
