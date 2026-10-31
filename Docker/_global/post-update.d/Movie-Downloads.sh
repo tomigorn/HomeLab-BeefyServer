@@ -87,6 +87,7 @@ if want recyclarr; then
 fi
 if want flaresolverr; then
   check md.flaresolverr-chromium '^(15[6-9]|1[6-9][0-9]|[2-9][0-9]{2}) match$' "$(v=$(docker exec movie-flaresolverr sh -c 'chromium --version; /app/chromedriver --version' 2>&1 | grep -oE ' [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | cut -d. -f1 | xargs); set -- $v; [ "$#" = 2 ] && [ "$1" = "$2" ] && echo "$1 match" || echo "mismatch $v")"
+  check md.flaresolverr-rebuild '^enabled (success|)$' "$(systemctl is-enabled flaresolverr-rebuild.timer 2>&1) $(systemctl show -p Result --value flaresolverr-rebuild.service 2>&1)"
 fi
 if want prowlarr; then
   check md.prowlarr-auth '^External$' "$(md_auth prowlarr)"
