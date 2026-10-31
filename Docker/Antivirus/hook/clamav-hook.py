@@ -16,8 +16,9 @@ import socket
 import struct
 import sys
 import time
-import urllib.parse
-import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from qbit_session import Qbit  # noqa: E402
 
 CLAMD_HOST = os.environ.get("CLAMD_HOST", "clamav")
 CLAMD_PORT = int(os.environ.get("CLAMD_PORT", "3310"))
@@ -197,10 +198,10 @@ def container_path(path, probe=None):
 
 
 def qbit(torrent_hash):
+    api = Qbit(QBIT_API)
     for endpoint, data in (("stop", {"hashes": torrent_hash}), ("addTags", {"hashes": torrent_hash, "tags": "infected"})):
         try:
-            req = urllib.request.Request(QBIT_API + "/api/v2/torrents/" + endpoint, data=urllib.parse.urlencode(data).encode())
-            urllib.request.urlopen(req, timeout=10).read()
+            api.post("torrents/" + endpoint, data)
         except OSError as e:
             print("qBittorrent %s failed: %s" % (endpoint, e))
 

@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hook", "clamav-hook.py")
 EICAR = rb"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
@@ -56,14 +57,33 @@ class FakeClamdHandler(socketserver.StreamRequestHandler):
 
 
 class FakeQbit(http.server.ThreadingHTTPServer):
-    def __init__(self):
+    """password set: like qBittorrent without the localhost bypass, every call needs the SID of a login first."""
+    def __init__(self, password=None):
         self.calls = []
+        self.logins = []
+        self.password = password
         super().__init__(("127.0.0.1", 0), FakeQbitHandler)
 
 
 class FakeQbitHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
+        if self.path == "/api/v2/auth/login":
+            form = urllib.parse.parse_qs(body)
+            self.server.logins.append(form.get("username", [""])[0])
+            ok = form.get("password", [""])[0] == self.server.password
+            self.send_response(204 if ok else 200)
+            if ok:
+                self.send_header("Set-Cookie", "QBT_SID_8080=good; HttpOnly; path=/")
+            self.end_headers()
+            if not ok:
+                self.wfile.write(b"Fails.")
+            return
+        if self.server.password is not None and "QBT_SID_8080=good" not in (self.headers.get("Cookie") or ""):
+            self.send_response(403)
+            self.end_headers()
+            self.wfile.write(b"Forbidden")
+            return
         self.server.calls.append((self.path, body))
         self.send_response(200)
         self.end_headers()
@@ -308,6 +328,34 @@ class HookTest(unittest.TestCase):
         self.assertFalse(os.path.exists(bad))
         self.assertIn(("/api/v2/torrents/stop", "hashes=abc123"), qbit.calls)
         self.assertIn(("/api/v2/torrents/addTags", "hashes=abc123&tags=infected"), qbit.calls)
+
+    def test_qbit_without_localhost_bypass_logs_in_with_the_password_file(self):
+        qbit = serve(FakeQbit(password="p&ss w+rd"))
+        self.addCleanup(qbit.server_close)
+        self.addCleanup(qbit.shutdown)
+        pw = os.path.join(self.t, "qbit.password")
+        with open(pw, "w") as f:
+            f.write("p&ss w+rd\n")
+        bad = self.write("Some.Movie.2026.exe", EICAR)
+        r = self.run_hook("--qbit", "abc123", bad, QBIT_API="http://127.0.0.1:%d" % qbit.server_address[1], QBIT_PASS_FILE=pw)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(qbit.logins, ["admin"], "one login for both calls")
+        self.assertEqual(qbit.calls, [("/api/v2/torrents/stop", "hashes=abc123"), ("/api/v2/torrents/addTags", "hashes=abc123&tags=infected")])
+        self.assertNotIn("p&ss", r.stdout + r.stderr)
+
+    def test_qbit_refused_login_still_quarantines(self):
+        qbit = serve(FakeQbit(password="right"))
+        self.addCleanup(qbit.server_close)
+        self.addCleanup(qbit.shutdown)
+        pw = os.path.join(self.t, "qbit.password")
+        with open(pw, "w") as f:
+            f.write("wrong\n")
+        bad = self.write("setup.exe", EICAR)
+        r = self.run_hook("--qbit", "abc123", bad, QBIT_API="http://127.0.0.1:%d" % qbit.server_address[1], QBIT_PASS_FILE=pw)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(bad))
+        self.assertEqual(qbit.calls, [])
+        self.assertIn("login refused", r.stdout)
 
     def test_qbit_clean_torrent_makes_no_api_calls(self):
         qbit = serve(FakeQbit())

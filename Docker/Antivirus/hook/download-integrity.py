@@ -16,8 +16,9 @@ import shutil
 import subprocess
 import sys
 import time
-import urllib.parse
-import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from qbit_session import Qbit  # noqa: E402
 
 TEXTFILE = os.environ.get("TEXTFILE", "/clamav")
 HOST = os.environ.get("HOST", "beefy")
@@ -234,10 +235,10 @@ def record(client, title, corrupt, errors):
 
 
 def qbit(torrent_hash):
+    api = Qbit(QBIT_API)
     for endpoint, data in (("recheck", {"hashes": torrent_hash}), ("addTags", {"hashes": torrent_hash, "tags": "corrupt"})):
         try:
-            req = urllib.request.Request(QBIT_API + "/api/v2/torrents/" + endpoint, data=urllib.parse.urlencode(data).encode())
-            urllib.request.urlopen(req, timeout=10).read()
+            api.post("torrents/" + endpoint, data)
         except OSError as e:
             print("qBittorrent %s failed: %s" % (endpoint, e))
 

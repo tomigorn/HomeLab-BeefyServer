@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.parse
 
 HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "hook", "download-integrity.py")
 MIB = 1 << 20
@@ -24,14 +25,33 @@ def media(mib, header=MKV, zero_blocks=(), tail=12345):
 
 
 class FakeQbit(http.server.ThreadingHTTPServer):
-    def __init__(self):
+    """password set: like qBittorrent without the localhost bypass, every call needs the SID of a login first."""
+    def __init__(self, password=None):
         self.calls = []
+        self.logins = []
+        self.password = password
         super().__init__(("127.0.0.1", 0), FakeQbitHandler)
 
 
 class FakeQbitHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
+        if self.path == "/api/v2/auth/login":
+            form = urllib.parse.parse_qs(body)
+            self.server.logins.append(form.get("username", [""])[0])
+            ok = form.get("password", [""])[0] == self.server.password
+            self.send_response(204 if ok else 200)
+            if ok:
+                self.send_header("Set-Cookie", "QBT_SID_8080=good; HttpOnly; path=/")
+            self.end_headers()
+            if not ok:
+                self.wfile.write(b"Fails.")
+            return
+        if self.server.password is not None and "QBT_SID_8080=good" not in (self.headers.get("Cookie") or ""):
+            self.send_response(403)
+            self.end_headers()
+            self.wfile.write(b"Forbidden")
+            return
         self.server.calls.append((self.path, body))
         self.send_response(200)
         self.end_headers()
@@ -240,6 +260,20 @@ class IntegrityTest(unittest.TestCase):
         self.assertIn("/api/v2/torrents/recheck", paths)
         self.assertIn(("/api/v2/torrents/addTags", "hashes=abc123&tags=corrupt"), qbit.calls)
         self.assertEqual(self.metric("download_integrity_corrupt_total", "qbittorrent"), 1)
+
+    def test_qbit_without_localhost_bypass_logs_in(self):
+        qbit = FakeQbit(password="s3cret")
+        threading.Thread(target=qbit.serve_forever, daemon=True).start()
+        self.addCleanup(qbit.server_close)
+        self.addCleanup(qbit.shutdown)
+        pw = os.path.join(self.t, "qbit.password")
+        with open(pw, "w") as f:
+            f.write("s3cret\n")
+        self.write("ep.mkv", media(3, zero_blocks=[1]))
+        r = self.run_hook("--qbit", "abc123", self.job, QBIT_API="http://127.0.0.1:%d" % qbit.server_address[1], QBIT_PASS_FILE=pw)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(qbit.logins, ["admin"])
+        self.assertEqual([c[0] for c in qbit.calls], ["/api/v2/torrents/recheck", "/api/v2/torrents/addTags"])
 
     def test_qbit_clean_torrent_hands_over_to_clamav(self):
         self.write("ep.mkv", media(2))

@@ -54,6 +54,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 |---|---|---|
 | SABnzbd | script folder `/clamav-hook`, default category script `download-integrity.py` (checks the data on disk, then runs `clamav-hook.py`), "User script can flag job as failed" on | `download-integrity.py <final dir> …` |
 | qBittorrent | Run external program on torrent finished | `/clamav-hook/download-integrity.py --qbit "%I" "%F"` (then `clamav-hook.py`) |
+| qBittorrent API (stop, tag) | no localhost bypass (B-02) | `hook/qbit_session.py`: on 403 one login as `admin`, password `/run/secrets/qbit-webui.password` (`QBIT_PASS_FILE`); the queue worker (.204) is whitelisted and never logs in |
 
 - Set by `../Movie-Downloads/scripts/clamav-hooks.sh` (idempotent). The hook is mounted read-only from `hook/`: a change is live at once.
 - Streams each file to clamd (`INSTREAM`, Python stdlib, no clamdscan or docker socket in the clients). Files over 2 GiB are skipped; the nightly scan has the same limit.
