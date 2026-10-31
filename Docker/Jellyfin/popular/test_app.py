@@ -2,6 +2,7 @@ import contextlib
 import datetime
 import io
 import json
+import os
 import pathlib
 import socket
 import sqlite3
@@ -272,7 +273,7 @@ class Attribution(Base):
         self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=self.GUEST)[0], 200)
         self.assertEqual(self.sent_as(), 5)
         a = self.audit()[-1]
-        self.assertEqual((a["via"], a["seerrUser"], a["person"], a["source"]), ("linked Seerr user", 5, 5, "jellyfin"))
+        self.assertEqual((a["via"], a["seerrUser"], a["person"], a["source"], a["match"]), ("linked Seerr user", 5, 5, "jellyfin", "name"))
 
     def test_other_sign_in_provider_does_not_count(self):
         self.seerr.linked[5] = holy_grail("guest", slug="elsewhere")
@@ -361,6 +362,100 @@ class Attribution(Base):
         self.assertEqual(self.sent_as(), 20)
 
 
+class SubjectMatch(Base):
+    GUEST = "b" * 32
+    GUEST_ID = "11111111222233334444555555555555"
+
+    def setUp(self):
+        super().setUp()
+        self.seerr.users.append({"id": 20, "email": app.SERVICE_EMAIL, "permissions": 160, "userType": 2})
+        self.seerr.users.append({"id": 5, "email": "x5", "permissions": 24736, "userType": 2})
+        self.ids = pathlib.Path(self.tmp.name, "identity.json")
+        self.core.cfg.identity_file = self.ids
+
+    def identities(self, jellyfin, seerr):
+        self.ids.write_text(json.dumps({"updated": "2026-10-31T00:00:00", "jellyfin": jellyfin, "seerr": seerr}))
+
+    def sent_as(self):
+        return [p for p in self.seerr.posts if p[0] == "request"][-1][2]
+
+    def test_same_sign_in_subject_is_the_requester(self):
+        self.identities({self.GUEST_ID: "sub-guest"}, {"5": "sub-guest"})
+        self.seerr.linked[5] = holy_grail("someone-else")
+        self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token=self.GUEST)[0], 200)
+        a = self.audit()[-1]
+        self.assertEqual((self.sent_as(), a["via"], a["person"], a["match"]), (5, "linked Seerr user", 5, "subject"))
+        self.assertEqual(self.seerr.link_gets, 0)
+
+    def test_renamed_user_keeps_their_account_and_the_new_holder_of_the_old_name_does_not_get_it(self):
+        self.identities({self.GUEST_ID: "sub-guest", "22222222222233334444555555555555": "sub-new"}, {"5": "sub-guest"})
+        self.seerr.linked[5] = holy_grail("guest")
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest-renamed", kind="movie"), (5, "linked Seerr user", 5, "subject"))
+        self.assertEqual(self.core.seerr_user("22222222222233334444555555555555", name="guest", kind="movie"), (20, "service user: no Seerr account", None, None))
+
+    def test_account_with_a_known_other_subject_is_never_matched_by_name(self):
+        self.identities({}, {"5": "sub-guest"})
+        self.seerr.linked[5] = holy_grail("guest")
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest", kind="movie"), (20, "service user: no Seerr account", None, None))
+
+    def test_name_fallback_only_where_the_subject_is_unknown(self):
+        self.identities({self.GUEST_ID: "sub-guest"}, {})
+        self.seerr.linked[5] = holy_grail("Guest")
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest", kind="movie"), (5, "linked Seerr user", 5, "name"))
+        self.assertIn("name fallback", out.getvalue())
+
+    def test_without_any_identity_map_the_name_is_the_fallback(self):
+        self.seerr.linked[5] = holy_grail("guest")
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest", kind="movie")[3], "name")
+        self.ids.write_text("{not json")
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest", kind="movie")[3], "name")
+
+    def test_broken_identity_file_keeps_the_last_good_map(self):
+        self.seerr.linked[5] = holy_grail("guest")
+        self.identities({}, {"5": "sub-guest"})
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest", kind="movie")[:3], (20, "service user: no Seerr account", None))
+        for bad in ("{not json", json.dumps({"jellyfin": [], "seerr": "x"}), json.dumps({"jellyfin": {}, "seerr": {"x": "s"}})):
+            self.ids.write_text(bad)
+            self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest", kind="movie")[:3], (20, "service user: no Seerr account", None), bad)
+        self.ids.unlink()
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest", kind="movie")[:3], (20, "service user: no Seerr account", None))
+
+    def test_two_unmapped_accounts_with_the_name_are_ambiguous(self):
+        self.seerr.users.append({"id": 6, "email": "x6", "permissions": 24736, "userType": 2})
+        self.identities({self.GUEST_ID: "sub-guest"}, {})
+        self.seerr.linked[5] = self.seerr.linked[6] = holy_grail("guest")
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest", kind="movie")[:3], (20, "service user: ambiguous Seerr account", None))
+
+    def test_identity_file_reread_when_it_changes(self):
+        self.identities({self.GUEST_ID: "sub-guest"}, {})
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="nobody", kind="movie")[0], 20)
+        self.identities({self.GUEST_ID: "sub-guest"}, {"5": "sub-guest"})
+        os.utime(self.ids, ns=(1, 2))
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="nobody", kind="movie")[3], "subject")
+
+    def test_jellyfin_link_comes_first(self):
+        self.identities({"40e05f0a9e964fd9b225eb1379dfcfa4": "sub-jane"}, {"5": "sub-jane"})
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.assertEqual((self.sent_as(), self.audit()[-1]["match"]), (7, "jellyfin"))
+
+    def test_subject_of_an_account_linked_to_another_jellyfin_user_does_not_count(self):
+        self.seerr.users[2]["jellyfinUserId"] = "ffffffffffffffffffffffffffffffff"
+        self.identities({self.GUEST_ID: "sub-guest"}, {"5": "sub-guest"})
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest", kind="movie")[:3], (20, "service user: no Seerr account", None))
+
+    def test_two_accounts_with_the_subject_are_ambiguous(self):
+        self.seerr.users.append({"id": 6, "email": "x6", "permissions": 24736, "userType": 2})
+        self.identities({self.GUEST_ID: "sub-guest"}, {"5": "sub-guest", "6": "sub-guest"})
+        self.assertEqual(self.core.seerr_user(self.GUEST_ID, name="guest", kind="movie")[:3], (20, "service user: ambiguous Seerr account", None))
+
+    def test_dry_run_says_which_path_matched(self):
+        self.identities({self.GUEST_ID: "sub-guest"}, {"5": "sub-guest"})
+        out = self.core.dry_who(self.GUEST_ID, "guest", "movie", {})
+        self.assertEqual((out["dryAs"], out["match"]), (5, "subject"))
+        self.assertEqual([p for p in self.seerr.posts if p[0] == "request"], [])
+
+
 class Origins(Base):
     def setUp(self):
         super().setUp()
@@ -380,6 +475,72 @@ class Origins(Base):
         self.assertEqual(reqs[ids[1]], {"source": "jellyfin", "name": "guest", "seerrUser": 20, "person": None, "service": True})
         self.assertNotIn("@", self.export.read_text())
         self.assertNotIn("userId", self.export.read_text())
+
+    def jellyfin_names(self, **names):
+        self.jf_users = [{"Id": "40e05f0a-9e96-4fd9-b225-eb1379dfcfa4", "Name": names.get("jane", "jane")},
+                         {"Id": "11111111-2222-3333-4444-555555555555", "Name": names.get("guest", "guest")}]
+        def admin(method, path, body=None):
+            if method == "GET" and path == "/Users":
+                return self.jf_users
+            raise AssertionError((method, path))
+        self.core.jellyfin_admin = admin
+
+    def test_export_shows_the_current_jellyfin_name(self):
+        self.jellyfin_names(guest="Guesty")
+        self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token="b" * 32)
+        self.assertEqual([v["name"] for v in self.origins()["requests"].values()], ["Guesty"])
+        self.jf_users[1]["Name"] = "Guest Renamed"
+        self.now = NOW + datetime.timedelta(minutes=5)
+        self.core.refresh_origins()
+        self.assertEqual([v["name"] for v in self.origins()["requests"].values()], ["Guest Renamed"])
+
+    def test_export_takes_the_seerr_display_name_without_a_jellyfin_name(self):
+        self.seerr.users[0]["displayName"] = "Jane D"
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.assertEqual([v["name"] for v in self.origins()["requests"].values()], ["Jane D"])
+
+    def test_mail_like_current_names_are_never_exported(self):
+        self.seerr.users[0]["displayName"] = "jane@example.com"
+        self.jellyfin_names(jane="jane@example.com")
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.assertEqual([v["name"] for v in self.origins()["requests"].values()], ["jane"])
+        self.assertNotIn("@", self.export.read_text())
+
+    def test_name_lookups_failing_keep_the_stored_name(self):
+        def down(*a, **k):
+            raise OSError("down")
+        self.core.jellyfin_admin = down
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        self.core.seerr = down
+        self.now = NOW + datetime.timedelta(minutes=5)
+        self.core.refresh_origins()
+        self.assertEqual([v["name"] for v in self.origins()["requests"].values()], ["jane"])
+
+    def test_failed_name_lookups_are_not_retried_for_30_s(self):
+        calls = []
+        def down(*a, **k):
+            calls.append(1)
+            raise OSError("down")
+        self.core.jellyfin_admin = down
+        self.core.current_names()
+        self.core.current_names()
+        self.assertEqual(len(calls), 1)
+        self.now = NOW + datetime.timedelta(seconds=31)
+        self.core.current_names()
+        self.assertEqual(len(calls), 2)
+
+    def test_refresh_rewrites_only_on_change(self):
+        self.jellyfin_names()
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"})
+        first = self.origins()["updated"]
+        self.now = NOW + datetime.timedelta(minutes=10)
+        self.core.refresh_origins()
+        self.assertEqual(self.origins()["updated"], first)
+        self.jf_users[0]["Name"] = "Jane New"
+        self.now = NOW + datetime.timedelta(minutes=20)
+        self.core.refresh_origins()
+        self.assertNotEqual(self.origins()["updated"], first)
+        self.assertEqual([v["name"] for v in self.origins()["requests"].values()], ["Jane New"])
 
     def test_moonfin_and_tv_sources(self):
         e = self.core.allow()["tok-movie-xxxxxxxxxxxx"]

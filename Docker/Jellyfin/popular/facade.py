@@ -583,8 +583,8 @@ class Facade:
         if mode == "now" and self.core.now_tag(kind) is None:
             self.core.audit(**log, decision="dry-run: refused: no download-now tag")
             return self.refusal(503, {"error": "download now unavailable"})
-        sid, via, person = self.core.seerr_user(jf_id, create=False, name=log.get("user"), kind=kind)
-        log.update(dryAs=sid, dryVia=via, person=person, source=app.SOURCES.get(log.get("via"), "jellyfin"))
+        sid, via, person, match = self.core.seerr_user(jf_id, create=False, name=log.get("user"), kind=kind)
+        log.update(dryAs=sid, dryVia=via, person=person, match=match, source=app.SOURCES.get(log.get("via"), "jellyfin"))
         return None
 
     def refusal(self, code, res):

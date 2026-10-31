@@ -50,6 +50,7 @@ FLUSH_EVERY = datetime.timedelta(minutes=1)
 AUTH_TTL = datetime.timedelta(seconds=30)
 UPSTREAM_TIMEOUT = 8
 SERVICE_TTL = datetime.timedelta(minutes=5)
+NAMES_RETRY = datetime.timedelta(seconds=30)
 RESET_DELAYS = (5, 30)
 RESET_CAP = 500
 
@@ -64,7 +65,7 @@ class Unauthorized(Exception):
 
 class Config:
     def __init__(self, allow_file, audit_file, request_state, origins, limit=10, days=7, daily_max=30, rate_per_min=10, list_max_age_days=9, tz="Europe/Zurich", state_db=None, audit_max_bytes=AUDIT_MAX_BYTES,
-                 details_files=None, details_per_min=60, index_file=None, hook_secret=None, signal_file=None, dry_flag=None, export_file=None):
+                 details_files=None, details_per_min=60, index_file=None, hook_secret=None, signal_file=None, dry_flag=None, export_file=None, identity_file=None):
         self.allow_file, self.audit_file, self.request_state = pathlib.Path(allow_file), pathlib.Path(audit_file), pathlib.Path(request_state)
         self.details_files = [pathlib.Path(f) for f in details_files] if details_files else [self.allow_file.with_name("details.json"), self.allow_file.with_name("coming.json")]
         self.details_per_min = details_per_min
@@ -76,6 +77,7 @@ class Config:
         self.signal_file = pathlib.Path(signal_file) if signal_file else None
         self.dry_flag = pathlib.Path(dry_flag) if dry_flag else self.audit_file.with_name("hook-dry-run")
         self.export_file = pathlib.Path(export_file) if export_file else None
+        self.identity_file = pathlib.Path(identity_file) if identity_file else None
 
 
 def seerr_status(kind, season, media):
@@ -296,22 +298,57 @@ class Core:
             con.execute("UPDATE user_requests SET source = ?, name = ?, seerr_user = ?, person = ?, service = ? WHERE user_id = ? AND seerr_id = ? AND source IS NULL",
                         (*self.origin_of(r), r["userId"], r["requestId"]))
 
-    def export_origins(self):
-        """origins.json for the Seerr pages (Seerr README "Request origin"): source and requester name by Seerr request id, never a Jellyfin id or a mail address."""
+    def current_names(self):
+        """(Jellyfin user id -> name, Seerr user id -> display name) as they are now, cached 5 min; a side that cannot be read is empty and not cached."""
+        now = self.clock()
+        with self.lock:
+            hit = self.cache.get("current_names")
+        if hit and now - hit[0] < (SERVICE_TTL if hit[2] else NAMES_RETRY):
+            return hit[1]
+        ok, jf, se = True, {}, {}
+        if self.jellyfin_admin:
+            try:
+                jf = {str(u["Id"]).replace("-", "").lower(): u.get("Name") for u in self.jellyfin_admin("GET", "/Users") if isinstance(u, dict) and u.get("Id")}
+            except (OSError, ValueError, KeyError, TypeError) as e:
+                ok = False
+                print(f"jellyfin names unreadable {type(e).__name__}", flush=True)
+        try:
+            se = {u["id"]: u.get("displayName") for u in self.seerr("GET", "/api/v1/user?take=1000")["results"] if isinstance(u, dict) and "id" in u}
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            ok = False
+            print(f"seerr names unreadable {type(e).__name__}", flush=True)
+        with self.lock:
+            self.cache["current_names"] = (now, (jf, se), ok)
+        return jf, se
+
+    @staticmethod
+    def shown_name(*names):
+        return next((n for n in names if isinstance(n, str) and n.strip() and "@" not in n), None)
+
+    def refresh_origins(self):
+        self.export_origins(only_changed=True)
+
+    def export_origins(self, only_changed=False):
+        """origins.json for the Seerr pages (Seerr README "Request origin"): source and the requester's current name by Seerr request id, never a Jellyfin id or a mail address."""
         f = self.cfg.export_file
         if not f:
             return
+        jf, se = self.current_names()
         with self.export_lock:
             try:
                 with self.db() as con:
-                    rows = con.execute("SELECT seerr_id, source, name, seerr_user, person, service FROM user_requests WHERE source IS NOT NULL ORDER BY seerr_id").fetchall()
-                out = {"updated": self.iso(self.clock()), "requests": {str(rid): {"source": src, "name": name, "seerrUser": sid, "person": person, "service": bool(service)}
-                                                                        for rid, src, name, sid, person, service in rows}}
+                    rows = con.execute("SELECT seerr_id, source, name, seerr_user, person, service, user_id FROM user_requests WHERE source IS NOT NULL ORDER BY seerr_id").fetchall()
+                reqs = {str(rid): {"source": src, "name": self.shown_name(jf.get(uid), se.get(person), name), "seerrUser": sid, "person": person, "service": bool(service)}
+                        for rid, src, name, sid, person, service, uid in rows}
+                if only_changed and reqs == self.cache.get("exported"):
+                    return
+                out = {"updated": self.iso(self.clock()), "requests": reqs}
                 f.parent.mkdir(parents=True, exist_ok=True)
                 tmp = f.with_name(f".{f.name}.tmp")
                 tmp.write_text(json.dumps(out, ensure_ascii=False, sort_keys=True))
                 tmp.chmod(0o644)
                 os.replace(tmp, f)
+                self.cache["exported"] = reqs
             except (OSError, sqlite3.Error) as e:
                 print(f"origins export failed {type(e).__name__}", flush=True)
 
@@ -434,34 +471,71 @@ class Core:
 
     # --- Seerr ----------------------------------------------------------
     def seerr_user(self, jf_id, create=True, name=None, kind=None):
-        """(Seerr user id, why, person): the caller's own Seerr account when it may request the kind and is auto-approved for it, else the service user; person = the matched Seerr account (None = none or ambiguous).
+        """(Seerr user id, why, person, match): the caller's own Seerr account when it may request the kind and is auto-approved for it, else the service user; person = the matched Seerr account (None = none or ambiguous), match = how it was found ("jellyfin", "subject", "name" or None).
         Owner's choice: any Jellyfin user may request from this page, also without a Seerr account or request right; the audit log says which applied."""
-        person, why = self.find_person(jf_id, name)
+        person, why, match = self.find_person(jf_id, name)
         if person:
             p = person.get("permissions") or 0
             may = MAY_REQUEST.get(kind, 32 | 262144 | 524288)
             auto = AUTO_APPROVED.get(kind, 128 | 256 | 512)
             if p & ADMIN or (p & may and p & auto):
-                return person["id"], "linked Seerr user", person["id"]
+                return person["id"], "linked Seerr user", person["id"], match
             why = "service user: linked Seerr user not auto-approved" if p & may else "service user: linked Seerr user may not request"
-        return self.service_user(create)["id"], why, person["id"] if person else None
+        return self.service_user(create)["id"], why, person["id"] if person else None, match
 
     def find_person(self, jf_id, name):
-        """(Seerr user, why): Seerr's Jellyfin link first, else the one Holy Grail sign-in account with the Jellyfin user name (both come from the same Authentik user)."""
+        """(Seerr user, why, match): Seerr's Jellyfin link first, else the account with the same Holy Grail sign-in subject (stable across renames), else, only for accounts whose subject is unknown, the one Holy Grail sign-in with the Jellyfin user name."""
         users = [u for u in self.seerr("GET", "/api/v1/user?take=1000")["results"] if (u.get("email") or "").lower() != SERVICE_EMAIL]
         linked = next((u for u in users if str(u.get("jellyfinUserId") or "").replace("-", "").lower() == jf_id), None)
         if linked:
-            return linked, None
+            return linked, None, "jellyfin"
+        free = [u for u in users if not u.get("jellyfinUserId")]
+        ids = self.identities()
+        if ids:
+            jf_subs, seerr_subs = ids
+            sub = jf_subs.get(jf_id)
+            hits = [u for u in free if sub and seerr_subs.get(u.get("id")) == sub]
+            if len(hits) > 1:
+                return None, "service user: ambiguous Seerr account", None
+            if hits:
+                return hits[0], None, "subject"
+            free = [u for u in free if u.get("id") not in seerr_subs]
         want = (name or "").casefold()
-        if not want:
-            return None, "service user: no Seerr account"
+        if not want or not free:
+            return None, "service user: no Seerr account", None
         names = self.sign_in_names(users)
         if names is None:
-            return None, "service user: sign-in accounts unreadable"
-        hits = [u for u in users if not u.get("jellyfinUserId") and want in names.get(u.get("id"), ())]
+            return None, "service user: sign-in accounts unreadable", None
+        hits = [u for u in free if want in names.get(u.get("id"), ())]
         if len(hits) > 1:
-            return None, "service user: ambiguous Seerr account"
-        return (hits[0], None) if hits else (None, "service user: no Seerr account")
+            return None, "service user: ambiguous Seerr account", None
+        if not hits:
+            return None, "service user: no Seerr account", None
+        print(f"attribution by name fallback: Seerr user {hits[0].get('id')}", flush=True)
+        return hits[0], None, "name"
+
+    def identities(self):
+        """(Jellyfin user id -> subject, Seerr user id -> subject) of the Holy Grail sign-ins (scripts/identity-map.py), re-read when the file changes; the last good map while it is missing or broken, None before the first good one."""
+        f = self.cfg.identity_file
+        if not f:
+            return None
+        with self.lock:
+            hit = self.cache.get("identities")
+        try:
+            st = f.stat()
+            key = (st.st_mtime_ns, st.st_size, st.st_ino)
+            if hit and hit[0] == key:
+                return hit[1]
+            d = json.loads(f.read_text())
+            jf = {str(k).replace("-", "").lower(): v for k, v in d["jellyfin"].items() if isinstance(v, str) and v}
+            se = {int(k): v for k, v in d["seerr"].items() if isinstance(v, str) and v}
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+            if hit:
+                print(f"identity map unreadable {type(e).__name__}, keeping the last good one", flush=True)
+            return hit[1] if hit else None
+        with self.lock:
+            self.cache["identities"] = (key, (jf, se))
+        return jf, se
 
     def sign_in_names(self, users):
         """Seerr user id -> casefolded Holy Grail sign-in user names, cached 5 min; None (not cached) when one account's list is unreadable, so a missed duplicate cannot pick the wrong person."""
@@ -711,7 +785,7 @@ class Core:
                     return 503, {"error": "download now unavailable"}
                 payload["tags"] = [tag]
             try:
-                sid, via, person = self.seerr_user(user["id"], create=create_service, name=user.get("name"), kind=entry["kind"])
+                sid, via, person, match = self.seerr_user(user["id"], create=create_service, name=user.get("name"), kind=entry["kind"])
             except NoServiceUser:
                 self.audit(**log, decision="refused: no service user")
                 return 503, {"error": "service user missing"}
@@ -719,24 +793,24 @@ class Core:
                 created = self.seerr("POST", "/api/v1/request", payload, user=sid)
             except urllib.error.HTTPError as e:
                 e.close()
-                self.audit(**log, decision=f"seerr refused: HTTP {e.code}", **self.who(log, sid, via, person))
+                self.audit(**log, decision=f"seerr refused: HTTP {e.code}", **self.who(log, sid, via, person, match))
                 return 502, {"error": "Seerr refused the request"}
             except (OSError, ValueError) as e:
-                self.audit(**log, decision=f"seerr error: {type(e).__name__}", **self.who(log, sid, via, person))
+                self.audit(**log, decision=f"seerr error: {type(e).__name__}", **self.who(log, sid, via, person, match))
                 return 502, {"error": "Seerr did not answer"}
             ok = True
         finally:
             self.settle(rid, ok)
         request_id = created.get("id") if isinstance(created, dict) else None
-        rec = dict(log, requestId=request_id, **self.who(log, sid, via, person))
+        rec = dict(log, requestId=request_id, **self.who(log, sid, via, person, match))
         self.audit(**rec, decision="requested")
         if isinstance(request_id, int) and not isinstance(request_id, bool):
             self.remember(user["id"], request_id, self.origin_of(rec))
         return 200, {"ok": True, "state": "requested", "left": left - 1, "request": created}
 
     @staticmethod
-    def who(log, sid, via, person):
-        return {"seerrUser": sid, "seerrVia" if "via" in log else "via": via, "person": person, "source": SOURCES.get(log.get("via"), "jellyfin")}
+    def who(log, sid, via, person, match=None):
+        return {"seerrUser": sid, "seerrVia" if "via" in log else "via": via, "person": person, "match": match, "source": SOURCES.get(log.get("via"), "jellyfin")}
 
     # --- TV playback hook -------------------------------------------------
     def trending_index(self):
@@ -891,12 +965,12 @@ class Core:
         """As whom the real request would go to Seerr (dry run only, never writes to Seerr)."""
         out = {"source": SOURCES.get(log.get("via"), "jellyfin")}
         try:
-            sid, via, person = self.seerr_user(uid, create=False, name=name, kind=kind)
+            sid, via, person, match = self.seerr_user(uid, create=False, name=name, kind=kind)
         except NoServiceUser:
             return dict(out, dryVia="service user missing")
         except (OSError, ValueError, KeyError, TypeError) as e:
             return dict(out, dryVia=f"seerr error: {type(e).__name__}")
-        return dict(out, dryAs=sid, dryVia=via, person=person)
+        return dict(out, dryAs=sid, dryVia=via, person=person, match=match)
 
     def reset(self, iid, uid):
         if not self.jellyfin_admin:
@@ -1012,7 +1086,7 @@ def make_core():
                  request_state=env.get("POP_REQUEST_STATE", "/indexer-bar/request-state.json"), origins=[o for o in env.get("POP_ORIGINS", "").split(",") if o],
                  limit=int(env.get("POP_LIMIT", "10")), days=int(env.get("POP_DAYS", "7")), daily_max=int(env.get("POP_DAILY_MAX", "30")), tz=env.get("TZ") or "Europe/Zurich",
                  hook_secret=secret_file(env.get("POP_HOOK_SECRET_FILE", "/run/secrets/popular/hook.secret")), signal_file=env.get("POP_SIGNAL", "/signal/requested"),
-                 export_file=env.get("POP_EXPORT_FILE") or None)
+                 export_file=env.get("POP_EXPORT_FILE") or None, identity_file=env.get("POP_IDENTITY_FILE", "/data/identity.json"))
     return Core(cfg, seerr, jellyfin, jellyfin_admin=jellyfin_admin if jf_key else None)
 
 
@@ -1166,8 +1240,18 @@ def start_facade(core):
         print("facade off: " + type(e).__name__, flush=True)
 
 
+def refresh_origins_forever(core, every=300):
+    while True:
+        time.sleep(every)
+        try:
+            core.refresh_origins()
+        except Exception as e:  # noqa: BLE001
+            print(f"origins refresh failed {type(e).__name__}", flush=True)
+
+
 def main():
     Handler.core = HookHandler.core = make_core()
+    threading.Thread(target=refresh_origins_forever, args=(Handler.core,), daemon=True).start()
     threading.Thread(target=make_hook_server(("0.0.0.0", int(os.environ.get("POP_HOOK_PORT", "8098")))).serve_forever, daemon=True).start()
     start_facade(Handler.core)
     make_server().serve_forever()
