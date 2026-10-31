@@ -1144,9 +1144,11 @@ Per language (profile items, `scripts/language-policy.sh` and `scripts/language-
 |---|---|---|---|
 | full | always (en, de, original, requested); a normal one preferred, HI when it is the best match | `<movie>.de.srt` / `<movie>.de.hi.srt` | `German` / `German - Hearing Impaired` |
 | forced | only when the file has audio in that language (`audio_only_include`) and a forced one exists | `<movie>.de.forced.srt` | `German - Forced` |
+| translated | German or English has no human subtitle 48 h after import; made at night from the best human one ([Subtitle-Translate](../Subtitle-Translate/README.md)) | `<movie>.German (translated).de.srt` (`.de.hi.srt` from an HI source) | `German (translated) - SRT - External` |
 
 - Forced = only the lines not spoken in the audio language (foreign dialogue, signs). With a dub in another language it shows almost nothing, hence audio-bound since 2026-10-31.
 - HI / SDH = full subtitle plus sound cues (`[music]`) and speaker names.
+- Translated = machine translation (LibreTranslate, local), cue by cue with the timestamps of its source. Bazarr does not index it, so it keeps searching; a human subtitle found later replaces it (the translation is deleted that night). Never made from a Forced or a translated file.
 - Jellyfin subtitle mode **Smart** (new-user default, `../Jellyfin/scripts/user-defaults.py`): audio in your language → forced track only; foreign audio → full track. Existing users keep their own choice.
 
 | Sync limit | Effect | Fix |
