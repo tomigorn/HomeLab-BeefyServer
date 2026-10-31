@@ -99,6 +99,9 @@ if want popular jellyfin; then
   check jf.popular-allow-list '^fresh [1-9]' "$(python3 -c 'import json,sys,datetime as d;a=json.load(open(sys.argv[1]));print(("fresh" if d.datetime.now()-d.datetime.fromisoformat(a["updated"])<d.timedelta(days=9) else "stale"),len(a["entries"]))' /srv/appdata/jellyfin-popular/allow.json 2>&1)"
   check jf.popular-state-db '^facade_users rejects requests sessions user_requests$' "$(docker exec jellyfin-popular python3 -c 'import sqlite3; print(*sorted(r[0] for r in sqlite3.connect("file:/state/state.db?mode=ro", uri=True).execute("select name from sqlite_master where type = ?", ("table",))))' 2>&1)"
   check jf.popular-origins-export '^object 644 [1-9]' "$(jq -r '.requests|type' /srv/appdata/jellyfin-popular-export/origins.json 2>&1) $(stat -c %a /srv/appdata/jellyfin-popular-export/origins.json 2>&1) $(jq '.requests|length' /srv/appdata/jellyfin-popular-export/origins.json 2>&1)"
+  # Request attribution: every human Seerr user is reached through its Jellyfin link or the Holy Grail sign-in subject, never only by name; identity.json in sync
+  check jf.identity-map '^ok [1-9][0-9]* users$' "$(python3 "$DIR/../../Jellyfin/scripts/identity-map.py" --check 2>&1 | tail -1)"
+  check jf.identity-timer '^active$' "$(jf_user_systemctl is-active jellyfin-identity.timer 2>&1)"
   check jf.popular-served '^[1-9][0-9]* [1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssPopular = ' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'hssPopularNav' 2>&1)"
   # Details overlay: answers only signed-in users (an API key has no user), sidecars written by popular.py and upcoming-popularity.py
   check jf.popular-details-refusals '^401 401$' "$(curl -s -o /dev/null -w '%{http_code}' -m 8 "$POP/details?id=x") $(curl -s -o /dev/null -w '%{http_code}' -m 8 -H "X-Emby-Token: $(cat "$DIR/../../Jellyfin/secrets/api-key")" "$POP/details?id=x")"
