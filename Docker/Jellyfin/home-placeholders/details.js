@@ -305,8 +305,13 @@
     return (list || []).filter(function (s) { return s && s.Id && s.UserId === me && s.SupportsRemoteControl && s.IsActive !== false && (!ownDevice || s.DeviceId !== ownDevice); });
   }
 
+  // Jellyfin here has EnableLegacyAuthorization off: X-Emby-Token is refused, only the Authorization header counts.
+  function auth(a) {
+    return { Authorization: 'MediaBrowser Token="' + a.accessToken() + '"' };
+  }
+
   function getJson(win, a, path, query) {
-    return win.fetch(a.getUrl(path, query), { headers: { "X-Emby-Token": a.accessToken() } }).then(function (r) {
+    return win.fetch(a.getUrl(path, query), { headers: auth(a) }).then(function (r) {
       if (r.status !== 200) throw new Error("HTTP " + r.status);
       return r.json();
     });
@@ -563,7 +568,7 @@
           set(false);
           return;
         }
-        return win.fetch(playUrl(a, s.Id, play), { method: "POST", headers: { "X-Emby-Token": a.accessToken() } }).then(function (r) {
+        return win.fetch(playUrl(a, s.Id, play), { method: "POST", headers: auth(a) }).then(function (r) {
           if (r.status < 200 || r.status > 299) throw new Error("HTTP " + r.status);
           if (menu !== m) return;
           status.textContent = tr(m.lang, "started", { d: name }, PLAY_TEXT);

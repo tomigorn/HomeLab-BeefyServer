@@ -276,7 +276,7 @@ function playWin(cls, routes, before) {
   const calls = [];
   win.ApiClient = { getCurrentUserId: () => "u1", accessToken: () => "tok", deviceId: () => "dev-browser", getUrl: (p, q) => p + (q ? "?" + new URLSearchParams(q) : "") };
   win.fetch = (url, opts) => {
-    calls.push([(opts && opts.method) || "GET", url, opts && opts.headers && opts.headers["X-Emby-Token"]]);
+    calls.push([(opts && opts.method) || "GET", url, opts && opts.headers && (opts.headers.Authorization || opts.headers["X-Emby-Token"])]);
     const hit = Object.keys(routes).find((k) => url.startsWith(k));
     const body = hit ? routes[hit] : null;
     const status = body === undefined || body === null ? 404 : typeof body === "number" ? body : 200;
@@ -300,7 +300,7 @@ test("play on TV: the button lists the TVs, picking one starts the film where th
   assert.equal(below, 0, "nothing below sees the click (no card link followed)");
   assert.ok(d.querySelector(".hssPlayMenu"));
   await tick();
-  assert.deepEqual(calls[0], ["GET", "Sessions?ControllableByUserId=u1", "tok"]);
+  assert.deepEqual(calls[0], ["GET", "Sessions?ControllableByUserId=u1", 'MediaBrowser Token="tok"'], "Jellyfin here rejects X-Emby-Token (EnableLegacyAuthorization off)");
   const opts = [...d.querySelectorAll(".hssPlayMenu .hssPlayTarget")];
   assert.deepEqual(opts.map((o) => o.querySelector(".hssPlayTargetName").textContent), ["Apple TV · Moonfin", "Sony BRAVIA · Moonfin"]);
   assert.equal(opts[1].querySelector(".hssPlayTargetSub").textContent, "now playing: Ice Age");
@@ -308,8 +308,8 @@ test("play on TV: the button lists the TVs, picking one starts the film where th
   opts[0].click();
   await tick();
   assert.deepEqual(calls.slice(1), [
-    ["GET", "Users/u1/Items/jf121", "tok"],
-    ["POST", "Sessions/sAtv/Playing?playCommand=PlayNow&itemIds=jf121&startPositionTicks=4200000000", "tok"]
+    ["GET", "Users/u1/Items/jf121", 'MediaBrowser Token="tok"'],
+    ["POST", "Sessions/sAtv/Playing?playCommand=PlayNow&itemIds=jf121&startPositionTicks=4200000000", 'MediaBrowser Token="tok"']
   ]);
   assert.equal(d.querySelector(".hssPlayMenuStatus").textContent, "Playing on Apple TV · Moonfin");
   win.close();
