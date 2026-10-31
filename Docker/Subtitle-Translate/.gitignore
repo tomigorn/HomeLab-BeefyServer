@@ -1,0 +1,29 @@
+# Environment files (contain secrets) — keep .env.example tracked
+.env
+.env.*
+!.env.example
+
+# Keys & certificates
+*.key
+*.pem
+*.crt
+*.cert
+*.csr
+*.p12
+*.pfx
+
+# Credentials, secrets & tokens
+secrets/
+*.secret
+*.token
+credentials.json
+auth.json
+
+# Logs (may leak sensitive data)
+*.log
+
+# Python caches
+__pycache__/
+
+# Local backups (hold secrets)
+backups/

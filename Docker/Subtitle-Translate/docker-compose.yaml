@@ -1,0 +1,101 @@
+# =========================================================
+# Services ================================================
+# =========================================================
+services:
+# #########################################################
+# LIBRETRANSLATE ##########################################
+# #########################################################
+# Offline machine translation (Argos models). Internal network only: no published port, no egress.
+  libretranslate:
+    image: libretranslate/libretranslate:v1.9.6
+    container_name: subtitle-libretranslate
+    restart: unless-stopped
+    user: "65130:65130"
+    mem_limit: 6g
+    # Low priority and capped: playback and transcoding win (README "CPU").
+    cpus: ${TRANSLATE_CPUS}
+    cpu_shares: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - LT_LOAD_ONLY=${LT_LANGUAGES}
+      - LT_UPDATE_MODELS=false
+      - LT_THREADS=1
+      - LT_DISABLE_WEB_UI=true
+      - LT_DISABLE_FILES_TRANSLATION=true
+      - LT_REQ_LIMIT=0
+      - HOME=/home/libretranslate
+    tmpfs:
+      - /app/db:uid=65130,gid=65130
+      - /tmp:uid=65130,gid=65130
+    volumes:
+      # Models only (scripts/install-models.sh downloads them; the container never does).
+      - ${APPDATA_ROOT}/libretranslate:/home/libretranslate
+    healthcheck:
+      test: ["CMD-SHELL", "./venv/bin/python -c \"import json,urllib.request as u; r=u.urlopen(u.Request('http://127.0.0.1:5000/translate', json.dumps({'q':'Hello','source':'en','target':'de'}).encode(), {'Content-Type':'application/json'}), timeout=20); assert json.load(r)['translatedText']\""]
+      interval: 120s
+      timeout: 30s
+      retries: 3
+      start_period: 180s
+    networks:
+      - translate-internal
+
+# #########################################################
+# LINGARR #################################################
+# #########################################################
+# Translation queue in front of LibreTranslate. Gets text lines only, never paths or the library: scripts/subtitle-translate.py picks the source, names and places the result.
+  lingarr:
+    image: lingarr/lingarr:1.4.1
+    container_name: subtitle-lingarr
+    restart: unless-stopped
+    user: "65129:65129"
+    mem_limit: 1g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - TZ=${TZ}
+      - ASPNETCORE_URLS=http://+:9876
+      - DB_CONNECTION=sqlite
+      - SERVICE_TYPE=libretranslate
+      - LIBRE_TRANSLATE_URL=http://libretranslate:5000
+      - MAX_CONCURRENT_JOBS=1
+      - TELEMETRY_ENABLED=false
+      # Login and API key on (scripts/lingarr-setup.sh); the env wins over the UI on every start.
+      - AUTH_ENABLED=true
+    volumes:
+      - ${APPDATA_ROOT}/lingarr:/app/config
+    healthcheck:
+      # No curl or wget in the image: bash /dev/tcp.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9876 && printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q ' 200 '"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    ports:
+      # Loopback only: the host-side orchestrator is the only client. No Traefik route.
+      - "127.0.0.1:${LINGARR_PORT}:9876"
+    depends_on:
+      - libretranslate
+    networks:
+      - translate-internal
+      - translate-edge
+
+# =========================================================
+# Networks ================================================
+# =========================================================
+networks:
+  # No egress: LibreTranslate and Lingarr talk only to each other.
+  translate-internal:
+    name: subtitle-translate-internal
+    internal: true
+  # Only for the loopback port of Lingarr.
+  translate-edge:
+    name: subtitle-translate-edge
+
+# =========================================================
+# Volumes =================================================
+# =========================================================
