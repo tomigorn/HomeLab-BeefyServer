@@ -183,10 +183,11 @@ bz() { curl -sf -H "X-API-KEY: $BK" "$@"; }
 # Profiles: keep whatever exists, make sure the default "English + German" and one
 # tagged profile per language are there. Posting the list replaces it, so the
 # existing ones are carried over.
+# Forced items in every profile: only when the audio has that language (audio_only_include).
 PROFILES=$(bz "$B/system/languages/profiles" | py 'import json,sys
 profiles=json.load(sys.stdin)
 by_name={p["name"]:p for p in profiles}
-def item(i,lang,forced): return {"id":i,"language":lang,"audio_exclude":"False","audio_only_include":"False","hi":"False","forced":forced}
+def item(i,lang,forced): return {"id":i,"language":lang,"audio_exclude":"False","audio_only_include":forced,"hi":"False","forced":forced}
 def profile(pid,name,langs,tag):
     items=[item(i+1,l,"False") for i,l in enumerate(langs)]
     items+=[item(len(items)+1,"en","True"),item(len(items)+2,"de","True")]
@@ -204,6 +205,10 @@ for pair in sys.argv[1].split():
         by_name[pname]["tag"]="lang-"+code
     else:
         profiles.append(profile(nxt,pname,["en","de",code],"lang-"+code)); nxt+=1
+for p in profiles:
+    for i in p["items"]:
+        if i["forced"]=="True":
+            i["audio_only_include"]="True"
 print(json.dumps(profiles))' "$LANGS")
 ENABLED=$(py 'import sys; print(" ".join(["en","de"]+[p.split(":")[0] for p in sys.argv[1].split()]))' "$LANGS")
 ARGS=()
@@ -223,7 +228,7 @@ DEFAULT=$(bz "$B/system/languages/profiles" | py 'import json,sys; print([p["pro
 bz "$B/system/settings" -X POST \
   --data-urlencode "settings-general-serie_default_profile=$DEFAULT" \
   --data-urlencode "settings-general-movie_default_profile=$DEFAULT"
-bz "$B/system/languages/profiles" | py 'import json,sys; [print("   profile", p["profileId"], p["name"], "tag", p["tag"], [i["language"]+("+f" if i["forced"]=="True" else "") for i in p["items"]]) for p in json.load(sys.stdin)]'
+bz "$B/system/languages/profiles" | py 'import json,sys; [print("   profile", p["profileId"], p["name"], "tag", p["tag"], [i["language"]+("+f" if i["forced"]=="True" else "")+("(audio)" if i["audio_only_include"]=="True" else "") for i in p["items"]]) for p in json.load(sys.stdin)]'
 bz "$B/system/settings" | py 'import json,sys; d=json.load(sys.stdin); g=d["general"]; o=d["opensubtitlescom"]; print("   subsync:", d["subsync"]["use_subsync"], "original audio:", d["subsync"]["use_original_language"], "framerate fix:", not d["subsync"]["no_fix_framerate"]); print("   tags:", g["serie_tag_enabled"], g["movie_tag_enabled"], "defaults:", g["serie_default_profile"], g["movie_default_profile"], "| opensubtitles ai:", o["include_ai_translated"], "machine:", o["include_machine_translated"], "hash:", o["use_hash"])'
 
 # The hook reaches Bazarr with this key (compose mounts secrets/hook at /secrets:ro).

@@ -190,6 +190,7 @@ recompute() {
 }
 
 # Bazarr picks the first profile whose tag the title carries; lang-xx is not set while a subs-<language> tag is (auto-tagging rule), so bz-<codes> is the only match.
+# Forced items only when the audio has that language (audio_only_include): foreign-parts subtitles are useless with a dub in another language.
 ensure_bazarr_profile() { # ensure_bazarr_profile <tag> <profile name> <codes...>
   local tag=$1 name=$2; shift 2
   [ -r "$BAZARR_KEY" ] || { echo "$kind $id: no Bazarr API key at $BAZARR_KEY, $tag not set" >&2; return 1; }
@@ -199,7 +200,7 @@ ensure_bazarr_profile() { # ensure_bazarr_profile <tag> <profile name> <codes...
   if jq -e --arg t "$tag" 'any(.[]; .tag == $t)' <<<"$profiles" >/dev/null; then return 0; fi
   langs=$(printf '%s\n' "$@" | jq -R . | jq -sc .)
   profiles=$(jq -c --arg t "$tag" --arg n "$name" --argjson l "$langs" '
-    def item($i; $lang; $forced): {id: $i, language: $lang, audio_exclude: "False", audio_only_include: "False", hi: "False", forced: $forced};
+    def item($i; $lang; $forced): {id: $i, language: $lang, audio_exclude: "False", audio_only_include: $forced, hi: "False", forced: $forced};
     . + [{profileId: ((map(.profileId) | max // 0) + 1), name: $n, cutoff: null, mustContain: [], mustNotContain: [], originalFormat: 0, tag: $t,
           items: ([$l | to_entries[] | item(.key + 1; .value; "False")] + [item(($l | length) + 1; "en"; "True"), item(($l | length) + 2; "de"; "True")])}]' <<<"$profiles")
   curl -sf -m 10 -H "X-API-KEY: $key" -X POST --data-urlencode "languages-profiles=$profiles" "$BAZARR_URL/api/system/settings" >/dev/null

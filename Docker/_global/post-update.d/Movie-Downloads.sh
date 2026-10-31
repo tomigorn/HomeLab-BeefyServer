@@ -118,6 +118,7 @@ if want bazarr; then
   check md.bazarr-subsync '^true true false$' "$(md_bz /system/settings | jq -r '.subsync | "\(.use_subsync) \(.use_original_language) \(.no_fix_framerate)"' 2>&1)"
   check md.bazarr-backup-daily '^Daily 14 4$' "$(md_bz /system/settings | jq -r '.backup | "\(.frequency) \(.retention) \(.hour)"' 2>&1)"
   check md.bazarr-profiles '^(2[2-9]|[3-9][0-9]) profiles$' "$(md_bz /system/languages/profiles | jq -r '"\(length) profiles"' 2>&1)"
+  check md.bazarr-forced-audio-only '^forced=audio-only full=always$' "$(md_bz /system/languages/profiles | jq -r '[.[].items[]] | "forced=\(if all(.[] | select(.forced == "True"); .audio_only_include == "True") then "audio-only" else "ALWAYS" end) full=\(if any(.[] | select(.forced != "True"); .audio_only_include == "True" or .audio_exclude == "True") then "AUDIO-BOUND" else "always" end)"' 2>&1)"
 fi
 if want gluetun vpn-status qbittorrent; then
   check md.vpn-port-forward '^true tun0 connected$' "$(curl -s -m 8 http://127.0.0.1:8087/api/status | jq -r '"\(.match) \(.qbit_interface) \(.qbit_connection)"' 2>&1)"

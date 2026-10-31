@@ -203,6 +203,7 @@ assert_eq "subs-french on an English film creates tag bz-fr" '{"label":"bz-fr"}'
 assert_eq "  and adds it to the film" "$(put movie movieIds 5 10)
 $(tagput movie movieIds 5 99 add)" "$(cat "$T/puts")"
 assert_eq "  and creates the Bazarr profile for it" '["English + German + French (requested)","en,de,fr,en+f,de+f"]' "$(bzprofile bz-fr)"
+assert_eq "  forced only when the audio has that language, full subtitles always" 'en:False,de:False,fr:False,en+f:True,de+f:True' "$(jq -r '.[] | select(.tag == "bz-fr") | [.items[] | .language + (if .forced == "True" then "+f" else "" end) + ":" + .audio_only_include] | join(",")' "$T/bazarr_profiles.json")"
 run "{\"tags\": [{\"id\": 31, \"label\": \"subs-french\"}, {\"id\": 50, \"label\": \"bz-es-fr\"}], \"bazarr\": $BZ_EXISTING, $(tagged 5 7 "$ES" 2020 "1,31" | sed 's/^{//')" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "subs-french on a Spanish film: existing tag bz-es-fr is added" "$(tagput movie movieIds 5 50 add)" "$(cat "$T/puts")"
 assert_eq "  no new tag" "" "$(cat "$T/newtags")"
