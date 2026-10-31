@@ -775,7 +775,7 @@ Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-poli
 
 - Rungs, gaps and the reasons for the numbers: [Release scoring](#release-scoring). HDR ranks above the rungs; extra languages score nothing.
 - Anime: `Anime Dual Audio` and `Language: Original + English` add up when both match (10000000), so a Japanese + English "Dual Audio" release beats a Japanese + German + English one named only "Multi" (7000000). Rare, accepted.
-- Subtitle sync (Bazarr, set by `scripts/language-policy.sh`): every downloaded subtitle is synced (ffsubsync) to the original-language audio track, with frame-rate correction (fixes the slowly growing lag of subtitles made for 24 vs 23.976 fps). One title by hand: Bazarr → the title → subtitle → Sync, or `PATCH /api/subtitles?action=sync&reference=a:<n>`.
+- Subtitle sync (Bazarr, set by `scripts/language-policy.sh`): every downloaded full subtitle is synced (ffsubsync) to the original-language audio track, with frame-rate correction limited to the standard ratios (24/23.976, 25/23.976, 25/24; fixes the slowly growing lag of PAL and NTSC subtitles). Limits and repairs: [Subtitle tracks and sync](#subtitle-tracks-and-sync).
 - English originals: a custom format cannot see that the original *is* English, so `Language: Original + English` would fire on any extra dub (English + Portuguese). English-original titles therefore use the twin profiles `… - English original` (Radarr and Sonarr, 4K default and Any quality), identical except that CF at 0: English + German 2000000 › English (+ any dub) 0.
   - `scripts/language-policy.sh` moves English originals on the main 4K profile to the twin and others back (existing titles).
   - Titles added later (Seerr, Radarr/Sonarr UI, import lists): Connect → Custom Script **Language policy** runs `scripts/language-policy-hook.sh` (mounted at `/scripts:ro` in both containers, registered by `language-policy.sh`) and does the same move for that one title (plus old/niche -> Any quality, see [Old and rare titles](#old-and-rare-titles)), before its first search.
@@ -1075,7 +1075,7 @@ Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scor
   the same instant as the import, before Bazarr knows the new file id, so Bazarr
   answers 200 "nothing to do" and never searches (twice in a row). SignalR does not
   have that race.
-- Language profiles: **English + German** (en, de, en forced, de forced) is the
+- Language profiles: **English + German** (en, de, en forced, de forced; forced only when the file has audio in that language) is the
   default for every new movie and series (`movie_default_profile`,
   `serie_default_profile`); **English + German + <Language>** (tag `lang-xx`) is
   chosen automatically from the Radarr/Sonarr tag (`movie_tag_enabled`,
@@ -1091,6 +1091,30 @@ Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scor
   (API keys).
 - Missing-subs search every 24 h for movies and series (series was still 6 h until 2026-10-20): providers that hash the file read it,
   which would wake the HDD for demoted movies.
+- OpenSubtitles.com free account: daily download limit. Hit → `DownloadLimitExceeded`, Bazarr throttles the provider for 6 h (`/srv/appdata/bazarr/config/throttled_providers.dat`); subtitles of imports in that window come with the next search.
+
+### Subtitle tracks and sync
+
+Per language (profile items, `scripts/language-policy.sh` and `scripts/language-policy-hook.sh`):
+
+| Track | When | File | Jellyfin shows |
+|---|---|---|---|
+| full | always (en, de, original, requested); a normal one preferred, HI when it is the best match | `<movie>.de.srt` / `<movie>.de.hi.srt` | `German` / `German - Hearing Impaired` |
+| forced | only when the file has audio in that language (`audio_only_include`) and a forced one exists | `<movie>.de.forced.srt` | `German - Forced` |
+
+- Forced = only the lines not spoken in the audio language (foreign dialogue, signs). With a dub in another language it shows almost nothing, hence audio-bound since 2026-10-31.
+- HI / SDH = full subtitle plus sound cues (`[music]`) and speaker names.
+- Jellyfin subtitle mode **Smart** (new-user default, `../Jellyfin/scripts/user-defaults.py`): audio in your language → forced track only; foreign audio → full track. Existing users keep their own choice.
+
+| Sync limit | Effect | Fix |
+|---|---|---|
+| Bazarr never syncs forced subtitles | a forced track is off by the source's offset (*More Than Honey*: 1.65 s late) | Bazarr → the title → subtitle → Tools → Adjust Times |
+| ffsubsync applies one offset + one speed factor | a subtitle from another cut (TV broadcast, other edition) is off after the cut | other subtitle, or shift per part |
+| golden-section search (`gss`) | finds non-standard speed factors (1.02, 1.08) that wreck a subtitle; off since 2026-10-31 | `md.bazarr-subsync` checks it |
+
+- Re-sync one subtitle: Bazarr → the title → subtitle → Sync (reference = an audio track or another subtitle), or `PATCH /api/subtitles?action=sync&reference=a:<n>`.
+- Wrong subtitle: Bazarr → History → blacklist it; Bazarr deletes it and searches again.
+- Check by hand: compare the first and the last line with the audio; > 0.3 s is noticeable.
 
 ### Subtitle check
 
