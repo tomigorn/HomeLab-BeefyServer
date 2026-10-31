@@ -147,7 +147,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 
 | Customization | Where | Reapply | Verify | Update can break |
 |---|---|---|---|---|
-| Pinned by digest | `Floppy/.env` FLOPPY_TAG | Floppy README "Update" | `floppy.image-pin`: → @sha256:c4959b1f… | |
+| Pinned by digest | `Floppy/.env` FLOPPY_TAG | Floppy README "Update" | `floppy.image-pin`: → @sha256:5e88307d… | |
 | Security env: SSO only, admin/demo/debug off, secure cookies, no X-Forwarded-Host, ComicVine off | compose | compose | `floppy.security-env`: env list; `floppy.sso-only-login`: login page → sso 0 password | renamed env vars = default (password form) back |
 | Seerr webhook shared secret | `secrets/floppy_seerr_webhook_secret` | Seerr seerr-webhook.py apply | `floppy.seerr-webhook-secret`: POST without secret → 401 | |
 | Pinned subnet 172.28.16.0/24, internal redis net | compose | compose | `floppy.subnet`: → 172.28.16.0/24 172.28.16.x internal-redis=true | |

@@ -5,7 +5,7 @@ Per-user tracker for films, series, books and games (ratings, history, want-list
 | | |
 |---|---|
 | URL | https://tracker.holy-grail.ch (Holy Grail, group `streaming-users`); wakes beefy |
-| Image | `ghcr.io/dannyvfilms/floppy:26.10.22@sha256:c4959b1f…`, `redis:8.10.3-alpine@sha256:896f241f…` (`.env`) |
+| Image | `ghcr.io/dannyvfilms/floppy:26.10.29@sha256:5e88307d…`, `redis:8.10.3-alpine@sha256:896f241f…` (`.env`) |
 | Containers | `floppy` (host port `8012` → 8000), `floppy-redis` (no port) |
 | Networks | `floppy` `172.28.16.0/24` (egress: internet, tcp 80/443 only), `floppy-redis` `172.28.17.0/24` (`internal`) |
 | Data | `/srv/appdata/floppy/db` (SQLite), `/srv/appdata/floppy/backups` (snapshots, CSV exports), `/srv/appdata/floppy-redis` (AOF) |
@@ -36,7 +36,7 @@ Stays public on purpose: friends use it from anywhere, and nothing left is admin
 
 ### Edge allow-list
 
-The catch-all router matches only `/`, `/serviceworker.js`, `/api/cache-status/` and these first path segments (Floppy 26.10.22): everything else is 404 at Traefik, so new upstream features stay closed until added on purpose. After every update compare:
+The catch-all router matches only `/`, `/serviceworker.js`, `/api/cache-status/` and these first path segments (Floppy 26.10.29; new and still closed: `covers`, `youtube-player`): everything else is 404 at Traefik, so new upstream features stay closed until added on purpose. After every update compare:
 
 ```bash
 sudo docker exec -i -u abc -w /floppy floppy python manage.py shell < scripts/url-prefixes.py   # PREFIXES …
