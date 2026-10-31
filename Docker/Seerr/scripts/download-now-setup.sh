@@ -21,8 +21,11 @@ for f in radarr sonarr sabnzbd seerr; do
 done
 ls -l "$D" | awk 'NR>1{print "secret", $1, $3":"$4, $NF}'
 
-# qBittorrent: the container moves and starts the night torrents (no password, like Radarr/Sonarr).
-qbit() { sudo docker exec movie-gluetun wget -qO- "$@"; }
-WL=$(qbit http://127.0.0.1:8080/api/v2/app/preferences | python3 -c 'import json,sys; w=json.load(sys.stdin)["bypass_auth_subnet_whitelist"].split("\n"); n=sys.argv[1]; print(json.dumps({"bypass_auth_subnet_whitelist": "\n".join(w if n in w else w + [n])}))' "$IP")
-qbit --post-data "json=$WL" http://127.0.0.1:8080/api/v2/app/setPreferences
-qbit http://127.0.0.1:8080/api/v2/app/preferences | python3 -c 'import json,sys; print("qbit whitelist:", json.load(sys.stdin)["bypass_auth_subnet_whitelist"].replace("\n", ", "))'
+# qBittorrent: the container moves and starts the night torrents (no password, like Radarr/Sonarr); this script logs in.
+QBIT_PASS_FILE=$HERE/../../Movie-Downloads/secrets/qbit-webui.password
+. "$HERE/../../Movie-Downloads/scripts/qbit-api.sh"
+trap 'rm -rf "$T"; qbit_logout' EXIT
+qb() { qbit_api http://127.0.0.1:8080 "$@"; }
+WL=$(qb /app/preferences | python3 -c 'import json,sys; w=json.load(sys.stdin)["bypass_auth_subnet_whitelist"].split("\n"); n=sys.argv[1]; print(json.dumps({"bypass_auth_subnet_whitelist": "\n".join(w if n in w else w + [n])}))' "$IP")
+qb /app/setPreferences --data-urlencode "json=$WL" >/dev/null
+qb /app/preferences | python3 -c 'import json,sys; print("qbit whitelist:", json.load(sys.stdin)["bypass_auth_subnet_whitelist"].replace("\n", ", "))'
