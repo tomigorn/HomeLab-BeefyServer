@@ -1,0 +1,19 @@
+{
+  "trash_id": "099d9621e51a2d4b088126e3769dc4fb",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "Remux: smaller encode wins",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+    {
+      "name": "Remux",
+      "implementation": "QualityModifierSpecification",
+      "negate": false,
+      "required": true,
+      "fields": {
+        "value": 5
+      }
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Live check of the release scoring order (README "Release scoring") in Radarr and Sonarr: real release names through GET /parse (never searches, never grabs), scored with every profile's live scores.
 Radarr also checks the editions (m): a longer cut beats audio, group and extras, never a language rung or HDR, and is what reaches the cutoff.
+Real quality only (n, owner 2026-10-31): lossless audio formats equal, Atmos/DTS:X a small plus, lossy ranked, repack and tier group higher, no score for size, more languages or a season pack, a remux never above a 2160p encode, minimum upgrade step 1.
 Usage: scripts/scoring-check.py [radarr|sonarr]   (exit 1 on any FAIL; prints the score of every name per profile)"""
 import json
 import os
@@ -25,6 +26,8 @@ V1080 = {"radarr": "1080p.BluRay.{a}.x264", "sonarr": "1080p.NF.WEB-DL.{a}.H.264
 V1080_HDR = {"radarr": "1080p.BluRay.{a}.HDR.x265", "sonarr": "1080p.NF.WEB-DL.{a}.HDR.H.265"}
 TIER01 = "FLUX"
 HD_TIER01 = "decibeL"
+UHD_TIER01 = "CtrlHD"
+REMUX_CF = "Remux: smaller encode wins"
 fails = 0
 
 
@@ -98,8 +101,8 @@ def check_app(app, cfg):
                   score(prof, [o], V2160) > score(prof, [o, "English", "German"] + others[:2], V2160_SDR, "TrueHD.Atmos.7.1"))
             check("(j) 2160p SDR original+English+German+extras stays below the cutoff", score(prof, [o, "English", "German"] + others[:2], V2160_SDR, "TrueHD.Atmos.7.1") < p["cutoffFormatScore"])
         v = V2160 if kind != "hd" else V1080
-        check(f"(b) original+English+German+{others[1]}+{others[0]} beats original+English+German", score(prof, [o, "English", "German", others[1], others[0]], v) > score(prof, [o, "English", "German"], v))
-        check(f"(c) original+German+{others[0]} beats original+German", score(prof, [o, "German", others[0]], v) > score(prof, [o, "German"], v))
+        check(f"(b) original+English+German+{others[1]}+{others[0]} equals original+English+German (more languages score nothing)", score(prof, [o, "English", "German", others[1], others[0]], v) == score(prof, [o, "English", "German"], v))
+        check(f"(c) original+German+{others[0]} equals original+German", score(prof, [o, "German", others[0]], v) == score(prof, [o, "German"], v))
         check(f"(d) original+English+{'+'.join(others[:3])} loses to original+English+German", score(prof, [o, "English"] + others[:3], v) < score(prof, [o, "English", "German"], v))
         if app == "radarr" and kind == "hd":
             check(f"(e) 3 languages from HD Bluray Tier 01 ({HD_TIER01}) beats 5 languages from no-name group (audio formats unscored here)", score(prof, [o, "English", "German"], v, group=HD_TIER01) > score(prof, [o, "English", "German", others[0], others[1]], v))
@@ -113,11 +116,21 @@ def check_app(app, cfg):
         ed = "Extended" if app == "radarr" else ""
         check(f"{'(j) ' if kind != 'hd' else ''}upgrade cutoff reached by {'2160p HDR ' if kind != 'hd' else ''}original+English{' Extended' if ed else ''}", score(prof, [o, "English"], v, ed=ed) >= p["cutoffFormatScore"])
         check("upgrade cutoff not reached by original+German+extras", score(prof, [o, "German"] + others[:3], v, "TrueHD.Atmos.7.1", ed=ed) < p["cutoffFormatScore"])
-        gain = score(prof, [o] + others[:3], v, "TrueHD.Atmos.7.1") - score(prof, [o], v, "AAC")
-        if app == "sonarr":
-            check("extras and audio alone upgrade below the cutoff", gain >= p["minUpgradeFormatScore"] == 1, gain)
-        else:
-            check("(m) extras and audio alone stay below the minimum upgrade step", gain < p["minUpgradeFormatScore"] == 100000, gain)
+        check("(n) minimum upgrade step 1", p["minUpgradeFormatScore"] == 1, p["minUpgradeFormatScore"])
+        if kind != "hd":
+            a = lambda audio: score(prof, [o, "English"], V2160, audio)
+            check("(n) TrueHD equals DTS-HD MA", a("TrueHD.7.1") == a("DTS-HD.MA.7.1"), (a("TrueHD.7.1"), a("DTS-HD.MA.7.1")))
+            check("(n) FLAC and LPCM equal TrueHD", a("FLAC.2.0") == a("LPCM.2.0") == a("TrueHD.7.1"), (a("FLAC.2.0"), a("LPCM.2.0")))
+            check("(n) TrueHD Atmos beats DTS-HD MA", a("TrueHD.Atmos.7.1") > a("DTS-HD.MA.7.1"))
+            check("(n) TrueHD Atmos equals DTS:X", a("TrueHD.Atmos.7.1") == a("DTS-X.7.1"))
+            check("(n) EAC3 beats AAC", a("EAC3.5.1") > a("AAC2.0") and a("DDP5.1") > a("AAC2.0"))
+            check("(n) TrueHD beats DD+ Atmos beats DD+", a("TrueHD.7.1") > a("DDP5.1.Atmos") > a("DDP5.1"))
+            check("(n) DD+ beats DD, DTS core equals DD, DD beats AAC", a("DDP5.1") > a("DD5.1") == a("DTS.5.1") > a("AAC2.0"))
+            check("(n) better audio upgrades below the cutoff (extras add nothing)", score(prof, [o] + others[:3], v, "TrueHD.Atmos.7.1") - score(prof, [o], v, "AAC") >= 1)
+        check("(n) REPACK beats the same release", score(prof, [o, "English"], v, "DDP5.1.REPACK") > score(prof, [o, "English"], v))
+        grp = TIER01 if app == "sonarr" else (HD_TIER01 if kind == "hd" else UHD_TIER01)
+        check(f"(n) tier group ({grp}) beats a no-name group", score(prof, [o, "English"], v, group=grp) > score(prof, [o, "English"], v))
+        if app == "radarr":
             check("(m) theatrical original+English+extras TrueHD Atmos stays below the cutoff", score(prof, [o, "English"] + others[:2], v, "TrueHD.Atmos.7.1") < p["cutoffFormatScore"])
             for cut in ("Extended", "Directors.Cut", "Uncut", "Ultimate.Edition"):
                 cfs = api("/parse", title=names(t, [o, "English"], v, "DDP5.1", ed=cut)).get("customFormats", [])
@@ -137,8 +150,8 @@ def check_app(app, cfg):
         pack = names(t, [o, "English"], V2160, "DDP5.1", pack=True)
         score(prof, [o, "English"], V2160, pack=True)
         check("(k) season pack is parsed as `Season Pack`", "Season Pack" in cache[pack][0], cache[pack][0])
-        check("(k) season pack beats the same release as a single episode", score(prof, [o, "English"], V2160, pack=True) > score(prof, [o, "English"], V2160))
-        check(f"(k) season pack from no-name group beats single episode from WEB Tier 01 ({TIER01})", score(prof, [o, "English"], V2160, pack=True) > score(prof, [o, "English"], V2160, group=TIER01))
+        check("(k) season pack equals the same release as a single episode (no swap)", score(prof, [o, "English"], V2160, pack=True) == score(prof, [o, "English"], V2160))
+        check(f"(k) single episode from WEB Tier 01 ({TIER01}) beats a no-name season pack", score(prof, [o, "English"], V2160, group=TIER01) > score(prof, [o, "English"], V2160, pack=True))
         check("(k) single episode original+English+German beats season pack original+English", score(prof, [o, "English", "German"], V2160) > score(prof, [o, "English"], V2160, pack=True))
         check("(k) 2160p HDR single episode beats 2160p SDR season pack", score(prof, [o, "English"], V2160) > score(prof, [o, "English"], V2160_SDR, pack=True))
     # Groups TRaSH's group match misses without a dash (1337x): own `Bad Group: <name>` CFs reject every tag shape everywhere.
@@ -163,7 +176,7 @@ def check_app(app, cfg):
         twin = cfg["profiles"]["4k"] + TWIN
         print(f"{e['title']} ({e['year']}, original English) on {twin}")
         check("twin: 1080p HDR English beats 1080p SDR English+German", escore(twin, ["English"], V1080_HDR) > escore(twin, ["English", "German"], V1080))
-        check("twin: English+German+2 extras beats English+German", escore(twin, ["English", "German", "Spanish", "French"], V2160) > escore(twin, ["English", "German"], V2160))
+        check("twin: English+German+2 extras equals English+German", escore(twin, ["English", "German", "Spanish", "French"], V2160) == escore(twin, ["English", "German"], V2160))
         check("twin: English+4 extras loses to English+German", escore(twin, ["English", "Spanish", "French", "Italian", "Portuguese"], V2160) < escore(twin, ["English", "German"], V2160))
         check("twin: (h) 2160p SDR English accepted", escore(twin, ["English"], V2160_SDR) >= profiles[twin]["minFormatScore"])
         check("twin: (i) 2160p HDR English beats 2160p SDR English+German+2 extras", escore(twin, ["English"], V2160) > escore(twin, ["English", "German", "Spanish", "French"], V2160_SDR))
@@ -175,11 +188,48 @@ def check_app(app, cfg):
             check("twin: (m) Extended English loses to theatrical English+German", escore(twin, ["English"], V2160, ed=eed) < escore(twin, ["English", "German"], V2160))
         check("twin: German DL still outscores English-only at grab time", escore(twin, ["English", "German"], V2160) > escore(twin, ["English"], V2160))
         cache.update(ecache)
+    scored = {f["format"] for q in profiles.values() for f in q["formatItems"] if f["score"]}
+    sized = [c["name"] for c in api("/customformat") if c["id"] in scored and any("Size" in x["implementation"] for x in c["specifications"])]
+    check("(n) no scored custom format has a size condition (a bigger file of the same quality scores the same)", not sized, sized)
+    if app == "radarr":
+        remux_check(api, profiles, t, names)
     print(" release name | languages parsed | custom formats | 4K profile score")
     for name, (cfs, langs) in cache.items():
         if name.startswith(dotted(t["title"])):
             s = {f["name"]: f["score"] for f in profiles[cfg["profiles"]["4k"]]["formatItems"]}
             print(f"  {name} | {', '.join(langs)} | {', '.join(c for c in cfs if not c.startswith('Resolution'))} | {sum(s.get(c, 0) for c in cfs)}")
+
+
+def rank(p, quality):
+    for i, item in enumerate(reversed([x for x in p["items"] if x["allowed"]])):
+        if quality in ([q["quality"]["name"] for q in item["items"]] if item.get("items") else [item["quality"]["name"]]):
+            return i
+    return None
+
+
+def remux_check(api, profiles, t, names):
+    o = (t.get("originalLanguage") or {}).get("name")
+    remux = names(t, [o, "English"], {"radarr": "2160p.UHD.BluRay.REMUX.DV.HDR.HEVC.{a}"}, "TrueHD.Atmos.7.1", group="FraMeSToR")
+    imax = names(t, [o, "English"], {"radarr": "IMAX.2160p.UHD.BluRay.REMUX.DV.HDR.HEVC.{a}"}, "TrueHD.Atmos.7.1", group="GRP")
+    enc = names(t, [o, "English"], {"radarr": "2160p.UHD.BluRay.{a}.DV.HDR.x265"}, "DDP5.1", group=UHD_TIER01)
+    web = names(t, [o, "English"], {"radarr": "2160p.AMZN.WEB-DL.{a}.DV.HDR.H.265"}, "DDP5.1.Atmos", group="FLUX")
+    plain = names(t, [o, "English"], {"radarr": "2160p.WEB-DL.{a}.DV.HDR.H.265"}, "AAC2.0", group="GRP")
+    sdr = names(t, [o], {"radarr": "2160p.UHD.BluRay.REMUX.HEVC{a}"}, "", group="GRP")
+    parsed = {n: api("/parse", title=n) for n in (remux, imax, enc, web, plain, sdr)}
+    q = {n: parsed[n]["parsedMovieInfo"]["quality"]["quality"]["name"] for n in parsed}
+    cfs = {n: [c["name"] for c in parsed[n].get("customFormats", [])] for n in parsed}
+    check("(n) remux parsed as Remux-2160p with `Remux: smaller encode wins`", q[remux] == "Remux-2160p" and REMUX_CF in cfs[remux], (q[remux], cfs[remux]))
+    for prof in (APPS["radarr"]["profiles"]["4k"], APPS["radarr"]["profiles"]["any"], APPS["radarr"]["profiles"]["4k"] + TWIN, APPS["radarr"]["profiles"]["any"] + TWIN):
+        p = profiles[prof]
+        s = {f["name"]: f["score"] for f in p["formatItems"]}
+        sc = {n: sum(s.get(c, 0) for c in cfs[n]) for n in parsed}
+        r = {n: rank(p, q[n]) for n in parsed}
+        check(f"(n) {prof}: remux allowed, below Bluray-2160p, same group as WEB 2160p", None not in r.values() and r[enc] < r[remux] == r[web], r)
+        check(f"(n) {prof}: DV tier-1 encode ranks at or above a DV remux", None not in r.values() and (r[enc], -sc[enc]) <= (r[remux], -sc[remux]), (r, sc))
+        for have in (web, plain):
+            for cand in (remux, imax):
+                check(f"(n) {prof}: `{have}` in place, `{cand}` appears: no upgrade", sc[cand] - sc[have] < p["minUpgradeFormatScore"], sc)
+        check(f"(n) {prof}: SDR remux, original only, no audio named: still grabbable", sc[sdr] >= p["minFormatScore"], (sc[sdr], p["minFormatScore"]))
 
 
 def main():

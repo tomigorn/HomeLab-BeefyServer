@@ -8,7 +8,7 @@ import sys
 ORIGINAL_ENGLISH = "Language: Original + English"
 EXTRA_PREFIX = "Extra audio: "
 ORIGINAL_ENGLISH_SCORE = 5_000_000
-EXTRA_SCORE = 10
+EXTRA_SCORE = 0
 SWISS = "Swiss German (Mundart) only - any quality"
 SWISS_ORIGINAL_ENGLISH_SCORE = 20_000
 ENGLISH_ORIGINAL_SUFFIX = " - English original"
