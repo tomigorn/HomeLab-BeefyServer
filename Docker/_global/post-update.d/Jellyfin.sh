@@ -110,6 +110,9 @@ if want popular jellyfin; then
   check jf.details-served '^[1-9][0-9]* [1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'HssDetails = api' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssUpcomingInfo = ' 2>&1)"
   # Play on TV everywhere: Top 10 card icon, menu + PlayNow, native placements (details, cards, rows, player), Authorization header (X-Emby-Token is refused here)
   check jf.play-on-tv-served '^[1-9][0-9]* [1-9][0-9]* [1-9][0-9]* [1-9][0-9]* [1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'P.cardIcon(doc' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'win.HssPlayTv = Object.assign' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'Sessions/" + encodeURIComponent(sessionId) + "/Playing' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'hssDetailTv' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'MediaBrowser Token=' 2>&1)"
+  # Remove from Continue watching: served script, and live on the canary only: the position write drops it from Resume, nothing else changes, Next Up keeps the series, undo restores
+  check jf.continue-remove-served '^[1-9][0-9]* [1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssContinueRemove = start(window)' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'PlaybackPositionTicks: ticks' 2>&1)"
+  check jf.continue-remove-api '^ok ' "$(python3 "$DIR/../../Jellyfin/scripts/continue-remove-check.py" 2>&1 | tail -1)"
   check jf.popular-home-slot '^[1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'HssExtraRows' 2>&1)"
   # Jellyfin calls pause() on every .itemsContainer of the home tab: a plain one of ours breaks every route change away from home.
   check jf.home-pause-safe '^[1-9][0-9]* 0$' "$(jf_api /JavaScriptInjector/private.js | grep -c 'function pausable' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'class=\"itemsContainer hssTopScroll' 2>&1)"
