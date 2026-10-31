@@ -324,6 +324,12 @@ services:
       - "${BAZARR_PORT}:6767"
     networks:
       - movie-downloads
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:6767/api/system/ping"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 # #########################################################
 # SONARR ##################################################
