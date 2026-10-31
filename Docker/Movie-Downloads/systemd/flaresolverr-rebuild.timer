@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly FlareSolverr image rebuild (Thu 04:27, maintenance window)
+
+[Timer]
+OnCalendar=Thu *-*-* 04:27:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target

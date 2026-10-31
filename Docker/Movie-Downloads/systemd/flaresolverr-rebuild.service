@@ -1,0 +1,16 @@
+[Unit]
+Description=Rebuild the local FlareSolverr image from the newest upstream release + Debian upgrades, test, roll back on failure
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Like auto-update: buntu with the docker group; the driver copy is written by root inside a throwaway container.
+User=buntu
+Group=buntu
+SupplementaryGroups=docker
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/flaresolverr-rebuild.sh
+StateDirectory=flaresolverr-rebuild
+StateDirectoryMode=0700
+TimeoutStartSec=20min

@@ -173,8 +173,8 @@ services:
 # reaches it at http://localhost:8191; no published port, nothing on the LAN.
 # Chromium needs a writable HOME and /tmp, hence the tmpfs mounts on a read_only root.
   flaresolverr:
-    build: ./flaresolverr   # ghcr.io/flaresolverr/flaresolverr:v3.5.2 + Debian security updates, see Dockerfile
-    image: flaresolverr-local:v3.5.2
+    build: ./flaresolverr   # newest upstream release + Debian upgrades, rebuilt weekly by scripts/flaresolverr-rebuild.sh (README "FlareSolverr")
+    image: flaresolverr-local:current
     container_name: movie-flaresolverr
     restart: unless-stopped
     mem_limit: 2g
