@@ -47,6 +47,11 @@ def plain(i):
     return v
 
 
+def active_ids(users):
+    """ids of the users that are not disabled."""
+    return [u["Id"] for u in users if not (u.get("Policy") or {}).get("IsDisabled")]
+
+
 def films_only(orders, series):
     """orders without the collections holding one of the series ids."""
     return {c: ids for c, ids in orders.items() if not set(ids) & set(series)}

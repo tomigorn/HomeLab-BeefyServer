@@ -19,6 +19,12 @@ class FilmsOnly(unittest.TestCase):
         self.assertEqual(co.films_only(orders, {"s1", "s9"}), {C1: ["m1", "m2"], G1: []})
 
 
+class ActiveIds(unittest.TestCase):
+    def test_disabled_users_skipped(self):
+        users = [{"Id": "a", "Policy": {"IsDisabled": False}}, {"Id": "b", "Policy": {"IsDisabled": True}}, {"Id": "c"}]
+        self.assertEqual(co.active_ids(users), ["a", "c"])
+
+
 class PlainFs:
     """Same operations as co.SudoFs, without the owner change."""
 

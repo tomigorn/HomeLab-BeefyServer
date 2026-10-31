@@ -859,7 +859,7 @@ def sync(io, paths, now, dry_run, log):
     series = {i for k, i in have.items() if k.startswith("tv/")} | {member_id(("ph", f)) for f, ph in plan.placeholders.items() if ph.kind == "tv"}
     orders = co.films_only(orders, series)
     try:
-        n_order = co.sync("trending", [u["Id"] for u in io.jf("GET", "/Users")], orders, dry_run, log, root=paths.moonfin, state=paths.order_state, fs=io.order_fs())
+        n_order = co.sync("trending", co.active_ids(io.jf("GET", "/Users")), orders, dry_run, log, root=paths.moonfin, state=paths.order_state, fs=io.order_fs())
     except (subprocess.CalledProcessError, *FAILURES) as e:
         log(f"collection order failed: {type(e).__name__}")
         n_order = 0
