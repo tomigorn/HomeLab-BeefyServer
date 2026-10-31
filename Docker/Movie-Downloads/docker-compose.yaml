@@ -70,6 +70,8 @@ services:
     volumes:
       - ${APPDATA_ROOT}/gluetun:/gluetun
       - ./scripts/qbit-port.sh:/scripts/qbit-port.sh:ro
+      # qbit-port.sh logs in: localhost has no auth bypass (B-02)
+      - ./secrets/qbit-webui.password:/run/secrets/qbit-webui.password:ro
       - ./secrets/vpn-status.apikey:/run/secrets/hc-apikey:ro
       - ./secrets/wireguard_private_key:/run/secrets/wireguard_private_key:ro
     networks:
@@ -107,7 +109,8 @@ services:
       - TORRENTING_PORT=6881
     # Unhealthy also when tun0 is gone from its namespace (gluetun restarted): autoheal restarts it into the new one.
     healthcheck:
-      test: ["CMD-SHELL", "grep -q tun0 /proc/net/dev && curl -fsS -o /dev/null http://127.0.0.1:8080/api/v2/app/version"]
+      # 403 = WebUI up (every client logs in, also localhost)
+      test: ["CMD-SHELL", "grep -q tun0 /proc/net/dev && curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/v2/app/version | grep -qE '^(200|403)$$'"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -123,6 +126,8 @@ services:
       # Completion scan (README "Completion scan"): the hook script and its metrics file.
       - ../Antivirus/hook:/clamav-hook:ro
       - /var/lib/clamav-scan/textfile:/clamav
+      # the hooks log in to stop/tag a torrent (B-02)
+      - ./secrets/qbit-webui.password:/run/secrets/qbit-webui.password:ro
 
 # #########################################################
 # PROWLARR ################################################

@@ -16,11 +16,15 @@ sab "mode=set_config&section=categories&name=*&script=download-integrity.py"
 sudo grep -E '^(script_dir|script_can_fail|direct_write|enable_par_cleanup) ' /srv/appdata/sabnzbd/sabnzbd.ini
 sudo grep -A4 -F '[[*]]' /srv/appdata/sabnzbd/sabnzbd.ini | grep 'script ='
 
-# qBittorrent: recheck the pieces on disk when a torrent finishes, then run the hook. Called from gluetun's namespace, where localhost needs no login.
-qbit() { sudo docker exec movie-gluetun wget -qO- "$@"; }
+# qBittorrent: recheck the pieces on disk when a torrent finishes, then run the hook. Logs in with the WebUI password.
+HERE=$(cd "$(dirname "$0")" && pwd)
+QBIT_PASS_FILE=$HERE/../secrets/qbit-webui.password
+. "$HERE/qbit-api.sh"
+trap qbit_logout EXIT
+qb() { qbit_api http://127.0.0.1:8080 "$@"; }
 PREFS=$(python3 -c 'import json; print(json.dumps({"recheck_completed_torrents": True, "autorun_enabled": True, "autorun_program": "/clamav-hook/download-integrity.py --qbit \"%I\" \"%F\""}))')
-qbit --post-data "json=$PREFS" http://127.0.0.1:8080/api/v2/app/setPreferences
+qb /app/setPreferences --data-urlencode "json=$PREFS" >/dev/null
 # The background scan worker (clamav-queue, 172.28.10.204) stops and tags a torrent it finds infected: add it to the no-password whitelist.
-WL=$(qbit http://127.0.0.1:8080/api/v2/app/preferences | python3 -c 'import json,sys; w=json.load(sys.stdin)["bypass_auth_subnet_whitelist"].split("\n"); n="172.28.10.204/32"; print(json.dumps({"bypass_auth_subnet_whitelist": "\n".join(w if n in w else w + [n])}))')
-qbit --post-data "json=$WL" http://127.0.0.1:8080/api/v2/app/setPreferences
-qbit http://127.0.0.1:8080/api/v2/app/preferences | python3 -c 'import json,sys; p=json.load(sys.stdin); print("qbit recheck on completion:", p["recheck_completed_torrents"]); print("qbit autorun:", p["autorun_enabled"], p["autorun_program"]); print("qbit whitelist:", p["bypass_auth_subnet_whitelist"].replace("\n", ", "))'
+WL=$(qb /app/preferences | python3 -c 'import json,sys; w=json.load(sys.stdin)["bypass_auth_subnet_whitelist"].split("\n"); n="172.28.10.204/32"; print(json.dumps({"bypass_auth_subnet_whitelist": "\n".join(w if n in w else w + [n])}))')
+qb /app/setPreferences --data-urlencode "json=$WL" >/dev/null
+qb /app/preferences | python3 -c 'import json,sys; p=json.load(sys.stdin); print("qbit recheck on completion:", p["recheck_completed_torrents"]); print("qbit autorun:", p["autorun_enabled"], p["autorun_program"]); print("qbit whitelist:", p["bypass_auth_subnet_whitelist"].replace("\n", ", "))'
