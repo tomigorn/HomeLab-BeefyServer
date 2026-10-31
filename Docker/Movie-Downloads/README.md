@@ -1316,7 +1316,7 @@ archive.org `S01E01 ... 720p.x264-VODO` mp4 placed in `/data/usenet/complete/tv/
 | Interactive search (never grabs) | 1080p AMZN WEB-DL scored 1725 accepted; two 720p HDTV releases rejected (not in profile) |
 | `DownloadedEpisodesScan`, Move | `Season 01/Pioneer One (2010) - S01E01 - Earthfall [SDTV][AAC 2.0][x264]-VODO.mp4`, release folder removed, file on `ssd-hot` (the archive mp4 is really 640x360, so MediaInfo said SDTV, not the 720p of the name - correct) |
 | Jellyfin | `/Library/Media/Updated` sent; the new Shows library needed one full scan first (empty-library gotcha), then TVDB/IMDb/TMDB ids, overview, poster, backdrop, trickplay, and `/media/tv` is watched |
-| Bazarr | series synced with profile English + German, 4 missing subtitles listed; the search is a no-op because the only enabled provider (YIFY) is movies-only - add OpenSubtitles.com / SubDL / SubSource (To do) |
+| Bazarr | series synced with profile English + German, 4 missing subtitles listed; the search is a no-op because the only provider then (YIFY, since dropped) was movies-only; OpenSubtitles.com + SubDL added 2026-10-31 |
 
 ### Verified 2026-10-19
 
