@@ -14,7 +14,9 @@
 #   Per-request tags from languages.tsv: `audio-<language>` (tag-scoped release profile: the
 #   release name must name that language) and `subs-<language>` (the hook turns them into
 #   one `bz-<codes>` tag + Bazarr profile; `lang-xx` is not set while one is present).
-#   `audio-swiss-german` also moves the title to the Swiss German profile (hook, Radarr and Sonarr), whose language is set to Any here (Radarr; Sonarr profiles have none).
+#   `audio-swiss-german` also moves the title to the Swiss German profile (hook, Radarr and Sonarr).
+#   Radarr: every profile language Any (the custom formats reject a release without the original audio; `Language: Not Original (sound film)` exempts silent films). Sonarr profiles have none.
+#   Sonarr: series from before 1930 move to the silent profile ("... - silent film", no original-audio reject), later ones back to Any quality (README "Silent films").
 #   `old-rare`: every title on Any quality (or its twin) gets it, every other title loses it (hook, README "Old and rare titles").
 # Bazarr: one subtitle profile per language ("English + German + <Language>",
 #   bound to the `lang-xx` tag), tag-based profile selection, OpenSubtitles.com
@@ -36,6 +38,8 @@ CF_NAME="Language: Original + English"
 PROBLEMS=0
 ENG_SUFFIX=" - English original"
 ANY="4K preferred · older versions allowed"
+SILENT="$ANY - silent film"
+SILENT_BEFORE=1930
 SWISS="Swiss German (Mundart) only - any quality"
 HOOK_NAME="Language policy"
 HOOK_PATH=/scripts/language-policy-hook.sh
@@ -97,14 +101,29 @@ print(",".join(str(t["id"]) for t in items if t["qualityProfileId"]==m and eng(t
     echo "   English original -> profile $EID: ${TO_ENG/-/none}; back to $MID: ${TO_MAIN/-/none}"
   done
 
-  # Swiss German profile (Recyclarr creates it, but does not manage the profile language): Any, so a Swiss German dub of a foreign film is not rejected for lacking the original audio. Sonarr profiles have no language (the profile's CF scores do it).
+  # Profile language Any (Radarr; Recyclarr puts the guide's Original back when it updates a profile): the custom formats do the original-audio rule, so a Swiss German dub
+  # on the Swiss German profile and a silent film with English intertitles (`Language: Not Original (sound film)` needs 1930 on) are not rejected by the profile. Sonarr profiles have no language.
   SID=$(api $app /qualityprofile | py 'import json,sys; r=[p["id"] for p in json.load(sys.stdin) if p["name"]==sys.argv[1]]; print(r[0] if r else "")' "$SWISS")
-  if [ -z "$SID" ]; then
-    echo "   profile '$SWISS' missing: run the Recyclarr sync first" >&2
-  elif api $app "/qualityprofile/$SID" | py 'import json,sys; sys.exit(0 if "language" in json.load(sys.stdin) else 1)'; then
-    api $app "/qualityprofile/$SID" | py 'import json,sys; p=json.load(sys.stdin); p["language"]={"id":-1,"name":"Any"}; print(json.dumps(p))' | api $app "/qualityprofile/$SID" -X PUT -d @- | py 'import json,sys; p=json.load(sys.stdin); print("   profile", p["name"], "language", p["language"]["name"], "min score", p["minFormatScore"])'
-  else
-    echo "   profile $SWISS: no profile language ($app), min score $(api $app "/qualityprofile/$SID" | py 'import json,sys; print(json.load(sys.stdin)["minFormatScore"])')"
+  [ -n "$SID" ] || echo "   profile '$SWISS' missing: run the Recyclarr sync first" >&2
+  for PID in $(api $app /qualityprofile | py 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin) if "language" in p))'); do
+    api $app "/qualityprofile/$PID" | py 'import json,sys; p=json.load(sys.stdin); p["language"]={"id":-1,"name":"Any"}; print(json.dumps(p))' | api $app "/qualityprofile/$PID" -X PUT -d @- | py 'import json,sys; p=json.load(sys.stdin); print("   profile", p["name"], "language", p["language"]["name"], "min score", p["minFormatScore"])'
+  done
+
+  # Silent series (Sonarr; Radarr's reject reads the film's year): before 1930 on main/Any or their twins -> the silent profile; 1930 or later on it -> Any quality.
+  if [ $app = sonarr ]; then
+    read -r QID AQID FAMILY < <(api sonarr /qualityprofile | py 'import json,sys; n={p["name"]:p["id"] for p in json.load(sys.stdin)}; print(*(n.get(x, 0) for x in sys.argv[1:]))' "$SILENT" "$ANY" "$MAIN" "$MAIN$ENG_SUFFIX" "$ANY" "$ANY$ENG_SUFFIX")
+    read -r TO_SILENT TO_ANY < <(api sonarr /series | py 'import json,sys
+q, before = int(sys.argv[1]), int(sys.argv[2]); fam = set(map(int, sys.argv[3:])) - {0}
+silent = lambda t: 0 < (t.get("year") or 0) < before
+items = json.load(sys.stdin)
+print(",".join(str(t["id"]) for t in items if q and t["qualityProfileId"] in fam and silent(t)) or "-", ",".join(str(t["id"]) for t in items if q and t["qualityProfileId"] == q and not silent(t)) or "-")' "$QID" "$SILENT_BEFORE" $FAMILY)
+    if [ "$QID" = 0 ]; then
+      echo "   profile '$SILENT' missing: run the Recyclarr sync first" >&2
+    else
+      [ "$TO_SILENT" = - ] || api sonarr /series/editor -X PUT -d "{\"seriesIds\":[$TO_SILENT],\"qualityProfileId\":$QID}" >/dev/null
+      [ "$TO_ANY" = - ] || api sonarr /series/editor -X PUT -d "{\"seriesIds\":[$TO_ANY],\"qualityProfileId\":$AQID}" >/dev/null
+      echo "   silent (before $SILENT_BEFORE) -> profile $QID: ${TO_SILENT/-/none}; back to $AQID: ${TO_ANY/-/none}"
+    fi
   fi
 
   # The same move for every title added from now on, before its first search:
@@ -255,7 +274,7 @@ for app in radarr sonarr; do
   case $app in radarr) kind=movie; ev=radarr_eventtype=MovieAdded; idv=radarr_movie_id;; sonarr) kind=series; ev=sonarr_eventtype=SeriesAdd; idv=sonarr_series_id;; esac
   SUBS_IDS=$(api $app /tag | py 'import json,sys; print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if t["label"].startswith("subs-") or t["label"]=="audio-swiss-german"))')
   OLD_TAG=$(api $app /tag | py 'import json,sys; print(" ".join(str(t["id"]) for t in json.load(sys.stdin) if t["label"]=="old-rare"))')
-  ANY_PIDS=$(api $app /qualityprofile | py 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin) if p["name"] in (sys.argv[1], sys.argv[1]+sys.argv[2])))' "$ANY" "$ENG_SUFFIX")
+  ANY_PIDS=$(api $app /qualityprofile | py 'import json,sys; print(" ".join(str(p["id"]) for p in json.load(sys.stdin) if p["name"] in (sys.argv[1], sys.argv[1]+sys.argv[2], sys.argv[3])))' "$ANY" "$ENG_SUFFIX" "$SILENT")
   # one line per title: <id> <scan>; scan = 1 when Bazarr has to rescan it (subs/Swiss German tags)
   while read -r TID RESCAN; do
     env "$ev" "$idv=$TID" LP_TAGS_ONLY=1 LP_CONFIG=/srv/appdata/$app/config.xml LP_LANGUAGES="$TSV" \

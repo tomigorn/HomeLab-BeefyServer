@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Radarr/Sonarr Connect "Custom Script" (On Movie Added / On Series Add): puts a new title on the right profile before its first search, gives titles on Any quality the old-rare tag (min. 1 seeder indexers) and turns its subs-<language> tags into one Bazarr profile (README "Languages", "Old and rare titles", "Per-request audio and subtitles", "Swiss German").
+# Radarr/Sonarr Connect "Custom Script" (On Movie Added / On Series Add): puts a new title on the right profile before its first search (Sonarr: series before 1930 on the silent profile, README "Silent films"), gives titles on Any quality the old-rare tag (min. 1 seeder indexers) and turns its subs-<language> tags into one Bazarr profile (README "Languages", "Old and rare titles", "Per-request audio and subtitles", "Swiss German").
 # Runs inside the app container (bash, curl, jq); registered by scripts/language-policy.sh. LP_TAGS_ONLY=1 skips the profile part except the tag-driven Swiss German move (language-policy.sh: existing titles).
 # LP_RECOMPUTE=1 (request-tags.sh, a title's tags or profile changed): profile from scratch = default rules + remaining tags; LP_PREV_PROFILE / LP_PREV_TAGS (ids, comma-separated) tell a profile the user picked (kept with the profile-pinned tag) from one the tags set.
 # A Connect call (no LP_TAGS_ONLY / LP_RECOMPUTE) writes "<kind> <id>" to title-added.stamp next to the config at exit: systemd/clear-data-wipe-added.path then snapshots Seerr while the new request still exists.
@@ -7,6 +7,8 @@ set -euo pipefail
 
 ENG_SUFFIX=" - English original"
 ANY="4K preferred · older versions allowed"
+SILENT_SUFFIX=" - silent film"
+SILENT_BEFORE=${LP_SILENT_BEFORE:-1930}
 SWISS="Swiss German (Mundart) only - any quality"
 SWISS_TAG=audio-swiss-german
 PIN_TAG=profile-pinned
@@ -39,20 +41,27 @@ URL="http://localhost:$(xml Port)$(xml UrlBase)/api/v3"
 api() { local path=$1; shift; curl -sf -m 10 -H @<(printf 'X-Api-Key: %s\n' "$KEY") -H 'Content-Type: application/json' "$URL$path" "$@"; }
 
 title=$(api "/$kind/$id")
-read -r MID MEN AID AEN SID < <(api /qualityprofile | jq -r --arg m "$MAIN" --arg a "$ANY" --arg s "$ENG_SUFFIX" --arg w "$SWISS" \
-  'map({(.name): .id}) | add | "\(.[$m] // 0) \(.[$m + $s] // 0) \(.[$a] // 0) \(.[$a + $s] // 0) \(.[$w] // 0)"')
+read -r MID MEN AID AEN SID TID < <(api /qualityprofile | jq -r --arg m "$MAIN" --arg a "$ANY" --arg s "$ENG_SUFFIX" --arg w "$SWISS" --arg q "$SILENT_SUFFIX" \
+  'map({(.name): .id}) | add | "\(.[$m] // 0) \(.[$m + $s] // 0) \(.[$a] // 0) \(.[$a + $s] // 0) \(.[$w] // 0) \(.[$a + $q] // 0)"')
 read -r current english year votes < <(jq -r \
   "\"\(.qualityProfileId) \(.originalLanguage.name == \"English\") \(.year // 0) \($VOTES // 0)\"" <<<"$title")
 now=${LP_YEAR:-$(date +%Y)}
+# Radarr's own `Language: Not Original (sound film)` reads the year itself; Sonarr has no year condition, so silent series get their own profile.
+[ "$kind" = series ] || TID=0
+silent() { [ "$TID" != 0 ] && [ "$year" -gt 0 ] && [ "$year" -lt "$SILENT_BEFORE" ]; }
 
 set_profile() {
   local family reason= target
   if pinned; then echo "$kind $id: profile $current kept ($PIN_TAG)"; return; fi
   case $current in
     "$MID"|"$MEN") family=main;;
-    "$AID"|"$AEN") family=any;;
+    "$AID"|"$AEN"|"$TID") family=any;;
     *) echo "$kind $id: profile $current kept"; return;;
   esac
+  if silent; then
+    if [ "$current" != "$TID" ]; then move "$TID" "silent: $year"; else echo "$kind $id: profile $current kept"; fi
+    return
+  fi
   if [ "$family" = main ] && [ "$AID" != 0 ] && [ "$year" -gt 0 ]; then
     if [ "$year" -le $((now - OLD_YEARS)) ]; then family=any; reason="old: $year"
     elif [ "$year" -le $((now - NICHE_MIN_AGE)) ] && [ "$votes" -lt "$NICHE_VOTES" ]; then family=any; reason="niche: $votes votes"
@@ -149,6 +158,7 @@ default_profile() {
   [ "$DEF" != 0 ] || DEF=$MID
   [ "$DEF" != 0 ] || DEF=$current
   if [ "$english" = true ]; then DEF_REASON="${reason:+$reason, }English original"; else DEF_REASON="${reason:-not English original}"; fi
+  if silent; then DEF=$TID; DEF_REASON="silent: $year"; fi
 }
 
 recompute() {
@@ -183,7 +193,7 @@ recompute() {
   fi
   if pinned; then echo "$kind $id: profile $current kept ($PIN_TAG)"; return; fi
   case $current in
-    "$MID"|"$MEN"|"$AID"|"$AEN"|"$SID") ;;
+    "$MID"|"$MEN"|"$AID"|"$AEN"|"$SID"|"$TID") ;;
     *) echo "$kind $id: profile $current kept"; return;;
   esac
   if [ "$DEF" != "$current" ]; then move "$DEF" "default: $DEF_REASON"; else echo "$kind $id: profile $current kept"; fi
@@ -257,6 +267,7 @@ old_rare_tag() {
   local on_any=false has=false tid
   if [ "$AID" != 0 ] && [ "$current" = "$AID" ]; then on_any=true; fi
   if [ "$AEN" != 0 ] && [ "$current" = "$AEN" ]; then on_any=true; fi
+  if [ "$TID" != 0 ] && [ "$current" = "$TID" ]; then on_any=true; fi
   tid=$(api /tag | jq -r --arg l "$OLD_RARE_TAG" '.[] | select(.label == $l) | .id')
   if [ -n "$tid" ] && jq -e --argjson t "$tid" '(.tags // []) | index($t)' <<<"$title" >/dev/null; then has=true; fi
   if [ "$on_any" = true ] && [ "$has" = false ]; then

@@ -20,6 +20,7 @@ PROFILES = [{"id": 3, "name": "Anime - Bluray + WEB 1080p"},
             {"id": 11, "name": "4K preferred · older versions allowed"},
             {"id": 12, "name": "4K preferred · older versions allowed - English original"},
             {"id": 13, "name": "Swiss German (Mundart) only - any quality"},
+            {"id": 14, "name": "4K preferred · older versions allowed - silent film"},
             {"id": 17, "name": "4K HDR - WEB-2160p (1080p fallback)"},
             {"id": 20, "name": "4K HDR - WEB-2160p (1080p fallback) - English original"}]
 TAGS = [{"id": 1, "label": "lang-es"}, {"id": 21, "label": "audio-english"}, {"id": 22, "label": "audio-german"},
@@ -187,6 +188,31 @@ run "$(show 8 3 "$ES" 1990 5)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "old niche anime-profile series stays" "" "$(cat "$T/puts")"
 run "{}" sonarr_eventtype=Test
 assert_eq "Test event exits 0 and calls nothing" "0|" "$RC|$(cat "$T/requests")"
+
+echo "Sonarr: silent series (before 1930) go to the silent profile"
+FR='{"id": 2, "name": "French"}'
+run "$(show 8 17 "$FR" 1915 500)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "French series from 1915 on main moves to the silent profile, gets old-rare" "$(moved series seriesIds 8 14)" "$(cat "$T/puts")"
+assert_eq "  the log line names the reason" "series 8: profile 17 -> 14 (silent: 1915)
+series 8: tag old-rare added (Any quality)" "$(cat "$T/out")"
+run "$(show 8 11 "$FR" 1929 500)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "series from 1929 on Any quality moves to the silent profile" "$(moved series seriesIds 8 14)" "$(cat "$T/puts")"
+run "$(show 8 17 "$EN" 1920 500)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "English silent series goes to the silent profile, not the twin" "$(moved series seriesIds 8 14)" "$(cat "$T/puts")"
+run "$(show 8 17 "$FR" 1930 500000)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "series from 1930 is a sound series: Any quality" "$(moved series seriesIds 8 11)" "$(cat "$T/puts")"
+run "$(show 8 14 "$FR" 1915 500)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "silent series already on the silent profile stays, gets old-rare" "$(tagput series seriesIds 8 60 add)" "$(cat "$T/puts")"
+run "$(show 8 14 "$FR" 1990 500)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "sound series on the silent profile moves to Any quality" "$(moved series seriesIds 8 11)" "$(cat "$T/puts")"
+run "$(show 8 3 "$ES" 1915 500)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "silent series on another profile (anime) stays" "" "$(cat "$T/puts")"
+run "$(tagged 8 17 "$FR" 1915 "61")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "pinned silent series stays" "" "$(cat "$T/puts")"
+run "$(tagged 8 17 "$FR" 1915 "")" sonarr_eventtype=SeriesAdd sonarr_series_id=8 LP_RECOMPUTE=1
+assert_eq "recompute: silent series default is the silent profile" "$(moved series seriesIds 8 14)" "$(cat "$T/puts")"
+run "$(film 5 7 "$FR" 1915 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "Radarr: silent film goes to Any quality (its own reject knows the year)" "$(moved movie movieIds 5 11)" "$(cat "$T/puts")"
 
 echo "Tags: audio-xx and subs-xx"
 JA='{"id": 8, "name": "Japanese"}'; DE='{"id": 4, "name": "German"}'; HI='{"id": 26, "name": "Hindi"}'
