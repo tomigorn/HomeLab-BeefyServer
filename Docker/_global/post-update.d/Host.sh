@@ -36,4 +36,5 @@ EOF
 check host.root-copies "^ok$" "$(root_copies)"
 check host.mem-limits '^none$' "$(docker ps --format '{{.Names}}' | while read -r c; do [ "$(docker inspect -f '{{.HostConfig.Memory}}' "$c")" = 0 ] && echo "$c"; done | xargs | sed 's/^$/none/')"
 check host.os-updates '^installed false$' "$(cmp -s "$DIR/../../../Server/11-OS-Updates/52unattended-upgrades-local" /etc/apt/apt.conf.d/52unattended-upgrades-local && echo installed || echo differs) $(apt-config dump Unattended-Upgrade::Automatic-Reboot | sed -n 's/.*"\(.*\)";/\1/p')"
+check host.sysctl-hardening '^installed ok$' "$(f="$DIR/../../../Server/12-Host-Hardening/90-hardening.conf"; cmp -s "$f" /etc/sysctl.d/90-hardening.conf && printf 'installed ' || printf 'differs '; grep -E '^[a-z]' "$f" | while IFS=' =' read -r k v; do [ "$(sysctl -n "$k" 2>&1)" = "$v" ] || echo "$k"; done | xargs | sed 's/^$/ok/')"
 check host.headless '^multi-user.target disabled disabled$' "$(systemctl get-default) $(systemctl is-enabled gdm.service 2>&1) $(test -e /etc/cloud/cloud-init.disabled && echo disabled || echo enabled)"
