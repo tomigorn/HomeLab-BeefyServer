@@ -36,7 +36,7 @@ Stays public on purpose: friends use it from anywhere, and nothing left is admin
 
 ### Edge allow-list
 
-The catch-all router matches only `/`, `/serviceworker.js`, `/api/cache-status/` and these first path segments (Floppy 26.10.29; new and still closed: `covers`, `youtube-player`): everything else is 404 at Traefik, so new upstream features stay closed until added on purpose. After every update compare:
+The catch-all router matches only `/`, `/serviceworker.js`, `/api/cache-status/` and these first path segments (Floppy 26.10.29; `covers` and `youtube-player` opened 2026-10-31): everything else is 404 at Traefik, so new upstream features stay closed until added on purpose. After every update compare:
 
 ```bash
 sudo docker exec -i -u abc -w /floppy floppy python manage.py shell < scripts/url-prefixes.py   # PREFIXES …
