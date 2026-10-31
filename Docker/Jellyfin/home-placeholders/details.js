@@ -31,11 +31,11 @@
   var PLAY_TEXT = {
     en: {
       play: "\u25B6 Play on TV", playLabel: "Play on TV", pick: "Play on", none: "No TV online. Open Moonfin on the TV first.", looking: "Looking for TVs\u2026", starting: "Starting\u2026",
-      started: "Playing on {d}", failed: "Could not start playback on {d}", nothing: "Nothing to play", busy: "now playing: {t}", unreachable: "Could not list the TVs"
+      started: "Playing on {d}", failed: "Could not start playback on {d}", nothing: "Nothing to play", busy: "now playing: {t}", unreachable: "Could not list the TVs", cont: "Continue on TV"
     },
     de: {
       play: "\u25B6 Auf TV abspielen", playLabel: "Auf TV abspielen", pick: "Abspielen auf", none: "Kein TV online. Zuerst Moonfin auf dem TV öffnen.", looking: "TVs werden gesucht\u2026", starting: "Wird gestartet\u2026",
-      started: "Läuft auf {d}", failed: "Wiedergabe auf {d} fehlgeschlagen", nothing: "Nichts zum Abspielen", busy: "spielt gerade: {t}", unreachable: "TVs konnten nicht geladen werden"
+      started: "Läuft auf {d}", failed: "Wiedergabe auf {d} fehlgeschlagen", nothing: "Nichts zum Abspielen", busy: "spielt gerade: {t}", unreachable: "TVs konnten nicht geladen werden", cont: "Auf TV weiterschauen"
     }
   };
 
@@ -326,9 +326,12 @@
     return typeof t === "number" && t > 0 ? t : 0;
   }
 
-  // Film: from its resume point. Series: the episode in progress, else Next Up, else the first regular episode (not a special).
+  // Film, episode: from its resume point. Series: the episode in progress, else Next Up, else the first regular episode (not a special).
+  // Season: its episode in progress, else its first unwatched episode, else its first episode.
   function resolvePlay(win, a, target) {
     var u = a.getCurrentUserId();
+    if (target.type === "current") return resolveCurrent(win, a, target);
+    if (target.type === "Season") return resolveSeason(win, a, target.id);
     if (target.type !== "Series") return getJson(win, a, "Users/" + u + "/Items/" + target.id).then(function (it) { return { id: target.id, ticks: ticksOf(it) }; });
     return getJson(win, a, "Users/" + u + "/Items/Resume", { ParentId: target.id, Limit: 1, IncludeItemTypes: "Episode", Recursive: true }).then(firstItem).then(function (it) {
       return it || getJson(win, a, "Shows/NextUp", { SeriesId: target.id, UserId: u, Limit: 1 }).then(firstItem);
@@ -338,6 +341,285 @@
         return eps.filter(function (e) { return e.ParentIndexNumber > 0; })[0] || eps[0] || null;
       });
     }).then(function (it) { return it && it.Id ? { id: it.Id, ticks: ticksOf(it) } : null; });
+  }
+
+  function resolveSeason(win, a, id) {
+    var u = a.getCurrentUserId();
+    return getJson(win, a, "Users/" + u + "/Items/Resume", { ParentId: id, Limit: 1, IncludeItemTypes: "Episode", Recursive: true }).then(firstItem).then(function (it) {
+      if (it) return it;
+      return getJson(win, a, "Users/" + u + "/Items/" + id).then(function (season) {
+        if (!season || !season.SeriesId) return null;
+        return getJson(win, a, "Shows/" + season.SeriesId + "/Episodes", { SeasonId: id, UserId: u, IsMissing: false }).then(function (r) {
+          var eps = (r && r.Items) || [];
+          return eps.filter(function (e) { return !(e.UserData && e.UserData.Played); })[0] || eps[0] || null;
+        });
+      });
+    }).then(function (it) { return it && it.Id ? { id: it.Id, ticks: ticksOf(it) } : null; });
+  }
+
+  // Jellyfin's own rule (playbackManager transcodingOffsetTicks): a progressive transcode without copyTimestamps starts its clock at StartTimeTicks; HLS and direct play run on the item's timeline.
+  function streamOffset(src) {
+    if (!src || /^blob:/i.test(src)) return 0;
+    var path = src.split(/[?#]/)[0];
+    var query = src.indexOf("?") < 0 ? "" : src.slice(src.indexOf("?") + 1).split("#")[0];
+    if (/\.m3u8$/i.test(path) || /(^|&)copytimestamps=true(&|$)/i.test(query) || /(^|&)static=true(&|$)/i.test(query)) return 0;
+    var m = /(?:^|&)starttimeticks=(\d+)(?:&|$)/i.exec(query);
+    return m ? Number(m[1]) : 0;
+  }
+
+  function localVideo(doc) {
+    var all = doc.querySelectorAll("video");
+    for (var i = 0; i < all.length; i++) if (all[i].classList.contains("htmlvideoplayer")) return all[i];
+    return all[0] || null;
+  }
+
+  // The item playing here: the browser's own session, else the id in a direct stream URL. Position read when the TV is picked.
+  function resolveCurrent(win, a, target) {
+    var u = a.getCurrentUserId();
+    var own = typeof a.deviceId === "function" ? a.deviceId() : null;
+    var at = target.at || 0;
+    var src = target.src || "";
+    return getJson(win, a, "Sessions", { DeviceId: own }).then(null, function () { return []; }).then(function (list) {
+      var s = (list || []).filter(function (x) { return x && x.UserId === u && x.DeviceId === own && x.NowPlayingItem && x.NowPlayingItem.Id; })[0];
+      var m = /\/videos\/([0-9a-f-]{8,})\//i.exec(src);
+      var id = s ? s.NowPlayingItem.Id : m ? m[1] : null;
+      if (!at && s && s.PlayState && s.PlayState.PositionTicks > 0) at = s.PlayState.PositionTicks;
+      return id ? { id: id, ticks: at, current: true } : null;
+    });
+  }
+
+  function currentPosition(doc) {
+    var v = localVideo(doc);
+    if (!v) return { at: 0, src: "" };
+    var t = Number(v.currentTime) || 0;
+    var src = v.currentSrc || v.src || "";
+    return { at: Math.max(0, Math.floor(t * 1e7)) + streamOffset(src), src: src };
+  }
+
+
+  // Native Jellyfin pages (README "Play on TV"): a TV icon on title details, cards, episode rows and in the player.
+  var PLAYABLE = { Movie: 1, Series: 1, Season: 1, Episode: 1, Video: 1 };
+
+  var phCache = { from: null, ids: {} };
+  function placeholders(win) {
+    var h = win.HssTrendingHide || null;
+    if (phCache.from === h && h) return phCache.ids;
+    var ids = {};
+    if (h) (h.items || []).forEach(function (i) { ids[i] = true; });
+    phCache = { from: h, ids: ids };
+    return ids;
+  }
+
+  function iconButton(doc, cls, icon, target, lang, name, key) {
+    var b = doc.createElement("button");
+    b.setAttribute("type", "button");
+    b.className = cls;
+    var label = tr(lang, key || "playLabel", null, PLAY_TEXT);
+    b.setAttribute("title", label);
+    b.setAttribute("aria-label", (name ? name + ": " : "") + label);
+    b.setAttribute("data-hss-play", target.id);
+    b.setAttribute("data-hss-play-type", target.type);
+    var i = el(doc, "span", icon + " tv");
+    i.setAttribute("aria-hidden", "true");
+    b.appendChild(i);
+    return b;
+  }
+
+  function textOf(node, sel) {
+    var t = node.querySelector(sel);
+    return t ? t.textContent.trim() : "";
+  }
+
+  function wanted(node, ph) {
+    var id = node.getAttribute("data-id");
+    return !!(id && PLAYABLE[node.getAttribute("data-type")] && !ph[id] && !node.querySelector("[data-hss-play]") && !node.classList.contains("hssComingCard") && !node.closest(".hssDetails"));
+  }
+
+  // data-hss-tv: "-<id>" = no icon for this item. React grids re-render cards and reuse them for other items, so a present icon is checked against the id.
+  function settled(node, id, cls) {
+    if (node.getAttribute("data-hss-tv") === "-" + id) return true;
+    var mine = node.querySelector(cls);
+    if (mine && mine.getAttribute("data-hss-play") === id && mine.getAttribute("data-hss-play-type") === node.getAttribute("data-type")) return true;
+    if (mine) mine.remove();
+    return false;
+  }
+
+  function skip(node, id) {
+    node.setAttribute("data-hss-tv", "-" + id);
+  }
+
+  function hover(win) {
+    return !(win && win.matchMedia) || win.matchMedia("(hover: hover)").matches;
+  }
+
+  // Desktop cards carry Jellyfin's hover overlay; phone cards have none, so the icon is its own tap target in the image.
+  function decorateCard(doc, card, lang, ph) {
+    var id = card.getAttribute("data-id");
+    if (settled(card, id, ".hssCardTv")) return;
+    if (!wanted(card, ph)) return skip(card, id);
+    var box = card.querySelector(".cardScalable");
+    if (!box) return;
+    card.setAttribute("data-hss-tv", id);
+    var target = { id: id, type: card.getAttribute("data-type") };
+    var named = card.querySelector("a[aria-label]");
+    var name = textOf(card, ".cardText bdi") || (named && named.getAttribute("aria-label")) || card.getAttribute("aria-label") || "";
+    var over = hover(doc.defaultView) && box.querySelector(".cardOverlayContainer");
+    if (over) {
+      var br = over.querySelector(".cardOverlayButton-br");
+      if (!br) br = over.appendChild(el(doc, "div", "cardOverlayButton-br flex"));
+      br.insertBefore(iconButton(doc, "cardOverlayButton cardOverlayButton-hover paper-icon-button-light hssCardTv", "material-icons cardOverlayButtonIcon cardOverlayButtonIcon-hover", target, lang, name), br.firstChild);
+    } else {
+      box.appendChild(iconButton(doc, "cardOverlayButton paper-icon-button-light hssCardTv hssCardTvTouch", "material-icons cardOverlayButtonIcon", target, lang, name));
+    }
+  }
+
+  function decorateRow(doc, row, lang, ph) {
+    var id = row.getAttribute("data-id");
+    if (settled(row, id, ".hssListTv")) return;
+    if (!wanted(row, ph)) return skip(row, id);
+    var box = row.querySelector(".listViewUserDataButtons");
+    if (!box) return;
+    row.setAttribute("data-hss-tv", id);
+    var target = { id: id, type: row.getAttribute("data-type") };
+    box.insertBefore(iconButton(doc, "listItemButton paper-icon-button-light hssListTv", "material-icons", target, lang, textOf(row, ".listItemBodyText")), box.firstChild);
+  }
+
+  function detailsId(win) {
+    var m = /[?&]id=([0-9A-Za-z-]+)/.exec(win.location.hash || "");
+    return m ? m[1] : null;
+  }
+
+  function detailButton(doc, target, lang) {
+    var b = iconButton(doc, "button-flat detailButton emby-button hssDetailTv", "material-icons detailButton-icon", target, lang);
+    var c = el(doc, "div", "detailButton-content");
+    c.appendChild(b.firstChild);
+    c.appendChild(el(doc, "span", "detailButton-text hssDetailTvLabel", tr(lang, "playLabel", null, PLAY_TEXT)));
+    b.appendChild(c);
+    return b;
+  }
+
+  // One page per route; Jellyfin keeps earlier pages hidden (.hide) and may reuse one for the next id.
+  function decorateDetails(win, lang, ph, items) {
+    var doc = win.document;
+    var id = detailsId(win);
+    var pages = doc.querySelectorAll("#itemDetailPage:not(.hide)");
+    for (var i = 0; i < pages.length; i++) {
+      var row = pages[i].querySelector(".mainDetailButtons");
+      if (!row) continue;
+      var b = row.querySelector(".hssDetailTv");
+      if (!id) { if (b) b.remove(); continue; }
+      if (b && b.getAttribute("data-hss-play") === id) continue;
+      if (b) b.remove();
+      lookup(win, items, id).then(placeDetail(win, row, id, lang, ph));
+    }
+  }
+
+  function placeDetail(win, row, id, lang, ph) {
+    return function (it) {
+      if (!it || !row.isConnected || detailsId(win) !== id || row.querySelector(".hssDetailTv")) return;
+      if (!PLAYABLE[it.Type] || ph[id] || (it.SeriesId && ph[it.SeriesId])) return;
+      var b = detailButton(win.document, { id: id, type: it.Type }, lang);
+      var after = row.querySelector(".btnReplay") || row.querySelector(".btnPlay");
+      if (after) row.insertBefore(b, after.nextSibling);
+      else row.insertBefore(b, row.firstChild);
+    };
+  }
+
+  // Cards on the page of a Trending placeholder (its seasons) stay plain; until that item is known they wait for the next pass.
+  function pageState(win, items, ph, later) {
+    var id = detailsId(win);
+    var page = id && win.document.querySelector("#itemDetailPage:not(.hide)");
+    if (!page) return { ok: function () { return true; } };
+    var it = items[id] && items[id].value;
+    if (it === undefined) lookup(win, items, id).then(later);
+    var blocked = it === undefined || !!(ph[id] || (it && it.SeriesId && ph[it.SeriesId]));
+    return {
+      ok: function (node) {
+        if (!blocked || !page.contains(node)) return true;
+        if (it !== undefined) {
+          var mine = node.querySelector("[data-hss-play]:not(.hssPlayTv)");
+          if (mine) mine.remove();
+          skip(node, node.getAttribute("data-id"));
+        }
+        return false;
+      }
+    };
+  }
+
+  function lookup(win, items, id) {
+    if (!items[id]) {
+      var a = win.ApiClient;
+      var p = items[id] = getJson(win, a, "Users/" + a.getCurrentUserId() + "/Items/" + id).then(function (it) { p.value = it || null; return it; }, function () {
+        p.value = null;
+        win.setTimeout(function () { if (items[id] === p) delete items[id]; }, 30000);
+        return null;
+      });
+    }
+    return items[id];
+  }
+
+  function decorateOsd(doc, lang) {
+    var bars = doc.querySelectorAll("#videoOsdPage .osdControls .buttons");
+    for (var i = 0; i < bars.length; i++) {
+      if (bars[i].querySelector(".hssOsdTv")) continue;
+      var b = iconButton(doc, "autoSize paper-icon-button-light hssOsdTv", "xlargePaperIconButton material-icons", { id: "current", type: "current" }, lang, "", "cont");
+      bars[i].insertBefore(b, bars[i].querySelector(".btnVideoOsdSettings"));
+    }
+  }
+
+  function toast(win, text) {
+    var doc = win.document;
+    var old = doc.querySelector(".hssToast");
+    if (old) old.remove();
+    var t = el(doc, "div", "hssToast", text);
+    t.setAttribute("role", "status");
+    doc.body.appendChild(t);
+    win.setTimeout(function () { t.remove(); }, 4000);
+  }
+
+  // Leaving the player route is Jellyfin's own stop: it reports PlaybackStopped with the position, which saves the resume point.
+  function stopLocal(win) {
+    var back = win.document.querySelector(".headerBackButton:not(.hide)");
+    if (back) back.click();
+    else win.history.back();
+  }
+
+  function native(win, lang, tv, stats) {
+    var doc = win.document;
+    var items = {};
+    var pending = null;
+    function scan() {
+      pending = null;
+      stats.scans++;
+      if (tv() || !win.ApiClient || !doc.body) return;
+      var l = lang();
+      var ph = placeholders(win);
+      var page = pageState(win, items, ph, later);
+      var cards = doc.querySelectorAll(".card[data-id]");
+      for (var i = 0; i < cards.length; i++) if (page.ok(cards[i])) decorateCard(doc, cards[i], l, ph);
+      var rows = doc.querySelectorAll(".listItem[data-id]");
+      for (var j = 0; j < rows.length; j++) if (page.ok(rows[j])) decorateRow(doc, rows[j], l, ph);
+      decorateDetails(win, l, ph, items);
+      decorateOsd(doc, l);
+      if (obs) obs.takeRecords();
+    }
+    function later() {
+      if (!pending) pending = win.setTimeout(scan, 120);
+    }
+    var obs = win.MutationObserver ? new win.MutationObserver(function (list) {
+      for (var i = 0; i < list.length; i++) {
+        var t = list[i].target;
+        if (t.closest && t.closest(".hssPlayMenu, .hssToast")) continue;
+        var added = list[i].addedNodes;
+        for (var k = 0; k < added.length; k++) if (added[k].nodeType === 1) return later();
+      }
+    }) : null;
+    if (obs) obs.observe(doc.documentElement, { childList: true, subtree: true });
+    doc.addEventListener("viewshow", later, true);
+    win.addEventListener("hashchange", later);
+    win.addEventListener("popstate", later);
+    later();
+    return scan;
   }
 
   function playUrl(a, sessionId, play) {
@@ -373,6 +655,7 @@
   }
 
   function placeMenu(win, m, btn) {
+    m.style.top = m.style.bottom = "";
     var r = btn.getBoundingClientRect();
     var w = win.innerWidth || 0;
     var h = win.innerHeight || 0;
@@ -422,6 +705,10 @@
     ".hssPlayTv:hover, .hssPlayTv:focus { background: #0cb5f0; outline: none; box-shadow: 0 0 0 0.15em #fff; }",
     ".hssDetailsActions .hssPlayTv { font-size: 1em; padding: 0.55em 1em; margin-top: 1.1em; }",
     ".layout-tv .hssPlayTv { display: none !important; }",
+    ".layout-tv .hssDetailTv, .layout-tv .hssCardTv, .layout-tv .hssListTv, .layout-tv .hssOsdTv { display: none !important; }",
+    ".hssDetailTvLabel { display: none; white-space: nowrap; } @media (min-width: 50em) { .hssDetailTvLabel { display: block; } }",
+    ".hssCardTvTouch { position: absolute; top: 0; left: 0; z-index: 2; }",
+    ".hssToast { position: fixed; z-index: 1500; left: 50%; bottom: 5em; transform: translateX(-50%); max-width: 90vw; padding: 0.7em 1.2em; border-radius: 0.4em; background: #202020; color: #fff; font-weight: 600; box-shadow: 0 0.4em 1.5em rgba(0, 0, 0, 0.7); }",
     ".hssPlayMenu { position: fixed; z-index: 1400; min-width: 14em; max-width: min(22em, 92vw); padding: 0.6em; border-radius: 0.4em; background: #202020; color: #fff; box-shadow: 0 0.4em 1.5em rgba(0, 0, 0, 0.7); }",
     ".hssPlayMenuTitle { font-weight: 700; margin-bottom: 0.4em; }",
     ".hssPlayTarget { display: block; width: 100%; margin: 0.15em 0; padding: 0.5em 0.6em; border: 0; border-radius: 0.3em; background: rgba(255, 255, 255, 0.08); color: inherit; font: inherit; text-align: left; cursor: pointer; }",
@@ -544,6 +831,7 @@
       getJson(win, a, "Sessions", { ControllableByUserId: me }).then(function (list) {
         if (menu !== m) return;
         fillMenu(doc, m.node, m.lang, remoteTargets(list, own, me));
+        if (m.btn.isConnected) placeMenu(win, m.node, m.btn);
         var f = m.node.querySelector(".hssPlayTarget");
         if (f) f.focus();
       }, function () {
@@ -560,9 +848,10 @@
       var set = function (off) { for (var i = 0; i < all.length; i++) all[i].disabled = off; };
       var status = m.node.querySelector(".hssPlayMenuStatus");
       var name = sessionLabel(s);
+      var target = m.target.type === "current" ? Object.assign(currentPosition(doc), m.target) : m.target;
       set(true);
       status.textContent = tr(m.lang, "starting", null, PLAY_TEXT);
-      resolvePlay(win, a, m.target).then(function (play) {
+      resolvePlay(win, a, target).then(function (play) {
         if (!play) {
           status.textContent = tr(m.lang, "nothing", null, PLAY_TEXT);
           set(false);
@@ -570,6 +859,10 @@
         }
         return win.fetch(playUrl(a, s.Id, play), { method: "POST", headers: auth(a) }).then(function (r) {
           if (r.status < 200 || r.status > 299) throw new Error("HTTP " + r.status);
+          if (play.current) {
+            toast(win, tr(m.lang, "started", { d: name }, PLAY_TEXT));
+            stopLocal(win);
+          }
           if (menu !== m) return;
           status.textContent = tr(m.lang, "started", { d: name }, PLAY_TEXT);
           m.timer = win.setTimeout(function () { if (menu === m) closeMenu(true); }, 4000);
@@ -584,7 +877,7 @@
     doc.addEventListener("click", function (e) {
       var t = e.target && e.target.closest ? e.target : null;
       if (!t) return;
-      var pb = t.closest(".hssPlayTv");
+      var pb = t.closest("button[data-hss-play]");
       var tb = !pb && menu && t.closest(".hssPlayMenu .hssPlayTarget");
       if (pb || tb) {
         e.preventDefault();
@@ -633,13 +926,15 @@
     doc.addEventListener("scroll", function (e) { if (menu && !(e.target && e.target.closest && e.target.closest(".hssPlayMenu"))) closeMenu(false); }, true);
     win.addEventListener("message", function (e) { if (cur) onMessage(win, e); });
 
+    var stats = { scans: 0 };
+    var scan = native(win, lang, tv, stats);
     var api = { open: open, close: close, refresh: refresh, isOpen: function () { return !!cur; } };
     win.HssDetails = api;
-    win.HssPlayTv = PLAY;
+    win.HssPlayTv = Object.assign({}, PLAY, { scan: scan, stats: stats });
     return api;
   }
 
-  var PLAY = { button: playButton, targets: remoteTargets, label: sessionLabel };
+  var PLAY = { button: playButton, targets: remoteTargets, label: sessionLabel, offset: streamOffset };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = { CSS: CSS, trailers: trailers, embedUrl: embedUrl, build: build, start: start, playTv: PLAY };
