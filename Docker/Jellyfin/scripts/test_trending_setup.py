@@ -57,8 +57,13 @@ class LibraryOptionsTest(unittest.TestCase):
 class HiddenTest(unittest.TestCase):
     def test_adds_exclude_and_keeps_others(self):
         c = {"MyMediaExcludes": ["a"], "X": 1}
-        self.assertEqual(ts.hidden(c, "t"), {"MyMediaExcludes": ["a", "t"], "X": 1})
+        self.assertEqual(ts.hidden(c, "t"), {"MyMediaExcludes": ["a", "t"], "LatestItemsExcludes": ["t"], "X": 1})
         self.assertEqual(c["MyMediaExcludes"], ["a"])
+
+    def test_also_hidden_from_latest(self):
+        c = ts.hidden({"LatestItemsExcludes": ["a"]}, "t")
+        self.assertEqual(c["LatestItemsExcludes"], ["a", "t"])
+        self.assertEqual(ts.hidden(c, "t"), c)
 
     def test_idempotent(self):
         c = ts.hidden({}, "t")
@@ -78,6 +83,7 @@ class UnresolvedTest(unittest.TestCase):
     def test_hidden_without_id_changes_nothing(self):
         self.assertEqual(ts.hidden({"MyMediaExcludes": ["a"]}, None), {"MyMediaExcludes": ["a"]})
         self.assertNotIn("MyMediaExcludes", ts.hidden({}, None))
+        self.assertNotIn("LatestItemsExcludes", ts.hidden({}, None))
 
     def test_collections_folder_found_by_type(self):
         items = [{"Name": "Movies", "Id": "m", "CollectionType": "movies"}, {"Name": "Collections", "Id": "c", "CollectionType": "boxsets"}]
@@ -231,10 +237,15 @@ class DirsTest(unittest.TestCase):
 
 class CountTest(unittest.TestCase):
     def test_summary(self):
-        users = [{"Configuration": {"MyMediaExcludes": ["t", "s"]}}, {"Configuration": {"MyMediaExcludes": ["t"]}}]
+        both = {"MyMediaExcludes": ["t", "s"], "LatestItemsExcludes": ["t", "s"]}
+        users = [{"Configuration": both}, {"Configuration": {"MyMediaExcludes": ["t"], "LatestItemsExcludes": ["t"]}}]
         libs = {"Trending items": "t", "Trending shows": "s"}
         self.assertEqual(ts.check_line(users, libs), (False, "1 of 2 users see Trending shows"))
         self.assertEqual(ts.check_line(users[:1], libs), (True, "all 1 users hide Trending items and Trending shows"))
+
+    def test_latest_leak_is_caught(self):
+        users = [{"Configuration": {"MyMediaExcludes": ["t"], "LatestItemsExcludes": []}}]
+        self.assertEqual(ts.check_line(users, {"Trending items": "t"}), (False, "1 of 1 users see Trending items in Latest"))
 
 
 if __name__ == "__main__":

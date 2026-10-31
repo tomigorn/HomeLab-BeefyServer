@@ -57,14 +57,18 @@ class PlanTest(unittest.TestCase):
 
     def test_plan_hides_trending_for_all_users(self):
         updates, _ = ud.plan([user("a")], {"a"}, "t")
-        self.assertEqual(updates, [("a", {**STOCK, "MyMediaExcludes": ["t"]})])
-        done = user("a", MyMediaExcludes=["t"])
+        self.assertEqual(updates, [("a", {**STOCK, "MyMediaExcludes": ["t"], "LatestItemsExcludes": ["t"]})])
+        done = user("a", MyMediaExcludes=["t"], LatestItemsExcludes=["t"])
         self.assertEqual(ud.plan([done], {"a"}, "t")[0], [])
 
     def test_plan_hides_both_trending_libraries(self):
         updates, _ = ud.plan([user("a")], {"a"}, ["t", "s"])
-        self.assertEqual(updates, [("a", {**STOCK, "MyMediaExcludes": ["t", "s"]})])
-        self.assertEqual(ud.plan([user("a", MyMediaExcludes=["s"])], {"a"}, [None, "s"])[0], [])
+        self.assertEqual(updates, [("a", {**STOCK, "MyMediaExcludes": ["t", "s"], "LatestItemsExcludes": ["t", "s"]})])
+        self.assertEqual(ud.plan([user("a", MyMediaExcludes=["s"], LatestItemsExcludes=["s"])], {"a"}, [None, "s"])[0], [])
+
+    def test_user_hiding_only_from_my_media_gets_latest_too(self):
+        updates, _ = ud.plan([user("a", MyMediaExcludes=["t"])], {"a"}, "t")
+        self.assertEqual(updates[0][1]["LatestItemsExcludes"], ["t"])
 
     def test_unresolved_library_id_writes_nothing(self):
         self.assertEqual(ud.plan([user("a")], {"a"}, None)[0], [])

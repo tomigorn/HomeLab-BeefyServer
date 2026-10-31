@@ -348,12 +348,13 @@ def find_library(folders, name=LIBRARY):
 
 
 def hidden(config, lib_id):
-    """config with lib_id added to MyMediaExcludes; unchanged when lib_id is unresolved."""
+    """config with lib_id added to MyMediaExcludes and LatestItemsExcludes (Latest without a parentId ignores the first); unchanged when lib_id is unresolved."""
     out = copy.deepcopy(config)
     if not lib_id:
         return out
-    excludes = list(out.get("MyMediaExcludes") or [])
-    if lib_id not in excludes:
-        excludes.append(lib_id)
-    out["MyMediaExcludes"] = excludes
+    for key in ("MyMediaExcludes", "LatestItemsExcludes"):
+        excludes = list(out.get(key) or [])
+        if lib_id not in excludes:
+            excludes.append(lib_id)
+        out[key] = excludes
     return out

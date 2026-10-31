@@ -92,6 +92,9 @@ def check_line(users, libs):
         seeing = sum(lib_id not in (u["Configuration"].get("MyMediaExcludes") or []) for u in users)
         if seeing:
             return False, f"{seeing} of {len(users)} users see {name}"
+        leaking = sum(lib_id not in (u["Configuration"].get("LatestItemsExcludes") or []) for u in users)
+        if leaking:
+            return False, f"{leaking} of {len(users)} users see {name} in Latest"
     return True, f"all {len(users)} users hide {' and '.join(libs)}"
 
 
