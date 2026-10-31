@@ -332,5 +332,132 @@ class Storage(unittest.TestCase):
                          [("SSD", ["/srv/.disks/ssd-hot", "/srv/.disks/ssd-hot2"], 0.70, 0.80), ("HDD", ["/srv/.disks/hdd-cold"], 0.80, 0.90)])
 
 
+SUBS = {"subdl": {"name": "SubDL", "searches": 2000, "downloads": 50, "approx": ["searches"]},
+        "opensubtitlescom": {"name": "OpenSubtitles"}}
+
+
+def job(jid, name, when, progress_max=1, status="completed"):
+    return {"job_id": jid, "job_name": name, "status": status, "last_run_time": when.isoformat(), "progress_max": progress_max}
+
+
+def hist(provider, local, action=1):
+    return {"action": action, "provider": provider, "parsed_timestamp": local, "path": "/data/media/x.mkv", "description": "secret title"}
+
+
+class Subtitles(unittest.TestCase):
+    NOW = utc(2026, 10, 31, 13, 30)
+
+    def test_repo_config_has_subdl_and_opensubtitles(self):
+        cfg = iu.load_config(ROOT / "indexer-bar" / "limits.toml")
+        self.assertEqual(cfg["subtitles"]["subdl"], {"name": "SubDL", "searches": 2000, "downloads": 50, "approx": ["searches"]})
+        self.assertEqual(cfg["subtitles"]["opensubtitlescom"]["name"], "OpenSubtitles")
+
+    def test_bad_subtitle_limit_is_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "l.toml"
+            p.write_text('[subtitles.subdl]\nname = "SubDL"\nsearches = "lots"\n')
+            with self.assertRaises(ValueError):
+                iu.load_config(p)
+
+    def test_job_requests_per_kind(self):
+        t = self.NOW
+        self.assertEqual(iu.job_requests(job(1, "Downloaded missing subtitles for Blue Ruin (2014)", t, 2)), 1)
+        self.assertEqual(iu.job_requests(job(1, "Downloaded missing subtitles for Blue Ruin (2014)", t, 0)), 0)
+        self.assertEqual(iu.job_requests(job(1, "Downloaded missing subtitles for The Vampires", t, 4)), 12)
+        self.assertEqual(iu.job_requests(job(1, "Searched for missing movies subtitles", t, 7)), 7)
+        self.assertEqual(iu.job_requests(job(1, "Searched for missing series subtitles", t, 2)), 6)
+        self.assertEqual(iu.job_requests(job(1, "Tried to upgrade movies subtitles", t, 5)), 5)
+        self.assertEqual(iu.job_requests(job(1, "Tried to upgrade episodes subtitles", t, 5)), 15)
+        self.assertEqual(iu.job_requests(job(1, "Searched DE for A Separation", t)), 1)
+        for other in ("Synced movies with Radarr", "Checked Health", "Manually downloaded Subtitles for X - de", "Synced /data/x.srt"):
+            self.assertEqual(iu.job_requests(job(1, other, t, 50)), 0)
+
+    def test_searches_count_once_per_job_and_reset_at_utc_midnight(self):
+        jobs = [job(1, "Searched for missing movies subtitles", utc(2026, 10, 31, 10), 7),
+                job(2, "Downloaded missing subtitles for Blue Ruin (2014)", utc(2026, 10, 31, 12), 1),
+                job(3, "Downloaded missing subtitles for Old (2020)", utc(2026, 10, 30, 23, 59), 1),
+                job(4, "Searched for missing movies subtitles", utc(2026, 10, 31, 13), 9, status="running")]
+        used, state = iu.count_searches(jobs, {}, self.NOW)
+        self.assertEqual(used, 8)
+        used, state = iu.count_searches(jobs[:1], state, self.NOW)
+        self.assertEqual(used, 8)
+        used, _ = iu.count_searches(jobs, state, utc(2026, 11, 1, 0, 1))
+        self.assertEqual(used, 0)
+
+    def test_restart_reuses_job_ids_but_counts_new_jobs(self):
+        _, state = iu.count_searches([job(1, "Searched for missing movies subtitles", utc(2026, 10, 31, 10), 7)], {}, self.NOW)
+        used, _ = iu.count_searches([job(1, "Downloaded missing subtitles for Heat (1995)", utc(2026, 10, 31, 13), 1)], state, self.NOW)
+        self.assertEqual(used, 8)
+
+    def test_downloads_from_history_since_utc_midnight(self):
+        rows = [hist("subdl", "10/31/26 14:16:07", 2), hist("subdl", "10/31/26 01:00:01"), hist("subdl", "10/31/26 00:59:59"),
+                hist("subdl", "10/31/26 09:00:00", 3), hist("subdl", "10/31/26 09:00:00", 5), hist(None, "10/31/26 09:00:00"),
+                hist("opensubtitlescom", "10/31/26 09:00:00"), hist("subdl", "garbage")]
+        self.assertEqual(iu.history_downloads(rows, "subdl", self.NOW), 3)
+        self.assertEqual(iu.history_downloads(rows, "opensubtitlescom", self.NOW), 1)
+
+    def test_rows_levels_reset_and_approx(self):
+        status = [{"name": "subdl", "status": "Good", "retry": "-"}, {"name": "opensubtitlescom", "status": "Good", "retry": "-"}]
+        rows = iu.subtitles(SUBS, status, {"subdl": 49, "opensubtitlescom": 3}, 300, self.NOW)
+        sd = next(r for r in rows if r["id"] == "subdl")
+        self.assertEqual(sd["name"], "SubDL")
+        self.assertEqual(sd["searches"], {"used": 300, "limit": 2000, "level": "ok", "resetsAt": "2026-11-01T00:00:00Z", "approx": True})
+        self.assertEqual(sd["downloads"], {"used": 49, "limit": 50, "level": "full", "resetsAt": "2026-11-01T00:00:00Z"})
+        self.assertEqual((sd["level"], sd["window"], sd["status"]), ("full", "utc-day", "ok"))
+        os_ = next(r for r in rows if r["id"] == "opensubtitlescom")
+        self.assertEqual(os_["downloads"], {"used": 3, "limit": None, "level": "ok", "resetsAt": None})
+        self.assertNotIn("approx", os_["searches"])
+        self.assertEqual(os_["level"], "ok")
+
+    def test_paused_provider_is_full_with_reason_and_retry(self):
+        status = [{"name": "opensubtitlescom", "status": "DownloadLimitExceeded", "retry": "in an hour"}]
+        os_ = next(r for r in iu.subtitles(SUBS, status, {}, 0, self.NOW) if r["id"] == "opensubtitlescom")
+        self.assertEqual((os_["status"], os_["level"], os_["statusText"]), ("paused", "full", "download limit reached, retry in an hour"))
+        status = [{"name": "subdl", "status": "SSLError", "retry": "in 9 minutes"}]
+        sd = next(r for r in iu.subtitles(SUBS, status, {}, 0, self.NOW) if r["id"] == "subdl")
+        self.assertEqual(sd["statusText"], "paused (SSLError), retry in 9 minutes")
+
+    def test_run_adds_subtitles_without_titles_or_paths(self):
+        def prowlarr(path):
+            return INDEXERS if path == "/indexer" else []
+        calls = []
+
+        def bazarr(path):
+            calls.append(path.split("?")[0])
+            if path == "/providers":
+                return {"data": [{"name": "subdl", "status": "Good", "retry": "-"}]}
+            if path == "/system/jobs":
+                return {"data": [job(1, "Downloaded missing subtitles for Secret Film (2014)", utc(2026, 10, 31, 12), 1)]}
+            return {"data": [hist("subdl", "10/31/26 14:16:07")] if path.startswith("/movies/") else [], "total": 1}
+        cfg = {"indexers": LIMITS, "subscriptions": [], "subtitles": SUBS}
+        with tempfile.TemporaryDirectory() as d:
+            out, st = pathlib.Path(d) / "usage.json", pathlib.Path(d) / "sub.json"
+            iu.run(cfg, prowlarr, out, self.NOW, bazarr=bazarr, sub_state=st)
+            text = out.read_text()
+            data = json.loads(text)
+            self.assertTrue(st.exists())
+        self.assertTrue(data["subtitlesOk"])
+        sd = next(r for r in data["subtitles"] if r["id"] == "subdl")
+        self.assertEqual((sd["searches"]["used"], sd["downloads"]["used"]), (1, 1))
+        self.assertEqual(sorted(set(calls)), ["/episodes/history", "/movies/history", "/providers", "/system/jobs"])
+        for leak in ("Secret Film", "secret title", "/data/media"):
+            self.assertNotIn(leak, text)
+
+    def test_bazarr_down_marks_subtitles_unavailable(self):
+        def prowlarr(path):
+            return INDEXERS if path == "/indexer" else []
+
+        def bazarr(path):
+            raise iu.ApiError("refused")
+        cfg = {"indexers": LIMITS, "subscriptions": [], "subtitles": SUBS}
+        with tempfile.TemporaryDirectory() as d:
+            out = pathlib.Path(d) / "usage.json"
+            iu.run(cfg, prowlarr, out, self.NOW, bazarr=bazarr, sub_state=pathlib.Path(d) / "s.json")
+            data = json.loads(out.read_text())
+        self.assertTrue(data["ok"])
+        self.assertFalse(data["subtitlesOk"])
+        self.assertEqual(data["subtitles"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

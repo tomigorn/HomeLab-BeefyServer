@@ -51,7 +51,7 @@
   }
   function metricText(m, word) {
     var s = el("span", m.level === "ok" ? "" : "ib-" + m.level + "-text");
-    add(s, document.createTextNode(num(m.used) + "/" + num(m.limit)), el("span", "ib-word", " " + word));
+    add(s, document.createTextNode((m.approx ? "≈" : "") + num(m.used) + "/" + num(m.limit)), el("span", "ib-word", " " + word));
     return s;
   }
   function resetText(r) {
@@ -127,6 +127,46 @@
     add(p, el("h4", null, t.head), tbl);
   }
 
+  var SUB_WINDOW = "per day (00:00 UTC)", SUB_APPROX = "≈ = estimated from Bazarr's searches.";
+  function subRows(d) { return d && Array.isArray(d.subtitles) ? d.subtitles : []; }
+  function subParts(r) {
+    var out = [];
+    [["searches", "searches"], ["downloads", "downloads"]].forEach(function (k) {
+      var m = r[k[0]];
+      if (!m) return;
+      if (m.limit != null) out.push(meter(m), metricText(m, k[1]));
+      else if (m.used) out.push(add(el("span", "ib-muted"), document.createTextNode(num(m.used)), el("span", "ib-word", " " + k[1])));
+    });
+    out.push(r.status === "paused" && r.statusText ? el("span", "ib-full-text", r.statusText) : resetText(r));
+    return out;
+  }
+  function subHint(r) {
+    var approx = ["searches", "downloads"].some(function (k) { return r[k] && r[k].approx; });
+    return r.name + ": subtitle provider, " + SUB_WINDOW + "." + (approx ? " " + SUB_APPROX : "");
+  }
+  function subChips(box, d) {
+    if (d && d.subtitlesOk === false) add(box, el("span", "ib-chip ib-muted", "Subtitle usage unavailable"));
+    subRows(d).forEach(function (r) {
+      var c = add.apply(null, [el("span", "ib-chip"), el("span", "ib-name", r.name)].concat(subParts(r)));
+      c.setAttribute("data-ib-subtitle", r.id || r.name);
+      c.title = subHint(r);
+      box.appendChild(c);
+    });
+  }
+  function subPanel(p, d) {
+    var rows = subRows(d);
+    if (!rows.length && !(d && d.subtitlesOk === false)) return;
+    if (!rows.length) { add(p, el("h4", null, "Subtitles"), el("p", "ib-muted", "Usage unavailable right now (Bazarr not reachable).")); return; }
+    var t = el("table"), approx = false;
+    rows.forEach(function (r) {
+      approx = approx || ["searches", "downloads"].some(function (k) { return r[k] && r[k].approx; });
+      add(t, add(el("tr"), add(el("td"), el("div", "ib-name", r.name), el("div", "ib-muted", SUB_WINDOW)),
+        add(el("td"), add.apply(null, [el("div", "ib-line")].concat(subParts(r))))));
+    });
+    add(p, el("h4", null, "Subtitles"), t);
+    if (approx) add(p, el("p", "ib-note", SUB_APPROX));
+  }
+
   function quotaLevel(q) { return q.used >= q.limit ? "full" : q.used >= q.limit - 1 ? "warn" : "ok"; }
   function quotaParts(q, l) {
     var m = { used: q.used, limit: q.limit, level: quotaLevel(q) }, t = TEXT[l];
@@ -168,6 +208,7 @@
       c.setAttribute("data-ib-indexer", r.name);
       box.appendChild(c);
     });
+    subChips(box, d);
     quotaChip(box);
     var subs = d ? d.subscriptions || [] : [];
     var due = subs.filter(function (s) { return s.level !== "ok"; });
@@ -215,6 +256,7 @@
         add(p, el("h4", null, "Unlimited (last 24 h)"), u);
       }
     }
+    subPanel(p, d);
     var subs = d ? d.subscriptions || [] : [];
     if (subs.length) {
       var s = el("table");
@@ -240,7 +282,7 @@
       root.classList.toggle("ib-mini", mini);
       bar.textContent = "";
       var rows = d && d.ok ? d.indexers.filter(function (r) { return r.limited; }) : [];
-      var level = d ? worst(rows.concat(d.subscriptions || [], disks(d), quota ? [{ level: quotaLevel(quota) }] : [])) : null;
+      var level = d ? worst(rows.concat(subRows(d), d.subscriptions || [], disks(d), quota ? [{ level: quotaLevel(quota) }] : [])) : null;
       var title = add(el("button", "ib-title"), el("span", "ib-dot" + (level ? " ib-" + level : "")), el("span", null, "Indexers"));
       title.title = mini ? "Show indexer usage" : "Hide indexer usage";
       title.setAttribute("aria-expanded", String(!mini));

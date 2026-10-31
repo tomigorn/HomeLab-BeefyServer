@@ -13,6 +13,19 @@ window = "rolling"
 searches = 20000
 window = "day"
 
+# Subtitle providers (Bazarr), by Bazarr provider id. Window: calendar day UTC (00:00 UTC = 01:00 CET / 02:00 CEST).
+# searches = API requests, downloads = subtitle downloads; leave one out = no limit shown. approx = counts that are estimated (≈ in the bar).
+# SubDL free plan: 2000 API requests and 50 downloads a day (its /api/v1/me usage endpoint is Pro-only, so searches are estimated from Bazarr's jobs).
+[subtitles.subdl]
+name = "SubDL"
+searches = 2000
+downloads = 50
+approx = ["searches"]
+
+# OpenSubtitles.com free account: daily download limit; Bazarr pauses it (DownloadLimitExceeded) when hit.
+[subtitles.opensubtitlescom]
+name = "OpenSubtitles"
+
 # Paid or time-limited services: shown with days left. After a renewal change only the date.
 # expires = the day it ends (YYYY-MM-DD, no quotes), or lifetime = true.
 [[subscriptions]]

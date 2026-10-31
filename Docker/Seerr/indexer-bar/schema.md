@@ -35,6 +35,8 @@ Auth: the bar exists only after a 200 from `data-ib-data`; 401, 403 or a redirec
 | `subscriptions[]` | list | `name`, `kind`, `lifetime`, `expires`, `daysLeft`, `expired`, `level` |
 | `storage[]` | list | `name`, `id` (optional, chip key), `total`/`used`/`free` bytes, `pct`, `level`, `yellow`/`red` %, optional `parts` (% per member) + `partsLabel`, `label`/`sub`/`hint` = {`en`, `de`} |
 | `note` | {`en`, `de`} or string, optional | last line of the panel |
+| `subtitles[]` | list, optional | subtitle providers: `name`, `id`, `window` (`utc-day`), `status` (`ok`/`paused`), `statusText` (paused: reason + retry), `level`, `searches`/`downloads` = {`used`, `limit` (null = no limit shown), `level`, `resetsAt`, `approx` (true = estimate, shown with ≈)} |
+| `subtitlesOk` | bool, optional | false = Bazarr not reachable ("Subtitle usage unavailable"); absent = app without subtitles |
 
 Levels: `ok`, `yellow`, `warn`, `orange`, `full` (green → red).
 
