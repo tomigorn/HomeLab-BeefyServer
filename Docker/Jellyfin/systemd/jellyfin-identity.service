@@ -1,0 +1,7 @@
+[Unit]
+Description=Holy Grail sign-in subjects of Jellyfin and Seerr users for the popular request attribution
+
+[Service]
+Type=oneshot
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/identity-map.py
+Nice=10
