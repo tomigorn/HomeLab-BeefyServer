@@ -1,0 +1,11 @@
+[Unit]
+Description=Translated subtitle fallback daily 04:46, right after the beefy maintenance window; no new title after 05:50
+Documentation=file:///home/buntu/Projects/Docker/Subtitle-Translate/README.md
+
+[Timer]
+# beefy is still awake (the idle watcher waits 15 min after the window releases at 04:45); the run holds it awake itself. No boot trigger, no Persistent: a daytime wake never runs it.
+OnCalendar=*-*-* 04:46:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target
