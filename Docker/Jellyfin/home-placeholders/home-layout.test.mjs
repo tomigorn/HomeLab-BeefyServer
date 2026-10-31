@@ -354,7 +354,7 @@ test("start: empty-sections lays out, names and fills the extension rows in plac
   win.close();
 });
 
-test("coming soon: an owned title has Play on TV on the desktop card (not on TV, not for titles not in the library)", () => {
+test("coming soon: no Play on TV on any card (nothing new to watch), an owned card just opens the show", () => {
   const win = new JSDOM("").window;
   const doc = win.document;
   win.HssPlayTv = createRequire(import.meta.url)("./details.js").playTv;
@@ -362,12 +362,11 @@ test("coming soon: an owned title has Play on TV on the desktop card (not on TV,
   const ctx = { lib: hl.libIndex(LIBRARY), info: { "s:1": { tmdb: "84773" } } };
   const c = { key: "s:1", name: "Rings of Power", season: 3, episode: 5, at: new Date(2026, 10, 6).getTime(), poster: "/HomeScreen/CachedImage/abc123" };
   const desk = hl.comingCard("en", new Date(2026, 9, 29), ctx)(doc, c, api, false);
-  const b = desk.querySelector(".hssComingActions .hssPlayTv");
-  assert.ok(b);
-  assert.equal(b.closest("a"), null, "not inside the card link");
-  assert.equal(b.getAttribute("data-hss-play"), "jfRings");
-  assert.equal(b.getAttribute("data-hss-play-type"), "Series");
-  assert.equal(hl.comingCard("en", new Date(2026, 9, 29), ctx)(doc, c, api, true).querySelector(".hssPlayTv"), null);
+  assert.equal(desk.querySelector("[data-hss-play]"), null);
+  assert.equal(desk.querySelector(".hssComingActions"), null);
+  assert.equal(desk.querySelector(".cardImageContainer").getAttribute("href"), "#/details?id=jfRings&serverId=srv");
+  assert.equal(hl.comingCard("en", new Date(2026, 9, 29), ctx)(doc, c, api, true).querySelector("[data-hss-play]"), null);
   const other = hl.comingCard("en", new Date(2026, 9, 29), { lib: hl.libIndex([]), info: {} })(doc, { key: "s:7", name: "New Show", season: 1, episode: 2, at: c.at, poster: null }, api, false);
-  assert.equal(other.querySelector(".hssPlayTv"), null);
+  assert.equal(other.querySelector("[data-hss-play]"), null);
+  assert.doesNotMatch(hl.CSS, /hssComingActions/);
 });

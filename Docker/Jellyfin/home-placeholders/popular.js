@@ -181,10 +181,10 @@
     if (it.k === "tv" && it.s) poster.appendChild(el(doc, "div", "hssTopSeason", tr(lang, "season") + it.s));
     c.appendChild(poster);
     if (entry.jf) {
-      // Play on TV (details.js, window.HssPlayTv); its click handler keeps the card link from opening.
+      // Play on TV (details.js, window.HssPlayTv): the native card icon; its click handler keeps the card link from opening.
       var P = (doc.defaultView || {}).HssPlayTv;
-      var pb = !tv && P && P.button(doc, { id: entry.jf.id, type: entry.jf.type || (it.k === "tv" ? "Series" : "Movie"), name: name }, lang);
-      if (pb) c.appendChild(el(doc, "div", "hssTopActions")).appendChild(pb);
+      var pb = !tv && P && P.cardIcon && P.cardIcon(doc, { id: entry.jf.id, type: entry.jf.type || (it.k === "tv" ? "Series" : "Movie"), name: name }, lang);
+      if (pb) poster.appendChild(pb);
       return c;
     }
     if (!it.x) {
@@ -732,7 +732,7 @@
       var t = e.target && e.target.closest ? e.target : null;
       if (!t) return;
       // Play on TV (details.js) handles its own clicks; this listener runs first (injector order).
-      if (t.closest(".hssPlayTv, .hssPlayMenu")) return;
+      if (t.closest("[data-hss-play], .hssPlayMenu")) return;
       var nav = t.closest(".hssPopularNav");
       if (nav) {
         e.preventDefault();

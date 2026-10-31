@@ -152,7 +152,7 @@ test("cards: a TV icon next to Jellyfin's overlay buttons (desktop) or as its ow
   const html = '<div class="itemsContainer">' + desktopCard("m1", "Movie", "Ikiru") + touchCard("e1", "Episode", true) + touchCard("s1", "Series") +
     desktopCard("f1", "Folder") + desktopCard("pe1", "Person") + desktopCard("g1", "Genre") + desktopCard("st1", "Studio") + desktopCard("bs1", "BoxSet") + desktopCard("cf1", "CollectionFolder") +
     desktopCard("ph1", "Movie") + desktopCard("phEp", "Episode") +
-    '<div class="card hssComingCard" data-id="c1" data-type="Movie"><div class="cardBox"><div class="cardScalable"></div><div class="hssComingActions"><button class="hssPlayTv" data-hss-play="c1"></button></div></div></div>' +
+    '<div class="card hssComingCard" data-id="c1" data-type="Movie"><div class="cardBox"><div class="cardScalable"></div></div></div>' +
     '<div class="card"><div class="cardBox"><div class="cardScalable"></div></div></div></div>';
   const s = setup(html, { hide: { lib: [], sets: [], items: ["ph1", "phEp"] } });
   await s.settle();
@@ -167,9 +167,9 @@ test("cards: a TV icon next to Jellyfin's overlay buttons (desktop) or as its ow
   assert.equal(e1.getAttribute("data-hss-play-type"), "Episode");
   assert.ok(s.d.querySelector('[data-id="s1"] .hssCardTvTouch'), "series card without overlay buttons");
   for (const id of ["f1", "pe1", "g1", "st1", "bs1", "cf1", "ph1", "phEp"]) assert.equal(s.d.querySelector(`[data-id="${id}"] .hssCardTv`), null, id);
-  assert.equal(s.d.querySelector('[data-id="c1"] .hssCardTv'), null, "Coming soon card keeps its own button");
+  assert.equal(s.d.querySelector('[data-id="c1"] [data-hss-play]'), null, "Coming soon card: no TV icon");
   assert.equal(s.d.querySelectorAll(".hssCardTv").length, 3);
-  assert.equal(s.d.querySelectorAll(".hssPlayTv").length, 1, "no full-width button added");
+  assert.equal(s.d.querySelectorAll(".hssPlayTv").length, 0, "no full-width button added");
   s.win.close();
 });
 

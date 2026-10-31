@@ -484,6 +484,17 @@
     box.insertBefore(iconButton(doc, "listItemButton paper-icon-button-light hssListTv", "material-icons", target, lang, textOf(row, ".listItemBodyText")), box.firstChild);
   }
 
+  // Injected cards (Top 10, Popular): the native card icon inside the poster; target: {id, type, name}.
+  function cardIcon(doc, target, lang) {
+    if (!target || !target.id) return null;
+    styles(doc);
+    var t = { id: String(target.id), type: target.type || "Movie" };
+    if (!hover(doc.defaultView)) return iconButton(doc, "cardOverlayButton paper-icon-button-light hssCardTv hssCardTvTouch", "material-icons cardOverlayButtonIcon", t, lang, target.name);
+    var over = el(doc, "div", "hssCardTvOverlay");
+    over.appendChild(el(doc, "div", "cardOverlayButton-br flex")).appendChild(iconButton(doc, "cardOverlayButton cardOverlayButton-hover paper-icon-button-light hssCardTv", "material-icons cardOverlayButtonIcon cardOverlayButtonIcon-hover", t, lang, target.name));
+    return over;
+  }
+
   function detailsId(win) {
     var m = /[?&]id=([0-9A-Za-z-]+)/.exec(win.location.hash || "");
     return m ? m[1] : null;
@@ -708,6 +719,10 @@
     ".layout-tv .hssDetailTv, .layout-tv .hssCardTv, .layout-tv .hssListTv, .layout-tv .hssOsdTv { display: none !important; }",
     ".hssDetailTvLabel { display: none; white-space: nowrap; } @media (min-width: 50em) { .hssDetailTvLabel { display: block; } }",
     ".hssCardTvTouch { position: absolute; top: 0; left: 0; z-index: 2; }",
+    ".hssCardTvOverlay { position: absolute; inset: 0; z-index: 2; opacity: 0; transition: opacity 0.2s; pointer-events: none; background: rgba(0, 0, 0, 0.5); }",
+    ".hssCardTvOverlay .cardOverlayButton-br { position: absolute; right: 0; bottom: 0; } .hssCardTvOverlay .hssCardTv { pointer-events: auto; }",
+    ".hssCardTvOverlay .cardOverlayButton-hover { opacity: 1; }",
+    ":hover > .hssCardTvOverlay, :focus-within > .hssCardTvOverlay, a:focus .hssCardTvOverlay, a:hover .hssCardTvOverlay { opacity: 1; }",
     ".hssToast { position: fixed; z-index: 1500; left: 50%; bottom: 5em; transform: translateX(-50%); max-width: 90vw; padding: 0.7em 1.2em; border-radius: 0.4em; background: #202020; color: #fff; font-weight: 600; box-shadow: 0 0.4em 1.5em rgba(0, 0, 0, 0.7); }",
     ".hssPlayMenu { position: fixed; z-index: 1400; min-width: 14em; max-width: min(22em, 92vw); padding: 0.6em; border-radius: 0.4em; background: #202020; color: #fff; box-shadow: 0 0.4em 1.5em rgba(0, 0, 0, 0.7); }",
     ".hssPlayMenuTitle { font-weight: 700; margin-bottom: 0.4em; }",
@@ -934,7 +949,7 @@
     return api;
   }
 
-  var PLAY = { button: playButton, targets: remoteTargets, label: sessionLabel, offset: streamOffset };
+  var PLAY = { button: playButton, cardIcon: cardIcon, targets: remoteTargets, label: sessionLabel, offset: streamOffset };
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = { CSS: CSS, trailers: trailers, embedUrl: embedUrl, build: build, start: start, playTv: PLAY };
