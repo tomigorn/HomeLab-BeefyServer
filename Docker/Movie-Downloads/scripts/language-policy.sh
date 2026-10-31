@@ -238,6 +238,10 @@ bz "$B/system/settings" -X POST "${ARGS[@]}" \
   --data-urlencode "settings-general-movie_tag_enabled=true" \
   --data-urlencode "settings-opensubtitlescom-include_ai_translated=false" \
   --data-urlencode "settings-opensubtitlescom-include_machine_translated=false" \
+  --data-urlencode "settings-general-enabled_providers=opensubtitlescom" \
+  --data-urlencode "settings-general-enabled_providers=subdl" \
+  --data-urlencode "settings-subdl-include_ai_translated=false" \
+  --data-urlencode "settings-subdl-ai_translate=false" \
   --data-urlencode "settings-subsync-use_subsync=true" \
   --data-urlencode "settings-subsync-use_original_language=true" \
   --data-urlencode "settings-subsync-no_fix_framerate=false" \

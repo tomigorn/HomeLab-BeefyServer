@@ -1123,10 +1123,14 @@ Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scor
   `<movie>.en.forced.srt` — the names Jellyfin understands.
 - Embedded subtitle tracks count as present (`use_embedded_subs`), so a remux/encode
   that already carries en/de subs triggers no download.
-- Providers: **YIFY Subtitles** (no account, movies only) and **OpenSubtitles.com**
-  (free account, username/password in Bazarr; `use_hash` on, AI-translated and
-  machine-translated subtitles **off**). Still possible: **SubDL** and **SubSource**
-  (API keys). Podnapisi is gone from Bazarr 1.6 (its settings section is deleted on start).
+- Providers (`enabled_providers`, set by `scripts/language-policy.sh`, check `md.bazarr-providers`):
+
+  | Provider | Account | Limits (free) | Notes |
+  |---|---|---|---|
+  | **OpenSubtitles.com** | username/password in Bazarr | daily download limit | `use_hash` on; AI- and machine-translated **off** |
+  | **SubDL** (since 2026-10-31) | API key in Bazarr (`subdl.api_key`, never in git) | ≈ 2000 API requests + 50 downloads per day, reset 00:00 UTC | AI-translated **off** (`include_ai_translated`, `ai_translate`): SubDL's machine translations (comment "KI-Maschinenübersetzung") are hidden, e.g. the only German one for *Kill Bill: The Whole Bloody Affair* |
+
+  Both show in the indexer bar above Seerr ([Seerr README](../Seerr/README.md#indexer-bar) "Subtitles"). Dropped 2026-10-31: **YIFY Subtitles** (`yifysubtitles.ch` is a parked domain: HTTP 410, Bazarr SSL EOF all day). Still possible: **SubSource** (API key). Podnapisi is gone from Bazarr 1.6 (its settings section is deleted on start).
 - Missing-subs search every 24 h for movies and series (series was still 6 h until 2026-10-20): providers that hash the file read it,
   which would wake the HDD for demoted movies.
 - Minimum score: movies 80 (TRaSH; was 70: 3 of 7 subtitles below 80 were from another cut, measured 2026-10-31), series 90. Below it nothing is downloaded and the next search tries again.
