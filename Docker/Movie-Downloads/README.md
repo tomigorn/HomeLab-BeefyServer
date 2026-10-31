@@ -98,7 +98,7 @@ Files under `secrets/` (gitignored), never in `.env`: `docker inspect` stays cle
 | `secrets/recyclarr.yml` (`radarr_api_key: '…'`, `sonarr_api_key: '…'`) | recyclarr | `65107:65107 0400` | mounted as `/config/secrets.yml`, `!secret` in `recyclarr/recyclarr.yml` |
 | `secrets/vpn-status.apikey` | vpn-status, gluetun healthcheck | `65111 0400` | bind `:ro` |
 | `secrets/hook/*.apikey` | Radarr/Sonarr hooks | `buntu:hook-secret 0640` | bind `:ro` |
-| `secrets/qbit-webui.password` (qBittorrent WebUI user `admin`) | host scripts: night-downloads, clear-data-wipe → title-wipe-hook, night-downloads-setup (also writes it into Radarr/Sonarr's qBittorrent clients), post-update check | `buntu:buntu 0600` | read from the file, sent only as POST body (`scripts/qbit-api.sh`, `night-downloads.py` `qbit_client`): login on 403, `QBT_SID_8080` cookie |
+| `secrets/qbit-webui.password` (qBittorrent WebUI user `admin`) | host scripts: night-downloads, clamav-hooks.sh, ../Seerr download-now-setup.sh; containers (read-only mount `/run/secrets/qbit-webui.password`): gluetun `qbit-port.sh`, qBittorrent autorun (`../Antivirus/hook/qbit_session.py`); clear-data-wipe → title-wipe-hook, night-downloads-setup (also writes it into Radarr/Sonarr's qBittorrent clients), post-update check | `65105:buntu 0440` (qBit reads it) | read from the file, sent only as POST body (`scripts/qbit-api.sh`, `night-downloads.py` `qbit_client`): login on 403, `QBT_SID_8080` cookie |
 
 Check: `sudo docker inspect movie-gluetun movie-recyclarr --format '{{range .Config.Env}}{{println .}}{{end}}' | cut -d= -f1` (`WIREGUARD_PRIVATE_KEY` is the image's empty default).
 
@@ -148,7 +148,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 | qBittorrent | category `radarr` save path | `/data/torrents/movies` |
 | qBittorrent | seed limits | **ratio 2.0 OR 30 days, then stop** (§14.0) |
 | movie-downloads bridge | `ip_range` | subnet `172.28.10.0/24`, dynamic addresses only in `.0/25` (2026-10-28, review S-13): the pinned `.201`-`.205` can never go to another container. Changing it recreates the network: `docker compose down` Seerr, Antivirus, Movie-Downloads, then `up -d` in reverse |
-| qBittorrent | no-password bypass | only vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), Seerr download-now .205 (moves/starts night torrents; added by `../Seerr/scripts/download-now-setup.sh`), localhost (qbit-port.sh, ClamAV autorun) and 192.168.1.2 (Traefik); everything else needs the password, including Radarr/Sonarr (their qBittorrent clients log in as `admin`; credentials written by `scripts/night-downloads-setup.sh` from the secret file), the host scripts and every other bridge (they arrive as the gateway .1, removed 2026-10-28, review S-01). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist`; rollback: `backups/pre-qbit-password-2026-10-28/rollback.sh` (not in git, puts .1 back), `backups/pre-qbit-arr-creds-2026-10-28/rollback.sh` (puts .201/.202 back) |
+| qBittorrent | no-password bypass | only vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), Seerr download-now .205 (moves/starts night torrents; added by `../Seerr/scripts/download-now-setup.sh`), and 192.168.1.2 (Traefik); localhost has no bypass since 2026-10-31 (B-02: `qbit-port.sh` and the ClamAV autorun log in with `/run/secrets/qbit-webui.password`); everything else needs the password, including Radarr/Sonarr (their qBittorrent clients log in as `admin`; credentials written by `scripts/night-downloads-setup.sh` from the secret file), the host scripts and every other bridge (they arrive as the gateway .1, removed 2026-10-28, review S-01). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist`; rollback: `backups/pre-qbit-password-2026-10-28/rollback.sh` (not in git, puts .1 back), `backups/pre-qbit-arr-creds-2026-10-28/rollback.sh` (puts .201/.202 back) |
 | SABnzbd | incomplete / complete | `/data/usenet/incomplete` / `/data/usenet/complete/movies` |
 | Radarr | root folder | `/data/media/movies` |
 | Radarr | **Use Hardlinks instead of Copy** | **on** (§13.6) |
@@ -1341,7 +1341,7 @@ curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/downloadclient | jq '.[] | {na
 curl -s -H "X-Api-Key: $RK" -H 'Content-Type: application/json' -X POST localhost:7878/api/v3/notification/test -d "$(curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/notification/1)"   # {} = Jellyfin reachable
 curl -s -H "X-Api-Key: $RK" localhost:7878/api/v3/releaseprofile | jq -r '.[].name'
 grep -a 'language-policy-hook\|grab-guard\|title-wipe' /srv/appdata/radarr/logs/radarr.debug.txt | tail
-sudo docker exec movie-qbittorrent curl -s localhost:8080/api/v2/app/preferences | jq '{max_ratio,max_seeding_time,max_ratio_act,autorun_program}'
+(QBIT_PASS_FILE=secrets/qbit-webui.password; . scripts/qbit-api.sh; qbit_api http://127.0.0.1:8080 /app/preferences; qbit_logout) | jq '{max_ratio,max_seeding_time,max_ratio_act,autorun_program}'
 ```
 
 Same for Sonarr on `8989` with `/srv/appdata/sonarr/config.xml`.
@@ -1487,9 +1487,7 @@ and Radarr cannot see qBittorrent at all.
 Port forwarding uses gluetun's own `VPN_PORT_FORWARDING_UP_COMMAND` hook
 (`scripts/qbit-port.sh`: sets `listen_port`, then reannounces every torrent). That is why this stack has **no port-updater container**, unlike the older `mouse` stack on fastpi; the rest of port_updater's job is split up, see [Recovery](#recovery-parity-with-fastpis-mouse-stack).
 
-⚠️ **Enable qBittorrent → Options → WebUI → "Bypass authentication for clients on
-localhost"**, or the hook gets a 403 and the forwarded port is never applied —
-which looks exactly like a dead tracker.
+The hook logs in as `admin` with `secrets/qbit-webui.password` (mounted read-only into gluetun and qBittorrent; owner 65105 = qBit, group buntu, 0440). "Bypass authentication for clients on localhost" is **off** (B-02, 2026-10-31): every process in gluetun's namespace (Prowlarr, SABnzbd, FlareSolverr) would otherwise drive the qBit API. Login refused = the hook exits 1 at once and the port stays wrong (looks like a dead tracker); `movie-vpn-status` (bypass .203) still fixes drift.
 
 Restarting or recreating only `qbittorrent` resets its listen port to 6881 and gluetun does not re-run the hook; `movie-vpn-status` sets it back within 30 s (`port_fix` in the history). By hand: `sudo docker exec movie-gluetun /scripts/qbit-port.sh $(sudo docker exec movie-gluetun cat /tmp/gluetun/forwarded_port)`.
 
@@ -1546,7 +1544,7 @@ ssh beefy curl -s localhost:8087/api/status   # vpn_ip, real_ip, forwarded_port,
 
 Every UI in this stack sits behind Authentik forward auth on fastpi's Traefik, and the
 apps' own logins are turned off — Radarr/Sonarr/Prowlarr auth = `External`, Bazarr = `None`,
-SABnzbd username/password empty, qBittorrent bypassed for vpn-status, ClamAV queue, Seerr and Traefik only (Radarr/Sonarr log in; password in `secrets/qbit-webui.password` for the rest). Full
+SABnzbd username/password empty, qBittorrent bypassed for vpn-status, ClamAV queue, Seerr and Traefik only, not localhost (Radarr/Sonarr, qbit-port.sh and the ClamAV autorun log in; password in `secrets/qbit-webui.password` for the rest). Full
 setup, including the Authentik objects that must be created by hand, is in
 `HomeLab-FastPi` → `Docker/Traefik/docs/2026-10-06-authentik-sso.md`.
 
