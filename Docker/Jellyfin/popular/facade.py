@@ -545,11 +545,11 @@ class Facade:
         if kind == "tv" and req["seasons"] != "all" and entry["season"] not in req["seasons"]:
             self.core.audit(**log, decision="refused: other season")
             return 403, {"message": f"Only season {entry['season']} can be requested"}
-        user = {"id": jf_id, "name": caller["name"]}
+        user = {"id": jf_id, "name": caller["name"], "admin": caller.get("admin") is True}
         dry = self.core.cfg.dry_flag.exists()
         try:
             with self.core.user_lock(jf_id):
-                refused = self.dry_refusal(jf_id, kind, mode, log) if dry else None
+                refused = self.dry_refusal(jf_id, kind, mode, log, user["admin"]) if dry else None
                 if refused:
                     return refused
                 code, res = self.core.send(user, entry, mode, dry, log, create_service=False)
@@ -571,10 +571,10 @@ class Facade:
             return 201, self.created(res.get("request"), entry, caller, me)
         return self.refusal(code, res)
 
-    def dry_refusal(self, jf_id, kind, mode, log):
+    def dry_refusal(self, jf_id, kind, mode, log, exempt=False):
         """The refusal the real request would get from the limits or the missing download-now tag, else None (dry run only); raises NoServiceUser like the real path."""
-        left, today, _ = self.core.overview(jf_id)
-        if left <= 0:
+        left, today, _ = self.core.overview(jf_id, exempt)
+        if left is not None and left <= 0:
             self.core.audit(**log, decision="dry-run: refused: user limit")
             return self.refusal(429, {"error": "limit"})
         if today >= self.core.cfg.daily_max:
@@ -668,6 +668,11 @@ class Facade:
         if uid != caller["uid"]:
             return 403, {"message": NOT_YOURS}
         cfg = self.core.cfg
+        if caller.get("admin") is True:
+            used, today = self.core.used(caller["jf_id"])
+            free = today < cfg.daily_max
+            return 200, {"movie": {"days": cfg.days, "limit": 0, "used": used, "remaining": None if free else 0, "restricted": not free},
+                         "tv": {"days": cfg.days, "limit": 0, "used": 0, "remaining": None if free else 0, "restricted": not free}}
         left, today, _ = self.core.overview(caller["jf_id"])
         used = max(0, cfg.limit - left)
         if left > 0 and today < cfg.daily_max:
@@ -802,7 +807,7 @@ class Facade:
         if user is None:
             self.sessions.revoke(data["sid"])
             return None
-        return {"jf_id": jf_id, "name": user["name"], "uid": data["uid"], "sid": data["sid"], "iat": data["iat"]}
+        return {"jf_id": jf_id, "name": user["name"], "admin": user["admin"], "uid": data["uid"], "sid": data["sid"], "iat": data["iat"]}
 
     def jellyfin_user(self, jf_id):
         now = self.clock()
@@ -840,7 +845,7 @@ class Facade:
         policy = u.get("Policy")
         if not isinstance(policy, dict) or policy.get("IsDisabled") is not False:
             return None
-        return {"id": u["Id"].replace("-", "").lower(), "name": u.get("Name") if isinstance(u.get("Name"), str) else ""}
+        return {"id": u["Id"].replace("-", "").lower(), "name": u.get("Name") if isinstance(u.get("Name"), str) else "", "admin": policy.get("IsAdministrator") is True}
 
     def logout(self, headers):
         data = read_cookie(self.key, headers.get("cookie"), self.now())

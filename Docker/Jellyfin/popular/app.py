@@ -157,7 +157,8 @@ class Core:
         if hit and now - hit[0] < AUTH_TTL:
             return hit[1]
         u = self.jellyfin(tok)
-        user = {"id": str(u["Id"]).replace("-", "").lower(), "name": u.get("Name") or "", "disabled": bool((u.get("Policy") or {}).get("IsDisabled"))}
+        policy = u.get("Policy") or {}
+        user = {"id": str(u["Id"]).replace("-", "").lower(), "name": u.get("Name") or "", "disabled": bool(policy.get("IsDisabled")), "admin": policy.get("IsAdministrator") is True}
         with self.lock:
             for k in [k for k, (at, _) in self.auth_cache.items() if now - at >= AUTH_TTL]:
                 del self.auth_cache[k]
@@ -384,20 +385,29 @@ class Core:
     def day(self, t):
         return t.astimezone(self.cfg.tz).date().isoformat()
 
-    def counts(self, con, user_id, now):
+    def counts(self, con, user_id, now, exempt=False):
+        """(requests left for the user, None when exempt (Jellyfin administrators), requests of everyone today)."""
         since = self.iso(now - datetime.timedelta(days=self.cfg.days))
         mine = con.execute("SELECT COUNT(*) FROM requests WHERE user_id = ? AND at > ?", (user_id, since)).fetchone()[0]
         today = con.execute("SELECT COUNT(*) FROM requests WHERE day = ?", (self.day(now),)).fetchone()[0]
-        return max(0, self.cfg.limit - mine), today
+        return None if exempt else max(0, self.cfg.limit - mine), today
 
-    def reserve(self, user_id, ref):
+    def used(self, user_id):
+        """(requests of the user within the limit period, requests of everyone today)."""
+        now = self.clock()
+        with self.db() as con:
+            since = self.iso(now - datetime.timedelta(days=self.cfg.days))
+            mine = con.execute("SELECT COUNT(*) FROM requests WHERE user_id = ? AND at > ?", (user_id, since)).fetchone()[0]
+            return mine, self.counts(con, user_id, now, True)[1]
+
+    def reserve(self, user_id, ref, exempt=False):
         """(left before this request, refusal or None, row id): the check and the reservation are one step, so parallel requests cannot pass the caps together."""
         now = self.clock()
         with self.lock, self.db() as con:
             con.execute("BEGIN IMMEDIATE")
             try:
-                left, today = self.counts(con, user_id, now)
-                if left <= 0:
+                left, today = self.counts(con, user_id, now, exempt)
+                if left is not None and left <= 0:
                     return left, "user limit", None
                 if today >= self.cfg.daily_max:
                     return left, "daily cap", None
@@ -411,10 +421,10 @@ class Core:
         with self.lock, self.db() as con:
             con.execute("UPDATE requests SET done = 1 WHERE id = ?" if ok else "DELETE FROM requests WHERE id = ?", (rid,))
 
-    def overview(self, user_id):
+    def overview(self, user_id, exempt=False):
         now = self.clock()
         with self.db() as con:
-            left, today = self.counts(con, user_id, now)
+            left, today = self.counts(con, user_id, now, exempt)
             recent = {r for (r,) in con.execute("SELECT ref FROM requests WHERE at > ?", (self.iso(now - STATE_FRESH),))}
         return left, today, recent
 
@@ -635,7 +645,7 @@ class Core:
             return 401, {"error": "sign in to Jellyfin"}
         if user["disabled"]:
             return 403, {"error": "account disabled"}
-        left, today, recent = self.overview(user["id"])
+        left, today, recent = self.overview(user["id"], user.get("admin"))
         media = self.media_list()
         rs = self.request_state()
         now = self.clock()
@@ -763,10 +773,10 @@ class Core:
         if st in ("available", "requested", "declined"):
             state = "owned" if st == "available" else st
             self.audit(**log, decision=f"refused: {state}")
-            return 409, {"error": state, "state": state, "left": self.overview(user["id"])[0]}
+            return 409, {"error": state, "state": state, "left": self.overview(user["id"], user.get("admin"))[0]}
         if check:
-            return 200, {"ok": True, "state": "requestable", "left": self.overview(user["id"])[0]}
-        left, refused, rid = self.reserve(user["id"], entry["ref"])
+            return 200, {"ok": True, "state": "requestable", "left": self.overview(user["id"], user.get("admin"))[0]}
+        left, refused, rid = self.reserve(user["id"], entry["ref"], user.get("admin"))
         if refused == "user limit":
             self.audit(**log, decision="refused: user limit")
             return 429, {"error": "limit", "left": 0, "limit": self.cfg.limit, "days": self.cfg.days}
@@ -806,7 +816,7 @@ class Core:
         self.audit(**rec, decision="requested")
         if isinstance(request_id, int) and not isinstance(request_id, bool):
             self.remember(user["id"], request_id, self.origin_of(rec))
-        return 200, {"ok": True, "state": "requested", "left": left - 1, "request": created}
+        return 200, {"ok": True, "state": "requested", "left": None if left is None else left - 1, "request": created}
 
     @staticmethod
     def who(log, sid, via, person, match=None):
@@ -952,7 +962,7 @@ class Core:
         log.update(title=entry["title"], ref=entry["ref"])
         dry = self.cfg.dry_flag.exists()
         with self.user_lock(uid):
-            code, _ = self.send({"id": uid, "name": name}, entry, mode, dry, log)
+            code, _ = self.send({"id": uid, "name": name, "admin": policy.get("IsAdministrator") is True}, entry, mode, dry, log)
         if dry and code == 200:
             self.audit(**log, **self.dry_who(uid, name, entry["kind"], log), decision="dry-run: requestable")
         elif code == 200 and self.cfg.signal_file:

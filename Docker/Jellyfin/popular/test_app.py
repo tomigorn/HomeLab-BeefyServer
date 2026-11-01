@@ -22,6 +22,7 @@ USERS = {
     TOKEN: {"Id": "40e05f0a-9e96-4fd9-b225-eb1379dfcfa4", "Name": "jane", "Policy": {"IsDisabled": False}},
     "b" * 32: {"Id": "11111111-2222-3333-4444-555555555555", "Name": "guest", "Policy": {"IsDisabled": False}},
     "c" * 32: {"Id": "99999999-2222-3333-4444-555555555555", "Name": "gone", "Policy": {"IsDisabled": True}},
+    "d" * 32: {"Id": "77777777-2222-3333-4444-555555555555", "Name": "boss", "Policy": {"IsDisabled": False, "IsAdministrator": True}},
 }
 
 
@@ -158,6 +159,20 @@ class Refusals(Base):
         self.allow.write_text(self.allow.read_text().replace("2026-10-28T04:39:00", "2026-11-05T04:39:00"))
         self.seerr.media = {}
         self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"})[0], 200)
+
+    def test_admin_exempt_from_per_user_limit(self):
+        self.core.cfg.limit = 1
+        code, body = self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token="d" * 32)
+        self.assertEqual((code, body["left"]), (200, None))
+        self.assertEqual(self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token="d" * 32)[0], 200)
+        self.assertIsNone(self.core.overview("77777777222233334444555555555555", True)[0])
+        self.assertEqual(self.core.overview("77777777222233334444555555555555")[0], 0)
+
+    def test_admin_still_under_daily_cap(self):
+        self.core.cfg.daily_max = 1
+        self.assertEqual(self.post({"id": "tok-movie-xxxxxxxxxxxx"})[0], 200)
+        code, body = self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"}, token="d" * 32)
+        self.assertEqual((code, body["error"]), (429, "daily cap"))
 
     def test_global_daily_cap(self):
         self.core.cfg.daily_max = 1
@@ -949,6 +964,13 @@ class State(Base):
         body = self.core.handle("GET", "/hss-popular/state", {"X-Emby-Token": TOKEN}, b"")[1]
         self.assertEqual(body["entries"]["tok-movie-xxxxxxxxxxxx"]["badge"], "night")
 
+    def test_state_admin_has_no_limit(self):
+        self.core.cfg.limit = 1
+        self.post({"id": "tok-movie-xxxxxxxxxxxx"}, token="d" * 32)
+        body = self.core.handle("GET", "/hss-popular/state", {"X-Emby-Token": "d" * 32}, b"")[1]
+        self.assertEqual((body["left"], body["dailyFull"]), (None, False))
+        self.assertEqual(self.core.handle("GET", "/hss-popular/state", {"X-Emby-Token": TOKEN}, b"")[1]["left"], 1)
+
     def test_state_needs_a_user(self):
         self.assertEqual(self.core.handle("GET", "/hss-popular/state", {}, b"")[0], 401)
 
@@ -982,11 +1004,11 @@ class HookBase(Base):
         self.mono = 0.0
         self.core.resets = app.Resetter(self.core.reset, clock=lambda: self.mono, autostart=False)
 
-    def event(self, event, at, item="ph1", ms=None, pos=None, paused=False, user="u1", disabled=False, played=False, session="s1", secret=SECRET, runtime=10 * SEC, kind="Movie", extra=None):
+    def event(self, event, at, item="ph1", ms=None, pos=None, paused=False, user="u1", disabled=False, admin=False, played=False, session="s1", secret=SECRET, runtime=10 * SEC, kind="Movie", extra=None):
         self.now = T0 + datetime.timedelta(seconds=at)
         ps = dict(CLEARED) if ms is None and pos is None else {"MediaSourceId": ms, "PositionTicks": pos, "IsPaused": paused, "CanSeek": True}
         body = {"Event": event, "Item": {"Id": item, "Type": kind, "RunTimeTicks": runtime, "UserData": {"Played": played}, **(extra or {})},
-                "User": {"Id": user, "Name": "anna", "Policy": {"IsDisabled": disabled}},
+                "User": {"Id": user, "Name": "anna", "Policy": {"IsDisabled": disabled, "IsAdministrator": admin}},
                 "Session": None if session is None else {"Id": session, "Client": "Android TV", "PlayState": ps}, "Server": {"Id": "srv"}}
         return self.core.hook("/hook/" + secret, {"Content-Type": "application/json"}, json.dumps(body).encode())
 
@@ -1208,6 +1230,17 @@ class Hook(HookBase):
         self.assertEqual(len(self.requests()), 10)
         a = self.audits()[-1]
         self.assertEqual((a["decision"], a["userId"], a["via"]), ("refused: user limit", uid, "tv"))
+
+    def test_hook_admin_exempt_from_user_limit(self):
+        uid = "40e05f0a9e964fd9b225eb1379dfcfa4"
+        for _ in range(10):
+            self.assertEqual(self.post({"id": "tok-tv-xxxxxxxxxxxxxxx"})[0], 200)
+            self.core.hits.clear()
+        self.event("Play", 0, ms="ms_night", pos=0, user="40e05f0a-9e96-4fd9-b225-eb1379dfcfa4", admin=True)
+        self.event("Stop", 10.5, user="40e05f0a-9e96-4fd9-b225-eb1379dfcfa4", admin=True)
+        self.assertEqual(len(self.requests()), 11)
+        self.assertEqual(self.audits()[-1]["userId"], uid)
+        self.assertNotEqual(self.audits()[-1]["decision"], "refused: user limit")
 
     def test_hook_dry_flag_audits_without_seerr_post(self):
         self.dry.touch()

@@ -953,6 +953,29 @@ class CreateRequest(FacadeBase):
         self.assertEqual(self.post(self.MOVIE)[:2], (403, {"message": "Today's request quota for everyone is used up"}))
         self.assertEqual(self.requests(), [])
 
+    def make_admin(self):
+        self.jf.users[JF_ID] = {**JANE, "Policy": {"IsDisabled": False, "IsAdministrator": True}}
+        self.facade.checked.clear()
+
+    def test_admin_over_the_user_limit_201(self):
+        self.fill_requests(10)
+        self.make_admin()
+        self.assertEqual(self.post(self.MOVIE)[0], 201)
+
+    def test_admin_dry_run_over_the_user_limit_201(self):
+        self.core.cfg.dry_flag.touch()
+        self.fill_requests(10)
+        self.make_admin()
+        self.assertEqual(self.post(self.MOVIE)[0], 201)
+        self.assertEqual(self.requests(), [])
+
+    def test_admin_dry_run_still_under_daily_cap(self):
+        self.core.cfg.dry_flag.touch()
+        self.core.cfg.daily_max = 3
+        self.fill_requests(3, user="someone-else")
+        self.make_admin()
+        self.assertEqual(self.post(self.MOVIE)[:2], (403, {"message": "Today's request quota for everyone is used up"}))
+
     def test_dry_run_now_without_tag_503(self):
         self.core.cfg.dry_flag.touch()
         self.seerr.tags = []
@@ -1046,6 +1069,16 @@ class ServersAndQuota(FacadeBase):
         out = self.get(f"user/{self.uid}/quota")[1]
         self.assertEqual(out["movie"], {"days": 7, "limit": 10, "used": 2, "remaining": 0, "restricted": True})
         self.assertEqual((out["tv"]["restricted"], out["tv"]["remaining"]), (True, 0))
+
+    def test_quota_admin_unlimited(self):
+        self.fill(12)
+        self.jf.users[JF_ID] = {**JANE, "Policy": {"IsDisabled": False, "IsAdministrator": True}}
+        self.facade.checked.clear()
+        out = self.get(f"user/{self.uid}/quota")[1]
+        self.assertEqual(out, {"movie": {"days": 7, "limit": 0, "used": 12, "remaining": None, "restricted": False},
+                               "tv": {"days": 7, "limit": 0, "used": 0, "remaining": None, "restricted": False}})
+        self.core.cfg.daily_max = 12
+        self.assertEqual(self.get(f"user/{self.uid}/quota")[1]["movie"]["restricted"], True)
 
     def test_quota_follows_config(self):
         self.core.cfg.limit, self.core.cfg.days = 5, 3
