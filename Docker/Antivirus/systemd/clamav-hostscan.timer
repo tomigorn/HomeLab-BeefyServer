@@ -1,10 +1,11 @@
 [Unit]
-Description=Weekly ClamAV whole-host scan
+Description=Nightly start of the resumable ClamAV whole-host scan
 Documentation=file:///home/buntu/Projects/Docker/Antivirus/README.md
 
 [Timer]
-# Inside the maintenance window (03:55 to 04:45), after the nightly scan; a week asleep is skipped.
-OnCalendar=Sun *-*-* 04:07
+# Inside the maintenance window (03:58 to 04:45), after the nightly scan; the scan itself stops at 04:40 and resumes the next night.
+OnCalendar=*-*-* 04:07 Europe/Zurich
+Persistent=false
 
 [Install]
 WantedBy=timers.target

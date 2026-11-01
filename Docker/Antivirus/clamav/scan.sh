@@ -20,6 +20,8 @@ CLAMD_RUNNING_CONF=${CLAMD_RUNNING_CONF:-/etc/clamav/clamd.conf}
 SCAN_RESUME=${SCAN_RESUME:-0}
 CHUNK_FILES=${CHUNK_FILES:-20000}
 PASS_DAYS=${PASS_DAYS:-6}
+SCAN_WINDOW=${SCAN_WINDOW:-22:00-06:00}
+SCAN_SUNDAY=${SCAN_SUNDAY:-1}
 
 usage() {
 	cat >&2 <<EOF
@@ -28,7 +30,7 @@ usage: scan.sh new        files under \$SCAN_ROOTS changed since the last good r
        scan.sh <path>...  quarantined when under \$SCAN_ROOTS, else report only
        scan.sh restore <file in quarantine>  move back to its original path and never flag it again
 exit:  0 clean, 1 infected, 2 errors
-env:   SCAN_RESUME=1 (with USE_CLAMD=1) scans \`all\` in chunks only 22:00-06:00 and Sundays (local time), resuming where it stopped
+env:   SCAN_RESUME=1 (with USE_CLAMD=1) scans \`all\` in chunks only inside SCAN_WINDOW (22:00-06:00) and Sundays (SCAN_SUNDAY=0: not), local time, resuming where it stopped
        USE_CLAMD=1 runs \`all\` through a private clamd (multiscan, all cores); SCAN_EXCLUDE_DIRS = directories `all` and `new` skip
        NEW_CLAMD=1 runs \`new\` through the container's running clamd (\$CLAMD_RUNNING_CONF), NEW_PARALLEL (4) clamdscan at once; clamd down = clamscan
        \`new\` scans one path per inode (hardlinks); an infected inode is quarantined under every path
@@ -72,10 +74,24 @@ now() {
 	if [ -n "$SCAN_NOW_FILE" ]; then cat "$SCAN_NOW_FILE"; else date +%s; fi
 }
 
-# Low-tariff window, local time: 22:00-06:00 every day, all day Sunday.
+hm_min() {
+	h=${1%:*}
+	m=${1#*:}
+	echo $(( ${h#0} * 60 + ${m#0} ))
+}
+WIN_FROM=$(hm_min "${SCAN_WINDOW%-*}")
+WIN_TO=$(hm_min "${SCAN_WINDOW#*-}")
+
+# Window, local time: SCAN_WINDOW every day (may wrap midnight), all day Sunday unless SCAN_SUNDAY=0.
 window_open() {
-	case $(date -d "@$1" +%H) in 22 | 23 | 0[0-5]) return 0 ;; esac
-	[ "$(date -d "@$1" +%u)" = 7 ]
+	set -- $(date -d "@$1" "+%H %M %u")
+	wt=$(( ${1#0} * 60 + ${2#0} ))
+	if [ "$WIN_FROM" -le "$WIN_TO" ]; then
+		[ "$wt" -ge "$WIN_FROM" ] && [ "$wt" -lt "$WIN_TO" ] && return 0
+	else
+		{ [ "$wt" -ge "$WIN_FROM" ] || [ "$wt" -lt "$WIN_TO" ]; } && return 0
+	fi
+	[ "$SCAN_SUNDAY" = 1 ] && [ "$3" = 7 ]
 }
 
 # Seconds until the window closes (a minute early at worst), 0 when closed.
@@ -89,7 +105,7 @@ window_left() {
 
 resume_gate() {
 	if ! window_open "$(now)"; then
-		echo "scan.sh all: outside the 22:00-06:00 / Sunday window, nothing to do"
+		echo "scan.sh all: outside the $SCAN_WINDOW window, nothing to do"
 		return 1
 	fi
 	if [ ! -s "$STATE/all.list" ] && [ -s "$STATE/all.finished" ] && [ $(( $(now) - $(cat "$STATE/all.finished") )) -lt $((PASS_DAYS * 86400)) ]; then
