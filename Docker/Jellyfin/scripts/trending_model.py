@@ -88,18 +88,13 @@ def collection_specs(lists):
     return out
 
 
-def slug(title):
-    plain = "".join(c for c in unicodedata.normalize("NFKD", str(title or "").casefold()) if not unicodedata.combining(c))
-    return "-".join(re.findall(r"[a-z0-9]+", plain))
-
-
 def entry_key(e):
-    """"kind/tmdb" of a matched list entry, "u/<slug of its title>" of one TMDB did not match, None when neither."""
+    """"kind/tmdb" of a matched list entry, "u/<title, case and spacing folded>" of one TMDB did not match (accents and punctuation kept, so near-identical titles stay apart), None when neither."""
     if e.get("id") and not e.get("u"):
         return f"{e['k']}/{e['id']}"
     if e.get("u") and not e.get("id"):
-        s = slug((e.get("t") or {}).get("en") or (e.get("t") or {}).get("de"))
-        return f"{UNMATCHED}/{s}" if s else None
+        t = " ".join(unicodedata.normalize("NFC", str((e.get("t") or {}).get("en") or (e.get("t") or {}).get("de") or "")).casefold().split())
+        return f"{UNMATCHED}/{t}" if any(c.isalnum() for c in t) else None
     return None
 
 
@@ -182,7 +177,7 @@ def ordered_marks(found, order):
 def plan(lists, coming, details, owned, states):
     """Plan of placeholders {folder: Ph}, collections [(spec, [("ph", folder) | ("real", item id)])] in rank order and art {spec key: [{"p": poster, "b": backdrop}] of the first members}.
     details: {details token: tmdb_details projection} (details.json and coming.json entries); owned: {"kind/tmdb": Jellyfin item id}; states: {"kind/tmdb": (request status, mode)}.
-    One placeholder per title (kind/tmdb, or u/<slug> for an entry TMDB did not match: a title-only placeholder, unavailable, a series when its first list is a shows list): its sort title "LL-RR <title>" comes from the first collection it appears in; a popular entry wins over a Coming soon one."""
+    One placeholder per title (kind/tmdb, or u/<folded title> for an entry TMDB did not match: a title-only placeholder, unavailable, a series when its first list is a shows list): its sort title "LL-RR <title>" comes from the first collection it appears in; a popular entry wins over a Coming soon one."""
     specs = collection_specs(lists)
     by_ref = {v.get("ref"): v for v in details.values() if isinstance(v, dict) and v.get("ref")}
     entries = {s["key"]: [] for s in specs}

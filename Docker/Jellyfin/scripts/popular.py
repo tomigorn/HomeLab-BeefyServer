@@ -82,6 +82,11 @@ def norm(text):
     return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
 
 
+def title_key(text):
+    """Case and spacing folded only: titles that differ in accents or punctuation stay apart."""
+    return " ".join(unicodedata.normalize("NFC", str(text or "")).casefold().split())
+
+
 def ref(kind, tmdb, season):
     return f"movie/{tmdb}" if kind == "movie" else f"tv/{tmdb}/s{season}"
 
@@ -526,7 +531,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
         cands = []
         for e in state["top"][kind]:
             tmdb = overrides.get((kind, norm(e["title"])))
-            mkey = f"{kind}|{norm(e['title'])}"
+            mkey = f"{kind}|{title_key(e['title'])}"
             tmdb = tmdb or state.setdefault("matches", {}).get(mkey)
             if not tmdb:
                 q = urllib.parse.quote(e["title"], safe="")

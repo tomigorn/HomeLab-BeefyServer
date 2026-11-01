@@ -325,6 +325,28 @@ class Main(unittest.TestCase):
             self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=9))
             self.assertTrue([p for p in fake.searches[n:] if "tt101" in p["query"]])
 
+    def test_netflix_titles_differing_only_in_accents_are_matched_apart(self):
+        class Twins(FakeIo):
+            def tsv(self, known):
+                self.tsv_fetches += 1
+                return iter(tsv(("Switzerland", "CH", "2026-10-18", "Films", 1, "Am\u00e9lie", "N/A", 1), ("Switzerland", "CH", "2026-10-18", "Films", 2, "Amelie", "N/A", 1))), "lm"
+
+            def seerr(self, path):
+                if path.startswith("/api/v1/search"):
+                    q = path.split("query=")[1].split("&")[0]
+                    return {"results": {"Am%C3%A9lie": [hit("movie", 301, "Am\u00e9lie", 5)], "Amelie": [hit("movie", 302, "Amelie", 5)]}.get(q, [])}
+                if path.startswith("/api/v1/movie/"):
+                    tid = path.split("?")[0].split("/")[4]
+                    return {"originalLanguage": "fr", "posterPath": None, "externalIds": {"imdbId": f"tt{tid}"}, "title": {"301": "Am\u00e9lie", "302": "Amelie"}[tid],
+                            "releaseDate": "2001-04-25", "imdbId": f"tt{tid}"}
+                return super().seerr(path)
+
+        fake = Twins()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.assertEqual(self.run_main(fake, sf)[0], 0)
+            self.assertEqual([(i["r"], i["id"]) for i in self.data(fake)["home"]["movies"]], [(1, 301), (2, 302)])
+
     def test_writes_lists_json(self):
         fake = FakeIo()
         with tempfile.TemporaryDirectory() as d:

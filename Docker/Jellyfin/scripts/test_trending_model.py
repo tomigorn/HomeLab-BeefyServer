@@ -208,7 +208,7 @@ class Plan(unittest.TestCase):
         l = lists(shows=[item("tv", 1, 1, "Known"), unmatched("tv", 2, "Instadocs: AI Gone Wild"), item("tv", 3, 3, "Later")])
         p = tm.plan(l, coming(), {}, {}, {})
         ph = p.placeholders["Instadocs AI Gone Wild"]
-        self.assertEqual((ph.key, ph.kind, ph.tmdb, ph.state, ph.x, ph.badge, ph.info), ("u/instadocs-ai-gone-wild", "tv", None, "none", None, "none", None))
+        self.assertEqual((ph.key, ph.kind, ph.tmdb, ph.state, ph.x, ph.badge, ph.info), ("u/instadocs: ai gone wild", "tv", None, "none", None, "none", None))
         self.assertEqual(ph.files, {"Season 00/S00E01.mp4": "unavailable"})
         self.assertEqual(ph.sort_title, "02-02 Instadocs: AI Gone Wild")
         members = dict((s["key"], m) for s, m in p.collections)["home-shows"]
@@ -246,10 +246,16 @@ class Plan(unittest.TestCase):
         p = tm.plan(l, coming(), {}, {}, {})
         self.assertEqual(p.placeholders, {})
 
-    def test_slug_is_stable_and_plain(self):
-        self.assertEqual(tm.slug("Instadocs: AI Gone Wild"), "instadocs-ai-gone-wild")
-        self.assertEqual(tm.slug("Café  Société!"), "cafe-societe")
-        self.assertEqual(tm.slug("?!"), "")
+    def test_unmatched_key_keeps_accents_and_punctuation(self):
+        self.assertEqual(tm.entry_key(unmatched("tv", 1, "Instadocs: AI  Gone Wild")), "u/instadocs: ai gone wild")
+        self.assertEqual(tm.entry_key(unmatched("movie", 1, "Am\u0065\u0301lie")), tm.entry_key(unmatched("movie", 2, "AM\u00c9LIE")))
+        self.assertIsNone(tm.entry_key(unmatched("movie", 1, "?!")))
+
+    def test_unmatched_titles_differing_in_accents_or_punctuation_stay_apart(self):
+        l = lists(movies=[unmatched("movie", 1, "Am\u00e9lie"), unmatched("movie", 2, "Amelie"), unmatched("movie", 3, "Spider-Man"), unmatched("movie", 4, "Spider Man")])
+        p = tm.plan(l, coming(), {}, {}, {})
+        self.assertEqual(sorted(ph.title for ph in p.placeholders.values()), ["Amelie", "Am\u00e9lie", "Spider Man", "Spider-Man"])
+        self.assertEqual(len(dict((s["key"], m) for s, m in p.collections)["home-movies"]), 4)
 
     def test_collections_cover_every_spec_in_order(self):
         l = lists(rows=[row("genre-drama-movie", "movie", "Drama", [], typ="genre")])
