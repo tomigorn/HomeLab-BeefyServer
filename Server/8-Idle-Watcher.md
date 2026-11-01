@@ -69,6 +69,8 @@ Each is small and independent; a probe answers exactly "is *this* signal busy?"
    peer that vanished without FIN must not pin beefy awake. Log shows `conns=host+ct`.
    `9001` (Portainer agent, held open by fastpi permanently) is excluded.
 
+   **Heartbeats don't count (v1.7.0, 2026-11-01):** a Jellyfin/Moonfin app left open holds a websocket (`/socket`) and an event stream (`/Moonfin/Settings/Stream`) through Traefik around the clock; their keep-alives refreshed the flows, so beefy never slept. The unit enables `nf_conntrack_acct` (`ExecStartPre`), and a flow with byte counters counts only if it moved at least `CT_MIN_BYTES` (1024) since the last sample. Heartbeats are ~30-200 B/min; any real request, playback or progress report is above. Flows without counters (opened before the sysctl) fall back to the `CT_MAX_IDLE` rule.
+
 2. **Interactive presence** — busy if EITHER:
    - an interactive SSH login exists: an OpenSSH per-session title
      `sshd-session: <user>@pts/N` in `ps -eo args` (a real pty shell), OR
@@ -114,6 +116,7 @@ PRIMARY_NIC=enp6s0
 DATA_DISKS="sda sdb sdc"  # basenames in /proc/diskstats (tune to actual data disks)
 EXCLUDE_PORTS="22 9001"   # ports the inbound-conn probe ignores
 CT_MAX_IDLE=300           # s a conntrack flow may idle and still count as in use
+CT_MIN_BYTES=1024         # bytes per sample a counted flow must move (heartbeats stay below)
 INHIBIT_FILE=/run/beefy-keep-awake
 VPN_CONTAINER=movie-gluetun  # empty = off; its uploads are ignored
 VPN_UPLINK=eth0

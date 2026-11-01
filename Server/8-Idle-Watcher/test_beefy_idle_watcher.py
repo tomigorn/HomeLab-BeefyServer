@@ -81,6 +81,47 @@ class TestConntrack(unittest.TestCase):
     def test_empty(self):
         self.assertEqual(count_ct_inbound("", self.LOCAL, {8090}, set()), 0)
 
+    # nf_conntrack_acct=1 adds packets=/bytes= per direction
+    ACCT = (
+        "tcp 6 431999 ESTABLISHED src=192.168.1.2 dst=192.168.1.102 sport=42138 dport=8096 packets=600 bytes=40000 src=172.28.11.3 dst=192.168.1.2 sport=8096 dport=42138 packets=650 bytes=15000 [ASSURED] mark=0 use=1\n"
+        "tcp 6 431998 ESTABLISHED src=192.168.1.2 dst=192.168.1.102 sport=43168 dport=8096 packets=800 bytes=30000 src=172.28.11.3 dst=192.168.1.2 sport=8096 dport=43168 packets=800 bytes=1100000 [ASSURED] mark=0 use=1\n")
+    KEY_SSE = ("192.168.1.2", "42138", "192.168.1.102", "8096")
+    KEY_API = ("192.168.1.2", "43168", "192.168.1.102", "8096")
+
+    def test_ct_flow_bytes_sums_both_directions(self):
+        self.assertEqual(biw.ct_flow_bytes(self.ACCT),
+                         {self.KEY_SSE: 55000, self.KEY_API: 1130000})
+
+    def test_ct_flow_bytes_without_accounting_is_empty(self):
+        self.assertEqual(biw.ct_flow_bytes(self.CT), {})
+
+    def test_heartbeat_only_flow_is_idle(self):
+        prev = {self.KEY_SSE: 55000 - 200, self.KEY_API: 1130000 - 5000}
+        self.assertEqual(count_ct_inbound(self.ACCT, self.LOCAL, {8096}, set(), 432000, 300,
+                                          prev, 1024), 1)
+
+    def test_all_quiet_flows_idle(self):
+        prev = {self.KEY_SSE: 55000 - 34, self.KEY_API: 1130000}
+        self.assertEqual(count_ct_inbound(self.ACCT, self.LOCAL, {8096}, set(), 432000, 300,
+                                          prev, 1024), 0)
+
+    def test_new_flow_counts_its_total(self):
+        self.assertEqual(count_ct_inbound(self.ACCT, self.LOCAL, {8096}, set(), 432000, 300,
+                                          {}, 1024), 2)
+
+    def test_flow_without_accounting_falls_back_to_age(self):
+        self.assertEqual(count_ct_inbound(self.CT, self.LOCAL, {8090}, set(), 432000, 300,
+                                          {}, 1024), 1)
+
+    def test_active_ct_peers_lists_only_busy_flows(self):
+        prev = {self.KEY_SSE: 55000 - 34, self.KEY_API: 1130000 - 5000}
+        self.assertEqual(biw.active_ct_peers(self.ACCT, self.LOCAL, {8096}, set(), 432000, 300,
+                                             prev, 1024), ["192.168.1.2:43168"])
+
+    def test_config_ct_min_bytes(self):
+        self.assertEqual(load_config({})["CT_MIN_BYTES"], 1024)
+        self.assertEqual(load_config({"CT_MIN_BYTES": "4096"})["CT_MIN_BYTES"], 4096)
+
     def test_unpublished_port_not_counted(self):
         self.assertEqual(count_ct_inbound(self.CT, self.LOCAL, {9999}, set()), 0)
 

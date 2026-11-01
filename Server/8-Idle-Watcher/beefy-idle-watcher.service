@@ -6,6 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/beefy-idle.conf
+# per-flow byte counters, so heartbeat-only connections read idle; '+' bypasses ProtectKernelTunables
+ExecStartPre=-+/usr/sbin/sysctl -q -w net.netfilter.nf_conntrack_acct=1
 ExecStart=/usr/local/sbin/beefy_idle_watcher.py
 Restart=on-failure
 RestartSec=10

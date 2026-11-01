@@ -73,18 +73,37 @@ def parse_local_addrs(ip_text):
     return set(re.findall(r"\binet (\d+\.\d+\.\d+\.\d+)/", ip_text))
 
 
-def count_ct_inbound(ct_text, local_addrs, published_ports, exclude_ports,
-                     est_timeout=None, max_idle=None):
-    """Count ESTABLISHED conntrack flows whose ORIGINAL destination is one of our
-    addresses and a Docker-published port.
+def _ct_key(line):
+    m = [re.search(r"\b%s=(\S+)" % k, line) for k in ("src", "sport", "dst", "dport")]
+    return tuple(x.group(1) for x in m) if all(m) else None
+
+
+def ct_flow_bytes(ct_text):
+    """{(src, sport, dst, dport): bytes both directions} for flows carrying accounting (nf_conntrack_acct=1)."""
+    out = {}
+    for line in ct_text.splitlines():
+        b = re.findall(r"\bbytes=(\d+)", line)
+        key = _ct_key(line)
+        if b and key:
+            out[key] = sum(int(x) for x in b)
+    return out
+
+
+def active_ct_peers(ct_text, local_addrs, published_ports, exclude_ports,
+                    est_timeout=None, max_idle=None, prev_bytes=None, min_bytes=None):
+    """src:sport of ESTABLISHED conntrack flows whose ORIGINAL destination is one of
+    our addresses and a Docker-published port, and which are in use.
 
     Connections DNAT'ed into a bridged container never show up in the host's `ss`,
     only in conntrack (`conntrack -L -p tcp --state ESTABLISHED`). The first
     dst=/dport= pair on a line is the original direction. A flow idle longer than
     max_idle seconds (conntrack keeps ESTABLISHED for est_timeout, 5 days) is
     treated as stale: a peer that vanished without FIN must not pin beefy awake.
+    With byte accounting and prev_bytes given, a flow is in use only if it moved at
+    least min_bytes since the last sample: an app left open holds a websocket or an
+    event stream whose heartbeats would otherwise keep the flow fresh forever.
     """
-    n = 0
+    peers = []
     for line in ct_text.splitlines():
         if "ESTABLISHED" not in line:
             continue
@@ -92,15 +111,24 @@ def count_ct_inbound(ct_text, local_addrs, published_ports, exclude_ports,
             f = line.split()
             if len(f) > 3 and f[2].isdigit() and est_timeout - int(f[2]) > max_idle:
                 continue
-        dst = re.search(r"\bdst=(\S+)", line)
-        dport = re.search(r"\bdport=(\d+)", line)
-        if not dst or not dport:
+        key = _ct_key(line)
+        if not key:
             continue
-        port = int(dport.group(1))
-        if (dst.group(1) in local_addrs and port in published_ports
+        port = int(key[3])
+        if not (key[2] in local_addrs and port in published_ports
                 and port not in exclude_ports):
-            n += 1
-    return n
+            continue
+        b = re.findall(r"\bbytes=(\d+)", line)
+        if b and prev_bytes is not None and min_bytes:
+            if sum(int(x) for x in b) - prev_bytes.get(key, 0) < min_bytes:
+                continue
+        peers.append("%s:%s" % (key[0], key[1]))
+    return peers
+
+
+def count_ct_inbound(*args, **kwargs):
+    """Number of in-use inbound conntrack flows (see active_ct_peers)."""
+    return len(active_ct_peers(*args, **kwargs))
 
 
 _PTS_RE = re.compile(r"sshd[\w-]*:.*@pts/\d+")
@@ -347,6 +375,7 @@ _DEFAULTS = {
     "EXCLUDE_PORTS": {22},
     "INHIBIT_FILE": "/run/beefy-keep-awake",
     "CT_MAX_IDLE": 300,
+    "CT_MIN_BYTES": 1024,
     "VPN_CONTAINER": "",
     "VPN_UPLINK": "eth0",
     "VPN_TUNNEL": "tun0",
@@ -371,7 +400,7 @@ def load_config(env):
     cfg = dict(_DEFAULTS)
     if "DRY_RUN" in env:
         cfg["DRY_RUN"] = _clean(env["DRY_RUN"]) not in ("0", "false", "False", "")
-    for key in ("IDLE_MINUTES", "SAMPLE_INTERVAL", "CT_MAX_IDLE"):
+    for key in ("IDLE_MINUTES", "SAMPLE_INTERVAL", "CT_MAX_IDLE", "CT_MIN_BYTES"):
         if key in env:
             cfg[key] = int(_clean(env[key]))
     for key in ("CPU_BUSY_PCT", "NET_BUSY_KBPS", "DISK_BUSY_KBPS"):
@@ -423,7 +452,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.6.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.7.0"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -455,6 +484,7 @@ def main():
     log(start_banner(VERSION, cfg))
 
     prev = _snapshot(cfg)
+    prev_ct_bytes = None
     idle_since = _now()
     time.sleep(cfg["SAMPLE_INTERVAL"])
 
@@ -479,8 +509,11 @@ def main():
             ct_text = _run(["conntrack", "-L", "-p", "tcp", "--state", "ESTABLISHED"])
             local_addrs = parse_local_addrs(_run(["ip", "-o", "-4", "addr", "show"]))
             published = parse_published_ports(_run(["docker", "ps", "--format", "{{.Ports}}"]))
-            ct = count_ct_inbound(ct_text, local_addrs, published, cfg["EXCLUDE_PORTS"],
-                                  _ct_est_timeout(), cfg["CT_MAX_IDLE"])
+            ct_peers = active_ct_peers(ct_text, local_addrs, published, cfg["EXCLUDE_PORTS"],
+                                       _ct_est_timeout(), cfg["CT_MAX_IDLE"],
+                                       prev_ct_bytes, cfg["CT_MIN_BYTES"])
+            prev_ct_bytes = ct_flow_bytes(ct_text)
+            ct = len(ct_peers)
             ps = _run(["ps", "-eo", "args"])
             ssh = count_interactive_ssh(ps)
             vscode = vscode_remote_active(ps)
@@ -494,8 +527,8 @@ def main():
                 "disk": disk > cfg["DISK_BUSY_KBPS"],
             }
             busy, reasons = evaluate(probes, inhibit)
-            peer = first_inbound_peer(estab, listen, cfg["EXCLUDE_PORTS"], ct_text,
-                                      local_addrs, published) if conns + ct > 0 else ""
+            peer = (first_inbound_peer(estab, listen, cfg["EXCLUDE_PORTS"], "")
+                    or (ct_peers[0] if ct_peers else ""))
             gauges = {"ssh": ssh, "cpu": cpu, "net": net, "disk": disk}
             detail = idle_detail(reasons, peer, gauges)
             stats = ("conns=%d+%d ssh=%d vscode=%d cpu=%2.0f%% net=%.0fkB/s "
