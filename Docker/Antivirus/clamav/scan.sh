@@ -20,6 +20,7 @@ CLAMD_RUNNING_CONF=${CLAMD_RUNNING_CONF:-/etc/clamav/clamd.conf}
 SCAN_RESUME=${SCAN_RESUME:-0}
 CHUNK_FILES=${CHUNK_FILES:-20000}
 PASS_DAYS=${PASS_DAYS:-6}
+TEST_SIG=${TEST_SIG:-Eicar-Test-Signature}
 SCAN_WINDOW=${SCAN_WINDOW:-22:00-06:00}
 SCAN_SUNDAY=${SCAN_SUNDAY:-1}
 
@@ -449,11 +450,13 @@ if [ "$INFECTED" -gt 0 ]; then
 fi
 TOTAL=$(( $(cat "$STATE/infected-total" 2>/dev/null || echo 0) + INFECTED ))
 echo "$TOTAL" > "$STATE/infected-total"
-INFECTED_M=$INFECTED
+# EICAR is the scanner self-test: reported and quarantined like any hit, but never counted in clamav_infected_last_run (MalwareFound).
+TEST_HITS=$(awk -F "$TAB" -v s="$TEST_SIG" '$2 == s' "$HITS" | wc -l | tr -d ' ')
+INFECTED_M=$((INFECTED - TEST_HITS))
 if [ "$MODE" = all ] && [ "$SCAN_RESUME" = 1 ] && [ "$USE_CLAMD" = 1 ] && [ -e "$STATE/all.pass-hits" ]; then
 	cat "$HITS" >> "$STATE/all.pass-hits"
 	sort -u -o "$STATE/all.pass-hits" "$STATE/all.pass-hits"
-	INFECTED_M=$(wc -l < "$STATE/all.pass-hits" | tr -d ' ')
+	INFECTED_M=$(awk -F "$TAB" -v s="$TEST_SIG" '$2 != s' "$STATE/all.pass-hits" | wc -l | tr -d ' ')
 	[ "$INFECTED_M" -gt 0 ] && cp "$STATE/all.pass-hits" "$STATE/last-infected.txt"
 fi
 
@@ -471,6 +474,7 @@ clamav_files_scanned{$L} $SCANNED
 clamav_scan_errors{$L} $ERRORS
 clamav_files_vanished{$L} $VANISHED
 clamav_infected_last_run{$L} $INFECTED_M
+clamav_test_hits_last_run{$L} $TEST_HITS
 clamav_files_skipped_large{$L} $SKIPPED
 EOF
 

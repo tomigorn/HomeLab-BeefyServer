@@ -3,7 +3,8 @@
 # Usage: tests/test_scan.sh   (POSIX sh; also runs inside the clamav-local image)
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCAN="$HERE/../clamav/scan.sh"
-SIG=EICAR-STANDARD-ANTIVIRUS-TEST-FILE
+SIG=FAKE-MALWARE-SAMPLE
+EICAR=EICAR-STANDARD-ANTIVIRUS-TEST-FILE
 TAB=$(printf '\t')
 PASS=0; FAIL=0
 T=$(mktemp -d)
@@ -50,8 +51,9 @@ while IFS= read -r f; do
   [ -s "$f" ] || continue
   [ "$f" = "$FAKE_DENY" ] && { denied=$((denied+1)); errors=$((errors+1)); continue; }
   scanned=$((scanned+1))
-  if grep -q EICAR-STANDARD-ANTIVIRUS-TEST-FILE "$f"; then
-    infected=$((infected+1)); echo "$f: Eicar-Test-Signature FOUND"
+  s=$(awk '/EICAR-STANDARD-ANTIVIRUS-TEST-FILE/ { print "Eicar-Test-Signature"; exit } /FAKE-MALWARE-SAMPLE/ { print "Win.Test.Fake"; exit }' "$f")
+  if [ -n "$s" ]; then
+    infected=$((infected+1)); echo "$f: $s FOUND"
     [ -n "$move" ] && mv "$f" "$move/" && echo "$f: moved to '$move/${f##*/}'"
   fi
 done < "$files"
@@ -110,7 +112,8 @@ while IFS= read -r re; do grep -Ev "$re" "$files" > "$files.x"; mv "$files.x" "$
 while IFS= read -r f; do
   [ -n "$(find "$f" -size +2000k)" ] && continue
   [ "$f" = "$FAKE_DENY" ] && { echo "$f: Access denied. ERROR"; errors=$((errors+1)); continue; }
-  grep -q EICAR-STANDARD-ANTIVIRUS-TEST-FILE "$f" && { infected=$((infected+1)); echo "$f: Eicar-Test-Signature FOUND"
+  s=$(awk '/EICAR-STANDARD-ANTIVIRUS-TEST-FILE/ { print "Eicar-Test-Signature"; exit } /FAKE-MALWARE-SAMPLE/ { print "Win.Test.Fake"; exit }' "$f")
+  [ -n "$s" ] && { infected=$((infected+1)); echo "$f: $s FOUND"
     [ -n "$move" ] && mv "$f" "$move/" && echo "$f: moved to '$move/${f##*/}'"; }
 done < "$files"
 printf '\n----------- SCAN SUMMARY -----------\nInfected files: %s\n' "$infected"
@@ -214,8 +217,8 @@ reset; marker
 fresh "$T/red/movies/evil.exe" "x $SIG x"; fresh "$T/red/movies/fine.mkv"
 assert_eq "hit exits 1" 1 "$(run new)"
 [ -e "$QUARANTINE/evil.exe" ] && [ ! -e "$T/red/movies/evil.exe" ] && ok "moved to quarantine" || bad "moved to quarantine"
-assert_grep "index line" "^[0-9-]*T[0-9:]*[^$TAB]*$TAB$T/red/movies/evil.exe${TAB}Eicar-Test-Signature\$" "$QUARANTINE/index.txt"
-assert_eq "last-infected" "$T/red/movies/evil.exe${TAB}Eicar-Test-Signature" "$(cat "$STATE/last-infected.txt")"
+assert_grep "index line" "^[0-9-]*T[0-9:]*[^$TAB]*$TAB$T/red/movies/evil.exe${TAB}Win.Test.Fake\$" "$QUARANTINE/index.txt"
+assert_eq "last-infected" "$T/red/movies/evil.exe${TAB}Win.Test.Fake" "$(cat "$STATE/last-infected.txt")"
 assert_eq "infected_last_run 1" 1 "$(metric clamav_infected_last_run new)"
 assert_eq "infected_total 1" 1 "$(metric clamav_infected_total)"
 advanced "marker advanced after hits"
@@ -241,8 +244,8 @@ fresh "$T/red/torrents/evil.mkv" "x $SIG x"; mkdir -p "$T/red/movies/E" "$T/blac
 assert_eq "hit exits 1" 1 "$(run new)"
 [ ! -e "$T/red/torrents/evil.mkv" ] && [ ! -e "$T/red/movies/E/evil.mkv" ] && ok "no path left outside quarantine" || bad "no path left outside quarantine" "$(find "$T/red" -name 'evil*')"
 assert_eq "both links in quarantine" 2 "$(find "$QUARANTINE" -name 'evil.mkv*' | wc -l | tr -d ' ')"
-assert_eq "an index line per path" 2 "$(grep -c "evil.mkv${TAB}Eicar" "$QUARANTINE/index.txt")"
-assert_grep "the second link's own path indexed" "$TAB$T/red/movies/E/evil.mkv${TAB}Eicar" "$QUARANTINE/index.txt"
+assert_eq "an index line per path" 2 "$(grep -c "evil.mkv${TAB}Win.Test.Fake" "$QUARANTINE/index.txt")"
+assert_grep "the second link's own path indexed" "$TAB$T/red/movies/E/evil.mkv${TAB}Win.Test.Fake" "$QUARANTINE/index.txt"
 assert_eq "restore of the second link works" 0 "$(run restore "$(find "$QUARANTINE" -name 'evil.mkv.*' | head -1)")"
 
 echo "== new through the running clamd: parallel clamdscan, same reporting"
@@ -283,7 +286,7 @@ assert_grep "duration" '^clamav_run_duration_seconds{host="testhost",mode="new"}
 assert_grep "signature age" '^clamav_signature_age_seconds{host="testhost"} [0-9]' "$P"
 assert_grep "db version" '^clamav_db_version{host="testhost"} 28158$' "$P"
 assert_grep "infected_total" '^clamav_infected_total{host="testhost"} 0$' "$P"
-assert_eq "one TYPE line per metric" 11 "$(grep -c '^# TYPE clamav_' "$P")"
+assert_eq "one TYPE line per metric" 12 "$(grep -c '^# TYPE clamav_' "$P")"
 assert_eq "no temp files left" "clamav.prom" "$(ls -A "$TEXTFILE")"
 sig_age=$(metric clamav_signature_age_seconds)
 exp=$(( $(date +%s) - 1792391160 ))
@@ -464,10 +467,19 @@ fresh "$T/red/movies/evil.exe" "$SIG"; fresh "$T/outside/my file.exe" "$SIG"; fr
 assert_eq "hits exit 1" 1 "$(run "$T/red/movies" "$T/outside/my file.exe" "$T/black/books/ok.epub")"
 [ -e "$QUARANTINE/evil.exe" ] && ok "under roots: moved" || bad "under roots: moved"
 [ -e "$T/outside/my file.exe" ] && ok "outside roots: left in place" || bad "outside roots: left in place"
-assert_grep "outside hit reported" "$T/outside/my file.exe${TAB}Eicar-Test-Signature" "$STATE/last-infected.txt"
+assert_grep "outside hit reported" "$T/outside/my file.exe${TAB}Win.Test.Fake" "$STATE/last-infected.txt"
 assert_eq "index only lists the moved file" 1 "$(wc -l < "$QUARANTINE/index.txt" | tr -d ' ')"
 assert_eq "infected_last_run path" 2 "$(metric clamav_infected_last_run path)"
 assert_eq "scanned all three" 3 "$(metric clamav_files_scanned path)"
+
+echo "== EICAR self-test: detected and reported, never counted as a hit"
+reset
+fresh "$T/outside/eicar.com" "$EICAR"; fresh "$T/outside/evil.exe" "$SIG"
+assert_eq "self-test still exits 1" 1 "$(run "$T/outside/eicar.com")"
+assert_eq "self-test not in infected_last_run" 0 "$(metric clamav_infected_last_run path)"
+assert_eq "self-test counted as test hit" 1 "$(metric clamav_test_hits_last_run path)"
+assert_eq "real hit next to a self-test counts" 1 "$(run "$T/outside/eicar.com" "$T/outside/evil.exe")"
+assert_eq "only the real hit counts" 1 "$(metric clamav_infected_last_run path)"
 assert_eq "clean path exits 0" 0 "$(run "$T/black/books")"
 assert_eq "missing path given by hand exits 2" 2 "$(run "$T/nope")"
 assert_eq "it is an error, not vanished" "1 0" "$(metric clamav_scan_errors path) $(metric clamav_files_vanished path)"
@@ -484,7 +496,7 @@ fresh "$T/red/movies/my [odd] file.exe" "$SIG"
 assert_eq "hit exits 1" 1 "$(run new)"
 assert_eq "restore exits 0" 0 "$(run restore "my [odd] file.exe")"
 [ -e "$T/red/movies/my [odd] file.exe" ] && [ ! -e "$QUARANTINE/my [odd] file.exe" ] && ok "moved back" || bad "moved back"
-assert_grep "index line marked restored" "$TAB$T/red/movies/my \[odd\] file.exe${TAB}Eicar-Test-Signature${TAB}restored " "$QUARANTINE/index.txt"
+assert_grep "index line marked restored" "$TAB$T/red/movies/my \[odd\] file.exe${TAB}Win.Test.Fake${TAB}restored " "$QUARANTINE/index.txt"
 assert_eq "allow list entry" "$T/red/movies/my [odd] file.exe" "$(cat "$STATE/allow.txt")"
 assert_eq "new skips it" 0 "$(run new)"
 assert_no_grep "not listed by new" "odd" "$STATE/new.list"
