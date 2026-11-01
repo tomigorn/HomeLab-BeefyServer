@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly Seerr image rebuild (Tue 04:27, maintenance window)
+
+[Timer]
+OnCalendar=Tue *-*-* 04:27:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target

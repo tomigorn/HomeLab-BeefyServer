@@ -1,0 +1,16 @@
+[Unit]
+Description=Rebuild our Seerr image (newest stable + OIDC PR 2715 + our patches), test, back up, deploy, roll back on failure
+Documentation=file:///home/buntu/Projects/Docker/Seerr/README.md
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Like auto-update: buntu with the docker group; config backup and restore run as root inside a throwaway container.
+User=buntu
+Group=buntu
+SupplementaryGroups=docker
+ExecStart=/home/buntu/Projects/Docker/Seerr/scripts/seerr-rebuild.sh
+StateDirectory=seerr-rebuild
+StateDirectoryMode=0700
+TimeoutStartSec=40min

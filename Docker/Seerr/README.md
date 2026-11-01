@@ -5,17 +5,14 @@ with Jellyfin access browse TMDB and request a film or a series. Approved reques
 go to Radarr/Sonarr (`../Movie-Downloads`), availability comes from Jellyfin.
 Public at `https://requests.holy-grail.ch` (wakes beefy, ~45 s).
 
-Jellyseerr itself is frozen at 2.7.3 (`fallenbagel/jellyseerr:2.7.3-deprecated`); the
-successor image is `ghcr.io/seerr-team/seerr`. **Temporarily** this runs the
-`preview-new-oidc` build for the Holy Grail login, pinned by digest (see
-[Preview image](#preview-image-temporary)).
+Jellyseerr itself is frozen at 2.7.3 (`fallenbagel/jellyseerr:2.7.3-deprecated`); the successor is `ghcr.io/seerr-team/seerr`. Its releases have no OIDC yet, so this runs **our own image** `seerr-local:current`: newest stable release + the OIDC PR, rebuilt weekly ([Own image](#own-image-until-oidc-is-released)).
 
 ## Deploy
 
 ```bash
 sudo mkdir -p /srv/appdata/seerr && sudo chown 65109:1000 /srv/appdata/seerr && sudo chmod 2770 /srv/appdata/seerr
 cd ~/Projects/Docker/Seerr && sudo docker compose up -d
-curl -s http://127.0.0.1:5055/api/v1/status     # preview: {"version":"develop-2d1a2ed...",...}
+curl -s http://127.0.0.1:5055/api/v1/status     # {"version":"3.5.1","commitTag":"v3.5.1-oidc2e52312",...}
 ```
 
 | | |
@@ -58,31 +55,68 @@ A duplicate account (signed in before linking): delete it under Users as admin, 
 
 Avatars: a pick in the Avatar Picker reaches Seerr without a new login, pushed from fastpi while beefy is up (`HomeLab-FastPi` `Avatar-Picker/README.md`, "How a pick reaches other apps"). Seerr's API cannot set an avatar, so that job updates the one `user` row as uid 65109: Jellyfin-type user (the owner): new `avatarVersion` (`/avatarproxy/<id>?v=<version>`) + empty `cache/images/avatar`; Holy Grail-created user: the new picker URL. Backup before the first run: `/srv/appdata/seerr/db.bak-avatar-sync-20261027.sqlite3`.
 
-### Preview image (temporary)
+### Own image (until OIDC is released)
 
-Seerr 3.5.0 has no OIDC. It lives in the open PR seerr-team/seerr#2715, published as `ghcr.io/seerr-team/seerr:preview-new-oidc`; Authentik's Seerr guide uses the same tag.
+Owner decision 2026-11-01: we build and run our own image from the newest stable release + OIDC PR seerr-team/seerr#2715 (+ our patches) until a release contains OIDC.
 
 | | |
 |---|---|
-| Image | `preview-new-oidc@sha256:28744b1ced522beb7af8e5c966b73c6e46b1dc2c4c8cb497ad2f12d3139699a3` (commit `2d1a2ed`, built 2026-09-08) |
-| Base | older than v3.5.0 (~v3.4.1 + OIDC): v3.5.0 fixes are missing until OIDC ships in a release |
-| DB | adds the `linked_accounts` table; v3.5.0's migrations stay applied |
-| Config | OIDC exists only in `settings.json` (no UI, no API): `main.oidcLogin`, `oidc.providers[]`, `network.trustProxy`, written by `scripts/configure.sh` with Seerr stopped |
-| Backup before the switch | `~/backups/seerr-2026-10-19.tgz` (`/srv/appdata/seerr`, v3.5.0 state) |
-| Cup | lists `preview-new-oidc` (flags a rebuilt preview) and still `v3.5.0` (flags new releases). Keep the unused `v3.5.0` image for that. `preview-new-oidc` is a local tag on the pinned image; redo after a re-pin: `sudo docker tag ghcr.io/seerr-team/seerr@sha256:<digest> ghcr.io/seerr-team/seerr:preview-new-oidc` |
+| Image | `seerr-local:current` (`pull_policy: never`), also tagged `seerr-local:<release>-oidc<pr sha7>`; previous one `seerr-local:rollback`. Labels `holy-grail.seerr.{tree,upstream,pr}` |
+| Now | `v3.5.1-oidc2e52312` (2026-11-02), 246 upstream tests green; Trivy critical 12 → 5 (only Next.js, see below), high 141 → 124 |
+| Script | `scripts/seerr-rebuild.sh [--force] [--no-deploy]`, unit `systemd/seerr-rebuild.service` (buntu + docker group, state and clone in `/var/lib/seerr-rebuild`) |
+| Timer | `seerr-rebuild.timer` Tue 04:27 (maintenance window waits for it) |
+| Tests | `bash tests/test_seerr_rebuild.sh` (fake upstream git + fake docker) |
+
+What a run does:
+
+1. Newest stable tag (GitHub `releases/latest`) and the PR head; clone/fetch in `/var/lib/seerr-rebuild/work`.
+2. Applies the PR's own diff (`merge-base(develop, PR)..PR`, without `docs/`) onto the tag with `git apply --3way`. A committed `image/resolutions/<tag>-<pr sha12>.patch` replaces that diff for exactly that pair (a hand-made conflict resolution, reproducible).
+3. Applies `image/patches/*.patch` (our in-image changes; none yet: everything of ours lives outside the image, see `../CUSTOMIZATIONS.md`).
+4. Merges `image/dependency-overrides.json` into `package.json` (`pnpm.overrides`, `scripts`) and refreshes the lockfile in the Dockerfile's node image. Overrides use `pkg@<x` selectors, so they stop mattering once upstream has caught up.
+5. Same source tree as the running image (label): stop. Otherwise upstream build stage, `pnpm typecheck && pnpm test`, final image.
+6. Deploy: Seerr stopped, `/srv/appdata/seerr` tarred (`~/backups/seerr/`, last 6, mode 600, SQLite integrity checked), tag swap, start, verify (healthy, `commitTag`, OIDC start redirects to sso, post-update check `Seerr`). Any failure: config restored from that backup, previous image back, Telegram.
+
+| Telegram | When |
+|---|---|
+| does not apply onto vX | PR conflicts with a new release: image kept, resolve below |
+| build / tests failed | image kept |
+| failed its checks, rolled back | config + image restored |
+| OIDC is in release vX | PR merged and released: back to the official image (below); until then the job builds the plain release |
+
+Resolve a conflict (once per release + PR head), as buntu after the failed run (conflict markers in the tree):
+
+```bash
+cd /var/lib/seerr-rebuild/work/seerr
+# fix the files, git add them, then:
+git diff --binary --cached <tag> > ~/Projects/Docker/Seerr/image/resolutions/<tag>-<pr sha12>.patch
+sudo systemctl start seerr-rebuild.service
+```
+
+Next.js stays on upstream's version (16.2.6, 5 critical CVEs): Next 16.4 builds with Turbopack and inlines a bootstrap `<script>`, which our CSP (`script-src 'self'`, fastpi Traefik) blocks; `next build --webpack` breaks title pages (SVG imports). Check `seerr.no-inline-script` stops such a build. Open: CSP for the bootstrap, or an upstream release that avoids it.
+
+Changing `image/` (overrides, patches): `--no-deploy` first, then a logged-in browser run (title page, request dialog) before deploying; the checks cannot render pages behind a session.
+
+Manual rollback to the September preview (no DB migration between them):
+
+```bash
+sudo docker tag ghcr.io/seerr-team/seerr:preview-new-oidc seerr-local:current && cd ~/Projects/Docker/Seerr && sudo docker compose up -d --no-deps seerr
+```
+
+DB: v3.5.1 + PR adds no migration over the preview (56 both, 2026-11-02); a later release may migrate one way, the backup of step 6 is the way back. Backup before the switch: `~/backups/seerr-2026-11-01-pre-own-image.tgz`.
 
 ### Back to stable
 
-When a release's notes include OIDC (PR #2715 merged):
+When the job reports "OIDC is in release vX":
 
 ```bash
 cd ~/Projects/Docker/Seerr
-# docker-compose.yaml: image: ghcr.io/seerr-team/seerr:vX.Y.Z, drop the "Temporary" comment
-sudo docker compose pull && sudo docker compose up -d
+# docker-compose.yaml: image: ghcr.io/seerr-team/seerr:vX.Y.Z, drop pull_policy and the "Own image" comment
+sudo systemctl disable --now seerr-rebuild.timer
+sudo docker compose up -d seerr
 ./scripts/configure.sh          # re-applies OIDC, Radarr/Sonarr, main settings
 ```
 
-Linked accounts stay in the DB. If the release configures OIDC differently (UI/API), adapt `configure.sh`. Back to plain v3.5.0 instead: same steps with `v3.5.0`; the Holy Grail button disappears, Quick Connect remains.
+Then: `../_global/auto-update.conf` Seerr row back to all services; checks `seerr.image-local`, `seerr.rebuild-timer` and their `CUSTOMIZATIONS.md` rows out. Linked accounts stay in the DB. If the release configures OIDC differently (UI/API), adapt `configure.sh`.
 
 ## First login (one-time, by hand) — done 2026-10-19, owner is jane; friends auto-approve + advanced requests + view requests (defaultPermissions 24736)
 
