@@ -75,7 +75,9 @@ services:
       - ./secrets/vpn-status.apikey:/run/secrets/hc-apikey:ro
       - ./secrets/wireguard_private_key:/run/secrets/wireguard_private_key:ro
     networks:
-      - movie-downloads
+      movie-downloads:
+        priority: 100   # eth0, the default route; clamd is internal (no gateway)
+      clamd: {}   # completion hook -> clamav:3310 (S-8); directly attached, so gluetun allows it without FIREWALL_OUTBOUND_SUBNETS
 
 # #########################################################
 # QBITTORRENT #############################################
@@ -538,6 +540,14 @@ networks:
         - subnet: 172.28.10.0/24
           # Dynamic addresses stay in .0-.127, so no container can take a pinned .2xx (qBit bypass list).
           ip_range: 172.28.10.0/25
+  # clamd only: clamav, clamav-queue (Antivirus) and gluetun's namespace (completion hook). Internal, no internet (S-8).
+  clamd:
+    name: clamd
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.18.0/24
   # autoheal <-> its socket proxy only; internal, no internet, nothing else on it.
   movie-heal:
     name: movie-heal

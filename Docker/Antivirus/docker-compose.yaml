@@ -5,7 +5,7 @@ services:
 # #########################################################
 # CLAMAV ##################################################
 # #########################################################
-# freshclam + clamd (port 3310 on movie-downloads, for the SABnzbd/qBittorrent completion hook) + scan.sh for the nightly and manual scans.
+# freshclam + clamd (port 3310 on the internal clamd net, for the SABnzbd/qBittorrent completion hook and the queue worker; S-8: off movie-downloads, so Radarr/Sonarr/Bazarr cannot send SHUTDOWN/RELOAD) + scan.sh for the nightly and manual scans.
   clamav:
     build: ./clamav   # rebuild: see README (build with --network host)
     image: clamav-local:latest
@@ -65,7 +65,8 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - movie-downloads
+      - egress   # freshclam
+      - clamd
 
 # #########################################################
 # CLAMAV-QUEUE ############################################
@@ -123,6 +124,7 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
+      clamd: {}
       movie-downloads:
         # pinned: qBittorrent lets this address in without a password (WebUI AuthSubnetWhitelist), to stop and tag an infected torrent
         ipv4_address: 172.28.10.204
@@ -181,10 +183,16 @@ services:
 # =========================================================
 # Networks ================================================
 # =========================================================
-# Movie-Downloads' bridge: SABnzbd and qBittorrent (in gluetun's namespace, whose firewall allows this subnet) reach clamd as clamav:3310. Start Movie-Downloads first.
+# clamd (internal, defined in Movie-Downloads): only clamav, clamav-queue and gluetun (SABnzbd/qBittorrent hook) reach clamav:3310 (S-8). movie-downloads: the queue worker's qBittorrent API access. Start Movie-Downloads first.
 networks:
   movie-downloads:
     external: true
+  clamd:
+    external: true
+  egress:
+    ipam:
+      config:
+        - subnet: 172.28.19.0/24
 
 # =========================================================
 # Volumes =================================================

@@ -1455,7 +1455,7 @@ sudo docker exec movie-sabnzbd /clamav-hook/download-integrity.py --check "/data
 
 ## Completion scan
 
-Every finished download is scanned by ClamAV: after the [integrity check](#download-integrity), SABnzbd post-processing and qBittorrent "run on torrent finished" run `../Antivirus/hook/clamav-hook.py`, which streams executables, archives and unknown files to `clamav:3310` before the job ends (the `clamav` container from `../Antivirus` joins this bridge) and hands media files to the background queue (`clamav-queue`, 1 file at a time), so SABnzbd post-processing no longer waits ~2 min per episode.
+Every finished download is scanned by ClamAV: after the [integrity check](#download-integrity), SABnzbd post-processing and qBittorrent "run on torrent finished" run `../Antivirus/hook/clamav-hook.py`, which streams executables, archives and unknown files to `clamav:3310` before the job ends (gluetun and the `clamav` container from `../Antivirus` share the internal `clamd` net, 172.28.18.0/24; Radarr, Sonarr and Bazarr are not on it, S-8) and hands media files to the background queue (`clamav-queue`, 1 file at a time), so SABnzbd post-processing no longer waits ~2 min per episode.
 
 | | |
 |---|---|
@@ -1578,6 +1578,6 @@ on fastpi's always-on `mouse` stack — that split is deliberate, not an oversig
 
 - `../Jellyfin` — playback, reads `/srv/video/media` read-only
 - `../Seerr` — requests from users, talks to Radarr and Sonarr over this bridge
-- `../Antivirus` — ClamAV: completion scan (clamd on this bridge) and nightly scan
+- `../Antivirus` — ClamAV: completion scan (clamd on the internal `clamd` net) and nightly scan
 - `../../Server/3-Storage-Layout-and-Spindown.md` — mergerfs tiers, demotion
 - `../../Server/8-Idle-Watcher.md` — what counts as idle, and `beefy-keep-awake`
