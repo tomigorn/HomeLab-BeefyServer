@@ -70,6 +70,7 @@ class Fix:
         self.applied = False
         self.calls = []
         self.fail_reverts = 0
+        self.pending = False
 
     def active(self):
         return {"downloads_slow": self.applied, "background_low": False}
@@ -92,7 +93,10 @@ class Fix:
 
     def restore_from_state(self):
         self.calls.append("restore")
-        return self.revert()
+        return []
+
+    def complete(self):
+        return self.applied and not self.pending
 
     def download_speeds(self):
         return 100, 200
@@ -236,6 +240,78 @@ class MainTest(unittest.TestCase):
         w.poll()
         self.assertEqual(fix.calls.count("revert"), 2)
 
+    def test_apply_throttled_to_60s_once_complete(self):
+        clock, fix, tr = Clock(), Fix(), FakeTracker()
+        w = self.watcher(Runner(["172.28.11.3"]), Http([[]]), clock=clock, fix=fix, tracker=tr)
+        tr.is_playing, tr.episode = 1, True
+        fix.pending = True
+        for _ in range(3):
+            w.poll()
+            clock.t += 5
+        self.assertEqual(fix.calls.count("apply"), 3)
+        fix.pending = False
+        for _ in range(11):
+            w.poll()
+            clock.t += 5
+        self.assertEqual(fix.calls.count("apply"), 3)
+        w.poll()
+        self.assertEqual(fix.calls.count("apply"), 4)
+        fix.pending = True
+        clock.t += 5
+        w.poll()
+        self.assertEqual(fix.calls.count("apply"), 5)
+
+    def test_downloads_bridge_ip_with_localhost_fallback(self):
+        calls = []
+        fail = {"172.28.10.5"}
+
+        def http(url, data=None):
+            calls.append(url)
+            if any(f"//{ip}:" in url for ip in fail):
+                raise pw.urllib.error.URLError("connection refused")
+            return b"ok"
+
+        def run(cmd, **kw):
+            if cmd[:2] == ["ip", "-o"]:
+                return subprocess.CompletedProcess(cmd, 0, OWN, "")
+            self.assertEqual(cmd[-1], "movie-gluetun")
+            return subprocess.CompletedProcess(cmd, 0, "clamd=172.28.18.3 movie-downloads=172.28.10.5 \n", "")
+        dl = pw.DownloadsHttp(run, http, self.logs.append)
+        self.assertEqual(dl(pw.DOWNLOADS_BASE + ":8080/api/v2/app/version"), b"ok")
+        self.assertEqual(calls, ["http://172.28.10.5:8080/api/v2/app/version", "http://127.0.0.1:8080/api/v2/app/version"])
+        fail.clear()
+        calls.clear()
+        dl(pw.DOWNLOADS_BASE + ":8081/api?mode=version")
+        self.assertEqual(calls, ["http://172.28.10.5:8081/api?mode=version"])
+        calls.clear()
+        dl(pw.DOWNLOADS_BASE + ":8081/api?mode=queue")
+        self.assertEqual(calls, ["http://172.28.10.5:8081/api?mode=queue"])
+
+    def test_downloads_http_errors_not_retried_on_localhost(self):
+        calls = []
+
+        def http(url, data=None):
+            calls.append(url)
+            raise pw.autofix.HttpError(403, url)
+
+        def run(cmd, **kw):
+            out = OWN if cmd[:2] == ["ip", "-o"] else "movie-downloads=172.28.10.5 \n"
+            return subprocess.CompletedProcess(cmd, 0, out, "")
+        dl = pw.DownloadsHttp(run, http, self.logs.append)
+        with self.assertRaises(pw.autofix.HttpError):
+            dl(pw.DOWNLOADS_BASE + ":8080/api/v2/app/preferences")
+        self.assertEqual(calls, ["http://172.28.10.5:8080/api/v2/app/preferences"])
+
+    def test_downloads_refuses_own_address(self):
+        calls = []
+
+        def run(cmd, **kw):
+            out = OWN if cmd[:2] == ["ip", "-o"] else "movie-downloads=192.168.1.102 \n"
+            return subprocess.CompletedProcess(cmd, 0, out, "")
+        dl = pw.DownloadsHttp(run, lambda url, data=None: calls.append(url) or b"", self.logs.append)
+        dl(pw.DOWNLOADS_BASE + ":8080/x")
+        self.assertEqual(calls, ["http://127.0.0.1:8080/x"])
+
     def test_incident_recorded_and_counted(self):
         clock, fix, tr = Clock(), Fix(), FakeTracker()
         w = self.watcher(Runner(["172.28.11.3"]), Http([[]]), clock=clock, fix=fix, tracker=tr)
@@ -306,7 +382,7 @@ class MainTest(unittest.TestCase):
             for sig, handler in old.items():
                 signal.signal(sig, handler)
         w.run(stop)
-        self.assertEqual(fix.calls[-1], "revert")
+        self.assertEqual(fix.calls, ["restore", "revert"])
         self.assertFalse(fix.applied)
         self.assertIn('jellyfin_playback_autofix_active{action="downloads_slow"} 0',
                       (self.dir / "state" / "playback.prom").read_text())

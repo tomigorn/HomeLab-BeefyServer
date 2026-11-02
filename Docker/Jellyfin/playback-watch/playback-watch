@@ -19,12 +19,16 @@ import tracker as tracker_mod  # noqa: E402
 
 POLL = 5.0
 REVERT_AFTER = 600.0
+APPLY_EVERY = 60.0
 STATE_DIR = Path.home() / ".local" / "state" / "jellyfin-playback"
 KEY_FILE = HERE.parent / "secrets" / "api-key"
 DOWNLOADS = HERE.parent.parent / "Movie-Downloads" / "secrets"
-QBIT_BASE, QBIT_PASSWORD = "http://127.0.0.1:8080", DOWNLOADS / "qbit-webui.password"
-SAB_BASE, SAB_KEY = "http://127.0.0.1:8081", DOWNLOADS / "hook" / "sabnzbd.apikey"
+DOWNLOADS_BASE = "http://movie-gluetun"
+QBIT_PASSWORD = DOWNLOADS / "qbit-webui.password"
+SAB_KEY = DOWNLOADS / "hook" / "sabnzbd.apikey"
 INSPECT = ["sudo", "-n", "docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}", "jellyfin"]
+INSPECT_GLUETUN = ["sudo", "-n", "docker", "inspect", "-f",
+                   "{{range $k, $v := .NetworkSettings.Networks}}{{$k}}={{$v.IPAddress}} {{end}}", "movie-gluetun"]
 
 
 def log_stdout(msg):
@@ -66,6 +70,38 @@ def parse_duration(text):
     raise ValueError(f"bad duration {text!r} (use 30s, 90m, 24h, 2d)")
 
 
+class DownloadsHttp:
+    """qBittorrent and SABnzbd share movie-gluetun's namespace: call them at its bridge IP, 127.0.0.1 only when that refuses."""
+
+    def __init__(self, run, http, log):
+        self.run, self.http, self.log = run, http, log
+        self.ip = None
+
+    def _resolve(self):
+        try:
+            r = self.run(INSPECT_GLUETUN, capture_output=True, text=True, timeout=20)
+            pairs = [f.partition("=") for f in r.stdout.split()] if r.returncode == 0 else []
+            ips = [ip for net, _, ip in pairs if net == "movie-downloads" and ip] + [ip for _, _, ip in pairs if ip]
+            ip = ips[0] if ips else None
+            if safe_ip(ip, own_addresses(self.run)):
+                return ip
+            self.log(f"downloads: no usable movie-gluetun bridge IP ({ip!r}), using 127.0.0.1")
+        except Exception as e:
+            self.log(f"downloads: resolving movie-gluetun failed: {e}")
+        return None
+
+    def __call__(self, url, data=None):
+        if self.ip is None:
+            self.ip = self._resolve()
+        if self.ip:
+            try:
+                return self.http(url.replace(DOWNLOADS_BASE, f"http://{self.ip}", 1), data)
+            except OSError as e:
+                self.log(f"downloads: {self.ip} refused ({e}), falling back to 127.0.0.1")
+                self.ip = None
+        return self.http(url.replace(DOWNLOADS_BASE, "http://127.0.0.1", 1), data)
+
+
 class Watcher:
     def __init__(self, *, run, http, clock, key_file, fix, state_dir, log, tracker=None, context=record.context):
         self.run_cmd, self.http, self.clock = run, http, clock
@@ -79,6 +115,7 @@ class Watcher:
         self.started = clock()
         self.last_ok = 0.0
         self.reverting = False
+        self.last_apply = None
         self.playbacks = {}
         fix.on_action = self._count_action
 
@@ -125,7 +162,10 @@ class Watcher:
         playing = self.tracker.playing()
         if playing and self.tracker.episode_active(now):
             self.reverting = False
-            self._step("apply", lambda: self.fix.apply(now))
+            done = self._step("complete", self.fix.complete)
+            if not done or self.last_apply is None or now - self.last_apply >= APPLY_EVERY:
+                self.last_apply = now
+                self._step("apply", lambda: self.fix.apply(now))
         else:
             end = self.tracker.last_playing_end()
             idle = not playing and now - (end if end is not None else self.started) >= REVERT_AFTER
@@ -223,13 +263,13 @@ def install_signals(stop):
 
 
 def build_fix(log):
-    http = autofix.make_http()
+    http = DownloadsHttp(subprocess.run, autofix.make_http(), log)
     try:
         sab_key = SAB_KEY.read_text().strip()
     except OSError as e:
         log(f"SABnzbd key unreadable: {e}")
         sab_key = ""
-    return autofix.AutoFix(autofix.Qbit(QBIT_BASE, QBIT_PASSWORD, http), autofix.Sab(SAB_BASE, sab_key, http),
+    return autofix.AutoFix(autofix.Qbit(DOWNLOADS_BASE + ":8080", QBIT_PASSWORD, http), autofix.Sab(DOWNLOADS_BASE + ":8081", sab_key, http),
                            autofix.Systemd(), STATE_DIR / "autofix.json", log=log)
 
 

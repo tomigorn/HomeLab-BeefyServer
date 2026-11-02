@@ -222,6 +222,22 @@ class AutoFixTest(Base):
         self.assertEqual(self.qbit.mode, 0)
         self.assertEqual(self.sd.weights["beefy-promoter.service"], (100, 100))
 
+    def test_complete_only_when_every_part_applied(self):
+        fix = self.make()
+        self.assertFalse(fix.complete())
+        self.qbit.down = True
+        fix.apply(1.0)
+        self.assertFalse(fix.complete())
+        self.qbit.down = False
+        fix.apply(2.0)
+        self.assertTrue(fix.complete())
+        fix.revert()
+        self.sd.fail.add("beefy-promoter.service")
+        fix.apply(3.0)
+        self.assertFalse(fix.complete())
+        fix.revert()
+        self.assertFalse(fix.complete())
+
     def test_failed_qbit_write_retried_without_resaving(self):
         orig = self.qbit.set_prefs
         self.qbit.set_prefs = lambda v: (_ for _ in ()).throw(OSError("timeout"))

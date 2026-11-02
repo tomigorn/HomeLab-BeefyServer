@@ -382,7 +382,7 @@ Per device (stored on the device, not on the server):
 Direct play (no transcode) is always best; the server transcodes only what the device cannot play.
 
 ## Playback watch (2026-11-02)
-Service `playback-watch` (system unit, user buntu, `playback-watch/`): polls `/Sessions?ActiveWithinSeconds=60` every 5 s at the Jellyfin container's bridge IP (never `localhost`/beefy's own addresses, so the idle watcher does not count it), records stutter and eases it.
+Service `playback-watch` (system unit, user buntu, `playback-watch/`): polls `/Sessions?ActiveWithinSeconds=60` every 5 s at the Jellyfin container's bridge IP (never `localhost`/beefy's own addresses, so the idle watcher does not count it), records stutter and eases it. qBittorrent/SABnzbd are called at movie-gluetun's bridge IP for the same reason (127.0.0.1 only if that refuses).
 
 | Incident | Rule |
 |---|---|
@@ -402,7 +402,7 @@ Files in `~/.local/state/jellyfin-playback/`: `incidents.jsonl` (incidents with 
 ```bash
 systemctl status playback-watch                      # status
 journalctl -u playback-watch -n 50                   # incidents and auto-fix log (no users/titles)
-playback-watch report --since 24h                    # incident table (s/m/h/d)
+ssh beefy playback-watch report --since 24h         # incident table (s/m/h/d), also from fastpi
 ~/Projects/Docker/Jellyfin/playback-watch/install.sh # install / update
 sudo systemctl disable --now playback-watch          # rollback: stopping reverts every auto-fix
 cd ~/Projects/Docker/Jellyfin/playback-watch && python3 -m unittest -q   # tests

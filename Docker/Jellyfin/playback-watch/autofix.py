@@ -139,6 +139,7 @@ class AutoFix:
         self.log = log
         self.on_action = on_action or (lambda action: None)
         self.applied = self._load()
+        self._complete = False
 
     def _load(self):
         try:
@@ -162,13 +163,18 @@ class AutoFix:
             return True
         except Exception as e:
             self.log(f"autofix: {what} failed: {e}")
+            self._complete = False
             return False
+
+    def complete(self):
+        return self._complete and bool(self.applied)
 
     def active(self):
         return {a: a in self.applied for a in self.ACTIONS}
 
     def apply(self, now):
         was = set(self.applied)
+        self._complete = True
         self._apply_downloads(now)
         self._apply_background(now)
         done = [a for a in self.ACTIONS if a in self.applied and a not in was]
@@ -218,6 +224,7 @@ class AutoFix:
             targets = self.systemd.active_units(UNITS) + self.systemd.container_scopes(CONTAINERS)
         except Exception as e:
             self.log(f"autofix: background_low lookup failed: {e}")
+            self._complete = False
             return
         entry = self.applied.setdefault("background_low", {"since": now, "units": {}})
         units = entry["units"]
@@ -228,6 +235,7 @@ class AutoFix:
                 units[unit] = list(self.systemd.weights_of(unit))
             except Exception as e:
                 self.log(f"autofix: read weights of {unit} failed: {e}")
+                self._complete = False
                 continue
             self._save()
             if not self._try(f"lower {unit}", lambda u=unit: self.systemd.set_weight(u, LOW, LOW)):
@@ -249,6 +257,7 @@ class AutoFix:
         self.sab.set_speedlimit(abs_ if abs_ not in (None, "") else saved.get("speedlimit", ""))
 
     def revert(self):
+        self._complete = False
         if not self.applied:
             return []
         done = []
