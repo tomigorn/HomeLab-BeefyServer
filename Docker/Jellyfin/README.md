@@ -793,4 +793,4 @@ Smart-TV Moonfin (Samsung/Tizen) has no Quick Connect: it sends username + passw
 - Verified: Ikiru 8.314 -> 8.3, The Secret in Their Eyes 7.965 -> 8.2 (= IMDb dataset).
 - Rollback: stop jellyfin, remove `/srv/appdata/jellyfin/data/plugins/IMDb Ratings NG_*`, start. Pre-change backup: `/srv/appdata/jellyfin-pre-imdb-2026-10-25.tgz` (root, mode 600).
 
-**Rebuild** (`jellyfin-local`, FROM `lscr.io/linuxserver/jellyfin` + the OpenCL mods image by digest): bump the tag in `Dockerfile` when Cup shows a newer linuxserver tag, then `sudo docker compose up -d --build --pull`; otherwise monthly.
+**Rebuild** (`jellyfin-local`, FROM `lscr.io/linuxserver/jellyfin` + the OpenCL mods image by digest): weekly by `rebuild-local` (Sat 04:27, `Docker/_global/rebuild-local.conf`): OpenCL image test, `/health` check, rollback; deferred while anyone plays (`scripts/no-playback.py`, test `scripts/test_no_playback.py`). New linuxserver tag: bump it in `Dockerfile`, then `sudo docker compose up -d --build --pull`.
