@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # update-project.sh <compose-dir> <mode> [backup-paths...]
-#   mode: pull | build | recreate | snapshot (saves compose + .env BEFORE you edit an image ref; the next run restores it on rollback)
+#   mode: pull | build | recreate (always force-recreates) | snapshot (saves compose + .env BEFORE you edit an image ref; the next run restores it on rollback)
 # Follows _global/UPDATE-RUNBOOK.md: snapshot image IDs, pull/build, stop and back up stateful paths
 # (bind dirs or "vol:<name>"), start/recreate, wait, verify every container of the
 # project is running (and healthy if it has a healthcheck) with no crash loop;
@@ -118,7 +118,9 @@ if [[ -n $bkfail ]]; then
   echo "ABORTED $proj: backup failed, nothing updated (old images re-tagged, stopped containers started again)"; exit 2
 fi
 
-docker compose up -d --remove-orphans ${SERVICES:+--no-deps $SERVICES} 2>&1 | grep -E 'Recreat|Creat|Error|error' | head -8
+# recreate means recreate: a change only in bind-mounted code is invisible to compose
+force=""; [[ $mode == recreate ]] && force="--force-recreate"
+docker compose up -d --remove-orphans $force ${SERVICES:+--no-deps $SERVICES} 2>&1 | grep -E 'Recreat|Creat|Error|error' | head -8
 # compose keeps a container whose tag another project's pull already moved to a new image
 stale=""
 for n in "${!oldid[@]}"; do

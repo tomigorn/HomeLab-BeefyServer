@@ -126,13 +126,22 @@ for m in pull recreate; do
   CHECK=true run $m
   [[ $rc == 0 && $(ctr) == "sha:new img:1 "* ]] && ok "$m: container on the new image" || bad "$m: container on the new image" "rc=$rc $(ctr) $out"
   [[ $out == *"image UPDATED"* ]] && ok "$m: reported as UPDATED" || bad "$m: reported as UPDATED" "$out"
-  grep -q "^compose up -d --no-deps --force-recreate app" "$T/log" && ok "$m: only the stale service force-recreated" || bad "$m: force-recreate of the stale service" "$(grep 'compose up' "$T/log")"
+  if [[ $m == pull ]]; then
+    grep -q "^compose up -d --no-deps --force-recreate app" "$T/log" && ok "$m: only the stale service force-recreated" || bad "$m: force-recreate of the stale service" "$(grep 'compose up' "$T/log")"
+  else
+    grep -q "^compose up -d --remove-orphans --force-recreate" "$T/log" && ok "$m: recreated in the first pass" || bad "$m: recreated in the first pass" "$(grep 'compose up' "$T/log")"
+  fi
 done
 
 echo "container already on the tag's image: no forced recreate"
 setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; touch "$T/keepctr"
 CHECK=true run pull
 [[ $rc == 0 ]] && ! grep -q -- "--force-recreate" "$T/log" && ok "nothing forced" || bad "nothing forced" "rc=$rc $(grep 'compose up' "$T/log")"
+
+echo "recreate mode recreates even when compose sees no change (bind-mounted code)"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; touch "$T/keepctr"
+CHECK=true run recreate
+grep -q "^compose up -d --remove-orphans --force-recreate" "$T/log" && ok "recreate forces the recreate" || bad "recreate forces the recreate" "$(grep 'compose up' "$T/log")"
 
 echo "rollback tag of a registry ref with a port and a path"
 setup reg.example:5000/team/img:1; printf 'reg.example:5000/team/img:1 sha:old\n' > "$T/tags"
