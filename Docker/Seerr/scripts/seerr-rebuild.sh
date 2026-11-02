@@ -63,6 +63,15 @@ if [ "$released" = 1 ]; then
   version=$tag; sha=
   once "released-$tag" && alert "OIDC (PR #$PRN) is in release $tag: we can return to the official image (Seerr README \"Back to stable\"). Until then this builds plain $tag."
 else
+  # only a PR commit someone reviewed is built: an unmerged third-party branch must not reach production by itself
+  reviewed=$(tr -d '[:space:]' < "$IMG_DIR/pr-reviewed" 2>/dev/null || true)
+  [ -n "$reviewed" ] || { alert "image/pr-reviewed is missing: no reviewed OIDC PR commit, current image kept"; exit 2; }
+  if [ "$sha" != "$reviewed" ]; then
+    once "moved-$sha" && alert "OIDC PR #$PRN moved to ${sha:0:7} (reviewed: ${reviewed:0:7}). Please review the diff, then put the new sha into image/pr-reviewed (Seerr README \"Own image\"). Until then the reviewed commit is built."
+    sha=$reviewed
+    gs cat-file -e "$sha^{commit}" 2>/dev/null || gs fetch -q origin "$sha" 2>/dev/null \
+      || { alert "reviewed OIDC PR commit ${sha:0:7} cannot be fetched any more, current image kept"; exit 2; }
+  fi
   version="$tag-oidc${sha:0:7}"
   patch="$IMG_DIR/resolutions/$tag-${sha:0:12}.patch"
   if [ ! -f "$patch" ]; then
@@ -152,7 +161,7 @@ if ! $DOCKER run --rm --user 0 --network none --entrypoint sh -v "$APPDATA:/d:ro
    || ! $DOCKER run --rm --network none --entrypoint sh -v "$BACKUPS:/b:ro" "$REPO:current" -c "tar -tzf /b/$name" > "$STATE/backup.list" \
    || ! grep -qx './db/db.sqlite3' "$STATE/backup.list" \
    || ! dbcheck "$BACKUPS/$name"; then
-  compose up -d --no-deps seerr
+  compose up -d --no-deps seerr || log "compose up failed"
   alert "backup failed before $version, nothing changed"
   exit 1
 fi
@@ -160,7 +169,7 @@ ls -1t "$BACKUPS"/seerr-*.tgz 2>/dev/null | tail -n +7 | xargs -r rm -f || true
 
 $DOCKER tag "$REPO:current" "$REPO:rollback"
 $DOCKER tag "$REPO:candidate" "$REPO:current"
-compose up -d --no-deps seerr
+compose up -d --no-deps seerr || log "compose up failed"
 if verify "$version"; then
   $DOCKER rmi "$REPO:candidate" >/dev/null 2>&1 || true
   keep="$($DOCKER image inspect -f '{{.Id}}' "$REPO:current") $($DOCKER image inspect -f '{{.Id}}' "$REPO:rollback")"
@@ -171,11 +180,11 @@ if verify "$version"; then
   exit 0
 fi
 
-compose stop seerr
+compose stop seerr || true
 $DOCKER run --rm --user 0 --network none --entrypoint sh -v "$APPDATA:/d" -v "$BACKUPS:/b:ro" "$REPO:rollback" \
   -c "find /d -mindepth 1 -delete && tar -C /d -xzpf /b/$name" || log "restore failed"
 $DOCKER tag "$REPO:rollback" "$REPO:current"
-compose up -d --no-deps seerr
+compose up -d --no-deps seerr || log "compose up failed"
 $DOCKER rmi "$REPO:candidate" "$REPO:$version" >/dev/null 2>&1 || true
 want=$($DOCKER image inspect -f '{{.Config.Env}}' "$REPO:current" 2>/dev/null | sed -n 's/.*COMMIT_TAG=\([^] ]*\).*/\1/p')
 if verify "$want"; then

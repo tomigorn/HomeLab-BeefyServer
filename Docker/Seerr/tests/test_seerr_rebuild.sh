@@ -33,6 +33,7 @@ api() { # api <tag> <state> <merged> [merge sha]
   printf '{"state":"%s","merged":%s,"merge_commit_sha":"%s","head":{"sha":"%s"}}' "$2" "$3" "${4:-}" "$PR" > "$T/api/pulls/2715"
 }
 printf '{"overrides":{"handlebars@<4.7.10":"4.7.10"},"scripts":{"build:next":"next build --webpack"}}\n' > "$T/repo/image/dependency-overrides.json"
+echo "$PR" > "$T/repo/image/pr-reviewed"
 
 mkdir -p "$T/bin"
 cat > "$T/bin/docker" <<'SH'
@@ -45,6 +46,7 @@ case "$*" in
   "build "*) [ -z "$FAKE_BUILD_FAIL" ] || exit 1 ;;
   "run --rm --network none seerr-local:test"*) [ -z "$FAKE_TEST_FAIL" ] || exit 1 ;;
   *"tar -C /d -czf"*) [ -z "$FAKE_BACKUP_FAIL" ] || exit 1 ;;
+  "compose up"*) [ -z "$FAKE_UP_FAIL" ] || exit 1 ;;
   *"tar -tzf"*) echo ./settings.json; echo ./db/db.sqlite3 ;;
 esac
 exit 0
@@ -100,6 +102,10 @@ assert_has "config restored from the backup" "tar -C /d -xzpf" "$(calls 'run --r
 assert_eq "stopped, started new, stopped, started old" "compose stop seerr;compose up -d --no-deps seerr;compose stop seerr;compose up -d --no-deps seerr;" "$(calls compose)"
 assert_has "alert sent" "rolled back" "$(cat "$T/alerts")"
 
+FAKE_UP_FAIL=1 run false; rc=$?
+assert_eq "compose up fails: exit 1, rolled back" "1 tag seerr-local:rollback seerr-local:current;" "$rc $(calls tag | sed "s/.*;\\(tag seerr-local:rollback[^;]*;\\)/\\1/")"
+assert_has "compose up fails: alert" "rolled back" "$(cat "$T/alerts")"
+
 FAKE_TEST_FAIL=1 run true; rc=$?
 assert_eq "upstream tests fail: exit 1, nothing swapped" "1 " "$rc $(calls 'tag|compose')"
 assert_has "upstream tests fail: alert" "tests failed" "$(cat "$T/alerts")"
@@ -112,9 +118,26 @@ FAKE_BACKUP_FAIL=1 run true; rc=$?
 assert_eq "backup fails: exit 1, no swap, Seerr started again" "1 compose stop seerr;compose up -d --no-deps seerr;" "$rc $(calls 'tag|compose')"
 assert_has "backup fails: alert" "backup failed" "$(cat "$T/alerts")"
 
+# the PR head moves past the reviewed commit: the reviewed one is built, the owner told once
+REVIEWED=$PR
+g checkout pr; printf 'moved\n' > "$T/up/src/moved.txt"; g add -A; g commit -m "unreviewed"
+PR=$(git -C "$T/up" rev-parse HEAD); g update-ref refs/pull/2715/head "$PR"; g checkout main
+api v1.0.0 open false
+run true --no-deploy; rc=$?
+assert_eq "moved PR: exit 0" 0 "$rc"
+assert_has "moved PR: the reviewed commit is built" "-t seerr-local:v1.0.0-oidc${REVIEWED:0:7} -t seerr-local:candidate" "$(grep -E '^build ' "$T/log" | grep -v -- --target)"
+assert_eq "moved PR: unreviewed file not built" "no" "$([ -e "$T/work/seerr/src/moved.txt" ] && echo yes || echo no)"
+assert_has "moved PR: owner asked to review" "review" "$(cat "$T/alerts")"
+run true --no-deploy
+assert_eq "moved PR: told only once" "" "$(cat "$T/alerts")"
+mv "$T/repo/image/pr-reviewed" "$T/pr-reviewed.bak"
+run true --no-deploy; rc=$?
+assert_eq "no reviewed commit: exit 2, nothing built" "2 " "$rc $(calls 'build|tag|compose')"
+mv "$T/pr-reviewed.bak" "$T/repo/image/pr-reviewed"
+
 # a new stable release that changes the line the PR touches
 g checkout pr; printf 'one-pr\n' > "$T/up/src/a.txt"; g add -A; g commit -m "pr touches a"
-PR=$(git -C "$T/up" rev-parse HEAD); g update-ref refs/pull/2715/head "$PR"; g checkout main
+PR=$(git -C "$T/up" rev-parse HEAD); g update-ref refs/pull/2715/head "$PR"; echo "$PR" > "$T/repo/image/pr-reviewed"; g checkout main
 printf 'one-release\n' > "$T/up/src/a.txt"; g add -A; g commit -m release; g tag v1.0.1
 api v1.0.1 open false
 run true; rc=$?

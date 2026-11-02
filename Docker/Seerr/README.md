@@ -69,7 +69,7 @@ Owner decision 2026-11-01: we build and run our own image from the newest stable
 
 What a run does:
 
-1. Newest stable tag (GitHub `releases/latest`) and the PR head; clone/fetch in `/var/lib/seerr-rebuild/work`.
+1. Newest stable tag (GitHub `releases/latest`) and the PR head; clone/fetch in `/var/lib/seerr-rebuild/work`. Only the PR commit in `image/pr-reviewed` is built: a moved head is reported once (Telegram) and the reviewed commit stays until you check the diff and put the new sha into that file (an unmerged third-party branch never reaches production by itself). File missing: nothing built.
 2. Applies the PR's own diff (`merge-base(develop, PR)..PR`, without `docs/`) onto the tag with `git apply --3way`. A committed `image/resolutions/<tag>-<pr sha12>.patch` replaces that diff for exactly that pair (a hand-made conflict resolution, reproducible).
 3. Applies `image/patches/*.patch` (our in-image changes; none yet: everything of ours lives outside the image, see `../CUSTOMIZATIONS.md`).
 4. Merges `image/dependency-overrides.json` into `package.json` (`pnpm.overrides`, `scripts`) and refreshes the lockfile in the Dockerfile's node image. Overrides use `pkg@<x` selectors, so they stop mattering once upstream has caught up.
@@ -79,6 +79,7 @@ What a run does:
 | Telegram | When |
 |---|---|
 | does not apply onto vX | PR conflicts with a new release: image kept, resolve below |
+| OIDC PR moved to X | review `git diff <reviewed> <new>` in `/var/lib/seerr-rebuild/work/seerr`, then `echo <new sha> > image/pr-reviewed`, commit |
 | build / tests failed | image kept |
 | failed its checks, rolled back | config + image restored |
 | OIDC is in release vX | PR merged and released: back to the official image (below); until then the job builds the plain release |
