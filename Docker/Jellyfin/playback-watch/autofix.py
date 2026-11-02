@@ -83,7 +83,15 @@ class Sab:
 
     def _call(self, params):
         query = urllib.parse.urlencode({**params, "output": "json", "apikey": self.api_key})
-        return _json(self.http(f"{self.base}/api?{query}"))
+        url = f"{self.base}/api?{query}"
+        try:
+            body = self.http(url)
+        except Exception as e:
+            msg = str(e).replace(url, f"{self.base}/api").replace(query, "")
+            if self.api_key:
+                msg = msg.replace(self.api_key, "***")
+            raise RuntimeError(msg) from None
+        return _json(body)
 
     def _queue(self):
         return self._call({"mode": "queue", "limit": "1"})["queue"]
@@ -122,6 +130,10 @@ class Systemd:
             raise RuntimeError(f"{unit}: show failed: {r.stderr.strip()}")
         props = dict(line.partition("=")[::2] for line in r.stdout.splitlines())
         return tuple(int(v) if v.strip().isdigit() else DEFAULT for v in (props.get("CPUWeight", ""), props.get("IOWeight", "")))
+
+    def loaded(self, unit):
+        r = self.run(["systemctl", "show", "-p", "LoadState", "--value", unit], capture_output=True, text=True, timeout=10)
+        return r.returncode != 0 or r.stdout.strip() == "loaded"
 
     def set_weight(self, unit, cpu, io):
         r = self.run(["sudo", "-n", "systemctl", "set-property", "--runtime", unit, f"CPUWeight={cpu}", f"IOWeight={io}"],
@@ -274,7 +286,7 @@ class AutoFix:
         if entry is not None:
             keep = {}
             for unit, (cpu, io) in entry.get("units", {}).items():
-                if not self._try(f"restore {unit}", lambda u=unit, c=cpu, i=io: self.systemd.set_weight(u, c, i)) and not unit.endswith(".scope"):
+                if not self._try(f"restore {unit}", lambda u=unit, c=cpu, i=io: self.systemd.set_weight(u, c, i)) and self._loaded(unit):
                     keep[unit] = [cpu, io]
             entry["units"] = keep
             if not keep:
@@ -284,6 +296,13 @@ class AutoFix:
         for a in done:
             self.log(f"autofix: reverted {a}")
         return done
+
+    def _loaded(self, unit):
+        try:
+            return self.systemd.loaded(unit)
+        except Exception as e:
+            self.log(f"autofix: LoadState of {unit} unknown, keeping it: {e}")
+            return True
 
     def restore_from_state(self):
         self.applied = self._load()

@@ -95,6 +95,9 @@ class FakeSystemd:
             raise RuntimeError(f"{unit}: show failed")
         return self.weights.get(unit, self.preset.get(unit, (100, 100)))
 
+    def loaded(self, unit):
+        return unit not in self.gone
+
     def set_weight(self, unit, cpu, io):
         self.calls.append((unit, cpu, io))
         if unit in self.fail or unit in self.gone:
@@ -299,6 +302,24 @@ class AutoFixTest(Base):
         self.assertEqual(fix.revert(), ["downloads_slow", "background_low"])
         self.assertFalse(fix.active()["background_low"])
 
+    def test_failed_restore_kept_while_loaded(self):
+        fix = self.make()
+        fix.apply(1.0)
+        self.sd.fail.update({"docker-clamavid.scope", "beefy-promoter.service"})
+        self.assertEqual(fix.revert(), ["downloads_slow"])
+        self.assertTrue(fix.active()["background_low"])
+        saved = json.loads(self.state.read_text())["applied"]["background_low"]["units"]
+        self.assertEqual(set(saved), {"docker-clamavid.scope", "beefy-promoter.service"})
+        self.sd.fail.clear()
+        self.assertEqual(fix.revert(), ["background_low"])
+        self.assertEqual(self.sd.weights["docker-clamavid.scope"], (100, 100))
+
+    def test_failed_restore_dropped_when_not_loaded(self):
+        fix = self.make()
+        fix.apply(1.0)
+        self.sd.gone.update({"docker-clamavid.scope", "beefy-promoter.service"})
+        self.assertEqual(fix.revert(), ["downloads_slow", "background_low"])
+
     def test_adapter_failure_logged_not_fatal(self):
         self.qbit.down = True
         self.sd.fail.add("beefy-promoter.service")
@@ -419,6 +440,19 @@ class SabAdapterTest(unittest.TestCase):
         self.assertEqual(q["apikey"], ["KEY"])
 
 
+class SabSecretTest(unittest.TestCase):
+    def test_key_stripped_from_any_exception(self):
+        def http(url, data=None):
+            raise OSError(f"cannot reach {url}")
+        s = af.Sab("http://172.28.10.5:8081", "SECRETKEY", http)
+        for call in (s.speedlimit, s.dl_speed, lambda: s.set_speedlimit("2M")):
+            with self.assertRaises(Exception) as cm:
+                call()
+            self.assertNotIn("SECRETKEY", str(cm.exception))
+            self.assertNotIn("apikey", str(cm.exception))
+            self.assertIn("http://172.28.10.5:8081/api", str(cm.exception))
+
+
 class SystemdAdapterTest(unittest.TestCase):
     def test_commands(self):
         calls = []
@@ -450,6 +484,14 @@ class SystemdAdapterTest(unittest.TestCase):
         self.assertEqual(sd.weights_of("set.service"), (20, 100))
         self.assertEqual(sd.weights_of("both.service"), (21, 50))
         self.assertEqual(sd.weights_of("empty.service"), (100, 100))
+
+    def test_loaded(self):
+        def run(cmd, **kw):
+            self.assertEqual(cmd[:5], ["systemctl", "show", "-p", "LoadState", "--value"])
+            return subprocess.CompletedProcess(cmd, 0, {"a.scope": "loaded\n", "b.scope": "not-found\n"}[cmd[-1]], "")
+        sd = af.Systemd(run)
+        self.assertTrue(sd.loaded("a.scope"))
+        self.assertFalse(sd.loaded("b.scope"))
 
     def test_weights_of_failure_raises(self):
         def run(cmd, **kw):

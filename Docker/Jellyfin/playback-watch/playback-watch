@@ -20,6 +20,7 @@ import tracker as tracker_mod  # noqa: E402
 POLL = 5.0
 REVERT_AFTER = 600.0
 APPLY_EVERY = 60.0
+RESOLVE_EVERY = 60.0
 STATE_DIR = Path.home() / ".local" / "state" / "jellyfin-playback"
 KEY_FILE = HERE.parent / "secrets" / "api-key"
 DOWNLOADS = HERE.parent.parent / "Movie-Downloads" / "secrets"
@@ -71,7 +72,7 @@ def parse_duration(text):
 
 
 class DownloadsHttp:
-    """qBittorrent and SABnzbd share movie-gluetun's namespace: call them at its bridge IP, 127.0.0.1 only when that refuses."""
+    """qBittorrent and SABnzbd share movie-gluetun's namespace: call them at its bridge IP only, never 127.0.0.1."""
 
     def __init__(self, run, http, log):
         self.run, self.http, self.log = run, http, log
@@ -85,7 +86,7 @@ class DownloadsHttp:
             ip = ips[0] if ips else None
             if safe_ip(ip, own_addresses(self.run)):
                 return ip
-            self.log(f"downloads: no usable movie-gluetun bridge IP ({ip!r}), using 127.0.0.1")
+            self.log(f"downloads: no usable movie-gluetun bridge IP ({ip!r}), skipping")
         except Exception as e:
             self.log(f"downloads: resolving movie-gluetun failed: {e}")
         return None
@@ -93,13 +94,14 @@ class DownloadsHttp:
     def __call__(self, url, data=None):
         if self.ip is None:
             self.ip = self._resolve()
-        if self.ip:
-            try:
-                return self.http(url.replace(DOWNLOADS_BASE, f"http://{self.ip}", 1), data)
-            except OSError as e:
-                self.log(f"downloads: {self.ip} refused ({e}), falling back to 127.0.0.1")
-                self.ip = None
-        return self.http(url.replace(DOWNLOADS_BASE, "http://127.0.0.1", 1), data)
+        if not self.ip:
+            raise OSError("movie-gluetun bridge IP unknown")
+        try:
+            return self.http(url.replace(DOWNLOADS_BASE, f"http://{self.ip}", 1), data)
+        except OSError as e:
+            self.log(f"downloads: {self.ip} refused ({e}), skipping")
+            self.ip = None
+            raise
 
 
 class Watcher:
@@ -112,6 +114,8 @@ class Watcher:
         self.incidents_path = self.state_dir / "incidents.jsonl"
         self.prom_path = self.state_dir / "playback.prom"
         self.base = self.key = None
+        self.stale = False
+        self.next_resolve = 0.0
         self.started = clock()
         self.last_ok = 0.0
         self.reverting = False
@@ -135,15 +139,21 @@ class Watcher:
         self.log(f"polling Jellyfin at {self.base}")
 
     def fetch(self):
-        if self.base is None:
+        now = self.clock()
+        if (self.base is None or self.stale) and now >= self.next_resolve:
+            self.next_resolve = now + RESOLVE_EVERY
             self._resolve()
+        if self.base is None:
+            raise RuntimeError("Jellyfin address unknown")
         try:
             body = self.http(self.base + "/Sessions?ActiveWithinSeconds=60",
                              {"Authorization": f'MediaBrowser Token="{self.key}"'})
-            return json.loads(body)
+            sessions = json.loads(body)
         except Exception:
-            self.base = None
+            self.stale = True
             raise
+        self.stale = False
+        return sessions
 
     def poll(self):
         now = self.clock()

@@ -21,10 +21,10 @@ OWN = "1: lo    inet 127.0.0.1/8 scope host lo\n2: eno1    inet 192.168.1.102/24
 KEY = "secret-key-123"
 
 
-def session(sid="s1", pos=0, method="DirectPlay", item="Pilot"):
+def session(sid="s1", pos=0, method="DirectPlay", item="Pilot", paused=False):
     return {"Id": sid, "UserName": "u", "Client": "Web", "DeviceName": "Firefox",
             "NowPlayingItem": {"Name": item, "RunTimeTicks": 36000 * 10_000_000},
-            "PlayState": {"PositionTicks": pos * 10_000_000, "IsPaused": False, "PlayMethod": method}}
+            "PlayState": {"PositionTicks": pos * 10_000_000, "IsPaused": paused, "PlayMethod": method}}
 
 
 class Clock:
@@ -186,8 +186,10 @@ class MainTest(unittest.TestCase):
     def test_bridge_ip_reresolved_after_failure(self):
         run = Runner(["172.28.11.3", "172.28.11.9"])
         http = Http([OSError("connection refused"), [], []])
-        w = self.watcher(run, http)
+        clock = Clock()
+        w = self.watcher(run, http, clock=clock)
         w.poll()
+        clock.t += 60
         w.poll()
         w.poll()
         self.assertEqual(run.inspects, 2)
@@ -195,6 +197,38 @@ class MainTest(unittest.TestCase):
         self.assertTrue(http.urls[1].startswith("http://172.28.11.9:8096/"))
         self.assertTrue(http.urls[2].startswith("http://172.28.11.9:8096/"))
         self.assertEqual(http.headers[0], {"Authorization": f'MediaBrowser Token="{KEY}"'})
+
+    def test_bridge_ip_reresolve_backs_off_60s(self):
+        clock, run = Clock(), Runner(["172.28.11.3"])
+        http = Http([OSError("connection refused")])
+        w = self.watcher(run, http, clock=clock)
+        for _ in range(25):
+            w.poll()
+            clock.t += 5
+        self.assertEqual(run.inspects, 3)
+        self.assertEqual(len(http.urls), 25)
+
+    def test_paused_10min_lets_autofix_revert(self):
+        clock, fix = Clock(), Fix()
+        fix.applied = True
+        w = self.watcher(Runner(["172.28.11.3"]), Http([[session()], [session(paused=True)]]), clock=clock, fix=fix)
+        w.poll()
+        clock.t += 5
+        w.poll()
+        for _ in range(119):
+            clock.t += 5
+            w.poll()
+        self.assertNotIn("revert", fix.calls)
+        clock.t += 5
+        w.poll()
+        self.assertIn("revert", fix.calls)
+        self.assertFalse(fix.applied)
+
+    def test_paused_session_not_in_active_gauge(self):
+        w = self.watcher(Runner(["172.28.11.3"]), Http([[session(paused=True)]]))
+        w.poll_once()
+        prom = (self.dir / "state" / "playback.prom").read_text()
+        self.assertNotIn("jellyfin_playback_active{", prom)
 
     def test_never_uses_localhost(self):
         for bad in ("127.0.0.1", "localhost", "::1", "192.168.1.102", "172.28.11.1", "0.0.0.0", None):
@@ -261,7 +295,7 @@ class MainTest(unittest.TestCase):
         w.poll()
         self.assertEqual(fix.calls.count("apply"), 5)
 
-    def test_downloads_bridge_ip_with_localhost_fallback(self):
+    def test_downloads_bridge_ip_only_no_localhost_fallback(self):
         calls = []
         fail = {"172.28.10.5"}
 
@@ -277,15 +311,16 @@ class MainTest(unittest.TestCase):
             self.assertEqual(cmd[-1], "movie-gluetun")
             return subprocess.CompletedProcess(cmd, 0, "clamd=172.28.18.3 movie-downloads=172.28.10.5 \n", "")
         dl = pw.DownloadsHttp(run, http, self.logs.append)
-        self.assertEqual(dl(pw.DOWNLOADS_BASE + ":8080/api/v2/app/version"), b"ok")
-        self.assertEqual(calls, ["http://172.28.10.5:8080/api/v2/app/version", "http://127.0.0.1:8080/api/v2/app/version"])
+        with self.assertRaises(OSError):
+            dl(pw.DOWNLOADS_BASE + ":8080/api/v2/app/version")
+        self.assertEqual(calls, ["http://172.28.10.5:8080/api/v2/app/version"])
+        self.assertTrue(any("172.28.10.5" in m for m in self.logs))
         fail.clear()
         calls.clear()
-        dl(pw.DOWNLOADS_BASE + ":8081/api?mode=version")
-        self.assertEqual(calls, ["http://172.28.10.5:8081/api?mode=version"])
-        calls.clear()
+        self.assertEqual(dl(pw.DOWNLOADS_BASE + ":8081/api?mode=version"), b"ok")
         dl(pw.DOWNLOADS_BASE + ":8081/api?mode=queue")
-        self.assertEqual(calls, ["http://172.28.10.5:8081/api?mode=queue"])
+        self.assertEqual(calls, ["http://172.28.10.5:8081/api?mode=version", "http://172.28.10.5:8081/api?mode=queue"])
+        self.assertFalse(any("127.0.0.1" in u for u in calls))
 
     def test_downloads_http_errors_not_retried_on_localhost(self):
         calls = []
@@ -309,8 +344,10 @@ class MainTest(unittest.TestCase):
             out = OWN if cmd[:2] == ["ip", "-o"] else "movie-downloads=192.168.1.102 \n"
             return subprocess.CompletedProcess(cmd, 0, out, "")
         dl = pw.DownloadsHttp(run, lambda url, data=None: calls.append(url) or b"", self.logs.append)
-        dl(pw.DOWNLOADS_BASE + ":8080/x")
-        self.assertEqual(calls, ["http://127.0.0.1:8080/x"])
+        with self.assertRaises(OSError):
+            dl(pw.DOWNLOADS_BASE + ":8080/x")
+        self.assertEqual(calls, [])
+        self.assertTrue(any("movie-gluetun" in m for m in self.logs))
 
     def test_incident_recorded_and_counted(self):
         clock, fix, tr = Clock(), Fix(), FakeTracker()

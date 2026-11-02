@@ -89,10 +89,9 @@ class TrackerTests(unittest.TestCase):
     def test_interval_ending_silent_gap_is_no_stall(self):
         frozen = T0
         steps = [(n, [session(10, n, checkin=frozen)]) for n in range(0, 50, 5)]
-        inc = run(self.t, steps)
-        self.assertEqual([i["kind"] for i in inc], ["silent"])
-        steps = [(60, [session(12, 60)]), (70, [session(14, 70)])]
         self.assertEqual(run(self.t, steps), [])
+        self.assertEqual([i["kind"] for i in self.t.update([session(12, 60)], 60)], ["silent"])
+        self.assertEqual(self.t.update([session(14, 70)], 70), [])
 
     def test_seek_forward_and_back_ignored(self):
         inc = run(self.t, [(0, [session(100, 0)]), (5, [session(500, 5)]), (10, [session(20, 10)]), (15, [session(25, 15)])])
@@ -104,15 +103,40 @@ class TrackerTests(unittest.TestCase):
         steps += [(200, [session(15, 200)]), (205, [session(20, 205)]), (210, [session(25, 210)])]
         self.assertEqual(run(self.t, steps), [])
 
-    def test_silent_after_45s(self):
-        frozen = T0
-        steps = [(0, [session(10, 0, checkin=frozen)])]
-        steps += [(n, [session(10, n, checkin=frozen)]) for n in range(5, 41, 5)]
-        self.assertEqual(run(self.t, steps), [])
-        inc = self.t.update([session(10, 45, checkin=frozen)], 45)
+    def test_tv_off_mid_play_no_incident_no_episode(self):
+        out = run(self.t, [(n, [session(n, n)]) for n in range(0, 21, 5)])
+        frozen = T0 + timedelta(seconds=20)
+        for n in range(25, 81, 5):
+            out += self.t.update([session(20, n, checkin=frozen)], n)
+            self.assertFalse(self.t.episode_active(n), n)
+        out += self.t.update([], 85)
+        self.assertEqual(out, [])
+        self.assertFalse(self.t.episode_active(85))
+
+    def test_silent_reported_when_resumed_after_gap(self):
+        out = run(self.t, [(n, [session(n, n)]) for n in range(0, 21, 5)])
+        frozen = T0 + timedelta(seconds=20)
+        out += run(self.t, [(n, [session(20, n, checkin=frozen)]) for n in range(25, 66, 5)])
+        self.assertEqual(out, [])
+        inc = self.t.update([session(25, 70)], 70)
         self.assertEqual([i["kind"] for i in inc], ["silent"])
-        self.assertAlmostEqual(inc[0]["seconds"], 45)
-        self.assertEqual(self.t.update([session(10, 50, checkin=frozen)], 50), [])
+        self.assertAlmostEqual(inc[0]["seconds"], 50)
+        self.assertTrue(self.t.episode_active(70))
+        self.assertEqual(run(self.t, [(75, [session(30, 75)]), (80, [session(35, 80)])]), [])
+
+    def test_short_gap_is_not_silent(self):
+        out = run(self.t, [(n, [session(n, n)]) for n in range(0, 21, 5)])
+        frozen = T0 + timedelta(seconds=20)
+        out += run(self.t, [(n, [session(20, n, checkin=frozen)]) for n in range(25, 61, 5)])
+        out += self.t.update([session(60, 60)], 60)
+        self.assertEqual(out, [])
+
+    def test_silent_session_does_not_hold_episode(self):
+        run(self.t, [(0, [session(0, 0)]), (10, [session(4, 10)]), (20, [session(8, 20)])])
+        self.assertTrue(self.t.episode_active(20))
+        frozen = T0 + timedelta(seconds=20)
+        run(self.t, [(n, [session(8, n, checkin=frozen)]) for n in range(25, 66, 5)])
+        self.assertFalse(self.t.episode_active(65))
 
     def test_slow_transcode_needs_two_polls_and_low_buffer(self):
         slow = lambda n: session(n, n, transcode=tcode(15.0, (n + 10) / 36))
@@ -153,6 +177,19 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(self.t.playing(), 0)
         self.assertEqual(self.t.last_playing_end(), 5)
         self.assertEqual(self.t.active_by_method(), {})
+
+    def test_paused_session_is_not_playing(self):
+        self.t.update([session(0, 0)], 0)
+        self.t.update([session(5, 5, paused=True)], 5)
+        self.assertEqual(self.t.playing(), 0)
+        self.assertEqual(self.t.active_by_method(), {})
+        self.assertEqual(self.t.last_playing_end(), 5)
+        for n in range(10, 600, 5):
+            self.t.update([session(5, n, paused=True)], n)
+        self.assertEqual(self.t.last_playing_end(), 5)
+        self.t.update([session(5, 600)], 600)
+        self.assertEqual(self.t.playing(), 1)
+        self.assertEqual(self.t.active_by_method(), {"DirectPlay": 1})
 
 
 if __name__ == "__main__":

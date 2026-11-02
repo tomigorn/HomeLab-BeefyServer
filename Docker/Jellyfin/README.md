@@ -382,15 +382,15 @@ Per device (stored on the device, not on the server):
 Direct play (no transcode) is always best; the server transcodes only what the device cannot play.
 
 ## Playback watch (2026-11-02)
-Service `playback-watch` (system unit, user buntu, `playback-watch/`): polls `/Sessions?ActiveWithinSeconds=60` every 5 s at the Jellyfin container's bridge IP (never `localhost`/beefy's own addresses, so the idle watcher does not count it), records stutter and eases it. qBittorrent/SABnzbd are called at movie-gluetun's bridge IP for the same reason (127.0.0.1 only if that refuses).
+Service `playback-watch` (system unit, user buntu, `playback-watch/`): polls `/Sessions?ActiveWithinSeconds=60` every 5 s at the Jellyfin container's bridge IP (never `localhost`/beefy's own addresses, so the idle watcher does not count it), records stutter and eases it. qBittorrent/SABnzbd are called at movie-gluetun's bridge IP for the same reason (never 127.0.0.1: if it fails, that client is skipped). After a failed poll the Jellyfin IP is re-resolved at most every 60 s.
 
 | Incident | Rule |
 |---|---|
 | `stall` | between two client check-ins the position falls ≥ 3 s behind wall time (2 in a row; seeks, pauses ignored) |
-| `silent` | playing, no client check-in for 45 s |
+| `silent` | check-ins resume after a gap ≥ 45 s (seconds = the gap); a session that goes silent and disappears (TV off, app killed) records nothing |
 | `slow_transcode` | encoder fps < 0.95 × source fps and < 30 s transcoded ahead, 2 polls in a row |
 
-Auto-fixes, only while a stutter episode (incident within 2 min) runs with someone playing; reverted 10 min after the last playback ends, on service stop and at start (saved state):
+Auto-fixes, only while a stutter episode (incident within 2 min) runs with someone playing (paused or silent sessions do not count); reverted 10 min after the last playback ends or pauses, on service stop and at start (saved state). A weight restore that fails is retried while the unit is still loaded:
 
 | Action | Change | Revert |
 |---|---|---|

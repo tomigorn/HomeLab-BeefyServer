@@ -60,7 +60,7 @@ class Tracker:
     def __init__(self, clock):
         self.clock = clock
         self._states = {}
-        self._active = {}
+        self._playing = {}
         self._last_incident = None
         self._last_end = None
 
@@ -92,7 +92,8 @@ class Tracker:
                 st.base_now, st.base_pos, st.activity = now, pos, now
                 st.base_ts = _parse_ts(checkin)
             elif pos != st.pos or checkin != st.checkin:
-                after_gap = st.silent or now - st.activity >= SILENT_AFTER
+                gap = now - st.activity
+                after_gap = st.silent or gap >= SILENT_AFTER
                 st.activity = now
                 st.silent = False
                 ts = _parse_ts(checkin)
@@ -101,6 +102,7 @@ class Tracker:
                 else:
                     wall, min_lag = now - st.base_now, STALL_MIN_LAG + POLL_INTERVAL
                 if after_gap:
+                    inc.append(self._incident("silent", gap, s, item, None))
                     st.streak = 0
                     st.base_now, st.base_pos, st.base_ts = now, pos, ts
                 elif wall >= STALL_MIN_WALL:
@@ -116,9 +118,8 @@ class Tracker:
                     else:
                         st.streak = 0
                     st.base_now, st.base_pos, st.base_ts = now, pos, ts
-            elif not st.silent and now - st.activity >= SILENT_AFTER:
+            elif now - st.activity >= SILENT_AFTER:
                 st.silent = True
-                inc.append(self._incident("silent", now - st.activity, s, item, None))
             st.pos, st.checkin = pos, checkin
             slow = self._slow(s, item, pos)
             if slow is None:
@@ -133,9 +134,10 @@ class Tracker:
             incidents += inc
         if self._states.keys() - seen.keys():
             self._states = {k: v for k, v in self._states.items() if k in seen}
-        if self._active and not seen:
+        playing = {k: s for k, s in seen.items() if not (s.get("PlayState") or {}).get("IsPaused")}
+        if self._playing and not playing:
             self._last_end = now
-        self._active = seen
+        self._playing = playing
         if incidents:
             self._last_incident = now
         return incidents
@@ -176,11 +178,11 @@ class Tracker:
         }
 
     def playing(self):
-        return len(self._active)
+        return len(self._playing)
 
     def active_by_method(self):
         counts = {}
-        for s in self._active.values():
+        for s in self._playing.values():
             method = (s.get("PlayState") or {}).get("PlayMethod") or "Unknown"
             counts[method] = counts.get(method, 0) + 1
         return counts
@@ -189,4 +191,5 @@ class Tracker:
         return self._last_end
 
     def episode_active(self, now):
-        return bool(self._active) and self._last_incident is not None and now - self._last_incident <= EPISODE_GAP
+        live = any(not self._states[k].silent for k in self._playing if k in self._states)
+        return live and self._last_incident is not None and now - self._last_incident <= EPISODE_GAP
