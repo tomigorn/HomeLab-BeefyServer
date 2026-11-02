@@ -425,7 +425,9 @@ awk '/ FOUND$/ { sub(/ FOUND$/, ""); i = match($0, /: [^:]*$/); print substr($0,
 INFECTED=$(wc -l < "$HITS" | tr -d ' ')
 SCANNED=$(awk -F': ' '/^Scanned files:/ { s += $2 } END { print s + 0 }' "$LOG")
 [ -n "$LISTED" ] || LISTED=$SCANNED
-set -- $(awk '
+# a --file-list entry deleted after the listing (rotated log, recycled WAL) is an ERROR line in clamscan's Total errors: vanished, not an error
+GONE=$(sed -n "s/^ERROR: Can't access file //p" "$LOG" | while IFS= read -r p; do [ -e "$p" ] || echo; done | wc -l | tr -d ' ')
+set -- $(awk -v ga="$GONE" '
 	/^ERROR: Can.t access file / { next }
 	/^ERROR: / { e++; next }
 	/: [^:]*No such file or directory\. ERROR$/ { v++; cv++; next }
@@ -433,7 +435,7 @@ set -- $(awk '
 	/^WARNING: .*: Can.t access file$/ { q = $0; sub(/^WARNING: /, "", q); sub(/: Can.t access file$/, "", q); if (q in gone) v++; else e++; next }
 	/^WARNING: / { e++ }
 	/^Total errors:/ { e += $3 }
-	END { e -= cv; print v + 0, (e > 0 ? e : 0) }' "$LOG")
+	END { e -= cv + ga; print v + ga, (e > 0 ? e : 0) }' "$LOG")
 VANISHED=$((VANISHED + $1))
 ERRORS=0
 if [ "$RC" -ge 2 ]; then

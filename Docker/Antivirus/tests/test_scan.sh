@@ -27,7 +27,7 @@ echo "$*" >> "$FAKE_LOG"
 targets=$(mktemp); move=; excl=; scanned=0; infected=0; errors=0
 for a; do
   case $a in
-    --file-list=*) cat "${a#*=}" >> "$targets" ;;
+    --file-list=*) sed 's/^/FL:/' "${a#*=}" >> "$targets" ;;
     --move=*) move=${a#*=} ;;
     --exclude-dir=*) excl=${a#*=}; printf '%s\n' "$excl" >> "$targets.excl" ;;
     --exclude=*) printf '%s\n' "${a#*=}" >> "$targets.excl" ;;
@@ -38,8 +38,11 @@ done
 files=$(mktemp); denied=0
 [ -n "$FAKE_VANISH" ] && rm -f "$FAKE_VANISH"
 while IFS= read -r t; do
+  fl=0; case $t in FL:*) t=${t#FL:}; fl=1 ;; esac
   if [ -d "$t" ]; then find "$t" -type f >> "$files"
   elif [ -f "$t" ]; then printf '%s\n' "$t" >> "$files"
+  # real clamscan: a missing --file-list entry is an ERROR line counted in Total errors, a missing argument a WARNING pair
+  elif [ "$fl" = 1 ]; then echo "ERROR: Can't access file $t"; denied=$((denied+1)); errors=$((errors+1))
   else echo "$t: No such file or directory"; echo "WARNING: $t: Can't access file"; errors=$((errors+1)); fi
 done < "$targets"
 [ -n "$excl" ] && { grep -Ev "$excl" "$files" > "$files.x"; mv "$files.x" "$files"; }
