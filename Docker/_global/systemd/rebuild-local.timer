@@ -1,0 +1,9 @@
+[Unit]
+Description=Weekly local image rebuilds (04:27 in the maintenance window; Mon Antivirus, Sat Jellyfin, see rebuild-local.conf)
+
+[Timer]
+OnCalendar=*-*-* 04:27:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target

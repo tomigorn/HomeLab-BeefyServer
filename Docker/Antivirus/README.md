@@ -128,6 +128,6 @@ python3 Docker/Antivirus/tests/test_integrity.py   # download-integrity.py, Movi
 sudo docker run --rm --entrypoint sh -v "$PWD/Docker/Antivirus:/src:ro" clamav-local:latest /src/tests/test_scan.sh   # busybox
 ```
 
-Changing `clamav/` needs a rebuild: `sudo docker build --network host -t clamav-local:latest ./clamav && sudo docker compose up -d clamav clamav-queue`. Changing `hook/`: live at once for the hook, `sudo docker restart clamav-queue` for the worker. `--network host` because the DOCKER-USER guard drops a build container's DNS to the LAN (compose builds can't get the host network without a BuildKit entitlement).
+Weekly: `rebuild-local` (Mon 04:27, `Docker/_global/rebuild-local.conf`) rebuilds, runs `tests/test_scan.sh` in the new image, recreates only when packages changed, rolls back on a failed check. Changing `clamav/` needs a rebuild: `sudo docker build --network host -t clamav-local:latest ./clamav && sudo docker compose up -d clamav clamav-queue`. Changing `hook/`: live at once for the hook, `sudo docker restart clamav-queue` for the worker. `--network host` because the DOCKER-USER guard drops a build container's DNS to the LAN (compose builds can't get the host network without a BuildKit entitlement).
 
 **Rebuild** (`clamav-local`, FROM `alpine:latest`): `sudo docker build --network host --pull -t clamav-local:latest ./clamav && sudo docker compose up -d clamav clamav-queue` when the security scan lists a fixable Alpine CVE, otherwise monthly.

@@ -1,0 +1,23 @@
+[Unit]
+Description=Weekly rebuild of beefy's locally built images with tests, verification and rollback (Docker/_global/rebuild-local.conf)
+Documentation=file:///home/buntu/Projects/Docker/_global/README.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=buntu
+Group=buntu
+SupplementaryGroups=docker
+StateDirectory=rebuild-local
+Environment=HOME=/home/buntu
+Environment=REBUILD_HOST=beefy
+Environment=REBUILD_TEXTFILE=/var/lib/auto-update/textfile
+Environment=REBUILD_DEADLINE=04:45
+ExecStart=/usr/bin/python3 /home/buntu/Projects/Docker/_global/scripts/rebuild_local.py
+TimeoutStartSec=40min
+Nice=10
+IOSchedulingClass=idle
+# Builds, commits a moved base pin and drives docker, which is root-equivalent anyway: no ProtectHome.
+NoNewPrivileges=true
+PrivateTmp=true

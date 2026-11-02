@@ -24,7 +24,7 @@ Nightly, by tier, with a functional check and automatic rollback. `Docker/_globa
 | auto | Movie-Downloads flaresolverr, recyclarr, vpn-status; Cup-Agent cup-agent, socket-proxy-unix | stateless; pinned version tags (socat floats): a new digest is a rebuild. 24 h cool-down, never across a major, rolled back when the check fails |
 | notify | Cup-Agent socket-proxy-ro, Movie-Downloads autoheal + socket-proxy-heal | docker.sock behind them |
 | notify | gluetun, qBittorrent, Prowlarr, SABnzbd, Radarr, Sonarr, Bazarr, Seerr sidecars (proxy, download-now), Floppy, Dependency-Track, Jellyfin, Antivirus, Portainer-Agent | state / DB migrations; gluetun holds the VPN namespace; Seerr itself is our own image (weekly seerr-rebuild); agent must match fastpi's Portainer |
-| local build | Jellyfin, clamav | reported as `local_build`; rebuild by hand (`docker build --network host`) |
+| local build | Jellyfin, clamav | reported as `local_build`; rebuilt weekly by `rebuild-local` 04:27 (Mon clamav, Sat Jellyfin only while nobody plays), tests + rollback, list `Docker/_global/rebuild-local.conf` |
 
 ```bash
 sudo systemctl start auto-update.service; journalctl -u auto-update -n 40   # real run now
