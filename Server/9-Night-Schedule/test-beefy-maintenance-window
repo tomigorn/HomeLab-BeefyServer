@@ -35,6 +35,7 @@ grep -q "still active" "$T/err" && ok "names the units it gave up on" || bad "na
 
 grep -q "^UNITS=.*beefy-backup.service" "$W" && ok "default list waits for the nightly backup" || bad "default list waits for the nightly backup"
 grep -q "^UNITS=.*seerr-rebuild.service" "$W" && ok "default list waits for the Seerr rebuild" || bad "default list waits for the Seerr rebuild"
+grep -q "^UNITS=.*rebuild-local.service" "$W" && ok "default list waits for the local image rebuilds" || bad "default list waits for the local image rebuilds"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
