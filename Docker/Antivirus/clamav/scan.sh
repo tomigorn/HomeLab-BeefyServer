@@ -451,12 +451,12 @@ fi
 TOTAL=$(( $(cat "$STATE/infected-total" 2>/dev/null || echo 0) + INFECTED ))
 echo "$TOTAL" > "$STATE/infected-total"
 # EICAR is the scanner self-test: reported and quarantined like any hit, but never counted in clamav_infected_last_run (MalwareFound).
-TEST_HITS=$(awk -F "$TAB" -v s="$TEST_SIG" '$2 == s' "$HITS" | wc -l | tr -d ' ')
+TEST_HITS=$(awk -F "$TAB" -v s="$TEST_SIG" '$NF == s' "$HITS" | wc -l | tr -d ' ')
 INFECTED_M=$((INFECTED - TEST_HITS))
 if [ "$MODE" = all ] && [ "$SCAN_RESUME" = 1 ] && [ "$USE_CLAMD" = 1 ] && [ -e "$STATE/all.pass-hits" ]; then
 	cat "$HITS" >> "$STATE/all.pass-hits"
 	sort -u -o "$STATE/all.pass-hits" "$STATE/all.pass-hits"
-	INFECTED_M=$(awk -F "$TAB" -v s="$TEST_SIG" '$2 != s' "$STATE/all.pass-hits" | wc -l | tr -d ' ')
+	INFECTED_M=$(awk -F "$TAB" -v s="$TEST_SIG" '$NF != s' "$STATE/all.pass-hits" | wc -l | tr -d ' ')
 	[ "$INFECTED_M" -gt 0 ] && cp "$STATE/all.pass-hits" "$STATE/last-infected.txt"
 fi
 

@@ -480,6 +480,9 @@ assert_eq "self-test not in infected_last_run" 0 "$(metric clamav_infected_last_
 assert_eq "self-test counted as test hit" 1 "$(metric clamav_test_hits_last_run path)"
 assert_eq "real hit next to a self-test counts" 1 "$(run "$T/outside/eicar.com" "$T/outside/evil.exe")"
 assert_eq "only the real hit counts" 1 "$(metric clamav_infected_last_run path)"
+fresh "$T/outside/a${TAB}Eicar-Test-Signature${TAB}x.exe" "$SIG"
+run "$T/outside/a${TAB}Eicar-Test-Signature${TAB}x.exe" >/dev/null
+assert_eq "a tab in a file name cannot pose as the self-test" 1 "$(metric clamav_infected_last_run path)"
 assert_eq "clean path exits 0" 0 "$(run "$T/black/books")"
 assert_eq "missing path given by hand exits 2" 2 "$(run "$T/nope")"
 assert_eq "it is an error, not vanished" "1 0" "$(metric clamav_scan_errors path) $(metric clamav_files_vanished path)"
