@@ -1,12 +1,30 @@
+import re
+from datetime import datetime
+
 TICKS = 10_000_000
 STALL_MIN_WALL = 5.0
 STALL_MIN_LAG = 3.0
 SEEK_TOLERANCE = 5.0
+POLL_INTERVAL = 5.0
+STALL_STREAK = 2
 SILENT_AFTER = 45.0
 SLOW_FPS_RATIO = 0.95
 SLOW_BUFFER = 30.0
 SLOW_POLLS = 2
 EPISODE_GAP = 120.0
+
+
+def _parse_ts(value):
+    if not isinstance(value, str) or not value:
+        return None
+    v = value.strip()
+    if v.endswith(("Z", "z")):
+        v = v[:-1] + "+00:00"
+    v = re.sub(r"(\.\d{6})\d+", r"\1", v)
+    try:
+        return datetime.fromisoformat(v).timestamp()
+    except ValueError:
+        return None
 
 
 def _source_fps(item):
@@ -28,6 +46,9 @@ class _State:
         self.checkin = checkin
         self.base_now = now
         self.base_pos = pos
+        self.base_ts = _parse_ts(checkin)
+        self.streak = 0
+        self.prev_lag = 0.0
         self.activity = now
         self.silent = False
         self.slow_polls = 0
@@ -60,6 +81,7 @@ class Tracker:
                 st = self._states[sid] = _State(now, pos, checkin)
             if play.get("IsPaused"):
                 st.base_now = None
+                st.streak = 0
                 st.activity = now
                 st.silent = False
                 st.slow_polls = 0
@@ -68,15 +90,32 @@ class Tracker:
             inc = []
             if st.base_now is None:
                 st.base_now, st.base_pos, st.activity = now, pos, now
+                st.base_ts = _parse_ts(checkin)
             elif pos != st.pos or checkin != st.checkin:
+                after_gap = st.silent or now - st.activity >= SILENT_AFTER
                 st.activity = now
                 st.silent = False
-                wall = now - st.base_now
-                if wall >= STALL_MIN_WALL:
+                ts = _parse_ts(checkin)
+                if st.base_ts is not None and ts is not None:
+                    wall, min_lag = ts - st.base_ts, STALL_MIN_LAG
+                else:
+                    wall, min_lag = now - st.base_now, STALL_MIN_LAG + POLL_INTERVAL
+                if after_gap:
+                    st.streak = 0
+                    st.base_now, st.base_pos, st.base_ts = now, pos, ts
+                elif wall >= STALL_MIN_WALL:
                     delta = pos - st.base_pos
-                    if 0 <= delta <= wall + SEEK_TOLERANCE and wall - delta >= STALL_MIN_LAG:
-                        inc.append(self._incident("stall", wall - delta, s, item, None))
-                    st.base_now, st.base_pos = now, pos
+                    lag = wall - delta
+                    if 0 <= delta <= wall + SEEK_TOLERANCE and lag >= min_lag:
+                        st.streak += 1
+                        if st.streak == STALL_STREAK:
+                            inc.append(self._incident("stall", st.prev_lag + lag, s, item, None))
+                        elif st.streak > STALL_STREAK:
+                            inc.append(self._incident("stall", lag, s, item, None))
+                        st.prev_lag = lag
+                    else:
+                        st.streak = 0
+                    st.base_now, st.base_pos, st.base_ts = now, pos, ts
             elif not st.silent and now - st.activity >= SILENT_AFTER:
                 st.silent = True
                 inc.append(self._incident("silent", now - st.activity, s, item, None))
