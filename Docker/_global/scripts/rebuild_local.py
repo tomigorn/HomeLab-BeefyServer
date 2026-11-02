@@ -287,6 +287,26 @@ def rollback_tag(ref: str, proj: str, date: str) -> str:
     return f"rollback.invalid/{repo.replace(':', '-')}:{date}-{proj}"
 
 
+def build_with_retry(run, wait=time.sleep):
+    """One retry after a minute: a mirror or registry blip should not cost a whole week."""
+    r = run()
+    if r.returncode != 0:
+        log("  build failed, retrying in 60 s")
+        wait(60)
+        r = run()
+    return r
+
+
+def old_fingerprint(prints: dict, img: str, compute) -> str:
+    """The running image's fingerprint, computed once and then remembered, so a later context change is seen."""
+    if img in prints:
+        return prints[img]
+    fp = compute(img)
+    if fp:
+        prints[img] = fp
+    return fp
+
+
 def image_fingerprint(image: str, context: str) -> str:
     env = parse_env(sh(["docker", "image", "inspect", "-f", "{{json .Config.Env}}", image]).stdout)
     if env is None:
@@ -365,7 +385,7 @@ def rebuild(row: dict, entry: dict, dry: bool) -> tuple[str, str]:
             sh(["docker", "tag", img, rollback_tag(ref, config.get("name", d.name.lower()), date)])
     cmd = row["build"] or "docker compose build --pull --no-cache " + " ".join(services)
     t0 = time.time()
-    r = sh(["bash", "-c", cmd], cwd=d, timeout=5400, env=dict(os.environ, DOCKER_BUILDKIT="1"))
+    r = build_with_retry(lambda: sh(["bash", "-c", cmd], cwd=d, timeout=5400, env=dict(os.environ, DOCKER_BUILDKIT="1")))
     log(f"  build: rc={r.returncode} in {int(time.time() - t0)} s")
     if r.returncode != 0:
         for line in (r.stdout + r.stderr).strip().splitlines()[-8:]:
@@ -380,7 +400,7 @@ def rebuild(row: dict, entry: dict, dry: bool) -> tuple[str, str]:
     for s, (ref, img) in old.items():
         fp_new = image_fingerprint(new[s], ctx)
         # first run: the running image is taken as built from the committed context
-        fp_old = prints.get(img) or image_fingerprint(img, ctx)
+        fp_old = old_fingerprint(prints, img, lambda i: image_fingerprint(i, ctx))
         log(f"  {s}: fingerprint {fp_old or '?'} -> {fp_new or '?'}")
         if new[s] != img and (not fp_new or fp_new != fp_old):
             changed.append(s)

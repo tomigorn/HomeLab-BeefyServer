@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from rebuild_local import (  # noqa: E402
     DOCKER,
     alert_message,
+    build_with_retry,
     bump_pins,
     commit_message,
     due,
@@ -15,6 +16,7 @@ from rebuild_local import (  # noqa: E402
     from_refs,
     guard_reason,
     image_env,
+    old_fingerprint,
     pinned_tags,
     parse_conf,
     project_dir,
@@ -153,6 +155,29 @@ def test_parse_env_tolerates_missing_image_output():
     assert parse_env("") is None
     assert parse_env("null") is None
 
+
+
+def test_old_fingerprint_is_remembered_so_a_context_change_shows_next_week():
+    prints, calls = {}, []
+    compute = lambda img: calls.append(img) or "fp-then"
+    assert old_fingerprint(prints, "sha256:old", compute) == "fp-then"
+    assert prints == {"sha256:old": "fp-then"}
+    compute2 = lambda img: calls.append(img) or "fp-now"
+    assert old_fingerprint(prints, "sha256:old", compute2) == "fp-then"
+    assert calls == ["sha256:old"]
+    assert old_fingerprint({}, "sha256:x", lambda img: "") == "" 
+
+
+def test_build_is_retried_once_after_a_failure():
+    from types import SimpleNamespace as R
+    rcs, waits = [1, 0], []
+    assert build_with_retry(lambda: R(returncode=rcs.pop(0)), waits.append).returncode == 0
+    assert waits == [60]
+    rcs, waits = [1, 1, 0], []
+    assert build_with_retry(lambda: R(returncode=rcs.pop(0)), waits.append).returncode == 1
+    assert rcs == [0]
+    rcs, waits = [0], []
+    assert build_with_retry(lambda: R(returncode=rcs.pop(0)), waits.append).returncode == 0 and waits == []
 
 if __name__ == "__main__":
     fails = 0
