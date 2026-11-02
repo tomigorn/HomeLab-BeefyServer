@@ -459,7 +459,7 @@ Requests page → every row gets a **Size** line under Profile (German **Grösse
 
 ## Request origin
 
-Requests made with Jellyfin's Popular buttons get a pill in the **Requested** line of the Requests list and a **Requested via** row (German **Angefragt über**) after Size on the title page. Requests made in Seerr itself: no pill.
+Requests made with Jellyfin's Popular buttons get a pill in the **Requested** line of the Requests list (wrapped under the name at every width) and a **Requested via** row (German **Angefragt über**) after Size on the title page. Requests made in Seerr itself: no pill.
 
 | Pill | Made with |
 |---|---|

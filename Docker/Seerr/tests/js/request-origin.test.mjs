@@ -108,6 +108,12 @@ test("Requests: no origin data (no session, backend down) = Seerr unchanged; siz
   assert.equal(sizes(w)[1], "45.3 GB");
 });
 
+test("Requests: the Requested line wraps the pill under the name at every width", async () => {
+  const css = (await requests()).document.getElementById("hg-origin-style").textContent;
+  assert.match(css, /\.card-field:has\(>\[data-hg-origin\]\)\{flex-wrap:wrap;row-gap:\.25rem\}/);
+  assert.doesNotMatch(css, /@media/);
+});
+
 test("Requests: runs are idempotent (one pill per row after many runs)", async () => {
   const w = await requests();
   for (let i = 0; i < 5; i++) w.hgRequestOrigin.run();
