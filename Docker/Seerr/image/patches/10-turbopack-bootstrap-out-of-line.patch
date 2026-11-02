@@ -1,0 +1,102 @@
+diff --git a/public/hg-turbopack-bootstrap.js b/public/hg-turbopack-bootstrap.js
+new file mode 100644
+index 00000000..ea0b8a9e
+--- /dev/null
++++ b/public/hg-turbopack-bootstrap.js
+@@ -0,0 +1,7 @@
++(function () {
++  var el = document.getElementById('__HG_TURBOPACK_BOOTSTRAP__');
++  if (!el) return;
++  var data = JSON.parse(el.textContent);
++  var queue = globalThis[data[0]] || (globalThis[data[0]] = []);
++  for (var i = 1; i < data.length; i++) queue.push(data[i]);
++})();
+diff --git a/src/pages/_document.tsx b/src/pages/_document.tsx
+index 6afc7134..0f1ae829 100644
+--- a/src/pages/_document.tsx
++++ b/src/pages/_document.tsx
+@@ -1,7 +1,60 @@
+ import type { DocumentContext, DocumentInitialProps } from 'next/document';
+ import Document, { Head, Html, Main, NextScript } from 'next/document';
++import { HtmlContext } from 'next/dist/shared/lib/html-context.shared-runtime';
+ 
+-import type { JSX } from 'react';
++import type { JSX, ReactNode } from 'react';
++
++type TurbopackManifest = {
++  pagesChunkGroupBootstrapParams?: Record<string, unknown>;
++  chunkLoadingGlobal?: string;
++};
++
++// Turbopack's per-page inline bootstrap <script> is blocked by script-src 'self': its data goes into a JSON element, /hg-turbopack-bootstrap.js runs it.
++const OutOfLineBootstrap = ({
++  children,
++}: {
++  children: (bootstrap: ReactNode) => ReactNode;
++}) => (
++  <HtmlContext.Consumer>
++    {(ctx) => {
++      const manifest = ctx?.buildManifest as
++        | (NonNullable<typeof ctx>['buildManifest'] & TurbopackManifest)
++        | undefined;
++      if (
++        !ctx ||
++        !manifest?.pagesChunkGroupBootstrapParams ||
++        !manifest.chunkLoadingGlobal
++      ) {
++        return children(null);
++      }
++      const {
++        pagesChunkGroupBootstrapParams: params,
++        chunkLoadingGlobal: global,
++        ...buildManifest
++      } = manifest;
++      const data = JSON.stringify([
++        global,
++        ...['/_app', ctx.__NEXT_DATA__.page]
++          .map((page) => params[page])
++          .filter(Boolean),
++      ]).replace(/</g, '\\u003c');
++      return (
++        <HtmlContext.Provider value={{ ...ctx, buildManifest }}>
++          {children(
++            <>
++              <script
++                id="__HG_TURBOPACK_BOOTSTRAP__"
++                type="application/json"
++                dangerouslySetInnerHTML={{ __html: data }}
++              />
++              <script src="/hg-turbopack-bootstrap.js" />
++            </>
++          )}
++        </HtmlContext.Provider>
++      );
++    }}
++  </HtmlContext.Consumer>
++);
+ 
+ class MyDocument extends Document {
+   static async getInitialProps(
+@@ -15,11 +68,17 @@ class MyDocument extends Document {
+   render(): JSX.Element {
+     return (
+       <Html>
+-        <Head />
+-        <body>
+-          <Main />
+-          <NextScript />
+-        </body>
++        <OutOfLineBootstrap>
++          {(bootstrap) => (
++            <>
++              <Head>{bootstrap}</Head>
++              <body>
++                <Main />
++                <NextScript />
++              </body>
++            </>
++          )}
++        </OutOfLineBootstrap>
+       </Html>
+     );
+   }
