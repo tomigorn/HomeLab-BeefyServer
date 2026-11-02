@@ -1,6 +1,6 @@
 [Unit]
 Description=Weekly rebuild of beefy's locally built images with tests, verification and rollback (Docker/_global/rebuild-local.conf)
-Documentation=file:///home/buntu/Projects/Docker/_global/README.md
+Documentation=file:///home/buntu/Projects/README.md
 After=network-online.target docker.service
 Wants=network-online.target
 
