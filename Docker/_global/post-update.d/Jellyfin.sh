@@ -4,7 +4,8 @@ jf_user_systemctl() { # buntu's user units; as root (sudo, nightly auto-update) 
   local u; u=$(stat -c %U "$DIR")
   if [ "$(id -u)" = 0 ] && [ "$u" != root ]; then sudo -n -u "$u" env XDG_RUNTIME_DIR="/run/user/$(id -u "$u")" systemctl --user "$@"
   else XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user "$@"; fi; }
-jf_plugin() { jf_api /Plugins | jq -r --arg n "$1" '[.[] | select(.Name == $n) | "\(.Status) \(.Version)"] | first // "missing"' 2>&1; }
+# a downloaded plugin update shows as Superseded (still loaded) + Restart (active after the next restart): the loaded one counts as Active
+jf_plugin() { jf_api /Plugins | jq -r --arg n "$1" '[.[] | select(.Name == $n)] | (map(select(.Status == "Active")) + (if any(.Status == "Restart") then map(select(.Status == "Superseded") | .Status = "Active") else [] end) + .) | first | if . == null then "missing" else "\(.Status) \(.Version)" end' 2>&1; }
 if want jellyfin; then
   check jf.local-build '^jellyfin-local:' "$(docker inspect -f '{{.Config.Image}}' jellyfin 2>&1)"
   check jf.opencl 'intel\.icd intel_legacy1\.icd' "$(docker exec jellyfin ls /etc/OpenCL/vendors 2>&1 | xargs)"
