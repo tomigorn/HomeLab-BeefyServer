@@ -18,7 +18,7 @@ if want seerr; then
   check seerr.image-local '^seerr-local:current [0-9a-f]{40}$' "$(docker inspect -f '{{.Config.Image}} {{index .Config.Labels "holy-grail.seerr.tree"}}' seerr 2>&1)"
   check seerr.oidc-build '^v[0-9]+\.[0-9]+\.[0-9]+(-oidc[0-9a-f]{7})? https://sso\.holy-grail\.ch/application/o/authorize/' "$(seerr_api /status | jq -r .commitTag 2>&1) $(seerr_api /auth/oidc/login/holy-grail | jq -r .redirectUrl 2>&1)"
   check seerr.rebuild-timer '^enabled$' "$(systemctl is-enabled seerr-rebuild.timer 2>&1)"
-  check seerr.no-inline-script '^0$' "$(curl -s -m 8 http://127.0.0.1:5055/login | grep -o '<script[^>]*>' | grep -v -c -E 'src=|type="application/json"')"
+  check seerr.no-inline-script '^0$' "$(p=$(curl -s -m 8 http://127.0.0.1:5055/login); if grep -qi '<html' <<<"$p"; then grep -o '<script[^>]*>' <<<"$p" | grep -v -c -E 'src=|type="application/json"'; else echo unreadable; fi)"
   check seerr.login-public '^\[false,false,false,"holy-grail"\]$' "$(seerr_api /settings/public | jq -c '[.localLogin,.mediaServerLogin,.newPlexLogin,(.openIdProviders[]?.slug)]' 2>&1)"
   check seerr.login-settings '^\[true,false,false,true,"holy-grail"\]$' "$(jq -c '[.main.oidcLogin,.main.localLogin,.main.mediaServerLogin,.network.trustProxy,.oidc.providers[0].slug]' "$SEERR_DIR/settings.json" 2>&1)"
   check seerr.main '^\["https://requests.holy-grail.ch",24736\]$' "$(jq -c '[.main.applicationUrl,.main.defaultPermissions]' "$SEERR_DIR/settings.json" 2>&1)"
