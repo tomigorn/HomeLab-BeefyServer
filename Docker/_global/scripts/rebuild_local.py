@@ -18,6 +18,7 @@ Env: REBUILD_CONF / REBUILD_STATE / REBUILD_TEXTFILE (paths), REBUILD_HOST (labe
      REBUILD_FORCE=1 (recreate even when the fingerprint is unchanged)
 Conf key guard: shell command run before the build and again before the recreate; non-zero = deferred to next week (no alert), e.g. someone is playing
 """
+import calendar
 import fcntl
 import hashlib
 import html
@@ -297,6 +298,14 @@ def build_with_retry(run, wait=time.sleep):
     return r
 
 
+def predates(created: str, commit_ts: int) -> bool:
+    """Docker's Created (UTC, ISO) is older than the last commit to the build context."""
+    if not created or not commit_ts:
+        return False
+    built = calendar.timegm(time.strptime(created[:19], "%Y-%m-%dT%H:%M:%S"))
+    return built < commit_ts
+
+
 def old_fingerprint(prints: dict, img: str, compute) -> str:
     """The running image's fingerprint, computed once and then remembered, so a later context change is seen."""
     if img in prints:
@@ -395,12 +404,17 @@ def rebuild(row: dict, entry: dict, dry: bool) -> tuple[str, str]:
         return "build_failed", (r.stderr.strip().splitlines() or ["?"])[-1][-200:]
     new = {s: sh(["docker", "image", "inspect", "-f", "{{.Id}}", ref]).stdout.strip() for s, (ref, _) in old.items()}
     ctx = context_listing(files)
+    ctx_time = max((int(git(f, "log", "-1", "--format=%ct", "--", ".").stdout.strip() or 0) for f in files), default=0)
     prints = entry.setdefault("fingerprints", {})
     changed = []
     for s, (ref, img) in old.items():
         fp_new = image_fingerprint(new[s], ctx)
-        # first run: the running image is taken as built from the committed context
-        fp_old = old_fingerprint(prints, img, lambda i: image_fingerprint(i, ctx))
+        # no fingerprint yet: the running image counts as built from the current context, unless it is older than its last commit
+        if img not in prints and predates(sh(["docker", "image", "inspect", "-f", "{{.Created}}", img]).stdout.strip(), ctx_time):
+            fp_old = ""
+            log(f"  {s}: running image is older than its build context's last commit, counts as changed")
+        else:
+            fp_old = old_fingerprint(prints, img, lambda i: image_fingerprint(i, ctx))
         log(f"  {s}: fingerprint {fp_old or '?'} -> {fp_new or '?'}")
         if new[s] != img and (not fp_new or fp_new != fp_old):
             changed.append(s)

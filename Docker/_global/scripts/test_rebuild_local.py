@@ -18,6 +18,7 @@ from rebuild_local import (  # noqa: E402
     image_env,
     old_fingerprint,
     pinned_tags,
+    predates,
     parse_conf,
     project_dir,
     project_name,
@@ -178,6 +179,13 @@ def test_build_is_retried_once_after_a_failure():
     assert rcs == [0]
     rcs, waits = [0], []
     assert build_with_retry(lambda: R(returncode=rcs.pop(0)), waits.append).returncode == 0 and waits == []
+
+
+def test_predates_compares_image_build_time_with_the_last_context_commit():
+    assert predates("2026-10-31T08:43:15.123456789Z", 1793578889)
+    assert not predates("2026-11-02T04:52:37.1Z", 1793578889)
+    assert not predates("", 1793578889)
+    assert not predates("2026-10-31T08:43:15Z", 0)
 
 if __name__ == "__main__":
     fails = 0
