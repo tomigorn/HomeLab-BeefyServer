@@ -1,0 +1,20 @@
+[Unit]
+Description=Jellyfin playback watch: stutter detection, debug log and auto-fixes
+Documentation=file:///home/buntu/Projects/Docker/Jellyfin/README.md
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=buntu
+WorkingDirectory=/home/buntu/Projects/Docker/Jellyfin/playback-watch
+ExecStart=/usr/bin/python3 /home/buntu/Projects/Docker/Jellyfin/playback-watch/playback-watch
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=10
+KillMode=mixed
+TimeoutStopSec=90
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

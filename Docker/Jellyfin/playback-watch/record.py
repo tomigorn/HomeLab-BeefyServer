@@ -107,7 +107,9 @@ def _append(path, row):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     _rotate(path)
-    with open(path, "a") as f:
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "a") as f:
         f.write(json.dumps(row, sort_keys=True) + "\n")
 
 
@@ -153,15 +155,17 @@ class Counters:
             "incidents": [[k, c, n] for (k, c), n in sorted(self.incidents.items())],
             "stall_seconds": self.stall_seconds, "autofix": self.autofix, "last_incident": self.last_incident,
         }
-        _atomic_write(self.path, json.dumps(data, sort_keys=True))
+        _atomic_write(self.path, json.dumps(data, sort_keys=True), 0o600)
 
 
-def _atomic_write(path, text):
+def _atomic_write(path, text, mode=0o644):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
-    os.chmod(tmp, 0o644)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    os.chmod(tmp, mode)
     os.replace(tmp, path)
 
 

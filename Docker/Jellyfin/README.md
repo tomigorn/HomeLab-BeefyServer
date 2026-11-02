@@ -381,6 +381,33 @@ Per device (stored on the device, not on the server):
 
 Direct play (no transcode) is always best; the server transcodes only what the device cannot play.
 
+## Playback watch (2026-11-02)
+Service `playback-watch` (system unit, user buntu, `playback-watch/`): polls `/Sessions?ActiveWithinSeconds=60` every 5 s at the Jellyfin container's bridge IP (never `localhost`/beefy's own addresses, so the idle watcher does not count it), records stutter and eases it.
+
+| Incident | Rule |
+|---|---|
+| `stall` | between two client check-ins the position falls ≥ 3 s behind wall time (2 in a row; seeks, pauses ignored) |
+| `silent` | playing, no client check-in for 45 s |
+| `slow_transcode` | encoder fps < 0.95 × source fps and < 30 s transcoded ahead, 2 polls in a row |
+
+Auto-fixes, only while a stutter episode (incident within 2 min) runs with someone playing; reverted 10 min after the last playback ends, on service stop and at start (saved state):
+
+| Action | Change | Revert |
+|---|---|---|
+| `downloads_slow` | qBittorrent alternative speed on, alt download 2 MiB/s, alt upload = normal upload (seeding unchanged); SABnzbd limit 2M | saved values back |
+| `background_low` | `CPUWeight=10 IOWeight=10` (runtime) for running subtitle-translate, clamav, mover, original-audio, promoter units and their containers | saved weights back |
+
+Files in `~/.local/state/jellyfin-playback/`: `incidents.jsonl` (incidents with context + one summary per playback, 0600, 5 MB × 3), `state.json` (counters), `autofix.json` (what is applied), `playback.prom` (metrics, pulled by fastpi).
+
+```bash
+systemctl status playback-watch                      # status
+journalctl -u playback-watch -n 50                   # incidents and auto-fix log (no users/titles)
+playback-watch report --since 24h                    # incident table (s/m/h/d)
+~/Projects/Docker/Jellyfin/playback-watch/install.sh # install / update
+sudo systemctl disable --now playback-watch          # rollback: stopping reverts every auto-fix
+cd ~/Projects/Docker/Jellyfin/playback-watch && python3 -m unittest -q   # tests
+```
+
 ## Tracker (Floppy): watch history per member (2026-10-27)
 Jellyfin posts each member's playback to their own Floppy account (`../Floppy/`, README "Integrations"). One webhook per Jellyfin user, bound by `UserId`, so one member's playback never lands in another member's Tracker.
 

@@ -104,6 +104,15 @@ class RecordTest(unittest.TestCase):
         self.assertEqual(c2.autofix["background_low"], 1)
         self.assertEqual(c2.last_incident, 20.0)
 
+    def test_private_files_are_0600(self):
+        log = self.dir / "incidents.jsonl"
+        rec.append_incident(log, incident(), CTX, clock=lambda: 1.0)
+        rec.append_summary(log, {"session_id": "s1"}, clock=lambda: 2.0)
+        c = rec.Counters(self.dir / "state.json")
+        c.inc_autofix("downloads_slow")
+        self.assertEqual(stat.S_IMODE(os.stat(log).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(self.dir / "state.json").st_mode), 0o600)
+
     def test_counters_corrupt_file_starts_empty(self):
         p = self.dir / "state.json"
         p.write_text("{nope")
