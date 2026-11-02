@@ -78,9 +78,11 @@ class FakeSystemd:
         self.active = set(active)
         self.running = {c: f"docker-{c}id.scope" for c in running}
         self.weights = {}
+        self.preset = {}
         self.calls = []
         self.fail = set()
         self.gone = set()
+        self.unreadable = set()
 
     def active_units(self, units):
         return [u for u in units if u in self.active]
@@ -88,11 +90,16 @@ class FakeSystemd:
     def container_scopes(self, names):
         return [self.running[n] for n in names if n in self.running]
 
-    def set_weight(self, unit, weight):
-        self.calls.append((unit, weight))
+    def weights_of(self, unit):
+        if unit in self.unreadable:
+            raise RuntimeError(f"{unit}: show failed")
+        return self.weights.get(unit, self.preset.get(unit, (100, 100)))
+
+    def set_weight(self, unit, cpu, io):
+        self.calls.append((unit, cpu, io))
         if unit in self.fail or unit in self.gone:
             raise RuntimeError(f"{unit}: failed")
-        self.weights[unit] = weight
+        self.weights[unit] = (cpu, io)
 
 
 class Base(unittest.TestCase):
@@ -119,15 +126,15 @@ class AutoFixTest(Base):
         self.assertEqual(fix.apply(100.0), ["downloads_slow", "background_low"])
         self.assertEqual(self.qbit.prefs_["alt_dl_limit"], 2 * 1024 * 1024)
         self.assertEqual(self.qbit.mode, 1)
-        self.assertEqual(self.sab.limit, "20")
+        self.assertEqual(self.sab.limit, "2M")
         lowered = {"beefy-promoter.service", "clamav-scan.service", "docker-clamavid.scope", "docker-movie-qbittorrentid.scope"}
-        self.assertEqual(self.sd.weights, {u: 10 for u in lowered})
+        self.assertEqual(self.sd.weights, {u: (10, 10) for u in lowered})
         saved = json.loads(self.state.read_text())
         self.assertEqual(saved["applied"]["downloads_slow"]["qbit"]["alt_dl_limit"], 10240)
         self.assertEqual(saved["applied"]["downloads_slow"]["qbit"]["alt_up_limit"], 10240)
         self.assertEqual(saved["applied"]["downloads_slow"]["qbit"]["mode"], 0)
         self.assertEqual(saved["applied"]["downloads_slow"]["sab"]["speedlimit"], "0")
-        self.assertEqual(set(saved["applied"]["background_low"]["units"]), lowered)
+        self.assertEqual(saved["applied"]["background_low"]["units"], {u: [100, 100] for u in lowered})
         self.assertEqual(stat.S_IMODE(os.stat(self.state).st_mode), 0o600)
         self.assertEqual(fix.active(), {"downloads_slow": True, "background_low": True})
         self.assertEqual(self.counted, ["downloads_slow", "background_low"])
@@ -149,18 +156,82 @@ class AutoFixTest(Base):
         self.assertEqual(self.qbit.prefs_["alt_up_limit"], 10240)
         self.assertEqual(self.qbit.mode, 0)
         self.assertEqual(self.sab.limit, "0")
-        self.assertTrue(all(w == 100 for w in self.sd.weights.values()))
+        self.assertEqual(set(self.sd.weights.values()), {(100, 100)})
         self.assertEqual(len(self.sd.weights), 4)
         self.assertEqual(fix.active(), {"downloads_slow": False, "background_low": False})
         self.assertEqual(fix.revert(), [])
 
-    def test_revert_keeps_speed_mode_that_was_already_on(self):
-        self.qbit.mode = 1
+    def test_alt_mode_already_on_keeps_owner_limits(self):
+        for alt_dl, expect in ((10240, 10240), (0, 2097152), (8 * 1024 * 1024, 2097152)):
+            with self.subTest(alt_dl=alt_dl):
+                self.state.unlink(missing_ok=True)
+                qbit = FakeQbit(up_limit=0, alt_dl=alt_dl, alt_up=4096, mode=1)
+                fix = self.make(qbit=qbit)
+                fix.apply(1.0)
+                self.assertEqual(qbit.mode, 1)
+                self.assertEqual(qbit.prefs_["alt_dl_limit"], expect)
+                self.assertEqual(qbit.prefs_["alt_up_limit"], 4096)
+                qbit.prefs_["alt_up_limit"] = 5555
+                fix.revert()
+                self.assertEqual(qbit.mode, 1)
+                self.assertEqual(qbit.prefs_["alt_dl_limit"], alt_dl)
+                self.assertEqual(qbit.prefs_["alt_up_limit"], 5555)
+
+    def test_configured_weight_restored(self):
+        self.sd.preset["clamav-scan.service"] = (20, 100)
+        self.sd.preset["docker-clamavid.scope"] = (21, 50)
         fix = self.make()
         fix.apply(1.0)
-        self.assertEqual(self.qbit.mode, 1)
+        self.assertEqual(self.sd.weights["clamav-scan.service"], (10, 10))
         fix.revert()
+        self.assertEqual(self.sd.weights["clamav-scan.service"], (20, 100))
+        self.assertEqual(self.sd.weights["docker-clamavid.scope"], (21, 50))
+        self.assertEqual(self.sd.weights["beefy-promoter.service"], (100, 100))
+
+    def test_crash_restore_uses_saved_weights(self):
+        self.sd.preset["clamav-scan.service"] = (20, 100)
+        self.make().apply(1.0)
+        self.make().restore_from_state()
+        self.assertEqual(self.sd.weights["clamav-scan.service"], (20, 100))
+        self.assertEqual(self.sd.weights["beefy-promoter.service"], (100, 100))
+
+    def test_unreadable_weights_skip_target(self):
+        self.sd.unreadable.add("clamav-scan.service")
+        fix = self.make()
+        fix.apply(1.0)
+        self.assertNotIn("clamav-scan.service", self.sd.weights)
+        self.assertTrue(any("clamav-scan.service" in m for m in self.logs))
+
+    def test_later_apply_retries_failed_parts(self):
+        self.qbit.down = True
+        self.sd.fail.add("beefy-promoter.service")
+        fix = self.make()
+        self.assertEqual(fix.apply(1.0), ["downloads_slow", "background_low"])
+        sab_sets = list(self.sab.sets)
+        self.qbit.down = False
+        self.sd.fail.clear()
+        self.assertEqual(fix.apply(2.0), [])
+        self.assertEqual(self.qbit.prefs_["alt_dl_limit"], 2097152)
         self.assertEqual(self.qbit.mode, 1)
+        self.assertEqual(self.sd.weights["beefy-promoter.service"], (10, 10))
+        self.assertEqual(self.sab.sets, sab_sets)
+        self.assertEqual([c for c in self.sd.calls if c[0] == "clamav-scan.service"], [("clamav-scan.service", 10, 10)])
+        self.assertEqual(self.counted, ["downloads_slow", "background_low"])
+        fix.revert()
+        self.assertEqual(self.qbit.prefs_["alt_dl_limit"], 10240)
+        self.assertEqual(self.qbit.mode, 0)
+        self.assertEqual(self.sd.weights["beefy-promoter.service"], (100, 100))
+
+    def test_failed_qbit_write_retried_without_resaving(self):
+        orig = self.qbit.set_prefs
+        self.qbit.set_prefs = lambda v: (_ for _ in ()).throw(OSError("timeout"))
+        fix = self.make()
+        fix.apply(1.0)
+        self.qbit.set_prefs = orig
+        self.qbit.prefs_["alt_dl_limit"] = 999
+        fix.apply(2.0)
+        self.assertEqual(self.qbit.prefs_["alt_dl_limit"], 2097152)
+        fix.revert()
         self.assertEqual(self.qbit.prefs_["alt_dl_limit"], 10240)
 
     def test_sab_revert_uses_absolute_limit(self):
@@ -168,7 +239,7 @@ class AutoFixTest(Base):
         fix = self.make(sab=sab)
         fix.apply(1.0)
         fix.revert()
-        self.assertEqual(sab.sets, ["20", "5242880"])
+        self.assertEqual(sab.sets, ["2M", "5242880"])
 
     def test_restore_after_crash(self):
         self.make().apply(1.0)
@@ -178,7 +249,7 @@ class AutoFixTest(Base):
         self.assertEqual(self.qbit.prefs_["alt_dl_limit"], 10240)
         self.assertEqual(self.qbit.mode, 0)
         self.assertEqual(self.sab.limit, "0")
-        self.assertTrue(all(w == 100 for w in self.sd.weights.values()))
+        self.assertEqual(set(self.sd.weights.values()), {(100, 100)})
         self.assertEqual(json.loads(self.state.read_text())["applied"], {})
         self.assertEqual(self.make().restore_from_state(), [])
 
@@ -203,7 +274,7 @@ class AutoFixTest(Base):
         self.assertEqual(set(sd.weights), {"beefy-promoter.service", "docker-clamavid.scope"})
         sd.active.add("beefy-mover.service")
         fix.revert()
-        self.assertEqual({u for u, w in sd.calls if w == 100}, {"beefy-promoter.service", "docker-clamavid.scope"})
+        self.assertEqual({u for u, c, i in sd.calls if c == 100}, {"beefy-promoter.service", "docker-clamavid.scope"})
 
     def test_vanished_scope_on_revert_is_fine(self):
         fix = self.make()
@@ -217,8 +288,8 @@ class AutoFixTest(Base):
         self.sd.fail.add("beefy-promoter.service")
         fix = self.make()
         self.assertEqual(fix.apply(1.0), ["downloads_slow", "background_low"])
-        self.assertEqual(self.sab.limit, "20")
-        self.assertEqual(self.sd.weights.get("clamav-scan.service"), 10)
+        self.assertEqual(self.sab.limit, "2M")
+        self.assertEqual(self.sd.weights.get("clamav-scan.service"), (10, 10))
         self.assertTrue(any("qbit" in m.lower() for m in self.logs))
         self.assertTrue(any("beefy-promoter.service" in m for m in self.logs))
         saved = json.loads(self.state.read_text())["applied"]
@@ -350,14 +421,31 @@ class SystemdAdapterTest(unittest.TestCase):
         sd = af.Systemd(run)
         self.assertEqual(sd.active_units(["a.service", "b.service"]), ["a.service"])
         self.assertEqual(sd.container_scopes(["up", "stopped", "missing"]), ["docker-abc123.scope"])
-        sd.set_weight("a.service", 10)
-        self.assertEqual(calls[-1], ["sudo", "-n", "systemctl", "set-property", "--runtime", "a.service", "CPUWeight=10", "IOWeight=10"])
+        sd.set_weight("a.service", 20, 100)
+        self.assertEqual(calls[-1], ["sudo", "-n", "systemctl", "set-property", "--runtime", "a.service", "CPUWeight=20", "IOWeight=100"])
+
+    def test_weights_of(self):
+        def run(cmd, **kw):
+            self.assertEqual(cmd[:6], ["systemctl", "show", "-p", "CPUWeight", "-p", "IOWeight"])
+            out = {"set.service": "CPUWeight=20\nIOWeight=[not set]\n", "both.service": "IOWeight=50\nCPUWeight=21\n",
+                   "empty.service": "CPUWeight=\nIOWeight=\n"}[cmd[-1]]
+            return subprocess.CompletedProcess(cmd, 0, out, "")
+        sd = af.Systemd(run)
+        self.assertEqual(sd.weights_of("set.service"), (20, 100))
+        self.assertEqual(sd.weights_of("both.service"), (21, 50))
+        self.assertEqual(sd.weights_of("empty.service"), (100, 100))
+
+    def test_weights_of_failure_raises(self):
+        def run(cmd, **kw):
+            return subprocess.CompletedProcess(cmd, 1, "", "boom")
+        with self.assertRaises(RuntimeError):
+            af.Systemd(run).weights_of("x.service")
 
     def test_set_weight_failure_raises(self):
         def run(cmd, **kw):
             return subprocess.CompletedProcess(cmd, 1, "", "Unit not found")
         with self.assertRaises(RuntimeError):
-            af.Systemd(run).set_weight("docker-x.scope", 100)
+            af.Systemd(run).set_weight("docker-x.scope", 100, 100)
 
 
 class ListsTest(unittest.TestCase):
@@ -365,7 +453,7 @@ class ListsTest(unittest.TestCase):
         self.assertEqual(tuple(af.UNITS), UNITS)
         self.assertEqual(tuple(af.CONTAINERS), CONTAINERS)
         self.assertEqual(af.QBIT_ALT_DL, 2097152)
-        self.assertEqual(af.SAB_LIMIT, "20")
+        self.assertEqual(af.SAB_LIMIT, "2M")
 
 
 if __name__ == "__main__":

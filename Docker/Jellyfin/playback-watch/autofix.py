@@ -10,8 +10,8 @@ from pathlib import Path
 from record import CONTAINERS, UNITS
 
 QBIT_ALT_DL = 2 * 1024 * 1024
-SAB_LIMIT = "20"
-LOW, NORMAL = 10, 100
+SAB_LIMIT = "2M"
+LOW, DEFAULT = 10, 100
 
 
 class HttpError(Exception):
@@ -116,8 +116,15 @@ class Systemd:
                 scopes.append(f"docker-{f[1]}.scope")
         return scopes
 
-    def set_weight(self, unit, weight):
-        r = self.run(["sudo", "-n", "systemctl", "set-property", "--runtime", unit, f"CPUWeight={weight}", f"IOWeight={weight}"],
+    def weights_of(self, unit):
+        r = self.run(["systemctl", "show", "-p", "CPUWeight", "-p", "IOWeight", unit], capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            raise RuntimeError(f"{unit}: show failed: {r.stderr.strip()}")
+        props = dict(line.partition("=")[::2] for line in r.stdout.splitlines())
+        return tuple(int(v) if v.strip().isdigit() else DEFAULT for v in (props.get("CPUWeight", ""), props.get("IOWeight", "")))
+
+    def set_weight(self, unit, cpu, io):
+        r = self.run(["sudo", "-n", "systemctl", "set-property", "--runtime", unit, f"CPUWeight={cpu}", f"IOWeight={io}"],
                      capture_output=True, text=True, timeout=20)
         if r.returncode != 0:
             raise RuntimeError(f"{unit}: set-property failed: {r.stderr.strip()}")
@@ -135,8 +142,7 @@ class AutoFix:
 
     def _load(self):
         try:
-            data = json.loads(self.state_path.read_text())
-            applied = data["applied"]
+            applied = json.loads(self.state_path.read_text())["applied"]
             return {a: applied[a] for a in self.ACTIONS if isinstance(applied.get(a), dict)}
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             return {}
@@ -162,64 +168,81 @@ class AutoFix:
         return {a: a in self.applied for a in self.ACTIONS}
 
     def apply(self, now):
-        done = []
-        if "downloads_slow" not in self.applied and self._apply_downloads(now):
-            done.append("downloads_slow")
-        if "background_low" not in self.applied and self._apply_background(now):
-            done.append("background_low")
+        was = set(self.applied)
+        self._apply_downloads(now)
+        self._apply_background(now)
+        done = [a for a in self.ACTIONS if a in self.applied and a not in was]
         for a in done:
             self.log(f"autofix: applied {a}")
             self.on_action(a)
         return done
 
     def _apply_downloads(self, now):
-        entry = {"since": now}
-        self.applied["downloads_slow"] = entry
+        entry = self.applied.setdefault("downloads_slow", {"since": now})
 
         def qbit():
-            prefs, mode = self.qbit.prefs(), self.qbit.speed_mode()
-            entry["qbit"] = {"alt_dl_limit": prefs["alt_dl_limit"], "alt_up_limit": prefs["alt_up_limit"], "mode": mode}
-            self._save()
-            self.qbit.set_prefs({"alt_dl_limit": QBIT_ALT_DL, "alt_up_limit": prefs["up_limit"]})
-            if mode == 0:
-                self.qbit.toggle_speed_mode()
+            if "qbit" not in entry:
+                prefs, mode = self.qbit.prefs(), self.qbit.speed_mode()
+                entry["qbit"] = {"alt_dl_limit": prefs["alt_dl_limit"], "alt_up_limit": prefs["alt_up_limit"],
+                                 "up_limit": prefs["up_limit"], "mode": mode, "pending": True}
+                self._save()
+            saved = entry["qbit"]
+            if not saved.get("pending"):
+                return
+            if saved["mode"] == 0:
+                self.qbit.set_prefs({"alt_dl_limit": QBIT_ALT_DL, "alt_up_limit": saved["up_limit"]})
+                if self.qbit.speed_mode() == 0:
+                    self.qbit.toggle_speed_mode()
+            else:
+                cur = saved["alt_dl_limit"]
+                self.qbit.set_prefs({"alt_dl_limit": QBIT_ALT_DL if cur <= 0 else min(cur, QBIT_ALT_DL)})
+            saved["pending"] = False
 
         def sab():
-            limit, limit_abs = self.sab.speedlimit()
-            entry["sab"] = {"speedlimit": limit, "speedlimit_abs": limit_abs}
-            self._save()
-            self.sab.set_speedlimit(SAB_LIMIT)
+            if "sab" not in entry:
+                limit, limit_abs = self.sab.speedlimit()
+                entry["sab"] = {"speedlimit": limit, "speedlimit_abs": limit_abs, "pending": True}
+                self._save()
+            if entry["sab"].get("pending"):
+                self.sab.set_speedlimit(SAB_LIMIT)
+                entry["sab"]["pending"] = False
 
         self._try("qbit downloads_slow", qbit)
         self._try("sab downloads_slow", sab)
         if "qbit" not in entry and "sab" not in entry:
             del self.applied["downloads_slow"]
         self._save()
-        return "downloads_slow" in self.applied
 
     def _apply_background(self, now):
         try:
             targets = self.systemd.active_units(UNITS) + self.systemd.container_scopes(CONTAINERS)
         except Exception as e:
             self.log(f"autofix: background_low lookup failed: {e}")
-            return False
-        if not targets:
-            return False
-        entry = {"since": now, "units": list(targets)}
-        self.applied["background_low"] = entry
-        self._save()
+            return
+        entry = self.applied.setdefault("background_low", {"since": now, "units": {}})
+        units = entry["units"]
         for unit in targets:
-            if not self._try(f"lower {unit}", lambda u=unit: self.systemd.set_weight(u, LOW)):
-                entry["units"].remove(unit)
-        if not entry["units"]:
+            if unit in units:
+                continue
+            try:
+                units[unit] = list(self.systemd.weights_of(unit))
+            except Exception as e:
+                self.log(f"autofix: read weights of {unit} failed: {e}")
+                continue
+            self._save()
+            if not self._try(f"lower {unit}", lambda u=unit: self.systemd.set_weight(u, LOW, LOW)):
+                del units[unit]
+        if not units:
             del self.applied["background_low"]
         self._save()
-        return "background_low" in self.applied
 
     def _revert_qbit(self, saved):
-        self.qbit.set_prefs({"alt_dl_limit": saved["alt_dl_limit"], "alt_up_limit": saved["alt_up_limit"]})
-        if saved["mode"] == 0 and self.qbit.speed_mode() == 1:
-            self.qbit.toggle_speed_mode()
+        if saved["mode"] == 0:
+            self.qbit.set_prefs({"alt_dl_limit": saved["alt_dl_limit"], "alt_up_limit": saved["alt_up_limit"]})
+            if self.qbit.speed_mode() == 1:
+                self.qbit.toggle_speed_mode()
+        else:
+            self.qbit.set_prefs({"alt_dl_limit": saved["alt_dl_limit"]})
 
     def _revert_sab(self, saved):
         abs_ = saved.get("speedlimit_abs")
@@ -240,10 +263,10 @@ class AutoFix:
                 done.append("downloads_slow")
         entry = self.applied.get("background_low")
         if entry is not None:
-            keep = []
-            for unit in entry.get("units", []):
-                if not self._try(f"restore {unit}", lambda u=unit: self.systemd.set_weight(u, NORMAL)) and not unit.endswith(".scope"):
-                    keep.append(unit)
+            keep = {}
+            for unit, (cpu, io) in entry.get("units", {}).items():
+                if not self._try(f"restore {unit}", lambda u=unit, c=cpu, i=io: self.systemd.set_weight(u, c, i)) and not unit.endswith(".scope"):
+                    keep[unit] = [cpu, io]
             entry["units"] = keep
             if not keep:
                 del self.applied["background_low"]
