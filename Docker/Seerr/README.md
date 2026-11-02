@@ -63,7 +63,7 @@ Owner decision 2026-11-01: we build and run our own image from the newest stable
 |---|---|
 | Image | `seerr-local:current` (`pull_policy: never`), also tagged `seerr-local:<release>-oidc<pr sha7>`; previous one `seerr-local:rollback`. Labels `holy-grail.seerr.{tree,upstream,pr}` |
 | Now | `v3.5.1-oidc2e52312` (2026-11-02), 246 upstream tests green; Trivy critical 12 → 5 (only Next.js, see below), high 141 → 124 |
-| Script | `scripts/seerr-rebuild.sh [--force] [--no-deploy]`, unit `systemd/seerr-rebuild.service` (buntu + docker group, state and clone in `/var/lib/seerr-rebuild`) |
+| Script | `scripts/seerr-rebuild.sh [--force] [--no-deploy] [--deploy-release]`, unit `systemd/seerr-rebuild.service` (buntu + docker group, state and clone in `/var/lib/seerr-rebuild`) |
 | Timer | `seerr-rebuild.timer` Tue 04:27 (maintenance window waits for it) |
 | Tests | `bash tests/test_seerr_rebuild.sh` (fake upstream git + fake docker) |
 
@@ -73,14 +73,22 @@ What a run does:
 2. Applies the PR's own diff (`merge-base(develop, PR)..PR`, without `docs/`) onto the tag with `git apply --3way`. A committed `image/resolutions/<tag>-<pr sha12>.patch` replaces that diff for exactly that pair (a hand-made conflict resolution, reproducible).
 3. Applies `image/patches/*.patch` (our in-image changes; none yet: everything of ours lives outside the image, see `../CUSTOMIZATIONS.md`).
 4. Merges `image/dependency-overrides.json` into `package.json` (`pnpm.overrides`, `scripts`) and refreshes the lockfile in the Dockerfile's node image. Overrides use `pkg@<x` selectors, so they stop mattering once upstream has caught up.
-5. Same source tree as the running image (label): stop. Otherwise upstream build stage, `pnpm typecheck && pnpm test`, final image.
-6. Deploy: Seerr stopped, `/srv/appdata/seerr` tarred (`~/backups/seerr/`, last 6, mode 600, SQLite integrity checked), tag swap, start, verify (healthy, `commitTag`, OIDC start redirects to sso, post-update check `Seerr`). Any failure: config restored from that backup, previous image back, Telegram.
+5. Same source tree as the running image (label): stop. Otherwise upstream build stage, `pnpm typecheck && pnpm test`, final image `seerr-local:candidate` (an already tested candidate of the same tree is reused).
+6. **New upstream release** (tag ≠ label `holy-grail.seerr.upstream` of the running image): not deployed, it may migrate the DB one way. Telegram once, the candidate stays. Deploy it yourself (backup, verify, rollback as below):
+
+   ```bash
+   sudo systemd-run --uid=buntu --gid=buntu -p SupplementaryGroups=docker -p StateDirectory=seerr-rebuild --wait --pipe --quiet -E HOME=/home/buntu /bin/bash /home/buntu/Projects/Docker/Seerr/scripts/seerr-rebuild.sh --deploy-release
+   ```
+
+   Same release, only the reviewed PR commit / overrides / patches changed: deployed automatically.
+7. Deploy: Seerr stopped, `/srv/appdata/seerr` tarred (`~/backups/seerr/`, last 6, mode 600, SQLite integrity checked), tag swap, start, verify (healthy, `commitTag`, OIDC start redirects to sso, post-update check `Seerr`). Any failure: config restored from that backup, previous image back, Telegram.
 
 | Telegram | When |
 |---|---|
 | does not apply onto vX | PR conflicts with a new release: image kept, resolve below |
 | OIDC PR moved to X | review `git diff <reviewed> <new>` in `/var/lib/seerr-rebuild/work/seerr`, then `echo <new sha> > image/pr-reviewed`, commit |
 | build / tests failed | image kept |
+| vX built and tested, not deployed | new release held: deploy with `--deploy-release` (step 6) |
 | failed its checks, rolled back | config + image restored |
 | OIDC is in release vX | PR merged and released: back to the official image (below); until then the job builds the plain release |
 
@@ -103,7 +111,7 @@ Manual rollback to the September preview (no DB migration between them):
 sudo docker tag ghcr.io/seerr-team/seerr:preview-new-oidc seerr-local:current && cd ~/Projects/Docker/Seerr && sudo docker compose up -d --no-deps seerr
 ```
 
-DB: v3.5.1 + PR adds no migration over the preview (56 both, 2026-11-02); a later release may migrate one way, the backup of step 6 is the way back. Backup before the switch: `~/backups/seerr-2026-11-01-pre-own-image.tgz`.
+DB: v3.5.1 + PR adds no migration over the preview (56 both, 2026-11-02); a later release may migrate one way (held, step 6), the backup of step 7 is the way back. Backup before the switch: `~/backups/seerr-2026-11-01-pre-own-image.tgz`.
 
 ### Back to stable
 

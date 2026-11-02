@@ -40,7 +40,9 @@ cat > "$T/bin/docker" <<'SH'
 #!/usr/bin/env bash
 echo "$*" >> "$FAKE_LOG"
 case "$*" in
+  "image inspect -f"*upstream*seerr-local:current) echo "${FAKE_UPSTREAM-v1.0.0}" ;;
   "image inspect -f"*seerr-local:current) echo "${FAKE_TREE:-}" ;;
+  "image inspect -f"*tree*seerr-local:candidate) echo "${FAKE_CAND_TREE:-}" ;;
   "image inspect"*) echo "sha256:img-${*##*:}" ;;
   "build "*"--target build"*) [ -z "$FAKE_BUILD_FAIL" ] || exit 1 ;;
   "build "*) [ -z "$FAKE_BUILD_FAIL" ] || exit 1 ;;
@@ -101,6 +103,26 @@ assert_eq "rolled back to the old image" "tag seerr-local:current seerr-local:ro
 assert_has "config restored from the backup" "tar -C /d -xzpf" "$(calls 'run --rm --user 0')"
 assert_eq "stopped, started new, stopped, started old" "compose stop seerr;compose up -d --no-deps seerr;compose stop seerr;compose up -d --no-deps seerr;" "$(calls compose)"
 assert_has "alert sent" "rolled back" "$(cat "$T/alerts")"
+
+# a new upstream release (running image built from v0.9.0): built and tested, never deployed by itself
+FAKE_UPSTREAM=v0.9.0 run true; rc=$?
+assert_eq "new release: exit 0" 0 "$rc"
+assert_has "new release: built and tested" "run --rm --network none seerr-local:test" "$(calls run)"
+assert_has "new release: candidate built" "-t seerr-local:v1.0.0-oidc$SHA7 -t seerr-local:candidate" "$(calls build)"
+assert_eq "new release: nothing swapped or stopped" "" "$(calls 'tag|compose')"
+assert_has "new release: owner told it is not deployed" "v1.0.0-oidc$SHA7 built and tested, not deployed" "$(cat "$T/alerts")"
+assert_has "new release: alert names the deploy command" "seerr-rebuild.sh --deploy-release" "$(cat "$T/alerts")"
+FAKE_UPSTREAM=v0.9.0 FAKE_CAND_TREE=$TREE run true; rc=$?
+assert_eq "new release again: tested candidate kept, nothing rebuilt or swapped" "0 " "$rc $(calls 'build|tag|compose')"
+assert_eq "new release again: told only once" "" "$(cat "$T/alerts")"
+FAKE_UPSTREAM= run true; rc=$?
+assert_eq "running release unknown: treated as new, nothing swapped" "0 " "$rc $(calls 'tag|compose')"
+FAKE_UPSTREAM=v0.9.0 FAKE_CAND_TREE=$TREE run true --deploy-release; rc=$?
+assert_eq "--deploy-release: tested candidate deployed without a rebuild" "0 " "$rc $(calls build)"
+assert_eq "--deploy-release: backup, swap, start" "compose stop seerr;compose up -d --no-deps seerr;" "$(calls compose)"
+assert_eq "--deploy-release: candidate becomes current" "tag seerr-local:current seerr-local:rollback;tag seerr-local:candidate seerr-local:current;" "$(calls tag)"
+FAKE_UPSTREAM=v0.9.0 run true --deploy-release; rc=$?
+assert_eq "--deploy-release without a candidate: built and deployed" "0 1 tag seerr-local:candidate seerr-local:current;" "$rc $(grep -c -E '^build .*candidate' "$T/log") $(calls 'tag seerr-local:candidate')"
 
 FAKE_UP_FAIL=1 run false; rc=$?
 assert_eq "compose up fails: exit 1, rolled back" "1 tag seerr-local:rollback seerr-local:current;" "$rc $(calls tag | sed "s/.*;\\(tag seerr-local:rollback[^;]*;\\)/\\1/")"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Rebuild of our own Seerr image (README "Own image"): newest stable release + OIDC PR #2715 + image/patches + image/dependency-overrides.json; upstream typecheck and tests, backup, deploy, roll back on failure, Telegram alert.
-#   seerr-rebuild.sh [--force] [--no-deploy]   buntu with the docker group; timer seerr-rebuild, Tue 04:27
+#   seerr-rebuild.sh [--force] [--no-deploy] [--deploy-release]   buntu with the docker group; timer seerr-rebuild, Tue 04:27
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -16,12 +16,14 @@ APPDATA=${SR_APPDATA:-/srv/appdata/seerr}
 ALERT=${SR_ALERT:-$SEERR/../_global/scripts/oob-alert.sh}
 PRN=2715
 REPO=seerr-local
-FORCE=0; DEPLOY=1
+FORCE=0; DEPLOY=1; RELEASE_OK=0
+DEPLOY_CMD="sudo systemd-run --uid=buntu --gid=buntu -p SupplementaryGroups=docker -p StateDirectory=seerr-rebuild --wait --pipe --quiet -E HOME=/home/buntu /bin/bash /home/buntu/Projects/Docker/Seerr/scripts/seerr-rebuild.sh --deploy-release"
 for a in "$@"; do
   case $a in
     --force) FORCE=1 ;;
     --no-deploy) DEPLOY=0 ;;
-    *) echo "usage: seerr-rebuild.sh [--force] [--no-deploy]" >&2; exit 64 ;;
+    --deploy-release) RELEASE_OK=1 ;;
+    *) echo "usage: seerr-rebuild.sh [--force] [--no-deploy] [--deploy-release]" >&2; exit 64 ;;
   esac
 done
 
@@ -107,22 +109,41 @@ if [ "$FORCE" = 0 ] && [ "$cur" = "$tree" ]; then
   log "unchanged ($version)"
   exit 0
 fi
+# a new release may migrate the DB one way: built and tested, deployed only by the owner (--deploy-release)
+running=$($DOCKER image inspect -f '{{index .Config.Labels "holy-grail.seerr.upstream"}}' "$REPO:current" 2>/dev/null || true)
+hold=0
+[ "$DEPLOY" = 1 ] && [ "$RELEASE_OK" = 0 ] && [ "$running" != "$tag" ] && hold=1
+held() {
+  once "held-$version" && alert "$version built and tested, not deployed: a new release (running ${running:-unknown}) may migrate the DB one way. Deploy: $DEPLOY_CMD"
+  log "built $REPO:$version, new release held for the owner"
+  exit 0
+}
 
-if ! $DOCKER build --network host --target build --build-arg "COMMIT_TAG=$version" -t "$REPO:test" "$src" > "$STATE/build.log" 2>&1; then
-  alert "build failed for $version (see $STATE/build.log), current image kept"
-  exit 1
-fi
-if ! $DOCKER run --rm --network none "$REPO:test" sh -c 'pnpm typecheck && pnpm test' > "$STATE/test.log" 2>&1; then
+build_candidate() {
+  if ! $DOCKER build --network host --target build --build-arg "COMMIT_TAG=$version" -t "$REPO:test" "$src" > "$STATE/build.log" 2>&1; then
+    alert "build failed for $version (see $STATE/build.log), current image kept"
+    exit 1
+  fi
+  if ! $DOCKER run --rm --network none "$REPO:test" sh -c 'pnpm typecheck && pnpm test' > "$STATE/test.log" 2>&1; then
+    $DOCKER rmi "$REPO:test" >/dev/null 2>&1 || true
+    alert "upstream tests failed for $version (see $STATE/test.log), current image kept"
+    exit 1
+  fi
   $DOCKER rmi "$REPO:test" >/dev/null 2>&1 || true
-  alert "upstream tests failed for $version (see $STATE/test.log), current image kept"
-  exit 1
+  if ! $DOCKER build --network host --build-arg "COMMIT_TAG=$version" --label "holy-grail.seerr.tree=$tree" --label "holy-grail.seerr.upstream=$tag" --label "holy-grail.seerr.pr=$sha" \
+      -t "$REPO:$version" -t "$REPO:candidate" "$src" >> "$STATE/build.log" 2>&1; then
+    alert "build failed for $version (see $STATE/build.log), current image kept"
+    exit 1
+  fi
+}
+
+cand=$($DOCKER image inspect -f '{{index .Config.Labels "holy-grail.seerr.tree"}}' "$REPO:candidate" 2>/dev/null || true)
+if [ "$FORCE" = 0 ] && [ "$cand" = "$tree" ]; then
+  log "candidate $version already built and tested"
+else
+  build_candidate
 fi
-$DOCKER rmi "$REPO:test" >/dev/null 2>&1 || true
-if ! $DOCKER build --network host --build-arg "COMMIT_TAG=$version" --label "holy-grail.seerr.tree=$tree" --label "holy-grail.seerr.upstream=$tag" --label "holy-grail.seerr.pr=$sha" \
-    -t "$REPO:$version" -t "$REPO:candidate" "$src" >> "$STATE/build.log" 2>&1; then
-  alert "build failed for $version (see $STATE/build.log), current image kept"
-  exit 1
-fi
+[ "$hold" = 1 ] && held
 if [ "$DEPLOY" = 0 ]; then
   log "built $REPO:$version (not deployed)"
   exit 0
