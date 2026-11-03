@@ -1,0 +1,16 @@
+# Tells Home Assistant on fastpi just before every clean shutdown (idle poweroff, reboot, poweroff), so a power drop without this report raises ServerPowerLost (fastpi Home-Assistant packages/plug_watch.yaml).
+[Unit]
+Description=Report a clean shutdown to Home Assistant (plug watch power-loss alert)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/beefy-shutdown-notify.conf
+ExecStart=/bin/true
+ExecStop=/usr/bin/curl -fsS -m 5 --retry 2 --retry-connrefused -o /dev/null -X POST "http://192.168.1.2:8123/api/webhook/${HA_WEBHOOK}"
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

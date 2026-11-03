@@ -208,3 +208,14 @@ never clobbers tuned values), then `systemctl daemon-reload && enable --now`.
 ## Nightly window hold
 
 `beefy-maintenance-window.service` (03:58, `Server/9-Night-Schedule.md`) holds `INHIBIT_FILE` until 04:45 and releases it after the window jobs, so the 15 idle minutes never cut the maintenance wake short.
+
+
+## Clean-shutdown report (2026-11-03)
+
+`beefy-shutdown-notify.service` (installed by `8-Idle-Watcher/install.sh`): its `ExecStop` POSTs to a Home Assistant webhook on fastpi just before every clean shutdown (idle poweroff, reboot, poweroff), while the network is still up. fastpi's plug watch then knows a power drop was clean; a drop with no report raises ⚡ `ServerPowerLost` (fastpi `Docker/Home-Assistant/README.md` "Plug watch").
+
+| Piece | Where |
+|---|---|
+| unit | `Server/8-Idle-Watcher/beefy-shutdown-notify.service` → `/etc/systemd/system/` |
+| webhook id | `/etc/beefy-shutdown-notify.conf` (`HA_WEBHOOK=…`, root 600), same value as fastpi HA `secrets.yaml` `beefy_shutdown_webhook` |
+| test | `sudo systemctl stop beefy-shutdown-notify && sudo systemctl start beefy-shutdown-notify` → HA `sensor.beefy_clean_shutdown` = now |

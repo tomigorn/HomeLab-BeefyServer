@@ -5,8 +5,12 @@ D=$(cd "$(dirname "$0")" && pwd)
 install -m 0755 "$D/beefy_idle_watcher.py"      /usr/local/sbin/beefy_idle_watcher.py
 install -m 0644 "$D/beefy-idle-watcher.service" /etc/systemd/system/beefy-idle-watcher.service
 [ -f /etc/beefy-idle.conf ] || install -m 0644 "$D/beefy-idle.conf" /etc/beefy-idle.conf
+install -m 0644 "$D/beefy-shutdown-notify.service" /etc/systemd/system/beefy-shutdown-notify.service
+[ -f /etc/beefy-shutdown-notify.conf ] || echo "HA_WEBHOOK=" > /etc/beefy-shutdown-notify.conf  # set the id from fastpi Home-Assistant secrets.yaml beefy_shutdown_webhook
+chmod 600 /etc/beefy-shutdown-notify.conf
 systemctl daemon-reload
 systemctl enable beefy-idle-watcher.service
+systemctl enable --now beefy-shutdown-notify.service
 # restart (NOT `enable --now`): --now is a no-op on an already-running service,
 # so it would not pick up an updated binary. restart always reloads it.
 systemctl restart beefy-idle-watcher.service
