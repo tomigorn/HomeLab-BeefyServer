@@ -203,6 +203,24 @@ def net_kbps(dev_a, dev_b, nic, secs):
     return max(0, delta) / 1000.0 / secs   # clamp counter reset/re-init (negative) to 0
 
 
+def default_route_iface(route_text):
+    """Interface of the default route in a /proc/<pid>/net/route snapshot, or None."""
+    for line in (route_text or "").splitlines()[1:]:
+        f = line.split()
+        if len(f) > 7 and f[1] == "00000000" and f[7] == "00000000":
+            return f[0]
+    return None
+
+
+def vpn_uplink(configured, route_text):
+    """The VPN container's uplink NIC: as configured, or its default-route NIC for "auto".
+
+    Docker numbers a container's NICs by network attach order, so eth0 can be an idle
+    second network (2026-11-03: seeding left on eth1 and kept beefy awake).
+    """
+    return default_route_iface(route_text) if configured == "auto" else configured
+
+
 def vpn_upload_kbps(vpn_a, vpn_b, uplink, tunnel, secs):
     """VPN-container traffic that is not download, in kB/s, from two snapshots of its
     netns /proc/<pid>/net/dev: uplink rx+tx minus tunnel rx.
@@ -211,7 +229,7 @@ def vpn_upload_kbps(vpn_a, vpn_b, uplink, tunnel, secs):
     from net_kbps and disk_kbps lets seeding go unseen while downloads (tunnel rx) still keep beefy
     awake. A missing snapshot or a counter reset (container restarted) subtracts nothing.
     """
-    if secs <= 0 or not vpn_a or not vpn_b:
+    if secs <= 0 or not vpn_a or not vpn_b or not uplink:
         return 0.0
     up_rx_a, up_tx_a = _nic_rx_tx(vpn_a, uplink)
     up_rx_b, up_tx_b = _nic_rx_tx(vpn_b, uplink)
@@ -377,7 +395,7 @@ _DEFAULTS = {
     "CT_MAX_IDLE": 300,
     "CT_MIN_BYTES": 1024,
     "VPN_CONTAINER": "",
-    "VPN_UPLINK": "eth0",
+    "VPN_UPLINK": "auto",
     "VPN_TUNNEL": "tun0",
     "METRICS_FILE": "/run/beefy-idle.prom",
 }
@@ -452,7 +470,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.7.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.7.1"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -476,6 +494,7 @@ def _snapshot(cfg):
         "ds": _read("/proc/diskstats"),
         "vpn_pid": vpn_pid,
         "vpn_dev": _read("/proc/%s/net/dev" % vpn_pid) if vpn_pid else None,
+        "vpn_route": _read("/proc/%s/net/route" % vpn_pid) if vpn_pid else None,
     }
 
 
@@ -498,7 +517,7 @@ def main():
         try:
             cpu = cpu_busy_pct(prev["stat"], cur["stat"])
             same_vpn = prev["vpn_pid"] == cur["vpn_pid"]
-            vpn_up = vpn_upload_kbps(prev["vpn_dev"], cur["vpn_dev"], cfg["VPN_UPLINK"],
+            vpn_up = vpn_upload_kbps(prev["vpn_dev"], cur["vpn_dev"], vpn_uplink(cfg["VPN_UPLINK"], cur["vpn_route"]),
                                      cfg["VPN_TUNNEL"], secs) if same_vpn else 0.0
             net = max(0.0, net_kbps(prev["dev"], cur["dev"], cfg["PRIMARY_NIC"], secs) - vpn_up)
             # uploaded bytes were read from the data disks first (through mergerfs, so not attributable per process)

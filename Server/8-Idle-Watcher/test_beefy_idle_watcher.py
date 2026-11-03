@@ -11,7 +11,7 @@ from beefy_idle_watcher import (
     cpu_busy_pct, net_kbps, disk_kbps,
     parse_published_ports, parse_local_addrs, count_ct_inbound,
     evaluate, update_idle, should_sleep, load_config,
-    vpn_upload_kbps,
+    vpn_upload_kbps, default_route_iface, vpn_uplink,
 )
 
 
@@ -291,6 +291,30 @@ class TestUploadsIgnored(unittest.TestCase):
     def test_missing_vpn_namespace_subtracts_nothing(self):
         self.assertEqual(vpn_upload_kbps(None, self.dev(9, 9, 0, 0), "eth0", "tun0", 1), 0.0)
         self.assertEqual(vpn_upload_kbps(self.dev(0, 0, 0, 0), None, "eth0", "tun0", 1), 0.0)
+
+    # gluetun's main routing table, captured 2026-11-03: eth1 carries the default route, eth0 is an idle second network
+    ROUTE = ("Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+             "eth1\t00000000\t010A1CAC\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"
+             "eth1\t000A1CAC\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
+             "eth0\t00121CAC\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n")
+
+    def test_default_route_iface_from_gluetun_routes(self):
+        self.assertEqual(default_route_iface(self.ROUTE), "eth1")
+
+    def test_default_route_iface_missing(self):
+        self.assertIsNone(default_route_iface(self.ROUTE.replace("eth1\t00000000", "eth1\t0000000A")))
+        self.assertIsNone(default_route_iface(None))
+
+    def test_auto_uplink_follows_default_route(self):
+        self.assertEqual(vpn_uplink("auto", self.ROUTE), "eth1")
+        self.assertEqual(vpn_uplink("eth0", self.ROUTE), "eth0")
+        self.assertIsNone(vpn_uplink("auto", None))
+
+    def test_unknown_uplink_subtracts_nothing(self):
+        self.assertEqual(vpn_upload_kbps(self.dev(0, 0, 0, 0), self.dev(9, 9, 0, 0), None, "tun0", 1), 0.0)
+
+    def test_auto_is_the_default(self):
+        self.assertEqual(load_config({})["VPN_UPLINK"], "auto")
 
     def test_vpn_counter_reset_subtracts_nothing(self):
         a = self.dev(9_000_000, 9_000_000, 0, 0)

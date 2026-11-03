@@ -119,7 +119,7 @@ CT_MAX_IDLE=300           # s a conntrack flow may idle and still count as in us
 CT_MIN_BYTES=1024         # bytes per sample a counted flow must move (heartbeats stay below)
 INHIBIT_FILE=/run/beefy-keep-awake
 VPN_CONTAINER=movie-gluetun  # empty = off; its uploads are ignored
-VPN_UPLINK=eth0
+VPN_UPLINK=auto           # the container's default-route NIC (Docker numbers NICs by attach order)
 VPN_TUNNEL=tun0
 ```
 
