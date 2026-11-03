@@ -329,7 +329,7 @@ Torrent indexers (`scripts/torrent-indexers.sh`, idempotent, also the FlareSolve
 
 | Indexer | Priority | Min. seeders | App tag (Radarr/Sonarr) | Used for | Via |
 |---|---|---|---|---|---|
-| 1337x, EZTV (Sonarr only), The Pirate Bay, Knaben | 40 | 5 | none | every title | 1337x/EZTV: FlareSolverr (Prowlarr tag `flaresolverr`, Cloudflare); others direct |
+| 1337x, EZTV (Sonarr only), The Pirate Bay, Knaben | 40 | 5 | none | every title | 1337x/EZTV: FlareSolverr (Prowlarr tag `flaresolverr`, Cloudflare); others direct; 1337x on the mirror `https://1337x.st/` (`BASE_1337X` in `scripts/torrent-indexers.sh`): `1337x.to` answers the VPN exit with Cloudflare error 1006 (IP banned, 2026-11-03), the mirrors only with the challenge FlareSolverr solves |
 | same four, `<name> (old-rare)` | 40 | 1 | `old-rare` | only titles tagged `old-rare` (= on Any quality, [Old and rare titles](#old-and-rare-titles)) | same |
 
 - Owner 2026-10-26: 5 seeders for normal titles, 1 for old & rare (they may have one seeder). Usenet unchanged.

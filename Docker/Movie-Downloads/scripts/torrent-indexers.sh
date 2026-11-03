@@ -39,11 +39,14 @@ echo "FlareSolverr proxy ready, tag $TAG ($tag_id)"
 
 profile_id=$(p /appprofile | j 'import json,sys; print(next(a["id"] for a in json.load(sys.stdin) if a["name"]=="Standard"))')
 
+# 1337x.to bans Proton exit addresses (Cloudflare error 1006, 2026-11-03); its official mirror only shows the solvable challenge.
+BASE_1337X=${BASE_1337X:-https://1337x.st/}
+
 # definition|tagged|name|min seeders
 for spec in "1337x|1" "The Pirate Bay|0" "EZTV|1" "Knaben|0"; do
   for variant in "$spec|${spec%|*}|$MINSEEDERS" "$spec|${spec%|*}$RARE_SUFFIX|$RARE_MINSEEDERS"; do
   IFS='|' read -r def tagged name minseeders <<<"$variant"
-  body=$( { p /indexer/schema; echo; p /indexer; } | DEF=$def NAME=$name TAGGED=$tagged TAG_ID=$tag_id PROFILE_ID=$profile_id PRIORITY=$PRIORITY MINSEEDERS=$minseeders j '
+  body=$( { p /indexer/schema; echo; p /indexer; } | DEF=$def NAME=$name TAGGED=$tagged TAG_ID=$tag_id PROFILE_ID=$profile_id PRIORITY=$PRIORITY MINSEEDERS=$minseeders BASE_1337X=$BASE_1337X j '
 import json, os, sys
 raw, dec = sys.stdin.read(), json.JSONDecoder()
 schema, end = dec.raw_decode(raw)
@@ -53,6 +56,8 @@ ix = next((i for i in existing if i["name"] == n), None) or next(i for i in sche
 for f in ix["fields"]:
     if f["name"] == "torrentBaseSettings.appMinimumSeeders":
         f["value"] = int(os.environ["MINSEEDERS"])
+    if f["name"] == "baseUrl" and os.environ["DEF"] == "1337x":
+        f["value"] = os.environ["BASE_1337X"]
 ix.update(name=n, enable=True, priority=int(os.environ["PRIORITY"]), appProfileId=int(os.environ["PROFILE_ID"]), tags=[int(os.environ["TAG_ID"])] if os.environ["TAGGED"] == "1" else [])
 ix.pop("presets", None)
 print(json.dumps(ix))

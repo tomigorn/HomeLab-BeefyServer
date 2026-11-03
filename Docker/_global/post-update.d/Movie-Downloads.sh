@@ -91,6 +91,7 @@ if want flaresolverr; then
 fi
 if want prowlarr; then
   check md.prowlarr-auth '^External$' "$(md_auth prowlarr)"
+  check md.prowlarr-1337x-mirror '^https://1337x\.st/ https://1337x\.st/$' "$(md_arr prowlarr 9696 /api/v1/indexer | jq -r '[.[] | select(.name | startswith("1337x")) | [.fields[] | select(.name == "baseUrl") | .value][0]] | sort | join(" ")' 2>&1)"
   check md.prowlarr-torrent-indexers '^min5=4 min1=4$' "$(md_arr prowlarr 9696 /api/v1/indexer | jq -r '[.[] | select(.enable) | [.fields[] | select(.name | endswith("inimumSeeders")) | .value][0] | select(. != null)] | "min5=\([.[] | select(. == 5)] | length) min1=\([.[] | select(. == 1)] | length)"' 2>&1)"
   check md.prowlarr-flaresolverr '^FlareSolverr 4$' "$(t=$(md_arr prowlarr 9696 /api/v1/tag | jq '[.[] | select(.label == "flaresolverr") | .id][0]'); echo "$(md_arr prowlarr 9696 /api/v1/indexerProxy | jq -r --argjson t "$t" '[.[] | select(.tags | index($t)) | .name] | join(",")' 2>&1) $(md_arr prowlarr 9696 /api/v1/indexer | jq --argjson t "$t" '[.[] | select(.tags | index($t))] | length' 2>&1)")"
   check md.prowlarr-priorities '^NZBgeek=25 NzbPlanet=26 Treasure Maps=27 NZBIndex=50$' "$(md_arr prowlarr 9696 /api/v1/indexer | jq -r '[.[] | {(.name): .priority}] | add | "NZBgeek=\(.NZBgeek) NzbPlanet=\(.NzbPlanet) Treasure Maps=\(."Treasure Maps") NZBIndex=\(.NZBIndex)"' 2>&1)"
