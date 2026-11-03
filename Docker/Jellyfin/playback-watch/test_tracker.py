@@ -92,6 +92,8 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(run(self.t, steps), [])
         self.assertEqual([i["kind"] for i in self.t.update([session(12, 60)], 60)], ["silent"])
         self.assertEqual(self.t.update([session(14, 70)], 70), [])
+        self.assertEqual([round(i["seconds"]) for i in self.t.update([session(16, 80)], 80)], [16])
+        self.assertEqual([round(i["seconds"]) for i in self.t.update([session(18, 90)], 90)], [8])
 
     def test_seek_forward_and_back_ignored(self):
         inc = run(self.t, [(0, [session(100, 0)]), (5, [session(500, 5)]), (10, [session(20, 10)]), (15, [session(25, 15)])])

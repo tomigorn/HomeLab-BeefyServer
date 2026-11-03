@@ -215,9 +215,11 @@ def _read_rows(path):
             continue
         for line in text.splitlines():
             try:
-                rows.append(json.loads(line))
+                row = json.loads(line)
             except ValueError:
-                pass
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
     return rows
 
 

@@ -134,6 +134,57 @@ class RecordTest(unittest.TestCase):
         self.assertIn("2 incidents", text)
         self.assertIn("stall 1", text)
 
+    def test_report_skips_malformed_and_non_dict_lines(self):
+        path = self.dir / "incidents.jsonl"
+        rec.append_incident(path, incident(item="Good"), CTX, clock=lambda: 900.0)
+        with open(path, "a") as f:
+            f.write("5\n[1]\n\"s\"\nnull\n{broken\n")
+        text = rec.report(path, 3600, now=lambda: 1000.0)
+        self.assertIn("Good", text)
+        self.assertIn("1 incidents", text)
+
+    def test_report_reads_rotated_files(self):
+        path = self.dir / "incidents.jsonl"
+        for suffix, item in (("", "Cur"), (".1", "R1"), (".2", "R2"), (".3", "R3")):
+            p = self.dir / ("incidents.jsonl" + suffix)
+            rec.append_incident(p, incident(item=item), CTX, clock=lambda: 900.0)
+        text = rec.report(path, 3600, now=lambda: 1000.0)
+        for item in ("Cur", "R1", "R2", "R3"):
+            self.assertIn(item, text)
+        self.assertIn("4 incidents", text)
+
+    def _context_with(self, bad):
+        stat = ["cpu  100 0 100 800 0 0 0 0 0 0\n", "cpu  150 0 150 900 0 0 0 0 0 0\n"]
+        disk = ["   8  0 sda 1 0 1 1 1 0 1 1 0 1000 1 0 0 0 0 0 0\n", "   8  0 sda 1 0 1 1 1 0 1 1 0 1250 1 0 0 0 0 0 0\n"]
+        if bad == "cpu":
+            stat = ["garbage\n", "garbage\n"]
+        else:
+            disk = ["garbage\n", "garbage\n"]
+        reads = {"stat": iter(stat), "diskstats": iter(disk)}
+
+        def read(p, *a, **k):
+            p = str(p)
+            if p.endswith("loadavg"):
+                return "1.50 1.00 0.50 1/100 123\n"
+            return next(reads[p.rsplit("/", 1)[1]])
+
+        class R:
+            stdout, returncode = "", 3
+
+        return rec.context(run=lambda *a, **k: R(), read=read, sleep=lambda s: None)
+
+    def test_context_cpu_probe_fails_alone(self):
+        ctx = self._context_with("cpu")
+        self.assertIsNone(ctx["cpu_percent"])
+        self.assertAlmostEqual(ctx["disk_busy_percent"], 50.0)
+        self.assertEqual(ctx["load"], [1.5, 1.0, 0.5])
+
+    def test_context_disk_probe_fails_alone(self):
+        ctx = self._context_with("disk")
+        self.assertIsNone(ctx["disk_busy_percent"])
+        self.assertAlmostEqual(ctx["cpu_percent"], 50.0)
+        self.assertEqual(ctx["load"], [1.5, 1.0, 0.5])
+
     def test_report_empty(self):
         self.assertIn("0 incidents", rec.report(self.dir / "none.jsonl", 3600, now=lambda: 1.0))
 
