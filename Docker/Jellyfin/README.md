@@ -383,15 +383,25 @@ Direct play (no transcode) is always best; the server transcodes only what the d
 
 ## Capacity, measured (2026-11-03)
 
-Real 4K HDR titles (DV/HDR10+ WEB-DL, typical 15.4 Mbit/s; a 4K remux is ~80). Wiki page for members: "Our machines" > "How many can watch at once".
+Wiki page for members: "Our machines" > "How many can watch at once".
 
-| Path | Measured | 4K web streams | 4K remux streams |
-|---|---|---|---|
-| SSD tier (870 QVO, `O_DIRECT`-like reads, caches dropped) | ~4,500 Mbit/s flat from 2 to 24 readers (SATA limit) | ~290 | ~55 |
-| HDD tier (raw `sdc`) | 2,280 (1 reader) → 1,250 Mbit/s (24) | ~80 | ~15 |
-| LAN: Jellyfin `/Videos/<id>/stream?static=true` from fastpi | ~930 Mbit/s flat 1–64 streams (1 GbE) | **~60** | **~11** |
-| Internet: client at a 926 Mbit/s line (Ookla) via Cloudflare tunnel → Traefik | 550–770 Mbit/s (peak at 2 streams) | **~35–45** | **~7–9** |
-| Transcode 4K HDR → 1080p SDR, `hevc_qsv` + `vpp_qsv` tonemap + `h264_qsv` 10 Mbit/s | 1: 3.70×, 2: 2.46×, 3: 1.69×, 4: 1.21×, 5: 0.99×, 6: 0.84×, 8: 0.63× real time | | **4 at once** |
+**Expected format** (Recyclarr default profile `4K HDR - UHD Bluray + WEB (1080p fallback)`, `../Movie-Downloads/recyclarr/recyclarr.yml`): Bluray-2160p encode > WEB 2160p > Bluray-1080p > WEB 1080p; HDR scored far above everything else (4K SDR still beats 1080p HDR); remuxes allowed but `Remux: smaller encode wins` -6000, so they rarely land. Library on 2026-11-03 (855 items):
+
+| | 2160p (216) | 1080p (638) |
+|---|---|---|
+| Bitrate median / p90 / max | 18.2 / 25.1 / 44.5 Mbit/s | 8.4 / 14.0 / 32.4 Mbit/s |
+| Codec, range | HEVC; DV+HDR10+ 89, DV+HDR10 64, HDR10+ 21, HDR10 11 | mostly H.264 SDR |
+
+**Measured limits** (test titles: real 4K DV/HDR10+ WEB-DL):
+
+| Path | Measured | 4K median (18) | 4K p90 (25) | 1080p median (8.4) |
+|---|---|---|---|---|
+| SSD tier (870 QVO, caches dropped) | ~4,500 Mbit/s flat from 2 to 24 readers (SATA limit) | ~245 | ~180 | ~535 |
+| HDD tier (raw `sdc`) | 2,280 (1 reader) → 1,250 Mbit/s (24) | ~70 | ~50 | ~150 |
+| LAN: Jellyfin `/Videos/<id>/stream?static=true` from fastpi | ~930 Mbit/s flat 1–64 streams (1 GbE) | **~50** | **~37** | **~110** |
+| Internet: client on a 926 Mbit/s line (Ookla) via Cloudflare tunnel → Traefik | 550–770 Mbit/s (peak at 2 streams) | **~30–42** | **~22–30** | **~65–90** |
+
+Transcode 4K HDR → 1080p SDR (`hevc_qsv` + `vpp_qsv` tonemap + `h264_qsv` 10 Mbit/s), slowest stream vs real time: 1: 3.70×, 2: 2.46×, 3: 1.69×, **4: 1.21×**, 5: 0.99×, 6: 0.84×, 8: 0.63× → **4 at once**.
 
 - Bottlenecks: direct play = the network (home: beefy 1 GbE; outside: most likely the Cloudflare tunnel, Traefik did 924 Mbit/s with TLS); transcoding = the UHD 730 media engine (load ≤ 3.5 on 12 threads).
 - RAM per transcode ~135 MB (3 parallel: ~0.4 GB); Jellyfin itself ~0.45 GB. The 8 GB `mem_limit` is ample; transcode segments go to `/config/cache/transcodes` on the NVMe, not RAM.
