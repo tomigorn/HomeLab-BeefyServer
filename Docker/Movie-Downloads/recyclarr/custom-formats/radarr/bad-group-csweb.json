@@ -1,0 +1,19 @@
+{
+  "trash_id": "7816cc84ad649f600d422909b418bb3f",
+  "trash_scores": {
+    "default": 0
+  },
+  "name": "Bad Group: CSWEB",
+  "includeCustomFormatWhenRenaming": false,
+  "specifications": [
+    {
+      "name": "CSWEB anywhere in the release name",
+      "implementation": "ReleaseTitleSpecification",
+      "negate": false,
+      "required": true,
+      "fields": {
+        "value": "(?<![A-Za-z0-9])CSWEB(?![A-Za-z0-9])"
+      }
+    }
+  ]
+}

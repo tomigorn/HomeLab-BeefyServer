@@ -172,7 +172,7 @@ def check_app(app, cfg):
         check("(k) single episode original+English+German beats season pack original+English", score(prof, [o, "English", "German"], V2160) > score(prof, [o, "English"], V2160, pack=True))
         check("(k) 2160p HDR single episode beats 2160p SDR season pack", score(prof, [o, "English"], V2160) > score(prof, [o, "English"], V2160_SDR, pack=True))
     # Groups TRaSH's group match misses without a dash (1337x): own `Bad Group: <name>` CFs reject every tag shape everywhere.
-    for grp in ("BlackBit", "Vyndros"):
+    for grp in ("BlackBit", "Vyndros", "CSWEB"):
         dash = names(t, [o, "English", "German"], V2160, "DDP5.1", group=grp)
         stem = dash[:-len("-" + grp)]
         for name in (dash, stem + " " + grp + ".mkv", stem + "." + grp, stem + "_" + grp, stem + " [" + grp + "]", stem + " (" + grp.upper() + ")"):

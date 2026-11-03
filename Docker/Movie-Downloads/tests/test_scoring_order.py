@@ -855,7 +855,7 @@ class NativeFormats(unittest.TestCase):
 
 class OwnRejects(unittest.TestCase):
     """Groups TRaSH's group match misses when the tag has no dash (`... H.265 BlackBit.mkv`, 1337x): own title-regex rejects, same shape for each."""
-    GROUPS = {"Bad Group: BlackBit": "BlackBit", "Bad Group: Vyndros": "Vyndros"}
+    GROUPS = {"Bad Group: BlackBit": "BlackBit", "Bad Group: Vyndros": "Vyndros", "Bad Group: CSWEB": "CSWEB"}
 
     def definition(self, app, name):
         return next(d for d in (json.loads(f.read_text()) for f in (ROOT / "recyclarr" / "custom-formats" / app).glob("*.json")) if d["name"] == name)
