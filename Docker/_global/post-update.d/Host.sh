@@ -6,6 +6,9 @@ check host.sso-egress '^200$' "$(docker exec jellyfin curl -s -m 8 -o /dev/null 
 check host.idle-watcher '^active fresh probe_error=0$' "$(echo "$(systemctl is-active beefy-idle-watcher.service) $(find /run/beefy-idle.prom -mmin -5 2>/dev/null | grep -q . && echo fresh || echo stale) probe_error=$(sed -n 's/^beefy_idle_busy{reason="probe_error"} //p' /run/beefy-idle.prom)")"
 check host.ct-acct '^1$' "$(cat /proc/sys/net/netfilter/nf_conntrack_acct 2>&1)"
 check host.timers '^enabled enabled enabled$' "$(systemctl is-enabled beefy-maintenance-window.timer auto-update.timer image-cleanup.timer | xargs)"
+# seeding through the VPN stays invisible to the idle watcher only if its uplink (default route in movie-gluetun) resolves to a real NIC; 2026-11-03 a fixed eth0 had become an idle second network
+check host.idle-vpn-uplink '^auto ok$' "$(sudo -n python3 "$(dirname "${BASH_SOURCE[0]}")/../../../Server/8-Idle-Watcher/check-vpn-uplink.py" 2>&1)"
+check host.shutdown-notify '^enabled active 600$' "$(systemctl is-enabled beefy-shutdown-notify.service) $(systemctl is-active beefy-shutdown-notify.service) $(sudo -n stat -c %a /etc/beefy-shutdown-notify.conf)"
 check host.idle-disks '^ok$' "$(for d in /srv/.disks/*; do p=$(findmnt -no SOURCE "$d" 2>/dev/null) || continue; k=$(lsblk -no PKNAME "$p" 2>/dev/null); grep -q "^DATA_DISKS=.*\b$k\b" /etc/beefy-idle.conf || echo "missing:$d"; done | xargs | sed 's/^$/ok/')"
 check host.mergerfs-branches '^live=/srv/.disks/ssd-hot=RW,1479G:/srv/.disks/ssd-hot2=RW,1479G:/srv/.disks/hdd-cold=RW,2800G fstab=1$' "live=$(getfattr --only-values -n user.mergerfs.branches /srv/video/.mergerfs 2>/dev/null) fstab=$(grep -c '^/srv/.disks/ssd-hot=RW,1479G:/srv/.disks/ssd-hot2=RW,1479G:/srv/.disks/hdd-cold=RW,2800G ' /etc/fstab)"
 check host.hd-idle '^-i 1200$' "$(ps -o args= -C hd-idle | grep -o 'K1S05Y9M -i [0-9]*' | cut -d' ' -f2-)"
