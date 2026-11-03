@@ -381,6 +381,22 @@ Per device (stored on the device, not on the server):
 
 Direct play (no transcode) is always best; the server transcodes only what the device cannot play.
 
+## Capacity, measured (2026-11-03)
+
+Real 4K HDR titles (DV/HDR10+ WEB-DL, typical 15.4 Mbit/s; a 4K remux is ~80). Wiki page for members: "Our machines" > "How many can watch at once".
+
+| Path | Measured | 4K web streams | 4K remux streams |
+|---|---|---|---|
+| SSD tier (870 QVO, `O_DIRECT`-like reads, caches dropped) | ~4,500 Mbit/s flat from 2 to 24 readers (SATA limit) | ~290 | ~55 |
+| HDD tier (raw `sdc`) | 2,280 (1 reader) → 1,250 Mbit/s (24) | ~80 | ~15 |
+| LAN: Jellyfin `/Videos/<id>/stream?static=true` from fastpi | ~930 Mbit/s flat 1–64 streams (1 GbE) | **~60** | **~11** |
+| Internet: client at a 926 Mbit/s line (Ookla) via Cloudflare tunnel → Traefik | 550–770 Mbit/s (peak at 2 streams) | **~35–45** | **~7–9** |
+| Transcode 4K HDR → 1080p SDR, `hevc_qsv` + `vpp_qsv` tonemap + `h264_qsv` 10 Mbit/s | 1: 3.70×, 2: 2.46×, 3: 1.69×, 4: 1.21×, 5: 0.99×, 6: 0.84×, 8: 0.63× real time | | **4 at once** |
+
+- Bottlenecks: direct play = the network (home: beefy 1 GbE; outside: most likely the Cloudflare tunnel, Traefik did 924 Mbit/s with TLS); transcoding = the UHD 730 media engine (load ≤ 3.5 on 12 threads).
+- RAM per transcode ~135 MB (3 parallel: ~0.4 GB); Jellyfin itself ~0.45 GB. The 8 GB `mem_limit` is ample; transcode segments go to `/config/cache/transcodes` on the NVMe, not RAM.
+- Home and outside viewers share beefy's 1 GbE (~930 Mbit/s total). A round trip measured from fastpi itself (fastpi → Cloudflare → fastpi) shows only ~360 Mbit/s because the data crosses the home line twice; measure from a real outside client.
+
 ## Playback watch (2026-11-02)
 Service `playback-watch` (system unit, user buntu, `playback-watch/`): polls `/Sessions?ActiveWithinSeconds=60` every 5 s at the Jellyfin container's bridge IP (never `localhost`/beefy's own addresses, so the idle watcher does not count it), records stutter and eases it. qBittorrent/SABnzbd are called at movie-gluetun's bridge IP for the same reason (never 127.0.0.1: if it fails, that client is skipped). After a failed poll the Jellyfin IP is re-resolved at most every 60 s.
 
