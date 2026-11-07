@@ -110,9 +110,19 @@ def parse_week(lines, country):
             season = r[head["season_title"]]
             out["movie" if r[head["category"]] == "Films" else "tv"].append(
                 {"rank": int(r[head["weekly_rank"]]), "title": r[head["show_title"]], "season": None if season in ("", "N/A") else season})
+    return merge_week(out)
+
+
+def merge_week(week):
+    """Netflix ranks each season of a show on its own: keeps a title once at its best rank (its season) and closes the ranks up."""
     for kind in ("movie", "tv"):
-        out[kind].sort(key=lambda e: e["rank"])
-    return out
+        seen, kept = set(), []
+        for e in sorted(week[kind], key=lambda e: e["rank"]):
+            if title_key(e["title"]) not in seen:
+                seen.add(title_key(e["title"]))
+                kept.append({**e, "rank": len(kept) + 1})
+        week[kind] = kept
+    return week
 
 
 def due_week(now):
@@ -431,7 +441,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
                 say(f"Netflix list unchanged, week {top and top['week']} (due {due_week(now)})")
         except (OSError, urllib.error.URLError, ValueError) as e:
             say(f"Netflix list not fetched: {e}")
-    state["top"] = top or {"week": None, "movie": [], "tv": []}
+    state["top"] = merge_week(top) if top else {"week": None, "movie": [], "tv": []}
 
     tried, failed = set(), {}
 

@@ -627,6 +627,7 @@ For a title you are no longer interested in: it leaves Continue watching, nothin
 |---|---|---|
 | Top 10 Shows / Movies | Netflix Top 10, official weekly per-country list, `https://www.netflix.com/tudum/top10/data/all-weeks-countries.tsv` (country `CH`, published Tuesdays) | public download offered on top10.netflix.com |
 | Services, genres | TMDB discover via Seerr (`/api/v1/discover/movies|tv`, `watchRegion=CH`, `watchProviders`, `genre`, `sortBy=popularity.desc`; Seerr's TMDB access, no own key) | TMDB API; streaming availability is JustWatch data via TMDB: credited on the page |
+| Netflix rows per season | Netflix lists a show once per ranked season (Lupin Part 1, 3, 4):  keeps each title once at its best rank, with that entry's season, and closes the ranks up (fewer than 10 shows is possible: no refill from other sources) | |
 | Netflix title → TMDB id | Seerr search, exact title (also original title), most popular of the type; series season from Netflix's season name (`Season 4`, a TMDB season name, `Limited Series` = the only season, else the latest aired). Wrong or missing match: `scripts/popular-overrides.tsv` (`kind<TAB>Netflix title<TAB>TMDB id`) | |
 
 ### Release check (never grabs)

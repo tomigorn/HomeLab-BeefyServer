@@ -48,6 +48,25 @@ class Netflix(unittest.TestCase):
         self.assertEqual([(e["rank"], e["title"], e["season"]) for e in week["tv"]], [(1, "Below", "Below: Limited Series"), (2, "The Diplomat", "The Diplomat: Season 4")])
         self.assertIsNone(week["movie"][0]["season"])
 
+    def test_one_entry_per_title_at_its_best_rank_and_ranks_close_up(self):
+        lines = tsv(
+            ("Switzerland", "CH", "2026-11-01", "TV", 1, "Lupin", "Lupin: Part 4", 2),
+            ("Switzerland", "CH", "2026-11-01", "TV", 2, "Below", "Below: Limited Series", 2),
+            ("Switzerland", "CH", "2026-11-01", "TV", 3, "lupin", "Lupin: Part 1", 2),
+            ("Switzerland", "CH", "2026-11-01", "TV", 4, "Lupin Rouge", "Lupin Rouge: Season 1", 2),
+            ("Switzerland", "CH", "2026-11-01", "TV", 5, "Lupin", "Lupin: Part 3", 2),
+            ("Switzerland", "CH", "2026-11-01", "Films", 1, "Animals", "N/A", 2),
+            ("Switzerland", "CH", "2026-11-01", "Films", 2, "Animals", "N/A", 2),
+            ("Switzerland", "CH", "2026-11-01", "Films", 3, "Armored", "N/A", 2),
+        )
+        week = pop.parse_week(lines, "CH")
+        self.assertEqual([(e["rank"], e["title"], e["season"]) for e in week["tv"]], [(1, "Lupin", "Lupin: Part 4"), (2, "Below", "Below: Limited Series"), (3, "Lupin Rouge", "Lupin Rouge: Season 1")])
+        self.assertEqual([(e["rank"], e["title"]) for e in week["movie"]], [(1, "Animals"), (2, "Armored")])
+
+    def test_cached_week_with_repeated_shows_is_merged(self):
+        top = {"week": "w", "movie": [], "tv": [{"rank": 1, "title": "Lupin", "season": "Lupin: Part 4"}, {"rank": 2, "title": "Below", "season": None}, {"rank": 3, "title": "Lupin", "season": "Lupin: Part 1"}]}
+        self.assertEqual([(e["rank"], e["title"]) for e in pop.merge_week(top)["tv"]], [(1, "Lupin"), (2, "Below")])
+
     def test_no_rows_for_the_country(self):
         self.assertIsNone(pop.parse_week(tsv(("Germany", "DE", "2026-10-18", "Films", 1, "X", "N/A", 1)), "CH"))
 
