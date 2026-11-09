@@ -154,6 +154,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Customization | Where | Reapply | Verify | Update can break |
 |---|---|---|---|---|
 | Pinned by digest | `Floppy/.env` FLOPPY_TAG | Floppy README "Update" | `floppy.image-pin`: → @sha256:5e88307d… | |
+| Redis pinned by digest, the Celery broker | `Floppy/.env` REDIS_TAG (+ `.env.example`) | new digest into both, `update-project.sh Floppy pull /srv/appdata/floppy /srv/appdata/floppy-redis` | `floppy.redis-pin`: → 8.10.x-alpine@sha256:71885d8c…; `floppy.redis-broker`: celery inspect ping via Redis → 2 pong | Redis major with a data-format change |
 | Security env: SSO only, admin/demo/debug off, secure cookies, no X-Forwarded-Host, ComicVine off | compose | compose | `floppy.security-env`: env list; `floppy.sso-only-login`: login page → sso 0 password | renamed env vars = default (password form) back |
 | Seerr webhook shared secret | `secrets/floppy_seerr_webhook_secret` | Seerr seerr-webhook.py apply | `floppy.seerr-webhook-secret`: POST without secret → 401 | |
 | Pinned subnet 172.28.16.0/24, internal redis net | compose | compose | `floppy.subnet`: → 172.28.16.0/24 172.28.16.x internal-redis=true | |

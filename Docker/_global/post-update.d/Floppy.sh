@@ -19,3 +19,8 @@ if want floppy; then
   # floppy-sync key expires after 365 days, weekly rotation 45 days before: timer on, last run ok, > 30 days left
   check floppy.abs-key-rotate '^enabled ok$' "$(systemctl is-enabled floppy-abs-key-rotate.timer 2>&1) $(python3 -c 'import json,time; s=json.load(open("/var/lib/floppy-abs-key/status.json")); print("ok" if s["ok"] and s["expires"] and s["expires"] - time.time() > 30 * 86400 else "failed-or-expiring")' 2>&1 | tail -1)"
 fi
+if want floppy-redis; then
+  check floppy.redis-pin '8\.10\.[0-9]+-alpine@sha256:71885d8cc6e4' "$(docker inspect -f '{{.Config.Image}}' floppy-redis 2>&1)"
+  # both Celery workers answer through Redis (broker), with the password from the secret file
+  check floppy.redis-broker '^2 pong$' "$(docker exec -u abc -w /floppy floppy sh -c 'export REDIS_URL="redis://:$(cat /run/secrets/floppy_redis_password)@floppy-redis:6379/0"; timeout 40 celery -A config inspect ping --timeout 5 2>&1 | grep -c pong') pong"
+fi
