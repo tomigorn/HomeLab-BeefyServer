@@ -42,7 +42,7 @@ WINTER = {"23:00": utc(2027, 1, 15, 22), "06:59": utc(2027, 1, 16, 5, 59), "07:0
 SUMMER = {"23:00": utc(2027, 7, 15, 21), "06:59": utc(2027, 7, 16, 4, 59), "07:00": utc(2027, 7, 16, 5), "21:59": utc(2027, 7, 15, 19, 59)}
 
 
-def fake(records=(), fail=False, health=(), status=None, indexers=(), health_fail=False):
+def fake(records=(), fail=False, health=(), status=None, indexers=(), health_fail=False, logs=()):
     def call(method, path, query=None, body=None):
         if fail:
             raise qw.ApiError("down")
@@ -57,6 +57,8 @@ def fake(records=(), fail=False, health=(), status=None, indexers=(), health_fai
             return list(status)
         if path == "/indexer":
             return list(indexers)
+        if path == "/log":
+            return {"records": list(logs)}
         assert path == "/queue", (method, path)
         return {"totalRecords": len(records), "records": list(records)}
     return call
@@ -873,6 +875,86 @@ class AutoImport(unittest.TestCase):
         lines = qw.dry_run({"sonarr": FakeSonarr(parse=parsed(year=2010))}, qw.Config())
         self.assertTrue(any(line.startswith("not imported: ") and "year" in line for line in lines), lines)
         self.assertEqual(lines[-1], "id-match auto-import: 1 candidate(s), 0 importable")
+
+
+def warn(text):
+    return {"time": "2026-11-08T17:43:24Z", "level": "warn", "logger": "Torznab", "message": text}
+
+
+X1, X1R, KN = "1337x (Prowlarr)", "1337x (old-rare) (Prowlarr)", "Knaben (Prowlarr)"
+LIMIT = "API Request Limit reached for {}. Disabled for 00:05:00"
+
+
+class RateLimit(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+        self.state = self.dir / "state.json"
+        self.sent = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def send(self, text):
+        self.sent.append(text)
+        return True
+
+    def go(self, api, now):
+        return qw.run({"radarr": api}, self.state, [], self.send, qw.Config(), now)
+
+    def test_request_limit_from_the_log_goes_to_the_digest(self):
+        self.assertEqual(self.go(fake(health=[hc([X1])], logs=[warn(LIMIT.format(X1))]), T0), 0)
+        self.assertEqual(self.sent, [])
+        [e] = digest(self.dir)
+        self.assertEqual((e["kind"], e["app"], e["title"]), ("indexer_rate_limited", "radarr", X1))
+
+    def test_429_and_too_many_requests_in_last_error_go_to_the_digest(self):
+        for err in ("HTTP 429", "Too Many Requests", "Request limit reached: 100"):
+            self.setUp()
+            status = [{"indexerId": 4, "disabledTill": "2026-11-08T17:48:24Z", "lastError": err}]
+            self.go(fake(health=[hc([KN])], status=status, indexers=[{"id": 4, "name": KN}]), T0)
+            self.assertEqual(self.sent, [], err)
+            self.assertEqual([e["kind"] for e in digest(self.dir)], ["indexer_rate_limited"], err)
+
+    def test_other_failure_of_the_same_indexer_alerts_at_once(self):
+        self.go(fake(health=[hc([X1])], logs=[warn(f"{X1} server is currently unavailable. http://gluetun:9696/4/api?t=movie Http request timed out")]), T0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn(X1, self.sent[0])
+
+    def test_newest_log_line_of_that_indexer_decides(self):
+        logs = [warn(f"{X1} server is currently unavailable. Http request timed out"), warn(LIMIT.format(X1))]
+        self.go(fake(health=[hc([X1])], logs=logs), T0)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_old_rare_copy_line_does_not_count_for_the_main_indexer(self):
+        self.go(fake(health=[hc([X1])], logs=[warn(LIMIT.format(X1R))]), T0)
+        self.assertEqual(len(self.sent), 1)
+
+    def test_mixed_alert_names_only_the_real_failure(self):
+        status = [{"indexerId": 1, "lastError": "401 Unauthorized"}]
+        self.go(fake(health=[hc([X1, NZB])], status=status, indexers=[{"id": 1, "name": NZB}], logs=[warn(LIMIT.format(X1))]), T0)
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn(NZB, self.sent[0])
+        self.assertNotIn("1337x", self.sent[0])
+        self.assertEqual([e["title"] for e in digest(self.dir)], [X1])
+
+    def test_digest_once_while_limited_again_after_it_cleared(self):
+        limited = fake(health=[hc([X1])], logs=[warn(LIMIT.format(X1))])
+        self.go(limited, T0)
+        self.go(limited, T0 + 15 * MIN)
+        self.assertEqual(sum(" indexer_rate_limited digest " in line for line in sends(self.dir)), 1)
+        self.go(fake(), T0 + 30 * MIN)
+        self.go(limited, T0 + 45 * MIN)
+        self.assertEqual(sum(" indexer_rate_limited digest " in line for line in sends(self.dir)), 2)
+        self.assertEqual(self.sent, [])
+
+    def test_log_api_error_falls_back_to_the_alert(self):
+        def api(method, path, query=None, body=None):
+            if path == "/log":
+                raise qw.ApiError("GET /log: down")
+            return fake(health=[hc([X1])])(method, path, query, body)
+        self.assertEqual(self.go(api, T0), 0)
+        self.assertEqual(len(self.sent), 1)
 
 
 if __name__ == "__main__":

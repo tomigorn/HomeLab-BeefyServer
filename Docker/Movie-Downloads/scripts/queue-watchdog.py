@@ -2,7 +2,7 @@
 """Queue watchdog (README "Queue watchdog"): Telegram for what needs a hand, the rest into a morning-digest metrics file.
 Per (app, downloadId, condition), once until the condition clears and returns: blocked (importBlocked/importPending/failedPending state or warning/error status) for QW_BLOCKED_MIN minutes = Telegram; stalled (downloading/queued, sizeleft not falling) for QW_STALL_HOURS hours and failed (status failed) = digest.
 Guard events: scripts/grab-guard.sh writes <config dir>/guard-events/*.json inside the containers (no bot token there); removed / marked-failed = digest, "check by hand" = Telegram; the file is deleted once handled. scripts/subtitle-check.py writes subtitle_repaired / subtitle_suspect events and scripts/forced-sync.py subtitle_forced_synced / subtitle_forced_unverified to /srv/appdata/bazarr/subtitle-check/events = digest. Sent with _global/scripts/oob-alert.sh. Run by systemd/queue-watchdog.timer.
-Indexers: /health of each app; one Telegram while indexers are disabled after failures (IndexerStatusCheck / IndexerLongTermStatusCheck), recovery = digest. Expected backoffs are left out: Treasure Maps grab limit, The Pirate Bay "no results".
+Indexers: /health of each app; one Telegram while indexers are disabled after failures (IndexerStatusCheck / IndexerLongTermStatusCheck), recovery = digest. Expected backoffs are left out: Treasure Maps grab limit, The Pirate Bay "no results"; any indexer disabled for a request limit (429, "Request Limit", too many requests: lastError or its newest warning in /log) = digest.
 Quiet hours 22:00-07:00 Europe/Zurich: Telegrams are held and sent on the first run from 07:00 if still due.
 ID-matched Sonarr imports: a completed download Sonarr blocks only with "matched to series by ID" is imported (ManualImport, once per download) when the grab history, title, year, season and Sonarr's own proposals all agree; otherwise the normal blocked alert names the reason. QW_AUTO_IMPORT=0 switches it off.
 Digest: watchdog-digest.prom (node-exporter textfile, last 48 h) in the state dir, read by fastpi's morning digest. Every send, hold and digest event is a line in watchdog-sends.log.
@@ -41,6 +41,7 @@ GUARD_DIGEST = {"removed", "marked-failed"}
 SUBTITLE_DIGEST = {"subtitle_repaired", "subtitle_suspect", "subtitle_forced_synced", "subtitle_forced_unverified"}
 DEFAULT_EVENTS = "/srv/appdata/radarr/guard-events:/srv/appdata/sonarr/guard-events:/srv/appdata/bazarr/subtitle-check/events"
 ID_MATCH = "matched to series by ID"
+RATE_LIMIT = re.compile(r"\b429\b|request limit|too many requests|rate limit", re.I)
 YEAR_SLACK = 1
 DIGEST_HOURS, DIGEST_MAX, SENDS_MAX, TITLE_MAX = 48, 40, 1000, 80
 
@@ -302,8 +303,22 @@ def indexer_message(app, failed, now):
     return "\n".join(lines)
 
 
+def rate_limited(app, api, bad):
+    """Names in bad whose last error, or newest warning in the app log, is a request limit."""
+    errors = {n: (i or {}).get("error") for n, i in bad.items()}
+    if not all(errors.values()):
+        try:
+            logs = (api("GET", "/log", {"page": 1, "pageSize": 200, "sortKey": "time", "sortDirection": "descending", "level": "warn"}) or {}).get("records") or []
+        except ApiError as e:
+            print(f"{app}: log API error, indexer failures alert: {e}", file=sys.stderr)
+            logs = []
+        for n in [n for n, e in errors.items() if not e]:
+            errors[n] = next((r.get("message") for r in logs if n in str(r.get("message"))), None)
+    return {n for n, e in errors.items() if e and RATE_LIMIT.search(e)}
+
+
 def indexer_check(app, api, state, out, now):
-    key = f"indexers/{app}"
+    key, lkey = f"indexers/{app}", f"ratelimited/{app}"
     try:
         health = api("GET", "/health") or []
         try:
@@ -314,6 +329,14 @@ def indexer_check(app, api, state, out, now):
         print(f"{app}: health API error, state kept: {e}", file=sys.stderr)
         return 1
     bad = unexpected(failed_indexers(health, status, indexers))
+    limited = rate_limited(app, api, bad) if bad else set()
+    bad = {n: i for n, i in bad.items() if n not in limited}
+    if limited and not limited <= set(state.get(lkey) or []):
+        out.digest("indexer_rate_limited", app, ", ".join(sorted(limited)))
+    if limited:
+        state[lkey] = sorted(limited)
+    else:
+        state.pop(lkey, None)
     if bad and key not in state:
         r = out.immediate(key, "indexers_disabled", ", ".join(sorted(bad)), indexer_message(app, bad, now))
         if r == "sent":

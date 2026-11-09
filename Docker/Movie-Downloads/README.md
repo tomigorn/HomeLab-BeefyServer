@@ -372,13 +372,14 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Sonarr "matched to series by ID" imported by the watchdog ([below](#id-matched-sonarr-imports)) | digest `auto_imported` | at once |
 | failed (status `failed`, the app re-searches) | digest `failed` | at once |
 | stalled (`downloading` / `queued`, `sizeleft` not smaller) | digest `stalled` | after `QW_STALL_HOURS` (6 h) |
+| indexer disabled for a request limit (429, `API Request Limit reached`, too many requests; any indexer) | digest `indexer_rate_limited` | at once, once while it stays limited |
 | indexers recovered | digest `indexer_recovered` | at once |
 | subtitle repaired / suspect ([Subtitle check](#subtitle-check)) | digest `subtitle_repaired` / `subtitle_suspect` | at once |
 
 | | |
 |---|---|
 | Indexers | `/health` of each app: **one** Telegram while indexers are disabled after failures (`IndexerStatusCheck`, `IndexerLongTermStatusCheck`: indexer names, disabled until / last error when `/indexerstatus` answers, fix `System → Status → test all indexers` or `POST /api/v3/indexer/testall`), recovery = digest. Never runs testall itself. State key `indexers/<app>` |
-| Indexer exceptions | no alert for Treasure Maps backoffs (daily download limit or 429 burst: error empty or 429 / limit) and The Pirate Bay (flaky "no results", [Indexers](#indexers-prowlarr)); any other error on them alerts. Found 2026-10-26: 5 of 6 indexers sat in a 24 h backoff after 401s during a Prowlarr key rotation |
+| Indexer exceptions | no alert for Treasure Maps backoffs (daily download limit or 429 burst: error empty or 429 / limit) and The Pirate Bay (flaky "no results", [Indexers](#indexers-prowlarr)); any other error on them alerts. Found 2026-10-26: 5 of 6 indexers sat in a 24 h backoff after 401s during a Prowlarr key rotation. Request limits on any indexer (1337x, Knaben: ~8 Telegrams a day until 2026-11-09) go to the digest: the error is `/indexerstatus` `lastError` or, when empty, the newest warning naming the indexer in `/api/v3/log`; a timeout or any other error still alerts |
 | Message | app, title (+year / SxxExx), release, state, status messages, how long, hint `Radarr → Activity → Queue` (Sonarr: `Sonarr → …`) |
 | Once | per app + download id + condition; again only after the condition cleared and came back (or a failed or held Telegram: retried next run) |
 | Quiet hours | 22:00–07:00 Europe/Zurich (DST-safe); beefy asleep at 07:00 = the first run after it wakes |
