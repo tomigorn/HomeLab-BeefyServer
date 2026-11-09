@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Radarr + Sonarr Connect "Custom Script" (On Grab): an indexer that tags a search result with the searched title's IDs makes the app grab a same-titled release from another year (Treasure Maps: the 1990 remake for the 1968 Night of the Living Dead, or a same-named older/newer series). A grab more than 2 years off is removed, blocklisted and searched again; one that never reaches the queue is marked failed through the grab history instead. A grab whose title is on the dub-only list (scripts/nfo-scout.py: the NFO lists two or more languages but not the title's original one) gets the same removal. Each case leaves an event file for scripts/queue-watchdog.py to send as a Telegram (README "Wrong-film guard").
 # Radarr compares the release year against the movie's year and secondary year. Sonarr compares the year parsed from the release title against the series' start year (±2), the series' run (start year to last-aired year, or the current year while it continues) and the air years of the grabbed episodes (±1): groups name a season pack with the season's air year (The.Boys.2024.S04), a legitimately old episode of a long-running series is kept.
-# Sonarr writes the grab history and lists the queue item only after this script returns, so its removal runs detached (GG_DETACH=0 runs it inline).
+# Both apps write the grab history and list the queue item only after this script returns, so the removal runs detached (GG_DETACH=0 runs it inline). The year rule is scripts/guard-year.jq, shared with scripts/queue-watchdog.py.
 # Runs inside the Radarr/Sonarr container (bash, curl, jq); registered by scripts/language-policy.sh.
 set -euo pipefail
 
@@ -12,7 +12,8 @@ elif [ "${sonarr_eventtype:-}" = Grab ]; then
 else
   exit 0
 fi
-WAIT=${GG_WAIT:-90}
+WAIT=${GG_WAIT:-300}
+RULE=${GG_YEAR_RULE:-$(dirname "$0")/guard-year.jq}
 LOG=${GG_LOG:-/config/grab-guard.log}
 EVENTS=${GG_EVENTS:-/config/guard-events}
 DUBONLY=${GG_DUBONLY:-/config/dub-only.json}
@@ -26,7 +27,7 @@ api() { local path=$1; shift; curl -sf -m 10 -H @<(printf 'X-Api-Key: %s\n' "$KE
 enc=$(jq -rn --arg t "$title" '$t | @uri')
 case $app in
   radarr)
-    noun=movie; qparam=includeUnknownMovieItems; hparam=movieId
+    noun=movie; qparam=includeUnknownMovieItems; hparam=movieId; first=0; last=0; ended=true; airyears=
     got=$(api "/parse?title=$enc" | jq -r '.parsedMovieInfo.year // 0')
     meta=$(api "/movie/$id")
     second=$(jq -r '.secondaryYear // 0' <<<"$meta")
@@ -37,7 +38,7 @@ case $app in
     meta=$(api "/series/$id")
     first=$(jq -r '(.firstAired // "")[0:4] | tonumber? // 0' <<<"$meta")
     last=$(jq -r '(.lastAired // "")[0:4] | tonumber? // 0' <<<"$meta")
-    [ "$(jq -r '.status // ""' <<<"$meta")" != ended ] && [ "$last" -gt 0 ] && [ "$last" -lt "$(date +%Y)" ] && last=$(date +%Y)
+    ended=$(jq '.status == "ended"' <<<"$meta")
     airyears=$(printf '%s' "${sonarr_release_episodeairdates:-}" | tr ',' '\n' | sed -n 's/^\([0-9]\{4\}\)-.*/\1/p')
     if [ -z "$airyears" ] && [ -n "${sonarr_release_seasonnumber:-}" ]; then
       airyears=$(api "/episode?seriesId=$id&seasonNumber=$sonarr_release_seasonnumber" | jq -r '.[].airDate // empty | .[0:4]') || airyears=
@@ -49,16 +50,18 @@ tid=$(jq -r '(if .tmdbId then .tmdbId else .tvdbId end) // 0' <<<"$meta")
 year=$(jq -r '.year // 0' <<<"$meta")
 mtitle=$(jq -r '.title // ""' <<<"$meta")
 
-inrun() { [ "${first:-0}" -gt 0 ] && [ "${last:-0}" -gt 0 ] && [ "$1" -ge "$first" ] && [ "$1" -le "$last" ]; }
-nearair() { local y; for y in $airyears; do [ $(( $1 > y ? $1 - y : y - $1 )) -le 1 ] && return 0; done; return 1; }
-near() { [ "$1" -gt 0 ] && [ $(( $2 > $1 ? $2 - $1 : $1 - $2 )) -le 2 ]; }
+fits() {
+  jq -e -f "$RULE" >/dev/null <<<"$(jq -n --arg app "$app" --argjson got "$got" --argjson year "$year" --argjson second "$second" --argjson first "$first" --argjson last "$last" \
+    --argjson ended "$ended" --argjson now "$(date +%Y)" --argjson air "$(printf '%s\n' $airyears | jq -s .)" \
+    '{app: $app, got: $got, year: $year, second: $second, first: $first, last: $last, ended: $ended, now: $now, air: $air}')"
+}
 # The exact release title, the same title id and at least two listed languages, younger than 30 days; no list or an unreadable one = no match.
 dub=$(jq -c --arg t "$title" --argjson id "$tid" --argjson min "$(( $(date +%s) - 30 * 86400 ))" \
   '[.[] | select(.title == $t and (.langs | length) >= 2 and .at > $min and (.titleId == $id or .titleId == null or $id == 0))][0] // empty' "$DUBONLY" 2>/dev/null) || dub=
 if [ -n "$dub" ]; then
   langs=$(jq -r '.langs | join(", ")' <<<"$dub"); orig=$(jq -r '.original' <<<"$dub")
   why="lists only dubbed audio ($langs), not the original $orig"
-elif [ "$got" -eq 0 ] || [ "$year" -eq 0 ] || near "$year" "$got" || near "$second" "$got" || { [ "$app" = sonarr ] && { inrun "$got" || nearair "$got" || near "$first" "$got"; }; }; then
+elif fits; then
   exit 0
 else
   why="is from $got, not $year"
@@ -72,7 +75,7 @@ event() {
        + (if $dub then {reason: "dub-only", languages: $dub.langs, original: $dub.original} else {} end)' > "$f.tmp" && mv "$f.tmp" "$f" ) || true
 }
 
-if [ "$app" = sonarr ] && [ "${GG_DETACH:-1}" != 0 ] && [ -z "${GG_DETACHED:-}" ]; then
+if [ "${GG_DETACH:-1}" != 0 ] && [ -z "${GG_DETACHED:-}" ]; then
   GG_DETACHED=1 setsid nohup bash "$0" </dev/null >>"$LOG" 2>&1 &
   echo "$noun $id: grabbed '$title' $why: removal scheduled"
   exit 0

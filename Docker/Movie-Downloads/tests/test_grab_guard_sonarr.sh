@@ -183,7 +183,7 @@ assert_eq "other events are ignored" "0|" "$RC|$(cat "$T/requests")"
 echo "$T/state.json" >/dev/null
 echo "{\"series_year\": 2017, \"parsed_year\": 1990, \"queue\": $Q}" > "$T/state.json"
 : > "$T/requests"
-env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_EVENTS="$T/events" radarr_eventtype=Grab radarr_movie_id=7 \
+env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_DETACH=0 GG_EVENTS="$T/events" radarr_eventtype=Grab radarr_movie_id=7 \
   radarr_release_title="Night.of.the.Living.Dead.1990.2160p.UHD.BluRay.x265-GROUP" radarr_download_id=abc bash "$GUARD" > "$T/out" 2>&1; RC=$?
 grep '^DELETE ' "$T/requests" | cut -d' ' -f2- > "$T/deletes"
 assert_eq "Radarr grab still routed and removed by the shared guard" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"

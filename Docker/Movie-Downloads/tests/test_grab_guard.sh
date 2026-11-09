@@ -61,7 +61,7 @@ printf '<Config>\n  <Port>%s</Port>\n  <UrlBase></UrlBase>\n  <ApiKey>testkey</A
 run() {
   echo "$1" > "$T/state.json"; local title=$2; shift 2
   : > "$T/requests"; rm -rf "$T/events"
-  env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_EVENTS="$T/events" GG_DUBONLY="$T/dub-only.json" radarr_eventtype=Grab radarr_movie_id=5 radarr_movie_year=1968 \
+  env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_DETACH=0 GG_EVENTS="$T/events" GG_DUBONLY="$T/dub-only.json" radarr_eventtype=Grab radarr_movie_id=5 radarr_movie_year=1968 \
     radarr_release_title="$title" radarr_download_id=abc "$@" bash "$GUARD" > "$T/out" 2>&1; RC=$?
   grep '^DELETE ' "$T/requests" | cut -d' ' -f2- > "$T/deletes"
   grep '^POST ' "$T/requests" | cut -d' ' -f2- > "$T/posts"
@@ -148,6 +148,18 @@ dub "$DUBREL"
 run "{\"parsed_year\": 1990, \"queue\": $Q}" "$DUBREL"
 assert_eq "listed and wrong year: removed once, reported as dub-only" "radarr	removed	Night of the Living Dead	1968	$DUBREL	1990|dub-only	German,French	Persian" "$(cat "$T/event")|$(cat "$T/event2")"
 rm -f "$T/dub-only.json"
+
+# Radarr writes the grab history and lists the queue item only after the Connect script returns (2026-11-08: history and queue "added" = the second the inline guard gave up): the removal runs detached.
+echo "{\"parsed_year\": 1990, \"queue\": $Q}" > "$T/state.json"; : > "$T/requests"; rm -rf "$T/events"
+env -i PATH="$PATH" LP_CONFIG="$T/config.xml" GG_WAIT=2 GG_LOG="$T/guard.log" GG_EVENTS="$T/events" GG_DUBONLY="$T/dub-only.json" radarr_eventtype=Grab radarr_movie_id=5 \
+  radarr_release_title="$REL" radarr_download_id=abc bash "$GUARD" > "$T/out" 2>&1; RC=$?
+assert_eq "detached: script returns at once, nothing deleted yet" "0|" "$RC|$(grep '^DELETE ' "$T/requests")"
+assert_eq "  output says the removal is scheduled" "movie 5: grabbed '$REL' is from 1990, not 1968: removal scheduled" "$(cat "$T/out")"
+for _ in $(seq 50); do grep -q '^DELETE ' "$T/requests" && break; sleep 0.2; done
+assert_eq "  background removal deletes the queue item" "DELETE /api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(grep '^DELETE ' "$T/requests")"
+sleep 0.5
+assert_eq "  background log" "movie 5: grabbed '$REL' is from 1990, not 1968: removed, blocklisted, searching again" "$(tail -1 "$T/guard.log")"
+grep -q '^GG_WAIT=${GG_WAIT:-300}$\|^WAIT=${GG_WAIT:-300}$' "$GUARD"; assert_eq "queue wait defaults to 300 s (the night client reports late)" 0 "$?"
 
 run "{}" "x" radarr_eventtype=Test
 assert_eq "Test event exits 0 and calls nothing" "0|" "$RC|$(cat "$T/requests")"
