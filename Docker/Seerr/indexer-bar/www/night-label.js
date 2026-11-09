@@ -18,8 +18,8 @@
     de: { spin: "Lädt gerade herunter", avail: "In Jellyfin verfügbar", part: "Teilweise verfügbar" },
   };
   var LIVE = {
-    en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", locale: "en-GB" },
-    de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", locale: "de-CH" },
+    en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", wrongFilm: "Wrong film downloaded (release from {ry}, film is {y}), being replaced", needsImport: "Needs a manual import (release title: '{r}')", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", locale: "en-GB" },
+    de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", wrongFilm: "Falscher Film heruntergeladen (Release von {ry}, Film ist von {y}), wird ersetzt", needsImport: "Muss manuell importiert werden (Release-Titel: '{r}')", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", locale: "de-CH" },
   };
   var TITLE = {
     en: { requested: "Requested — approved, waiting for the search", processing: "Processing — handed to Radarr/Sonarr", declined: "Declined — an admin refused the request", unknown: "Unknown — Seerr has no state for it", deleted: "Deleted — removed from Jellyfin" },
@@ -80,7 +80,7 @@
     var fresh = null, at = state.requested[key];
     if (!search && !done && has.call(rs.fresh, key)) fresh = { at: rs.fresh[key] };
     else if (!search && !done && at && now - Date.parse(at) < FRESH && !(rs.updated >= Date.parse(at)) && !busy(m)) fresh = { at: at };
-    var moon = rs.canWait[key] === true && !busy(m) && !done && !loading;
+    var moon = rs.canWait[key] === true && !busy(m) && !done && !loading && q.state !== "problem";
     var compass = has.call(rs.noRelease, key) && !busy(m) && !done;
     var cal = has.call(rs.unreleased, key) && !done;
     return { moon: moon, compass: compass, cal: cal, date: cal ? rs.unreleased[key] : null, search: search, fresh: fresh, pending: !done && rs.pending[key] === true,
@@ -93,9 +93,17 @@
     try { return d.toLocaleTimeString(LIVE[l].locale, { hour: "2-digit", minute: "2-digit" }); } catch (e) { return ""; }
   }
 
+  function problemText(p, L) {
+    var fill = function (t, o) { return t.replace(/\{(\w+)\}/g, function (x, k) { return o[k] != null ? String(o[k]) : "?"; }); };
+    if (p.code === "seerr") return L.seerr;
+    if (p.code === "wrong-film") return fill(L.wrongFilm, { ry: p.releaseYear, y: p.year });
+    if (p.code === "needs-import") return fill(L.needsImport, { r: p.release });
+    return L.problem + (p.message ? ": " + p.message : "");
+  }
+
   function liveList(f, l) {
     var L = LIVE[l], out = [];
-    if (f.problem) out.push(["⚠️", f.problem.code === "seerr" ? L.seerr : L.problem + (f.problem.message ? ": " + f.problem.message : "")]);
+    if (f.problem) out.push(["⚠️", problemText(f.problem, L)]);
     if (f.pending) out.push(["⏳", L.pending]);
     if (f.search) {
       var t = clock(f.search.started, l);
@@ -546,8 +554,8 @@
       if (f.soFar) part = false;
       if (part) badge.setAttribute("data-hg-part", ""); else badge.removeAttribute("data-hg-part");
       if (badge.getAttribute("data-hg-night") !== null) f.moon = false;
-      // Seerr's own spinner / progress bar is there (its popup tells the download): nothing of ours
-      if (badge.querySelector("svg animateTransform") || badge.querySelector(":scope > div.absolute.left-0.top-0.z-10")) f = { moon: false, compass: false, cal: false };
+      // Seerr's own spinner / progress bar is there (its popup tells the download): only ⚠️ of ours
+      if (badge.querySelector("svg animateTransform") || badge.querySelector(":scope > div.absolute.left-0.top-0.z-10")) f = { moon: false, compass: false, cal: false, problem: f.problem };
       if (part || (m && m.status === 4)) f.imported = false;
       if (/^(4K\s)?(Available|Verfügbar)$/.test(text)) f = { moon: false, compass: false, cal: false };
       var extra = null, spin = !!(badge.querySelector("svg animateTransform") || badge.querySelector(":scope > div.absolute.left-0.top-0.z-10"));

@@ -686,6 +686,28 @@ test("a pill with Seerr's own download spinner gets no second spinner; the title
   }
 });
 
+test("problem with Seerr's own overlay: ⚠️ and its hint stay next to the spinner; wrong film and manual import texts, also in German", async () => {
+  const wrong = { state: "problem", message: "", code: "wrong-film", release: "Analyze That", releaseYear: 2002, year: 1999 };
+  const imp = { state: "problem", message: "", code: "needs-import", release: "Company Retreat" };
+  const w = rsPage(header(badge("movie/550", "Processing", "")) + requestCard("movie/551", "Imp").replace(badge("movie/551"), badge("movie/551", "Verarbeiten", "")), "/movie/550", live({ queue: { "movie/550": wrong, "movie/551": imp } }));
+  await settle();
+  const [title, de] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  assert.equal(title.querySelectorAll("svg").length, 1);
+  assert.equal(title.querySelector("[data-hg-flag-own]").textContent, "⚠️");
+  assert.equal(flagTip(title), "Wrong film downloaded (release from 2002, film is 1999), being replaced");
+  assert.equal(de.querySelector("[data-hg-flag-own]").textContent, "⚠️");
+  assert.equal(flagTip(de), "Muss manuell importiert werden (Release-Titel: 'Company Retreat')");
+});
+
+test("no 🌙 when the queue state is problem", async () => {
+  const w = rsPage(requestCard("movie/560", "Jury").replace(badge("movie/560"), plainBadge("movie/560")), "/requests",
+    live({ canWait: ["movie/560"], queue: { "movie/560": { state: "problem", message: "", code: "needs-import", release: "Jury Duty" } } }));
+  await settle();
+  const b = w.document.querySelector('a[href$="?manage=1"]');
+  assert.equal(visibleText(w, b), "Requested|⚠️");
+  assert.equal(flagTip(b), "Needs a manual import (release title: 'Jury Duty')");
+});
+
 test("Partially Available pill: restyled away from green, ◐ first with the missing part's state, never ✅", async () => {
   const w = rsPage(requestCard("tv/76479", "Boys").replace(badge("tv/76479"), partPill("tv/76479")) + requestCard("tv/2", "Mixed").replace(badge("tv/2"), partPill("tv/2")) + requestCard("tv/3", "Solo").replace(badge("tv/3"), partPill("tv/3", "Teilweise verfügbar")), "/requests",
     live({ canWait: ["tv/76479"], unreleased: { "tv/76479": "2026-11-11" }, searching: { "tv/2": { status: "queued", ahead: 0 } }, imported: ["tv/3"] }));

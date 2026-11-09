@@ -98,6 +98,19 @@ test("German: Grösse, Swiss number format, episodes and queue in German", async
   assert.deepEqual([...w.document.querySelectorAll("[data-hg-size-sort] option")].map((o) => o.textContent), ["Aus", "Grösste", "Kleinste"]);
 });
 
+test("a title whose queue state is problem reads '· problem' instead of 'in queue', also in German", async () => {
+  const state = { ...STATE, queue: { "movie/1480613": { state: "problem", message: "", code: "needs-import", release: "X" }, "movie/120": { state: "problem", message: "" } } };
+  const w = await requests({ state });
+  assert.deepEqual(lines(w), ["Size≈ 5.4 GB · problem", "Size45.3 GB", "Size22.9 GB · 5 of 6 episodes", "Size—", "Size41.2 GB"]);
+  const de = await requests({ state, before: (win) => { win.hgNightLabel = { lang: () => "de" }; } });
+  assert.equal(lines(de)[0], "Grösse≈ 5.4 GB · Problem");
+});
+
+test("title page: queued with a problem state reads '· problem'", async () => {
+  const q = await title("/movie/1480613", { queue: { "movie/1480613": { state: "problem", message: "" } } });
+  assert.equal(q.document.querySelector("[data-hg-size-fact]").textContent, "Size≈ 5.4 GB · problem");
+});
+
 test("sizes in MB, GB and TB", async () => {
   const w = await requests();
   const s = w.hgRequestSizes;
@@ -242,9 +255,9 @@ const facts = (status = "Status") => `<div class="media-page"><div class="media-
   <div class="media-fact"><span>${status}</span><span class="media-fact-value">Released</span></div>
   <div class="media-fact"><span>Release Dates</span><span class="media-fact-value">19 Dec 2001</span></div>
 </div></div></div>`;
-async function title(path, { body = facts(), media = MEDIA, titleJson = null, before } = {}) {
+async function title(path, { body = facts(), media = MEDIA, queue = undefined, titleJson = null, before } = {}) {
   const calls = [];
-  const routes = { "/_indexer-bar/request-state.json": { ...STATE, media } };
+  const routes = { "/_indexer-bar/request-state.json": { ...STATE, media, queue } };
   if (titleJson) routes["/api/v1" + path] = titleJson;
   const w = load("request-sizes.js", SIDEBAR + body, (win) => { fakeXHR(routes, calls)(win); if (before) before(win); }, "https://requests.example.com" + path);
   open.push(w);

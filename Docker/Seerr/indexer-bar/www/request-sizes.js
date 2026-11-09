@@ -14,11 +14,11 @@
   var PREV_KEY = "hg-size-sort-page-size";
   var ALL_ROWS = "100";
   var TEXT = {
-    en: { size: "Size", season: "Season", of: "{a} of {b} episodes", queued: "in queue", off: "Off", desc: "Largest", asc: "Smallest", aria: "Sort by size", page: "Sorted within this page ({a} of {b})", locale: "en-GB" },
-    de: { size: "Grösse", season: "Staffel", of: "{a} von {b} Episoden", queued: "in der Warteschlange", off: "Aus", desc: "Grösste", asc: "Kleinste", aria: "Nach Grösse sortieren", page: "Innerhalb dieser Seite sortiert ({a} von {b})", locale: "de-CH" },
+    en: { size: "Size", season: "Season", of: "{a} of {b} episodes", queued: "in queue", problem: "problem", off: "Off", desc: "Largest", asc: "Smallest", aria: "Sort by size", page: "Sorted within this page ({a} of {b})", locale: "en-GB" },
+    de: { size: "Grösse", season: "Staffel", of: "{a} von {b} Episoden", queued: "in der Warteschlange", problem: "Problem", off: "Aus", desc: "Grösste", asc: "Kleinste", aria: "Nach Grösse sortieren", page: "Innerhalb dieser Seite sortiert ({a} von {b})", locale: "de-CH" },
   };
   var RESTORE_WAIT = 2000;
-  var state = { sizes: null, at: 0, loading: null, lists: [], mode: "", fetched: {}, restore: null, media: null, requested: {} };
+  var state = { sizes: null, at: 0, loading: null, lists: [], mode: "", fetched: {}, restore: null, media: null, queue: null, requested: {} };
 
   function store(key, value) {
     try {
@@ -38,11 +38,16 @@
     try { return v.toLocaleString(TEXT[l].locale, { minimumFractionDigits: unit[2], maximumFractionDigits: unit[2] }) + " " + unit[0]; } catch (e) { return v.toFixed(unit[2]) + " " + unit[0]; }
   }
 
-  function sizeText(entry, l) {
+  function sizeText(entry, l, problem) {
     if (!entry || typeof entry !== "object") return "—";
     if (entry.size > 0) return bytes(entry.size, l) + (entry.of > entry.files ? " · " + fill(TEXT[l].of, entry.files, entry.of) : "");
-    if (entry.queued > 0) return "≈ " + bytes(entry.queued, l) + " · " + TEXT[l].queued;
+    if (entry.queued > 0) return "≈ " + bytes(entry.queued, l) + " · " + (problem ? TEXT[l].problem : TEXT[l].queued);
     return "—";
+  }
+
+  function hasProblem(key) {
+    var q = key && state.queue && Object.prototype.hasOwnProperty.call(state.queue, key) ? state.queue[key] : null;
+    return !!q && q.state === "problem";
   }
 
   function sortValue(entry) {
@@ -99,7 +104,8 @@
       var obj = function (v) { return v && typeof v === "object" && !Array.isArray(v) ? v : null; };
       state.sizes = obj(d && d.sizes);
       state.media = obj(d && d.media);
-    }, function () { state.sizes = null; state.media = null; }).then(function () {
+      state.queue = obj(d && d.queue);
+    }, function () { state.sizes = null; state.media = null; state.queue = null; }).then(function () {
       state.at = Date.now();
       state.loading = null;
       run();
@@ -294,7 +300,7 @@
     var values = list.rows.map(function (row, i) {
       var entry = state.sizes[current.rows[i].id];
       tall(row);
-      sizeLine(doc, row, sizeText(entry, l), l);
+      sizeLine(doc, row, sizeText(entry, l, hasProblem(current.rows[i].key)), l);
       return sortValue(entry);
     });
     if (state.mode) sortRows(list, values); else unsort(list);
@@ -308,9 +314,9 @@
     return current ? list.rows.map(function (row, i) { return { row: row, id: current.rows[i].id }; }) : [];
   }
 
-  function titleText(entry, l) {
+  function titleText(entry, l, problem) {
     if (entry && entry.size > 0) return bytes(entry.size, l) + (entry.quality ? " · " + entry.quality : "") + (entry.of > 0 ? " · " + fill(TEXT[l].of, entry.files || 0, entry.of) : "");
-    return sizeText(entry, l);
+    return sizeText(entry, l, problem);
   }
 
   function seasonHint(entry, l) {
@@ -331,7 +337,7 @@
     var facts = panel.querySelectorAll(":scope > .media-fact:not([data-hg-size-fact])");
     for (var i = 0; i < facts.length; i++) if (facts[i].firstElementChild && STATUS.test(facts[i].firstElementChild.textContent.trim())) { status = facts[i]; break; }
     if (!status || (!entry && !state.requested[key])) { if (row) row.parentNode.removeChild(row); return; }
-    var l = lang(doc), text = titleText(entry, l);
+    var l = lang(doc), text = titleText(entry, l, hasProblem(key));
     if (!row) {
       row = doc.createElement("div");
       row.className = "media-fact";
