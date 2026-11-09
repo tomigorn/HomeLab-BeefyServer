@@ -1597,19 +1597,13 @@ without them every route breaks. The firewall lets only fastpi reach them: `../_
 
 ufw was the wrong tool (Docker bypasses it); the DOCKER-USER rule is what is in place.
 
-## Known trade-off: seeding on a host that sleeps
+## No seeding on beefy
 
-beefy powers itself off after 15 idle minutes. An **active** transfer keeps it
-awake (net/disk exceed the idle thresholds) so downloads always finish, and
-because downloads are local there is no "mount to a sleeping host" problem. But
-**idle seeding reads as idle**, so beefy sleeps and seeding stops.
-
-This stack is therefore effectively a hit-and-run client. That is fine on public
-trackers and will get you banned on a private one. Private-tracker content stays
-on fastpi's always-on `mouse` stack — that split is deliberate, not an oversight.
+beefy never seeds (owner 2026-11-09, see [No seeding](#no-seeding)): torrents stop at completion and are removed after the import. That is fine on public trackers and would get you banned on a private one. Private-tracker content stays on fastpi's always-on `mouse` stack, which seeds; that split is deliberate.
 
 ## Related
 
+- [public-domain-tests.md](public-domain-tests.md) — test titles for end-to-end pipeline tests, deleted after every test
 - `../Jellyfin` — playback, reads `/srv/video/media` read-only
 - `../Seerr` — requests from users, talks to Radarr and Sonarr over this bridge
 - `../Antivirus` — ClamAV: completion scan (clamd on the internal `clamd` net) and nightly scan
