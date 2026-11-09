@@ -317,7 +317,32 @@ def parse_btime(stat_text):
     return None
 
 
-IDLE_GAUGES = (("cpu", "beefy_idle_cpu_percent"), ("net", "beefy_idle_net_kbytes_per_second"), ("disk", "beefy_idle_disk_kbytes_per_second"))
+IDLE_GAUGES = (("cpu", "beefy_idle_cpu_percent"), ("net", "beefy_idle_net_kbytes_per_second"), ("disk", "beefy_idle_disk_kbytes_per_second"),
+              ("cpu_temp", "beefy_idle_cpu_temp_celsius"), ("pch_temp", "beefy_idle_pch_temp_celsius"))
+
+
+def read_hwmon_temps(root="/sys/class/hwmon"):
+    """CPU package (coretemp) and PCH (pch_cometlake) temperature in degrees C; a missing chip is left out."""
+    out = {}
+    try:
+        chips = sorted(os.listdir(root))
+    except OSError:
+        return out
+    for c in chips:
+        base = os.path.join(root, c)
+        try:
+            name = open(os.path.join(base, "name")).read().strip()
+            if name == "coretemp":
+                key = "cpu_temp"
+                for i in range(1, 20):
+                    if open(os.path.join(base, "temp%d_label" % i)).read().strip() == "Package id 0":
+                        out[key] = int(open(os.path.join(base, "temp%d_input" % i)).read()) / 1000.0
+                        break
+            elif name == "pch_cometlake":
+                out["pch_temp"] = int(open(os.path.join(base, "temp1_input")).read()) / 1000.0
+        except (OSError, ValueError):
+            continue
+    return out
 
 
 def render_idle_metrics(reasons, detail, ts, boot_time=None, stats=None):
@@ -548,7 +573,7 @@ def main():
             busy, reasons = evaluate(probes, inhibit)
             peer = (first_inbound_peer(estab, listen, cfg["EXCLUDE_PORTS"], "")
                     or (ct_peers[0] if ct_peers else ""))
-            gauges = {"ssh": ssh, "cpu": cpu, "net": net, "disk": disk}
+            gauges = {"ssh": ssh, "cpu": cpu, "net": net, "disk": disk, **read_hwmon_temps()}
             detail = idle_detail(reasons, peer, gauges)
             stats = ("conns=%d+%d ssh=%d vscode=%d cpu=%2.0f%% net=%.0fkB/s "
                      "disk=%.0fkB/s inhibit=%d ignored-vpn-up=%.0fkB/s"

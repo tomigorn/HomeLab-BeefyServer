@@ -408,6 +408,26 @@ class TestIdleMetrics(unittest.TestCase):
         self.assertNotIn("beefy_idle_cpu_percent", biw.render_idle_metrics([], "", 5))
         self.assertEqual(biw.idle_detail([], "", {}), "")
 
+    def test_hwmon_temps_read_package_and_pch(self):
+        import os, tempfile
+        d = tempfile.mkdtemp()
+        def chip(n, name, temps):
+            p = os.path.join(d, n); os.makedirs(p)
+            open(os.path.join(p, "name"), "w").write(name + "\n")
+            for i, (label, v) in enumerate(temps, 1):
+                if label: open(os.path.join(p, "temp%d_label" % i), "w").write(label + "\n")
+                open(os.path.join(p, "temp%d_input" % i), "w").write("%d\n" % v)
+        chip("hwmon0", "nvme", [("Composite", 40000)])
+        chip("hwmon1", "coretemp", [("Package id 0", 48000), ("Core 0", 45000)])
+        chip("hwmon2", "pch_cometlake", [(None, 51500)])
+        self.assertEqual(biw.read_hwmon_temps(d), {"cpu_temp": 48.0, "pch_temp": 51.5})
+        self.assertEqual(biw.read_hwmon_temps(os.path.join(d, "none")), {})
+
+    def test_temps_rendered_as_gauges(self):
+        out = biw.render_idle_metrics([], "", 5, stats={"cpu_temp": 48.0, "pch_temp": 51.5})
+        self.assertIn("beefy_idle_cpu_temp_celsius 48.0\n", out)
+        self.assertIn("beefy_idle_pch_temp_celsius 51.5\n", out)
+
     def test_write_idle_metrics_is_atomic_and_readable(self):
         import os, tempfile
         d = tempfile.mkdtemp()
