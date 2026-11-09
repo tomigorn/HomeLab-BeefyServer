@@ -4,6 +4,9 @@ Everything that runs on beefy: Docker stacks under `Docker/`, server docs under 
 ## Git commits
 - `Project Name: short description`. The project is the folder or service changed, written as it is normally written: `Jellyfin: …`, `Movie-Downloads: …`, `Server: …` for the docs.
 
+## Code
+- Everything self-written is Rust by default (services, sidecars, scripts beyond a few lines of shell).
+
 ## Projects
 - One folder per project under `Projects/`, named as normally written (PascalCase, `Portainer-Agent`). Any type: Docker stacks, scripts, docs.
 
