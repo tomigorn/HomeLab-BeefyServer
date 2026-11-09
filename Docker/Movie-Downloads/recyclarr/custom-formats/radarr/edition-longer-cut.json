@@ -12,7 +12,7 @@
       "negate": false,
       "required": true,
       "fields": {
-        "value": "(?<!^)\\b(extended|uncut|unrated|uncensored|director'?s|redux|final[ ._-]cut|(special|ultimate)[ ._-](edition|cut))(\\b|\\d)"
+        "value": "(?<!^)\\b(extended|encore|uncut|unrated|uncensored|director'?s|redux|final[ ._-]cut|(special|ultimate)[ ._-](edition|cut))(\\b|\\d)"
       }
     },
     {

@@ -780,7 +780,7 @@ Radarr only (owner 2026-10-30, option B): a longer cut wins whenever one exists 
 
 | Custom format | Score | Rank |
 |---|---|---|
-| own `Edition: longer cut` (`recyclarr/custom-formats/radarr/edition-longer-cut.json`): Extended, Director's Cut, Uncut, Unrated, Uncensored, Final Cut, Redux, Special / Ultimate Edition or Cut; not "Theatrical", "Extended Clip". Not TRaSH `Special Edition`: it also hits Anniversary, Collector's, Remastered, Limited Editions and TV / IMAX versions (the same cut, one more download each) | 1000000 (Swiss German 2000) | below HDR (20000000) and every language rung (smallest gap 2000000), above audio, group, streaming and extras (< 10000) |
+| own `Edition: longer cut` (`recyclarr/custom-formats/radarr/edition-longer-cut.json`): Extended, Encore (owner 2026-11-09: Avengers: Endgame Encore), Director's Cut, Uncut, Unrated, Uncensored, Final Cut, Redux, Special / Ultimate Edition or Cut; not "Theatrical", "Extended Clip". Not TRaSH `Special Edition`: it also hits Anniversary, Collector's, Remastered, Limited Editions and TV / IMAX versions (the same cut, one more download each) | 1000000 (Swiss German 2000) | below HDR (20000000) and every language rung (smallest gap 2000000), above audio, group, streaming and extras (< 10000) |
 | TRaSH `IMAX`, `IMAX Enhanced` | 800 | more picture: upgrades below the cutoff like audio or group |
 | TRaSH `Remaster`, `4K Remaster`, `Criterion Collection` | 25 | new transfer: same |
 | TRaSH `Theatrical Cut` | 0 | neutral |

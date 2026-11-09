@@ -391,6 +391,15 @@ class Editions(Base):
             if app == "sonarr":
                 self.assertNotIn(EDITION, p["scores"])
 
+    def test_longer_cut_names_match_the_release_titles(self):
+        import json, pathlib, re
+        cf = json.loads((pathlib.Path(__file__).parent.parent / "recyclarr/custom-formats/radarr/edition-longer-cut.json").read_text())
+        rx = re.compile(cf["specifications"][0]["fields"]["value"], re.I)
+        for title in ("Avengers.Endgame.Encore.2019.2160p.UHD.BluRay.x265", "Aliens.1986.Extended.2160p", "Blade.Runner.1982.Final.Cut.1080p"):
+            with self.subTest(title=title):
+                self.assertTrue(rx.search(title))
+        self.assertFalse(rx.search("Encore.2019.1080p.WEB"))
+
     def test_edition_beats_the_best_theatrical_of_the_same_languages(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.radarr():
             for tier in self.tiers(twin, orig):
