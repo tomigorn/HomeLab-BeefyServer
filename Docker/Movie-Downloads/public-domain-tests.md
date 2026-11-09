@@ -2,7 +2,7 @@
 
 For end-to-end tests of the download pipeline (request → download → import → metadata → Jellyfin → Seerr). Public domain in Switzerland: director, writer and composer dead more than 70 years. Not US-only public domain (e.g. *Night of the Living Dead*).
 
-**After every test: delete the test titles again** (Seerr → title → Advanced → Clear Data; series without a Seerr entry: Sonarr → delete with files). Nothing from a test stays in the library.
+**Delete the test titles only once the whole test is done** (night jobs, subtitles, transcodes, the nightly checks: this can take several days). Then: (Seerr → title → Advanced → Clear Data; series without a Seerr entry: Sonarr → delete with files). Nothing from a test stays in the library.
 
 ## Films
 
