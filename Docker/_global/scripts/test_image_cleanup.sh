@@ -136,8 +136,40 @@ echo "sha256:superseded2 $((NOW - 15*86400))" > "$IMAGE_CLEANUP_STATE/first-seen
 : > "$T/log"; bash "$HERE/image-cleanup.sh" --dry-run > "$T/out" 2>&1
 hasnt "dry run removes nothing" 'image rm\|builder prune' "$T/log"
 has "dry run reports" 'would remove app:2' "$T/out"
+echo "sha256:superseded2 $((NOW - 3*86400))" > "$IMAGE_CLEANUP_STATE/first-seen"
+: > "$T/log"; bash "$HERE/image-cleanup.sh" --dry-run > "$T/out" 2>&1
+has "dry run lists unused images still in their window with the date they go" "pending app:2 400 bytes (unused 3 d, goes from $(date -d @$((NOW + 11*86400)) +%F))" "$T/out"
+echo "sha256:superseded2 $((NOW - 15*86400))" > "$IMAGE_CLEANUP_STATE/first-seen"
 : > "$T/log"; FAKE_RM_FAIL=1 bash "$HERE/image-cleanup.sh" > "$T/out" 2>&1
 has "failed removal is kept and reported" 'could not remove app:2' "$T/out"
 has "failed removal stays tracked" 'sha256:superseded2' "$IMAGE_CLEANUP_STATE/first-seen"
+
+echo "stronger cleanup: old tags of a repo in use are not protected by loose repo mentions"
+d1=$(date -d @$((NOW - 1*86400)) +%F); d2=$(date -d @$((NOW - 2*86400)) +%F); d4=$(date -d @$((NOW - 4*86400)) +%F); d5=$(date -d @$((NOW - 5*86400)) +%F)
+printf '%s\n' '    image: app:${APP_TAG}' '    image: influxdb:2.9.1' '    docker run scan/tool --x' '    docker run app --y' '# rollback images kept locally: old/t:v1, old/t:v2' > "$T/repo/compose.yaml"
+printf '%s\n' sha256:used sha256:appold sha256:applatest sha256:influx sha256:scan sha256:oldt sha256:rb1 sha256:rb2 sha256:rb4 sha256:rb5 sha256:rbo | sort > "$T/ids"
+cat > "$T/inspect" <<EOF2
+sha256:used|$old|0001-01-01T00:00:00Z|100|app:1
+sha256:appold|$old|0001-01-01T00:00:00Z|100|app:0
+sha256:applatest|$old|0001-01-01T00:00:00Z|100|app:latest
+sha256:influx|$old|0001-01-01T00:00:00Z|100|influxdb:2.9
+sha256:scan|$old|0001-01-01T00:00:00Z|100|scan/tool:latest
+sha256:oldt|$old|0001-01-01T00:00:00Z|100|old/t:v1
+sha256:rb1|$old|0001-01-01T00:00:00Z|100|rollback.invalid/img:$d1-demo
+sha256:rb2|$old|0001-01-01T00:00:00Z|100|rollback.invalid/img:$d2-demo
+sha256:rb4|$old|0001-01-01T00:00:00Z|100|rollback.invalid/img:$d4-demo
+sha256:rb5|$old|0001-01-01T00:00:00Z|100|rollback.invalid/img:$d5-demo
+sha256:rbo|$old|0001-01-01T00:00:00Z|100|rollback.invalid/img:$d5-other
+EOF2
+: > "$IMAGE_CLEANUP_STATE/first-seen"; for i in appold applatest influx scan oldt rb1 rb2 rb4 rb5 rbo; do echo "sha256:$i $((NOW - 90*86400))" >> "$IMAGE_CLEANUP_STATE/first-seen"; done
+: > "$T/log"; ROLLBACK_KEEP=3 bash "$HERE/image-cleanup.sh" > "$T/out" 2>&1
+has "old tag of a repo in use removed although compose names repo:\${VAR}" '^image rm app:0$' "$T/log"
+has "repo:latest of a repo in use removed although the repo is mentioned" '^image rm app:latest$' "$T/log"
+has "reference only matches a whole tag (influxdb:2.9 is not influxdb:2.9.1)" '^image rm influxdb:2.9$' "$T/log"
+hasnt "repo no container uses, mentioned by name: kept (run on demand)" 'scan/tool' "$T/log"
+hasnt "exact tag named in a comment kept" 'old/t' "$T/log"
+has "rollback tags beyond the newest ROLLBACK_KEEP per repo and project removed while young" "^image rm rollback.invalid/img:$d5-demo$" "$T/log"
+hasnt "newest ROLLBACK_KEEP rollback tags kept" "img:$d1-demo\|img:$d2-demo\|img:$d4-demo" "$T/log"
+hasnt "another project's rollback tag of the same repo kept" "$d5-other" "$T/log"
 
 echo "$PASS passed, $FAIL failed"; [[ $FAIL == 0 ]]

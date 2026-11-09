@@ -5,11 +5,13 @@
 # First run (no state yet): only images of repositories no container uses are dated by build/pull time; dangling images and older tags of a repository in use (the likely previous versions) start their window now.
 # A plain "image prune --filter until" dates by image build time, not by when it became unused, so this keeps its own first-seen-unused clock per image ID.
 # A rollback tag (update-project.sh tags every old image rollback.invalid/<repo>:<date>-<project>; the older <repo>:rollback-<date>-<project> form too) keeps its image for KEEP_DAYS from the date in the tag (else the tag time), then the tag is cleaned like any other.
+# Only the newest ROLLBACK_KEEP (3, as in update-project.sh) rollback.invalid tags per repo and project keep that window; older ones go at once.
 # Any other tag with "rollback" in it (deliberate manual rollback tags) is never removed.
-# Images whose reference appears in the repo's compose files or scripts (REPO_DIR) are kept as well: they are something the stack pulls or runs on demand (scanners, parked projects).
+# Images whose reference appears as a whole word in the repo's compose files or scripts (REPO_DIR) are kept as well: they are something the stack pulls or runs on demand (scanners, parked projects).
+# A repo:${VAR} line or a bare repo name (for :latest) only protects repositories no container uses; for a repository in use those name the tag in use, so its other tags are old tags and go.
 # IMAGE_CLEANUP_KEEP: space-separated repositories to always keep (images another host's scheduled job runs here).
 # Usage: image-cleanup.sh [--dry-run]
-# Env: KEEP_DAYS (14), REPO_DIR (the repo root), IMAGE_CLEANUP_STATE (/var/lib/image-cleanup), IMAGE_CLEANUP_TEXTFILE (/var/lib/node-exporter/textfile), DOCKER (docker command)
+# Env: KEEP_DAYS (14), ROLLBACK_KEEP (3), REPO_DIR (the repo root), IMAGE_CLEANUP_STATE (/var/lib/image-cleanup), IMAGE_CLEANUP_TEXTFILE (/var/lib/node-exporter/textfile), DOCKER (docker command)
 set -uo pipefail
 KEEP_DAYS=${KEEP_DAYS:-14}
 STATE=${IMAGE_CLEANUP_STATE:-/var/lib/image-cleanup}
@@ -23,8 +25,10 @@ REPO_DIR=${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}
 corpus=$(mktemp)
 find "$REPO_DIR" -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.sh' -o -name '*.py' -o -name 'Dockerfile*' -o -name '*.service' \) ! -path '*/.git/*' ! -path '*/www/*' ! -path '*/tests/*' ! -name 'test_*' -exec cat {} + > "$corpus" 2>/dev/null
 isrb() { [[ $1 == rollback.invalid/* || $1 == *:* && ${1##*:} == rollback-* ]]; }
+# a reference counts only as a whole word (influxdb:2.9 is not influxdb:2.9.1); repo:${VAR} and a bare repo name only protect repos no container uses (for a repo in use they name the tag in use, the rest are old tags)
+named() { local e; e=$(sed 's/[][\.*^$+?(){}|/]/\\&/g' <<<"$1"); grep -qE -- "(^|[^A-Za-z0-9._/-])$e([^A-Za-z0-9._-]|\$)" "$corpus"; }
 protected() { local r tag; for r in ${1//,/ }; do isrb "$r" && continue; [[ $r == *rollback* ]] && return 0; for k in ${IMAGE_CLEANUP_KEEP:-}; do [[ ${r%:*} == "$k" ]] && return 0; done; tag=${r##*:}; [[ $tag == "$r" || $r == */*:* && $tag == */* ]] && tag=latest
-  grep -qF -- "$r" "$corpus" && return 0; grep -qF -- "${r%:*}:\${" "$corpus" && return 0; [[ $tag == latest ]] && grep -qF -- "${r%:*}" "$corpus" && return 0; done; return 1; }
+  named "$r" && return 0; [[ -n ${usedrepo[${r%:*}]:-} ]] && continue; grep -qF -- "${r%:*}:\${" "$corpus" && return 0; [[ $tag == latest ]] && grep -qF -- "${r%:*}" "$corpus" && return 0; done; return 1; }
 bootstrap=0; [[ -f $seen ]] || bootstrap=1
 log() { echo "$(date '+%F %T') $*"; }
 bytes() { local v=${1%B}; [[ -z $v || $v == 0 ]] && { echo 0; return; }; numfmt --from=si "$v" 2>/dev/null || echo 0; }
@@ -41,6 +45,11 @@ if ((${#ids[@]})); then
   mapfile -t rows < <($DOCKER image inspect -f '{{.Id}}|{{.Created}}|{{.Metadata.LastTagTime}}|{{.Size}}|{{join .RepoTags ","}}' "${ids[@]}")
   declare -A usedrepo
   for row in "${rows[@]}"; do IFS='|' read -r id _ _ _ tags <<<"$row"; [[ -n ${used[$id]:-} && -n $tags ]] && for r in ${tags//,/ }; do usedrepo[${r%:*}]=1; done; done
+  # rollback.invalid/<repo>:<date>-<project>: only the newest ROLLBACK_KEEP per repo and project keep their window (update-project.sh keeps the same number)
+  declare -A excess
+  while read -r _ r; do excess[$r]=1; done < <(for row in "${rows[@]}"; do IFS='|' read -r _ _ _ _ tags <<<"$row"; for r in ${tags//,/ }; do
+      [[ $r =~ ^rollback\.invalid/(.+):([0-9]{4}-[0-9]{2}-[0-9]{2})-(.+)$ ]] && echo "${BASH_REMATCH[1]}|${BASH_REMATCH[3]} ${BASH_REMATCH[2]} $r"; done; done \
+    | sort -k1,1 -k2,2r | awk -v n="${ROLLBACK_KEEP:-3}" '{ if (++c[$1] > n) print $1, $3 }')
   for row in "${rows[@]}"; do
     IFS='|' read -r id created tagged size tags <<<"$row"
     [[ -n ${used[$id]:-} ]] && continue
@@ -51,7 +60,7 @@ if ((${#ids[@]})); then
       if isrb "$r"; then
         if [[ ${tg#rollback-} =~ ^([0-9]{4})-?([0-9]{2})-?([0-9]{2}) ]] && at=$(date -d "${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}" +%s 2>/dev/null); then :
         elif ((t > 0)); then at=$t; else at=${first[$id]:-$now}; fi
-        if ((now - at < keep)); then young=1; else expired+=("$r"); fi
+        if ((now - at < keep)) && [[ -z ${excess[$r]:-} ]]; then young=1; else expired+=("$r"); fi
       else rest+=",$r"; fi
     done
     rest=${rest#,}
@@ -72,7 +81,7 @@ if ((${#ids[@]})); then
       if $DOCKER image rm "${rmargs[@]}" >/dev/null 2>&1; then
         log "removed $ref $size bytes (unused $(( (now - since) / 86400 )) d)"; removed=$((removed + 1))
       else log "could not remove $ref (kept)"; failed=$((failed + 1)); echo "$id $since" >> "$newseen"; fi
-    else pending=$((pending + 1)); echo "$id $since" >> "$newseen"; fi
+    else ((DRY)) && log "pending ${tags:-$id} $size bytes (unused $(( (now - since) / 86400 )) d, goes from $(date -d @$((since + keep)) +%F))"; pending=$((pending + 1)); echo "$id $since" >> "$newseen"; fi
   done
 fi
 ((DRY)) || mv "$newseen" "$seen"; rm -f "$newseen" "$corpus"
