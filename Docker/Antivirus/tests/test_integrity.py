@@ -3,6 +3,7 @@
 # Usage: python3 tests/test_integrity.py
 import http.server
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,15 @@ def media(mib, header=MKV, zero_blocks=(), tail=12345):
     for b in zero_blocks:
         data[b * MIB:(b + 1) * MIB] = bytes(MIB)
     return bytes(data)
+
+
+def par2_set(*names):
+    out = b""
+    for n in names:
+        raw = n.encode()
+        body = bytes(16) + bytes(16) + bytes(16) + struct.pack("<Q", 1) + raw + bytes(-len(raw) % 4)
+        out += b"PAR2\x00PKT" + struct.pack("<Q", 64 + len(body)) + bytes(16) + bytes(16) + b"PAR 2.0\x00FileDesc" + body
+    return out
 
 
 class FakeQbit(http.server.ThreadingHTTPServer):
@@ -211,6 +221,48 @@ class IntegrityTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertTrue(os.path.exists(self.marker))
         self.write("ep.mkv", media(3, zero_blocks=[1]))
+        r = self.sab()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+
+    def par2_calls(self):
+        return open(self.par2_log).read().split() if os.path.exists(self.par2_log) else []
+
+    def test_par2_targets_all_missing_skips_verify_and_zero_scans(self):
+        self.write("ep.mkv", media(3))
+        self.write("ep.par2", par2_set("ep.part01.rar", "ep.part02.rar"))
+        r = self.sab()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.par2_calls(), [])
+        self.assertTrue(os.path.exists(self.marker))
+        self.assertTrue(os.path.exists(os.path.join(self.job, "ep.par2")))
+
+    def test_par2_targets_all_missing_still_catches_zero_blocks(self):
+        self.write("ep.mkv", media(3, zero_blocks=[1]))
+        self.write("ep.par2", par2_set("ep.part01.rar"))
+        r = self.sab()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertEqual(self.par2_calls(), [])
+        self.assertIn("zeros", r.stdout)
+
+    def test_par2_targets_present_are_verified(self):
+        self.write("ep.mkv", media(3))
+        self.write("ep.par2", par2_set("ep.mkv"))
+        r = self.sab()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.par2_calls()[0], "verify")
+        self.assertFalse(os.path.exists(os.path.join(self.job, "ep.par2")))
+
+    def test_par2_targets_mixed_are_verified(self):
+        self.write("ep.mkv", media(3))
+        self.write("ep.par2", par2_set("ep.mkv", "ep.part01.rar"))
+        r = self.sab()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.par2_calls()[0], "verify")
+
+    def test_par2_damaged_present_target_among_missing_fails_the_job(self):
+        self.fake_par2(2, 'Target: "ep.mkv" - damaged. Found 95 of 100 data blocks.')
+        self.write("ep.mkv", media(3))
+        self.write("ep.par2", par2_set("ep.mkv", "ep.part01.rar"))
         r = self.sab()
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
 

@@ -4,7 +4,7 @@
 SABnzbd post-processing script:  download-integrity.py <final dir> [SAB's other args]
 qBittorrent on torrent finished:  download-integrity.py --qbit "%I" "%F"
 By hand (report only):            download-integrity.py --check <file or dir>...
-Checks: par2 verify of the set when par2 files are there (then removed), else every video file: container header and no
+Checks: par2 verify of the set when par2 files are there and at least one of its target files is on disk (then removed), else every video file: container header and no
 aligned 1 MiB block of zeros. Data is flushed and dropped from the page cache first, so the disk is read, not memory.
 exit: clean -> whatever clamav-hook.py returns; 1 corrupt (SABnzbd job failed, torrent rechecked and tagged); 2 usage
 """
@@ -13,6 +13,7 @@ import fcntl
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -112,6 +113,28 @@ def par2_main(par2s):
     return min(plain or par2s, key=lambda p: (len(os.path.basename(p)), p))
 
 
+def par2_targets(par2s):
+    """Names of the files the par2 sets describe; empty when a set cannot be read."""
+    names = set()
+    for p in par2s:
+        try:
+            with open(p, "rb") as f:
+                while True:
+                    head = f.read(64)
+                    if len(head) < 64 or head[:8] != b"PAR2\0PKT":
+                        break
+                    length = struct.unpack("<Q", head[8:16])[0]
+                    if length < 64:
+                        break
+                    if head[48:64] == b"PAR 2.0\0FileDesc" and length >= 120:
+                        names.add(f.read(length - 64)[56:].rstrip(b"\0").decode("utf-8", "replace"))
+                    else:
+                        f.seek(length - 64, 1)
+        except (OSError, struct.error):
+            return set()
+    return names
+
+
 def par2_verify(par2s, others):
     """True verified, the damaged file names, or None for no verdict (par2 missing, a target missing or misnamed)."""
     binary = shutil.which(PAR2) if os.sep not in PAR2 else (PAR2 if os.access(PAR2, os.X_OK) else None)
@@ -119,6 +142,11 @@ def par2_verify(par2s, others):
         print("par2 not available, zero scan instead")
         return None
     main = par2_main(par2s)
+    targets = par2_targets(par2s)
+    here = {os.path.basename(p) for p in others} | set(os.listdir(os.path.dirname(main)))
+    if targets and not any(os.path.basename(t) in here for t in targets):
+        print("par2 targets are not on disk (%d, e.g. %s), zero scan instead" % (len(targets), sorted(targets)[0]))
+        return None
     try:
         r = subprocess.run([binary, "verify", main] + others, cwd=os.path.dirname(main), capture_output=True, text=True, timeout=3600)
     except (OSError, subprocess.SubprocessError) as e:
