@@ -30,11 +30,13 @@ SIDECAR = pathlib.Path("/srv/appdata/jellyfin-popular/coming.json")
 
 
 def release_date(entry, today):
-    """ISO date of the calendar entry: an episode's air date; a movie's earliest release not before today, else its earliest."""
+    """ISO date of the calendar entry: an episode's air date; a movie's first home release (digital or disc; once it has passed the film is out, never a later date), the cinema date only when no home release is known."""
     if entry.get("airDateUtc"):
         return entry["airDateUtc"][:10]
-    dates = sorted(v[:10] for v in (entry.get(k) for k in ("inCinemas", "digitalRelease", "physicalRelease")) if v)
-    return next((d for d in dates if d >= today.isoformat()), dates[0] if dates else None)
+    home = sorted(v[:10] for v in (entry.get(k) for k in ("digitalRelease", "physicalRelease")) if v)
+    if home:
+        return home[0]
+    return entry["inCinemas"][:10] if entry.get("inCinemas") else None
 
 
 def titles(episodes, movies, today=None):

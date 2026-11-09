@@ -54,8 +54,18 @@ class ReleaseDate(unittest.TestCase):
         movie = {"inCinemas": "2026-09-01T00:00:00Z", "digitalRelease": "2026-12-05T00:00:00Z", "physicalRelease": "2027-01-10T00:00:00Z"}
         self.assertEqual(up.release_date(movie, self.TODAY), "2026-12-05")
         self.assertEqual(up.release_date({"inCinemas": "2026-10-29T00:00:00Z"}, self.TODAY), "2026-10-29")
-        self.assertEqual(up.release_date({"inCinemas": "2026-03-01T00:00:00Z", "digitalRelease": "2026-05-01T00:00:00Z"}, self.TODAY), "2026-03-01")
+        self.assertEqual(up.release_date({"inCinemas": "2026-03-01T00:00:00Z", "digitalRelease": "2026-05-01T00:00:00Z"}, self.TODAY), "2026-05-01")
         self.assertIsNone(up.release_date({}, self.TODAY))
+
+    def test_movie_date_is_its_first_home_release_never_a_later_one(self):
+        today = datetime.date(2026, 11, 9)
+        released = {"inCinemas": "2026-09-16T00:00:00Z", "digitalRelease": "2026-11-03T00:00:00Z", "physicalRelease": "2026-12-29T00:00:00Z"}
+        self.assertEqual(up.release_date(released, today), "2026-11-03")
+        cinema_first = {"inCinemas": "2027-02-10T00:00:00Z", "digitalRelease": "2027-04-01T00:00:00Z"}
+        self.assertEqual(up.release_date(cinema_first, today), "2027-04-01")
+        disc_only = {"inCinemas": "2026-08-01T00:00:00Z", "physicalRelease": "2026-12-01T00:00:00Z"}
+        self.assertEqual(up.release_date(disc_only, today), "2026-12-01")
+        self.assertEqual(up.release_date({"inCinemas": "2026-12-24T00:00:00Z"}, today), "2026-12-24")
 
     def test_episode_date_is_the_air_date(self):
         self.assertEqual(up.release_date({"airDateUtc": "2026-11-03T02:00:00Z"}, self.TODAY), "2026-11-03")

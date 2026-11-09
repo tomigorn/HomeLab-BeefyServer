@@ -818,14 +818,11 @@ class RealArt(Base):
         comingd["entries"]["c9"] = {"t": {"en": "Owned"}, "p": {"en": "/p9.jpg"}, "ref": "movie/9", "y": 2026}
         self.write_feeds(lists, coming, details, comingd)
 
-    def test_owned_coming_soon_title_gets_the_date_pill_and_loses_it_after_the_day(self):
+    def test_owned_coming_soon_movie_plays_so_it_gets_no_date_pill(self):
         self.coming_owned("2026-11-05")
         self.assertEqual(self.run_sync(), 0, self.out)
-        self.assertEqual(self.io.primary["real9"], tr.art.poster(self.ORIGINAL, None, "", [("home-movies", 3, None)], "Thu 5 Nov"))
+        self.assertEqual(self.io.primary["real9"], tr.art.poster(self.ORIGINAL, None, "", [("home-movies", 3, None)]))
         self.coming_owned("2026-11-05", listed=False)
-        self.assertEqual(self.run_sync(), 0, self.out)
-        self.assertEqual(self.io.primary["real9"], tr.art.poster(self.ORIGINAL, None, "", [], "Thu 5 Nov"))
-        self.coming_owned("2026-10-28", listed=False)
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(self.io.primary["real9"], self.ORIGINAL)
         self.assertFalse((self.paths.originals / "real9.jpg").exists())

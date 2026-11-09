@@ -183,6 +183,12 @@ class Plan(unittest.TestCase):
         self.assertEqual((phs["Upcoming"].coming_date, phs["Upcoming"].coming_ep), ("2026-11-05", None))
         self.assertEqual(p.real_dates, {"jf30": ("2026-11-04", None)})
 
+    def test_owned_movie_has_no_date_an_owned_series_keeps_its_next_episode(self):
+        c = coming(("tv", 30, "d30", "2026-11-04"), ("movie", 20, "d20", "2026-12-29"))
+        details = {"d30": info("tv", 30, "Running Show", 2020), "d20": info("movie", 20, "In Library", 2026)}
+        p = tm.plan(lists(), c, details, {"tv/30": "jf30", "movie/20": "jf20"}, {})
+        self.assertEqual(p.real_dates, {"jf30": ("2026-11-04", None)})
+
     def test_date_label_like_the_web_cards_until_the_day_passed(self):
         today = datetime.date(2026, 10, 30)
         self.assertEqual(tm.date_label("2026-11-04", (1, 5), today), "Wed 4 Nov · S01E05")

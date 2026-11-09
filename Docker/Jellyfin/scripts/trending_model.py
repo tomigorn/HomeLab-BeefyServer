@@ -254,7 +254,7 @@ def plan(lists, coming, details, owned, states):
             keys = [entry_key(e) for e in entries[spec["key"]]]
         collections.append((spec, [m for m in map(member, keys) if m]))
         art[spec["key"]] = [art_ref(k) for k in keys if member(k)][:ART_MEMBERS]
-    dates = {real[k]: (t["date"], t.get("ep")) for k, t in titles.items() if k in real and "coming_rank" in t and t["date"]}
+    dates = {real[k]: (t["date"], t.get("ep")) for k, t in titles.items() if k in real and t["kind"] == "tv" and "coming_rank" in t and t["date"]}
     return Plan(placeholders, collections, art, {real[k]: marks[k] for k in real if marks.get(k)}, dates)
 
 
