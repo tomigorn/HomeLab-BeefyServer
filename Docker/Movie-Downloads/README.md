@@ -1503,6 +1503,7 @@ Every download client is inside the tunnel (SABnzbd since 2026-10-23, like `sabn
 | | |
 |---|---|
 | Kill switch | gluetun's firewall: `OUTPUT` policy `DROP`; allowed only `tun0`, the WireGuard endpoint (UDP 51820, gluetun itself) and `FIREWALL_OUTBOUND_SUBNETS` (bridge only since 2026-10-24; replies to fastpi leave via eth0 because gluetun routes its own eth0 address there). Tunnel down = no internet for qBittorrent, Prowlarr and SABnzbd (bridge still reachable, so the WebUIs and Radarr keep working) |
+| DNS | containers resolve through dockerd on the host (`127.0.0.53`, systemd-resolved → router). Compose `dns:` (AdGuard `192.168.1.2`, router second) was tried 2026-11-09 and reverted: DOCKER-USER drops container traffic into the LAN (`-d 192.168.1.0/24 -o enp6s0 -j DROP`, `_global/scripts/docker-user-guard.sh`), so every lookup failed |
 | Reached as | qBittorrent `gluetun:8080`, Prowlarr `gluetun:9696`, SABnzbd `gluetun:8081` (Radarr/Sonarr download client host) |
 | SABnzbd | `port = 8081` and `host_whitelist` += `gluetun` in `sabnzbd.ini` (not in git; backup `backups/pre-sab-vpn-2026-10-23/`); still reaches `clamav:3310` (gluetun's DNS resolves the container names) |
 | Verified 2026-10-23 | egress of sab, qBit, Prowlarr = VPN IP (≠ WAN); Radarr/Sonarr client tests 200; SAB "test server" (eweka, 563 TLS) OK; clamav hook clean scan from sab; Prowlarr testall valid; `192.168.1.102:8081` from fastpi and `sabnzbd.holy-grail.ch` (302 to SSO) unchanged |
