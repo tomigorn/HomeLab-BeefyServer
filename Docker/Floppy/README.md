@@ -5,7 +5,7 @@ Per-user tracker for films, series, books and games (ratings, history, want-list
 | | |
 |---|---|
 | URL | https://tracker.holy-grail.ch (Holy Grail, group `streaming-users`); wakes beefy |
-| Image | `ghcr.io/dannyvfilms/floppy:26.10.29@sha256:5e88307d…`, `redis:8.10.3-alpine@sha256:896f241f…` (`.env`) |
+| Image | `ghcr.io/dannyvfilms/floppy:26.10.29@sha256:5e88307d…`, `redis:8.10.3-alpine@sha256:71885d8c…` (`.env`) |
 | Containers | `floppy` (host port `8012` → 8000), `floppy-redis` (no port) |
 | Networks | `floppy` `172.28.16.0/24` (egress: internet, tcp 80/443 only), `floppy-redis` `172.28.17.0/24` (`internal`) |
 | Data | `/srv/appdata/floppy/db` (SQLite), `/srv/appdata/floppy/backups` (snapshots, CSV exports), `/srv/appdata/floppy-redis` (AOF) |
