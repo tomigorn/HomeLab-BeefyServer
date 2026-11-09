@@ -645,6 +645,7 @@ Mount **`/srv/video`** (not its subfolders separately) into the video apps. Same
 - **Knows about the split: no.** Point category save paths inside the pool
   (`/srv/video/torrents/{movies,tv}`). New data auto-lands
   on SSD; it never sees a branch.
+- Current state (2026-11-09): nothing seeds on beefy, torrents stop at completion and are removed after the import (Movie-Downloads README "No seeding"), so the live-seeding set is empty.
 - **The single thing you MUST get right — bound the live-seeding set.** Active torrents are
   **pinned to the SSD** by the mover (§8F): peers do random reads at random times, so seeding
   from the cold HDD would keep it awake permanently. The cold HDD therefore only ever holds

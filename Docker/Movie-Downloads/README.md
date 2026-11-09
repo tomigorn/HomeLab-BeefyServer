@@ -146,7 +146,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 | App | Setting | Value |
 |---|---|---|
 | qBittorrent | category `radarr` save path | `/data/torrents/movies` |
-| qBittorrent | seed limits | **ratio 2.0 OR 30 days, then stop** (§14.0) |
+| qBittorrent | seed limits | **no seeding: ratio 0 / 0 min, then stop; upload 1 KiB/s** ([No seeding](#no-seeding)) |
 | movie-downloads bridge | `ip_range` | subnet `172.28.10.0/24`, dynamic addresses only in `.0/25` (2026-10-28, review S-13): the pinned `.201`-`.205` can never go to another container. Changing it recreates the network: `docker compose down` Seerr, Antivirus, Movie-Downloads, then `up -d` in reverse |
 | qBittorrent | no-password bypass | only vpn-status .203, ClamAV queue worker .204 (stops/tags an infected torrent; pinned in compose, added by `scripts/clamav-hooks.sh`), Seerr download-now .205 (moves/starts night torrents; added by `../Seerr/scripts/download-now-setup.sh`), and 192.168.1.2 (Traefik; accepted 2026-11-01, review S-14: fastpi is trusted and DOCKER-USER limits :8080 to it, a second qBittorrent login behind Authentik is not wanted); localhost has no bypass since 2026-10-31 (B-02: `qbit-port.sh` and the ClamAV autorun log in with `/run/secrets/qbit-webui.password`); everything else needs the password, including Radarr/Sonarr (their qBittorrent clients log in as `admin`; credentials written by `scripts/night-downloads-setup.sh` from the secret file), the host scripts and every other bridge (they arrive as the gateway .1, removed 2026-10-28, review S-01). Change: `app/setPreferences` key `bypass_auth_subnet_whitelist`; rollback: `backups/pre-qbit-password-2026-10-28/rollback.sh` (not in git, puts .1 back), `backups/pre-qbit-arr-creds-2026-10-28/rollback.sh` (puts .201/.202 back) |
 | SABnzbd | incomplete / complete | `/data/usenet/incomplete` / `/data/usenet/complete/movies` |
@@ -162,9 +162,7 @@ No remote-path mapping is needed — every container sees the identical tree.
 
 Two behaviours to set deliberately, both from §14.2:
 
-- **Don't auto-delete the download on import** (`import-and-keep`). A seeding
-  torrent holds the second hardlink; deleting the library link early doesn't free
-  the SSD anyway, and force-deleting a seeding torrent's data is worse.
+- **No seeding** (owner 2026-11-09): qBittorrent stops a torrent at completion, Radarr/Sonarr import it and "Remove Completed" deletes the torrent and its download link; only the library copy stays. See [No seeding](#no-seeding).
 - **Per-category disk-space limits** in qBittorrent and SABnzbd, so a large pack
   can't start without room and spill onto the cold HDD.
 
@@ -179,9 +177,7 @@ separate disks. This has nothing to do with ext4 vs xfs and would **not** change
 both were reformatted to match: two ext4 filesystems cannot share hardlinks either.
 Do not reach for `mkfs` over this. The moment a movie is demoted to `hdd-cold`, its
 hardlink to the still-seeding download breaks and you are paying for two full
-copies. Set qBittorrent to remove torrents at a seed ratio or time
-limit so the download side is gone before demotion, or expect the hot tier to
-fill with orphans.
+copies. Since 2026-11-09 nothing seeds ([No seeding](#no-seeding)), so the download side is gone right after the import.
 
 The nightly mover (`Server/3-Storage-Layout-and-Spindown.md`, "Storage — current state") moves titles nobody played or added for 30 days from the SSDs to the HDD when the SSDs are ≥ 70 % (down to 60 %). It never touches a hardlinked (seeding) file. By hand:
 
@@ -215,7 +211,7 @@ quality/naming policy, which is `recyclarr/recyclarr.yml` in this folder.
 SABnzbd ─ /data/usenet/complete/movies/<job>/ ─┐  Radarr: completed download handling
 qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks every 1 min)
                                                ▼
-        usenet: MOVE (atomic rename) · torrent: HARDLINK (qBit keeps seeding)
+        usenet: MOVE (atomic rename) · torrent: HARDLINK (qBit stopped, link removed)
                                                ▼
   /data/media/movies/<Title> (<Year>) [tmdbid-<id>]/<Title> (<Year>) [tmdbid-<id>] - [<CF>][<Quality>][<Audio>][<HDR>][<Codec>]-<Group>.mkv
                     ┌──────────────────────────┴───────────────────────────┐
@@ -253,7 +249,7 @@ qBit ──── /data/torrents/movies/<torrent>/ ────┤  (checks ever
   (`stat` *through mergerfs* can show a stale link count for ~1 s; check the
   branch, `/srv/.disks/ssd-hot/...` or `ssd-hot2`, when in doubt.)
 - Usenet is always moved (nothing seeds). Torrents are hardlinked; qBit stops
-  them at ratio 2 or 30 days, then Radarr's "Remove Completed" deletes the torrent
+  them at completion (no seeding), then Radarr's "Remove Completed" deletes the torrent
   and its download-side link — the library link is untouched.
 - Identity: no container runs as `buntu` (1000, sudo). Each app has its own uid, in linuxserver non-root mode (no root PID1, `cap_drop: ALL`):
 
@@ -533,7 +529,7 @@ The records of a wiped title stay in `title-wipe.tsv`: the wipe runs as buntu an
 | Setting | Value | Why |
 |---|---|---|
 | Completed Download Handling | on, check every 1 min | the import trigger |
-| Remove Completed (SAB + qBit) | on | SAB history/scratch is cleaned; torrents only after seeding stops |
+| Remove Completed (SAB + qBit) | on | SAB history/scratch is cleaned; torrents right after the import (qBit stops them at completion) |
 | Use Hardlinks instead of Copy | on | |
 | Import Extra Files | on, `srt,ass,ssa,sub,idx` | release-supplied subs are kept and renamed `<movie>.en.srt` |
 | Rename Movies | on (Recyclarr) | |
@@ -1524,7 +1520,27 @@ qBittorrent settings that matter here (in `/srv/appdata/qbittorrent`, not in git
 |---|---|---|
 | `current_network_interface` | `tun0` | bound to the tunnel only (gluetun's WireGuard interface); without it qBit also listened on `eth0`/bridge and had 0 DHT nodes. Takes effect after a qBit restart |
 | `status_bar_external_ip` | `true` | WebUI status bar shows the external IP qBit sees (= VPN IP) |
-| ratio 2 / 30 days, queueing, connection limits | on | public trackers; mouse has none of these (private tracker, seeds forever) |
+| ratio 0 / 0 min, action stop; `up_limit` and `alt_up_limit` 1024 (1 KiB/s) | on | [No seeding](#no-seeding); mouse seeds (private tracker) |
+| queueing, connection limits | on | public trackers |
+
+### No seeding
+
+Owner 2026-11-09: beefy never seeds. Only the library copy is kept.
+
+| Step | What happens |
+|---|---|
+| While downloading | upload capped at 1 KiB/s (`up_limit`; `alt_up_limit` too, playback-watch switches to alt mode). BitTorrent cannot upload zero: `0` means unlimited. Only usenet uploads nothing |
+| Completion | ratio 0 / 0 min reached at once → qBit stops the torrent (`max_ratio_act` 0 = stop, never remove: Radarr/Sonarr must import first) |
+| Import | Radarr/Sonarr hardlink into the library, then "Remove Completed" deletes the torrent and its download link (within ~1 min) |
+| Not imported (wrong film, import blocked) | stays stopped in qBit with its files, nothing seeds; the queue watchdog reports it |
+
+Indexers carry no own seed ratio/time (`seedCriteria` empty in Radarr/Sonarr), so qBit's global limits apply to every torrent. Applied live 2026-11-09 (6 seeding torrents stopped and removed, library copies intact). Previous preferences: `~/qbit-prefs-before-no-seeding-2026-11-09.json` (not in git).
+
+```bash
+(QBIT_PASS_FILE=secrets/qbit-webui.password; . scripts/qbit-api.sh; qbit_api http://127.0.0.1:8080 /app/setPreferences --data-urlencode 'json={"max_ratio_enabled":true,"max_ratio":0,"max_seeding_time_enabled":true,"max_seeding_time":0,"max_ratio_act":0,"up_limit":1024,"alt_up_limit":1024}'; qbit_logout)
+```
+
+Verify: `md.qbit-tun0-no-seeding` in the post-update check.
 
 ### Recovery (parity with fastpi's mouse stack)
 
