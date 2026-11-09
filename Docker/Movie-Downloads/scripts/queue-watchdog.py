@@ -4,9 +4,10 @@ Per (app, downloadId, condition), once until the condition clears and returns: b
 Guard events: scripts/grab-guard.sh writes <config dir>/guard-events/*.json inside the containers (no bot token there); removed / marked-failed = digest, "check by hand" = Telegram; the file is deleted once handled. scripts/subtitle-check.py writes subtitle_repaired / subtitle_suspect events and scripts/forced-sync.py subtitle_forced_synced / subtitle_forced_unverified to /srv/appdata/bazarr/subtitle-check/events = digest. Sent with _global/scripts/oob-alert.sh. Run by systemd/queue-watchdog.timer.
 Indexers: /health of each app; one Telegram while indexers are disabled after failures (IndexerStatusCheck / IndexerLongTermStatusCheck), recovery = digest. Expected backoffs are left out: Treasure Maps grab limit, The Pirate Bay "no results"; any indexer disabled for a request limit (429, "Request Limit", too many requests: lastError or its newest warning in /log) = digest.
 Quiet hours 22:00-07:00 Europe/Zurich: Telegrams are held and sent on the first run from 07:00 if still due.
-ID-matched Sonarr imports: a completed download Sonarr blocks only with "matched to series by ID" is imported (ManualImport, once per download) when the grab history, title, year, season and Sonarr's own proposals all agree; otherwise the normal blocked alert names the reason. QW_AUTO_IMPORT=0 switches it off.
+Removals (remove from the client, blocklist, search again; digest, Telegram only when the DELETE fails): a download blocked "matched to movie/series by ID" whose release year fails the guard's year rule (scripts/guard-year.jq) = guard_removed; a fake (executable / dangerous / encrypted file message, an output path with such an extension, or a completed folder with such files and no video) = malware_removed.
+ID-matched imports: a completed download blocked only with "matched to movie/series by ID" is imported (ManualImport, once per download) when the grab history, title, year, season (Sonarr) and the app's own proposals all agree; otherwise the normal blocked alert names the reason. QW_AUTO_IMPORT=0 switches it off.
 Digest: watchdog-digest.prom (node-exporter textfile, last 48 h) in the state dir, read by fastpi's morning digest. Every send, hold and digest event is a line in watchdog-sends.log.
-Usage: scripts/queue-watchdog.py [--dry-run]   (--dry-run: only the ID-match auto-import check, prints, changes nothing)"""
+Usage: scripts/queue-watchdog.py [--dry-run]   (--dry-run: only the removal and ID-match auto-import checks, prints, changes nothing)"""
 import datetime
 import html
 import json
@@ -40,8 +41,14 @@ TZ = "Europe/Zurich"
 GUARD_DIGEST = {"removed", "marked-failed"}
 SUBTITLE_DIGEST = {"subtitle_repaired", "subtitle_suspect", "subtitle_forced_synced", "subtitle_forced_unverified"}
 DEFAULT_EVENTS = "/srv/appdata/radarr/guard-events:/srv/appdata/sonarr/guard-events:/srv/appdata/bazarr/subtitle-check/events"
-ID_MATCH = "matched to series by ID"
+ID_MATCH = re.compile(r"matched to (movie|series) by ID")
 RATE_LIMIT = re.compile(r"\b429\b|request limit|too many requests|rate limit", re.I)
+FAKE_MSG = re.compile(r"(found|contains) (executable|potentially dangerous) file|encrypted download|password[- ]protected|requires a password", re.I)
+FAKE_EXT = {".exe", ".scr", ".lnk", ".msi", ".bat", ".cmd", ".com", ".pif", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".hta", ".ps1", ".jar", ".cpl", ".apk", ".sh"}
+FAKE_NAME_EXT = {".exe", ".scr", ".lnk", ".msi", ".bat", ".cmd", ".pif", ".vbs", ".ps1"}
+VIDEO_EXT = {".mkv", ".mp4", ".m4v", ".avi", ".ts", ".m2ts", ".wmv", ".mov", ".webm", ".mpg", ".mpeg", ".vob", ".iso", ".flv"}
+YEAR_RULE = HERE / "guard-year.jq"
+DELETE = {"removeFromClient": "true", "blocklist": "true", "skipRedownload": "false"}
 YEAR_SLACK = 1
 DIGEST_HOURS, DIGEST_MAX, SENDS_MAX, TITLE_MAX = 48, 40, 1000, 80
 
@@ -58,6 +65,7 @@ class Config:
     quiet_from: int = 22
     quiet_until: int = 7
     auto_import: bool = True
+    data_root: str = "/srv/video"
 
 
 def in_quiet_hours(now, cfg):
@@ -356,9 +364,22 @@ def clean(title):
     return re.sub(r"[\W_]+", "", str(title or "").casefold())
 
 
+def words(text):
+    return re.findall(r"\w+", str(text or "").casefold())
+
+
+def part_of(part, whole):
+    p, w = words(part), words(whole)
+    return bool(p) and any(w[i:i + len(p)] == p for i in range(len(w) - len(p) + 1))
+
+
+def strip_year(title):
+    return re.sub(r"\s*\(?\b(19|20)\d{2}\)?\s*$", "", title or "")
+
+
 def series_names(series):
     titles = [series.get("title")] + [a.get("title") for a in series.get("alternateTitles") or []]
-    return {clean(re.sub(r"\s*\(?\b(19|20)\d{2}\)?\s*$", "", t or "")) for t in titles if t} - {""}
+    return {clean(strip_year(t)) for t in titles if t} - {""}
 
 
 def id_match_groups(records):
@@ -371,18 +392,58 @@ def id_match_groups(records):
     def only_id(rec):
         msgs = [m for sm in rec.get("statusMessages") or [] for m in sm.get("messages") or []]
         return (rec.get("status") == "completed" and rec.get("trackedDownloadState") == "importBlocked"
-                and bool(msgs) and all(ID_MATCH in m for m in msgs))
+                and bool(msgs) and all(ID_MATCH.search(m) for m in msgs))
     return {d: recs for d, recs in groups.items() if all(only_id(r) for r in recs)}
 
 
-def group_label(recs):
+def group_label(app, recs):
+    if app == "radarr":
+        return f"{label(app, recs[0])}: {recs[0].get('title')}"
     seasons = sorted({(r.get("episode") or {}).get("seasonNumber") for r in recs} - {None})
     name = label("sonarr", dict(recs[0], episode=None))
     return f"{name} {'/'.join(f'S{s:02d}' for s in seasons)}".rstrip() + f": {recs[0].get('title')}"
 
 
-def id_import_files(api, download_id, recs):
+def id_import_files(app, api, download_id, recs):
     """ManualImport files for an ID-matched download, or Refused(reason)."""
+    return (radarr_import_files if app == "radarr" else sonarr_import_files)(api, download_id, recs)
+
+
+def radarr_import_files(api, download_id, recs):
+    mids = {r.get("movieId") for r in recs}
+    if len(mids) != 1 or None in mids:
+        raise Refused("queue records name no single movie")
+    mid = mids.pop()
+    movie = api("GET", f"/movie/{mid}") or {}
+    grabs = [h for h in (api("GET", "/history", {"downloadId": download_id, "pageSize": 1000}) or {}).get("records") or [] if h.get("eventType") == "grabbed"]
+    if not grabs:
+        raise Refused("no grab history for this download")
+    for h in grabs:
+        data = h.get("data") or {}
+        if h.get("movieId") != mid or data.get("movieMatchType") != "Id" or not movie.get("tmdbId") or str(data.get("tmdbId")) != str(movie.get("tmdbId")):
+            raise Refused("grab history is not this movie by its TMDB id")
+    info = (api("GET", "/parse", {"title": recs[0].get("title")}) or {}).get("parsedMovieInfo") or {}
+    year = info.get("year") or 0
+    if not year or year != movie.get("year"):
+        raise Refused(f"release year {year or 'none'} is not the movie year {movie.get('year')}")
+    parsed_words = {w for t in (info.get("movieTitles") or []) + [info.get("primaryMovieTitle")] for w in words(t)}
+    names = [movie.get("title"), movie.get("originalTitle")] + [a.get("title") for a in movie.get("alternateTitles") or []]
+    if not any(words(n) and set(words(n)) <= parsed_words for n in names):
+        raise Refused(f'release title "{info.get("primaryMovieTitle")}" contains no title or alternate title of the movie')
+    out_dir = (recs[0].get("outputPath") or "").rstrip("/")
+    proposals = api("GET", "/manualimport", {"downloadId": download_id, "filterExistingFiles": "true"}) or []
+    for p in proposals:
+        if p.get("rejections"):
+            raise Refused("Radarr rejects a file: " + "; ".join(str(r.get("reason")) for r in p["rejections"]))
+        if (p.get("movie") or {}).get("id") != mid or not out_dir or not str(p.get("path", "")).startswith(out_dir + "/"):
+            raise Refused("a proposed file is not this movie inside the download folder")
+    if not proposals:
+        raise Refused("Radarr proposes no file")
+    keys = ("path", "folderName", "releaseGroup", "quality", "languages", "indexerFlags")
+    return [{k: p.get(k) for k in keys} | {"movieId": mid, "downloadId": download_id} for p in proposals]
+
+
+def sonarr_import_files(api, download_id, recs):
     sids = {r.get("seriesId") for r in recs}
     if len(sids) != 1 or None in sids:
         raise Refused("queue records name no single series")
@@ -403,9 +464,11 @@ def id_import_files(api, download_id, recs):
     info = (api("GET", "/parse", {"title": recs[0].get("title")}) or {}).get("parsedEpisodeInfo") or {}
     title = info.get("seriesTitleInfo") or {}
     parsed_title = title.get("titleWithoutYear") or info.get("seriesTitle")
-    if clean(parsed_title) not in series_names(series):
-        raise Refused(f'release title "{parsed_title}" is not the series title')
     year = title.get("year") or 0
+    titles = [series.get("title")] + [a.get("title") for a in series.get("alternateTitles") or []]
+    loose = year and year == series.get("year") and any(part_of(parsed_title, strip_year(t)) for t in titles if t)
+    if clean(parsed_title) not in series_names(series) and not loose:
+        raise Refused(f'release title "{parsed_title}" is not the series title')
     years = {series.get("year")} | {int(e["airDate"][:4]) for e in eps if (e.get("airDate") or "")[:4].isdigit()}
     if year and not any(y and abs(year - y) <= YEAR_SLACK for y in years):
         raise Refused(f"release year {year} fits neither the series year nor the episode air years")
@@ -422,27 +485,27 @@ def id_import_files(api, download_id, recs):
         if (p.get("series") or {}).get("id") != sid or not p.get("episodes") or not out_dir or not str(p.get("path", "")).startswith(out_dir + "/"):
             raise Refused("a proposed file is not this series' episode inside the download folder")
     if not proposals or len(proposed) != len(set(proposed)) or set(proposed) != queued:
-        raise Refused("proposed files do not cover exactly the grabbed episodes")
+        raise Refused(f"proposed files ({len(proposed)}) do not cover exactly the {len(queued)} grabbed episodes")
     keys = ("path", "folderName", "releaseGroup", "quality", "languages", "indexerFlags", "releaseType")
     return [{k: p.get(k) for k in keys} | {"seriesId": sid, "episodeIds": [e["id"] for e in p["episodes"]], "downloadId": download_id} for p in proposals]
 
 
 def auto_import(app, api, records, state, out, now, cfg):
-    """ID-matched Sonarr downloads: import the ones that pass, mark the rest; (download ids imported this run, rc)."""
+    """ID-matched downloads: import the ones that pass, mark the rest; (download ids imported this run, rc)."""
     done, rc = set(), 0
-    if app != "sonarr" or not cfg.auto_import:
+    if not cfg.auto_import:
         return done, rc
     groups = id_match_groups(records)
     queued = {r.get("downloadId") for r in records}
-    for key in [k for k in state if k.startswith("autoimport:sonarr:") and k.split(":", 2)[2] not in queued]:
+    for key in [k for k in state if k.startswith(f"autoimport:{app}:") and k.split(":", 2)[2] not in queued]:
         del state[key]
     for dl, recs in groups.items():
-        key = f"autoimport:sonarr:{dl}"
+        key = f"autoimport:{app}:{dl}"
         if key in state:
             continue
-        name = group_label(recs)
+        name = group_label(app, recs)
         try:
-            files = id_import_files(api, dl, recs)
+            files = id_import_files(app, api, dl, recs)
         except Refused as e:
             print(f"auto-import refused: {name}: {e}")
             for r in recs:
@@ -465,18 +528,144 @@ def auto_import(app, api, records, state, out, now, cfg):
     return done, rc
 
 
+def groups_of(records):
+    groups = {}
+    for rec in records:
+        if rec.get("downloadId"):
+            groups.setdefault(rec["downloadId"], []).append(rec)
+    return groups
+
+
+def fake_reason(recs, cfg):
+    """Why a download is a fake (executable, dangerous or encrypted files), or None."""
+    rec = recs[0]
+    if rec.get("status") == "failed":
+        return None
+    msg = next((m for r in recs for sm in r.get("statusMessages") or [] for m in sm.get("messages") or [] if FAKE_MSG.search(m)), None)
+    if msg:
+        return msg
+    out = str(rec.get("outputPath") or "").rstrip("/")
+    if pathlib.PurePosixPath(out).suffix.lower() in FAKE_NAME_EXT:
+        return f"downloaded file {pathlib.PurePosixPath(out).name}"
+    if rec.get("status") == "completed" and out.startswith("/data/"):
+        root = pathlib.Path(cfg.data_root) / out[len("/data/"):]
+        files = [f for f in root.rglob("*") if f.is_file()][:1000] if root.is_dir() else []
+        exts = {f.suffix.lower() for f in files}
+        if exts & FAKE_EXT and not exts & VIDEO_EXT:
+            return "the download holds only " + ", ".join(sorted(exts & FAKE_EXT)) + " files, no video"
+    return None
+
+
+def year_fits(facts):
+    r = subprocess.run(["jq", "-e", "-f", str(YEAR_RULE)], input=json.dumps(facts), capture_output=True, text=True, timeout=30)
+    if r.returncode not in (0, 1):
+        raise ApiError(f"year rule: {r.stderr.strip()}")
+    return r.returncode == 0
+
+
+def year_of(date):
+    return int(date[:4]) if str(date or "")[:4].isdigit() else 0
+
+
+def wrong_year(app, api, recs):
+    """Why an ID-matched blocked download is the wrong film (the guard's year rule), or None."""
+    def id_matched(rec):
+        return rec.get("trackedDownloadState") in ("importBlocked", "importPending") and any(
+            ID_MATCH.search(m) for sm in rec.get("statusMessages") or [] for m in sm.get("messages") or [])
+    rec = recs[0]
+    tid = rec.get("movieId") if app == "radarr" else rec.get("seriesId")
+    if not tid or not all(id_matched(r) for r in recs):
+        return None
+    parsed = api("GET", "/parse", {"title": rec.get("title")}) or {}
+    facts = {"app": app, "second": 0, "first": 0, "last": 0, "ended": True, "now": datetime.date.today().year, "air": []}
+    if app == "radarr":
+        meta = api("GET", f"/movie/{tid}") or {}
+        facts |= {"got": (parsed.get("parsedMovieInfo") or {}).get("year") or 0, "second": meta.get("secondaryYear") or 0}
+    else:
+        meta = api("GET", f"/series/{tid}") or {}
+        facts |= {"got": ((parsed.get("parsedEpisodeInfo") or {}).get("seriesTitleInfo") or {}).get("year") or 0,
+                  "first": year_of(meta.get("firstAired")), "last": year_of(meta.get("lastAired")), "ended": meta.get("status") == "ended",
+                  "air": sorted({year_of((r.get("episode") or {}).get("airDate")) for r in recs} - {0})}
+    facts["year"] = meta.get("year") or 0
+    return None if year_fits(facts) else f"release year {facts['got']}, not {facts['year']}"
+
+
+def removal(app, api, recs, cfg):
+    """(digest kind, reason) when the download is to be removed and blocklisted, else None."""
+    why = fake_reason(recs, cfg)
+    if why:
+        return "malware_removed", why
+    why = wrong_year(app, api, recs)
+    return ("guard_removed", why) if why else None
+
+
+def removal_failed_text(app, kind, recs, why, err):
+    app_name = app.capitalize()
+    head = "Fake download" if kind == "malware_removed" else "Wrong-film backstop"
+    return "\n".join([f"🔴 <b>{head}: {app_name}</b>", "", f"• 🎬 {html.escape(label(app, recs[0]))}", f"• Release: <code>{html.escape(recs[0].get('title') or '')}</code>",
+                      f"• Why: {html.escape(why)}", "• Result: could not be removed: check by hand",
+                      f"<blockquote expandable>{html.escape(err)}\n{app_name} → Activity → Queue</blockquote>"])
+
+
+def removals(app, api, records, state, out, now, cfg):
+    """Removes wrong-year ID matches and fakes from the client with blocklist; (handled download ids, rc)."""
+    handled, rc = set(), 0
+    groups = groups_of(records)
+    for key in [k for k in state if k.startswith((f"removed:{app}:", f"removefail:{app}:")) and k.split(":", 2)[2] not in groups]:
+        del state[key]
+    for dl, recs in groups.items():
+        if f"removed:{app}:{dl}" in state:
+            handled.add(dl)
+            continue
+        name = group_label(app, recs)
+        try:
+            found = removal(app, api, recs, cfg)
+        except ApiError as e:
+            print(f"removal check failed, retried next run: {name}: {e}", file=sys.stderr)
+            rc = 1
+            continue
+        if not found:
+            continue
+        kind, why = found
+        handled.add(dl)
+        try:
+            api("DELETE", f"/queue/{recs[0]['id']}", DELETE)
+        except ApiError as e:
+            print(f"{kind}: removal failed, retried next run: {name}: {why}: {e}", file=sys.stderr)
+            rc = 1
+            fkey = f"removefail:{app}:{dl}"
+            if fkey not in state:
+                r = out.immediate(fkey, kind.replace("removed", "manual"), name, removal_failed_text(app, kind, recs, why, str(e)))
+                if r == "sent":
+                    state[fkey] = now
+            continue
+        state[f"removed:{app}:{dl}"] = now
+        state.pop(f"removefail:{app}:{dl}", None)
+        print(f"{kind}: {name}: {why}: removed, blocklisted, searching again")
+        out.digest(kind, app, name)
+    return handled, rc
+
+
 def dry_run(apps, cfg):
-    """Lines describing what auto_import would do; no command, no state, no message."""
+    """Lines describing what removals and auto_import would do; no command, no state, no message."""
     lines, n, ok = [], 0, 0
-    api = apps.get("sonarr")
     if not cfg.auto_import:
         lines.append("auto-import switched off (QW_AUTO_IMPORT=0)")
-    elif api:
-        for dl, recs in id_match_groups(fetch("sonarr", api)).items():
+    for app, api in apps.items():
+        records = fetch(app, api)
+        gone = set()
+        for dl, recs in groups_of(records).items():
+            found = removal(app, api, recs, cfg)
+            if found:
+                gone.add(dl)
+                lines.append(f"would remove ({found[0]}): {group_label(app, recs)}: {found[1]}")
+        if not cfg.auto_import:
+            continue
+        for dl, recs in id_match_groups([r for r in records if r.get("downloadId") not in gone]).items():
             n += 1
-            name = group_label(recs)
+            name = group_label(app, recs)
             try:
-                files = id_import_files(api, dl, recs)
+                files = id_import_files(app, api, dl, recs)
             except Refused as e:
                 lines.append(f"not imported: {name}: {e}")
                 continue
@@ -502,6 +691,9 @@ def run(apps, state_path, event_dirs, send, cfg, now=None):
             print(f"{app}: API error, state kept: {e}", file=sys.stderr)
             rc = 1
             continue
+        removed, r = removals(app, api, records, state, out, now, cfg)
+        rc |= r
+        records = [rec for rec in records if rec.get("downloadId") not in removed]
         imported, r = auto_import(app, api, records, state, out, now, cfg)
         rc |= r
         alerts, state = evaluate(app, [rec for rec in records if rec.get("downloadId") not in imported], state, now, cfg)
@@ -535,7 +727,8 @@ def client(app, config):
         req = urllib.request.Request(f"{base}{path}?{q}", data=data, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=60) as r:
-                return json.load(r)
+                raw = r.read()
+                return json.loads(raw) if raw.strip() else None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
             raise ApiError(f"{method} {path}: {e}") from None
     return call
@@ -553,7 +746,8 @@ def sender(script):
 def main():
     apps = {app: client(app, os.environ.get(f"QW_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml")) for app in APPS}
     dirs = os.environ.get("QW_EVENTS", DEFAULT_EVENTS).split(":")
-    cfg = Config(int(os.environ.get("QW_BLOCKED_MIN", 30)), int(os.environ.get("QW_STALL_HOURS", 6)), auto_import=os.environ.get("QW_AUTO_IMPORT", "1") != "0")
+    cfg = Config(int(os.environ.get("QW_BLOCKED_MIN", 30)), int(os.environ.get("QW_STALL_HOURS", 6)), auto_import=os.environ.get("QW_AUTO_IMPORT", "1") != "0",
+                 data_root=os.environ.get("QW_DATA_ROOT", "/srv/video"))
     if sys.argv[1:] == ["--dry-run"]:
         try:
             print("\n".join(dry_run(apps, cfg)))

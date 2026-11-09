@@ -14,6 +14,8 @@ MD_LADDER='["TrueHD ATMOS","DTS X","TrueHD","DTS-HD MA","FLAC","PCM","DD+ ATMOS"
 md_ladder() { jq -r --arg p "$1" --argjson n "$MD_LADDER" '.[] | select(.name == $p) | (.formatItems | map({(.name): .score}) | add) as $s | [$n[] | $s[.] // "none"] | join(" ")' 2>&1; }
 md_policy() { jq -r --arg b "$1" 'def u(f): [.[].formatItems[] | select(.name | f) | .score] | unique | join(","); [.[] | select((.name | test("^(Anime|Swiss German)")) != ($b == "bonus"))] | "step=\([.[].minUpgradeFormatScore] | unique | join(",")) dub=\(u(startswith("Extra audio: "))) extras=\(u(. == "Extras: included")) pack=\(u(. == "Season Pack"))\(if $b == "bonus" then " repack=\(u(test("^Repack")))" else "" end)"' 2>&1; }
 md_dirs() { docker exec "movie-$1" sh -c 'b=; for d in "$@"; do [ -d "$d" ] && [ -w "$d" ] || b="$b $d"; done; echo "${b:-ok}"' sh "${@:2}" 2>&1; }
+# The wrong-film guard year rule run with the container's own jq: <app> <fixed facts> <year that fits> <year that does not>.
+md_guard_year() { local g; for g in "${@:3}"; do printf '{%s,"got":%s,"now":2026,"air":[]}' "$2" "$g" | docker exec -i "movie-$1" jq -e -f /scripts/guard-year.jq; done 2>&1 | tr "\n" " " | sed "s/ $//"; }
 if want radarr; then
   check md.radarr-auth '^External$' "$(md_auth radarr)"
   check md.radarr-qbit-login '^true 4$' "$(md_arrtest radarr 7878)"
@@ -41,6 +43,8 @@ if want radarr; then
   check md.radarr-media-management '^true /data/.recyclebin 7 afterManual true srt,ass,ssa,sub,idx$' "$(md_arr radarr 7878 /api/v3/config/mediamanagement | jq -r '"\(.copyUsingHardlinks) \(.recycleBin) \(.recycleBinCleanupDays) \(.rescanAfterRefresh) \(.importExtraFiles) \(.extraFileExtensions)"' 2>&1)"
   check md.radarr-min-free '^5896192$' "$(md_arr radarr 7878 /api/v3/config/mediamanagement | jq -r .minimumFreeSpaceWhenImporting 2>&1)"
   check md.radarr-metadata-off '^0 enabled$' "$(md_arr radarr 7878 /api/v3/metadata | jq -r '[.[] | select(.enable)] | "\(length) enabled"' 2>&1)"
+  check md.radarr-id-parse '^2019 Avengers 4 Endgame$' "$(md_arr radarr 7878 '/api/v3/parse?title=Avengers.4.Endgame.2019.German.DL.2160p.UHD.BluRay.x265-GRP' | jq -r '.parsedMovieInfo | "\(.year) \(.primaryMovieTitle)"' 2>&1)"
+  check md.radarr-guard-year '^true false$' "$(md_guard_year radarr '"app":"radarr","year":2011,"second":0,"first":0,"last":0,"ended":true' 2012 1997)"
   check md.radarr-backup-daily '^1 14$' "$(md_arr radarr 7878 /api/v3/config/host | jq -r '"\(.backupInterval) \(.backupRetention)"' 2>&1)"
 fi
 if want sonarr; then
@@ -67,6 +71,7 @@ if want sonarr; then
   check md.sonarr-min-free '^5896192$' "$(md_arr sonarr 8989 /api/v3/config/mediamanagement | jq -r .minimumFreeSpaceWhenImporting 2>&1)"
   check md.sonarr-metadata-off '^0 enabled$' "$(md_arr sonarr 8989 /api/v3/metadata | jq -r '[.[] | select(.enable)] | "\(length) enabled"' 2>&1)"
   check md.sonarr-backup-daily '^1 14$' "$(md_arr sonarr 8989 /api/v3/config/host | jq -r '"\(.backupInterval) \(.backupRetention)"' 2>&1)"
+  check md.sonarr-guard-year '^true false$' "$(md_guard_year sonarr '"app":"sonarr","year":2019,"second":0,"first":2019,"last":2023,"ended":false' 2024 1985)"
   check md.sonarr-id-parse '^The Boys 2024 4$' "$(md_arr sonarr 8989 '/api/v3/parse?title=The.Boys.2024.S04.2160p.AMZN.WEB-DL-GRP' | jq -r '.parsedEpisodeInfo | "\(.seriesTitleInfo.titleWithoutYear) \(.seriesTitleInfo.year) \(.seasonNumber)"' 2>&1)"
   check md.sonarr-id-import '^id-match auto-import: [0-9]+ candidate\(s\), [0-9]+ importable$' "$(python3 "$MD_DIR/scripts/queue-watchdog.py" --dry-run 2>&1 | tail -1)"
 fi

@@ -369,7 +369,10 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | guard "could not be removed: check by hand" | Telegram | at once; 22:00–07:00 held (event file kept), sent from 07:00 |
 | indexers disabled after failures | Telegram | at once; 22:00–07:00 held, sent from 07:00 if still disabled |
 | guard removed / marked failed, re-searching (wrong film, dub-only) | digest `guard_removed` | at once |
-| Sonarr "matched to series by ID" imported by the watchdog ([below](#id-matched-sonarr-imports)) | digest `auto_imported` | at once |
+| Radarr/Sonarr "matched to movie/series by ID" imported by the watchdog ([below](#id-matched-imports)) | digest `auto_imported` | at once |
+| "matched … by ID" download of the wrong year ([backstop](#removals-backstop-and-fakes)) removed, blocklisted, re-searched | digest `guard_removed` | at once |
+| fake download (executable / dangerous / encrypted file) removed, blocklisted, re-searched ([below](#removals-backstop-and-fakes)) | digest `malware_removed` | at once |
+| one of those removals failed | Telegram | at once, once per download; 22:00–07:00 held |
 | failed (status `failed`, the app re-searches) | digest `failed` | at once |
 | stalled (`downloading` / `queued`, `sizeleft` not smaller) | digest `stalled` | after `QW_STALL_HOURS` (6 h) |
 | indexer disabled for a request limit (429, `API Request Limit reached`, too many requests; any indexer) | digest `indexer_rate_limited` | at once, once while it stays limited |
@@ -387,7 +390,7 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Sends log | `~/.local/state/movie-downloads/watchdog-sends.log`: `<ISO time> <kind> sent\|held\|digest <title>`, last 1000 lines |
 | State | `~/.local/state/movie-downloads/queue-watchdog.json`: first seen per condition, last `sizeleft`; entries of downloads that left the queue are dropped; an unreachable app keeps its entries (exit 1) |
 | Telegram | `../_global/scripts/oob-alert.sh` (direct to api.telegram.org, no edge); the token stays in `_global/secrets/` |
-| Env | `QW_AUTO_IMPORT` (`0` = off), `QW_BLOCKED_MIN`, `QW_STALL_HOURS`, `QW_STATE`, `QW_EVENTS` (colon-separated dirs; default the two `guard-events` dirs + `/srv/appdata/bazarr/subtitle-check/events`), `QW_ALERT`, `QW_RADARR_CONFIG`, `QW_SONARR_CONFIG` |
+| Env | `QW_AUTO_IMPORT` (`0` = off), `QW_DATA_ROOT` (`/srv/video`, the host path of `/data`), `QW_BLOCKED_MIN`, `QW_STALL_HOURS`, `QW_STATE`, `QW_EVENTS` (colon-separated dirs; default the two `guard-events` dirs + `/srv/appdata/bazarr/subtitle-check/events`), `QW_ALERT`, `QW_RADARR_CONFIG`, `QW_SONARR_CONFIG` |
 | Tests | `python3 tests/test_queue_watchdog.py` |
 
 ```bash
@@ -395,10 +398,21 @@ cd ~/Projects/Docker/Movie-Downloads/systemd
 sudo install -m 0644 queue-watchdog.service queue-watchdog.timer /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now queue-watchdog.timer
 scripts/queue-watchdog.py; echo $?    # empty queue: no message, 0
-scripts/queue-watchdog.py --dry-run    # only the ID-match check: would import / not imported + reason
+scripts/queue-watchdog.py --dry-run    # only the removal and ID-match checks: would remove / would import / not imported + reason
 ```
 
-#### ID-matched Sonarr imports
+#### Removals (backstop and fakes)
+
+Once per download: `DELETE /api/v3/queue/{id}?removeFromClient=true&blocklist=true&skipRedownload=false` (files gone from SABnzbd/qBit, release blocklisted, the app searches again), digest entry, Telegram only when the DELETE fails (retried every run).
+
+| | |
+|---|---|
+| Backstop (`guard_removed`) | state `importBlocked` / `importPending` with "matched to movie/series by ID" on every record, and the release-title year fails the guard year rule `scripts/guard-year.jq` ([Wrong-film guard](#wrong-film-guard), same file): Radarr `/parse` year vs movie year and secondary year ±2; Sonarr series start ±2, run, episode air years ±1. No year in the title = kept. Found 2026-11-08: four wrong films (*Analyze This* ← 2002 sequel, *Drive* 2011 ← 1997, *Drive My Car*, *A Separation* ← 2026 releases) sat completed for days |
+| Fakes (`malware_removed`) | a status message `Found executable file`, `Found potentially dangerous file`, `contains executable file`, `Encrypted download detected`, password-protected; an output path ending in `.exe .scr .lnk .msi .bat .cmd .pif .vbs .ps1`; or a completed folder (read under `QW_DATA_ROOT`) with such files and no video. Not for status `failed` (the app handles those). Found 2026-11-05: a 1 GB `VisionQuest S01E08 … .exe` from a Knaben RSS grab sat 4 days |
+| Order | removals first, then the ID-matched imports, then the blocked alerts |
+| Log | `journalctl -u queue-watchdog.service`: `guard_removed: <title>: <release>: release year …` / `malware_removed: …` |
+
+#### ID-matched imports
 
 Why: groups name a season pack with the season's air year (`The.Boys.2024.S04` for *The Boys (2019)*). Sonarr parses the title as "The Boys" + year 2024, finds no series with that year, and falls back to the grab history. When the grab came from an ID search (`seriesMatchType: Id`, not interactive), Sonarr refuses on purpose: "Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible" (`CompletedDownloadService`, no setting; alternate titles / scene mappings do not cover a year suffix). The download sits `importBlocked` until someone imports it by hand.
 
@@ -406,10 +420,10 @@ The watchdog does that manual import (`POST /command` `ManualImport`, `importMod
 
 | Check | Rule |
 |---|---|
-| Queue | every record of the download id `completed` + `importBlocked`, and the ID-match message is its only message |
+| Queue | every record of the download id `completed` + `importBlocked`, and the ID-match message (`matched to series by ID`, Radarr `matched to movie by ID`) is its only message |
 | Series | one `seriesId`; every `grabbed` history record of the download id is that series, `seriesMatchType: Id`, same TVDB id |
 | Episodes | grabbed episodes = queued episodes = episodes of Sonarr's proposals (each once) |
-| Title | `/parse` title without year = series title or an alternate title (case, punctuation and a trailing year ignored) |
+| Title | `/parse` title without year = series title or an alternate title (case, punctuation and a trailing year ignored); or, same year as the series exactly, whole words of the series title or an alternate title (`Company Retreat` 2026 in *Jury Duty Presents: Behind the Scenes of Company Retreat* (2026), 2026-11-09) |
 | Year | none, or ±1 of the series year or an air year of the grabbed episodes |
 | Season / episode | parsed season = queued season; a single-episode release: parsed episode numbers = queued |
 | Files | every proposal: this series, no rejection (sample, quality, language …), inside the download folder |
@@ -418,7 +432,7 @@ The watchdog does that manual import (`POST /command` `ManualImport`, `importMod
 |---|---|
 | Once | per download id (`autoimport:sonarr:<id>` in the state, dropped when it leaves the queue); still blocked later = the normal blocked Telegram |
 | Refused | nothing imported, the blocked Telegram adds `🤖 Auto-import: not done (<reason>)`; the reason is in the journal |
-| Radarr | never: a movie ID match is the wrong-year case (*A Separation* 2026 vs 2011) |
+| Radarr (2026-11-09) | wrong-year ID matches are removed first (backstop). The rest is imported when: one movie; every `grabbed` record is that movie, `movieMatchType: Id`, same TMDB id; `/parse` year = movie year exactly; every word of the title, original title or an alternate title is in the parsed release title (*Traffic* ← `Traffic.-.Die.Macht.des.Kartells…2000`, *Avengers: Endgame* ← `Avengers.4.Endgame.2019`); Radarr proposals: this movie, no rejection, inside the download folder. Not covered: a same-year film whose title contains the whole title (*Drive* 2011 vs a 2011 *Drive Something*) |
 | Log | `journalctl -u queue-watchdog.service`: `auto-import: <series> Sxx: <release> (n files, command id)`; digest `auto_imported` |
 
 ### Can wait: downloads at night
