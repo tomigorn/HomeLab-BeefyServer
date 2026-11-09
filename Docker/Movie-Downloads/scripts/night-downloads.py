@@ -283,6 +283,25 @@ def brief(rec):
     return text if len(text) <= 100 else text[:99] + "…"
 
 
+ID_MATCHED = re.compile(r"matched to (?:series|movie) by ID")
+YEAR_SLACK = 2
+
+
+def id_match_problem(rec):
+    """An import Radarr/Sonarr blocks with "matched ... by ID": the release year more than YEAR_SLACK (grab-guard.sh) off the title's year = wrong-film, else needs-import."""
+    msgs = [m for sm in rec.get("statusMessages") or [] for m in sm.get("messages") or []]
+    if not any(ID_MATCHED.search(str(m)) for m in msgs):
+        return {}
+    release = str(rec.get("title") or "")
+    years = [int(y.group()) for y in re.finditer(r"(?<!\d)(?:19|20)\d{2}(?!\d)", release)]
+    cut = re.search(r"(?<!\d)(?:19|20)\d{2}(?!\d)|[. _-]S\d+|[. _-](?:2160|1080|720|480)p", release)
+    name = re.sub(r"[._]+", " ", release[:cut.start()] if cut and cut.start() else release).strip()[:60]
+    year = ((rec.get("movie") or rec.get("series") or {}).get("year")) or 0
+    if year and years and not any(abs(year - y) <= YEAR_SLACK for y in years):
+        return {"message": "", "code": "wrong-film", "release": name, "releaseYear": years[-1], "year": year}
+    return {"message": "", "code": "needs-import", "release": name}
+
+
 def queue_states(app, queue):
     """(app, title id) -> its downloads' state: problem (import blocked, failed) > importing > downloading > paused."""
     out = {}
@@ -292,7 +311,7 @@ def queue_states(app, queue):
             continue
         tds = rec.get("trackedDownloadState")
         if tds in PROBLEM_STATES or rec.get("trackedDownloadStatus") == "error" or rec.get("status") == "failed":
-            st = {"state": "problem", "message": brief(rec)}
+            st = {"state": "problem", "message": brief(rec)} | id_match_problem(rec)
         elif tds in IMPORT_STATES:
             st = {"state": "importing"}
         else:
@@ -635,7 +654,7 @@ def run_fast(now, apps, seerr, public_path, lock_path):
             return 0
         queue = {}
         for app, api in apps.items():
-            queue |= queue_states(app, api("/queue?page=1&pageSize=1000"))
+            queue |= queue_states(app, api("/queue?page=1&pageSize=1000&includeMovie=true&includeSeries=true"))
         searching = {app: running_searches(c) for app, c in cmds.items()}
         write_request_state(now, seerr, apps, public_path, lock_path, set(), searching, commands, queue, wait=False)
     except (ApiError, OSError, KeyError, TypeError, ValueError, AttributeError) as e:
@@ -666,7 +685,7 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr
     rc, urgent, titles, positions, searching, commands, qstates, queues = 0, set(), {}, {}, {}, {}, {}, {}
     for app, api in apps.items():
         try:
-            queue = queues[app] = api("/queue?page=1&pageSize=1000")
+            queue = queues[app] = api("/queue?page=1&pageSize=1000&includeMovie=true&includeSeries=true")
             urgent |= urgent_ids(api("/tag"), queue)
             titles |= title_ids(app, queue)
             positions |= episode_positions(queue)

@@ -551,6 +551,27 @@ class SearchFeedback(unittest.TestCase):
         self.assertEqual(len(out), 6)
         self.assertLessEqual(len(nd.brief({"errorMessage": "x" * 500})), 100)
 
+    def test_id_matched_problem_wrong_film_by_year(self):
+        msg = "Found matching movie via grab history, but release was matched to movie by ID. Automatic import is not possible."
+        rec = {"movieId": 7, "status": "completed", "trackedDownloadState": "importBlocked", "trackedDownloadStatus": "warning",
+               "title": "Analyze.That.2002.1080p.BluRay.x264-GRP", "movie": {"year": 1999}, "statusMessages": [{"messages": [msg]}]}
+        out = nd.queue_states("radarr", {"records": [rec]})[("radarr", 7)]
+        self.assertEqual(out, {"state": "problem", "message": "", "code": "wrong-film", "release": "Analyze That", "releaseYear": 2002, "year": 1999})
+
+    def test_id_matched_problem_within_two_years_needs_import(self):
+        msg = "Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible."
+        mk = lambda title, year: {"seriesId": 8, "status": "completed", "trackedDownloadState": "importBlocked", "title": title, "series": {"year": year}, "statusMessages": [{"messages": [msg]}]}
+        out = nd.queue_states("sonarr", {"records": [mk("Company.Retreat.2002.S01.1080p.WEB-GRP", 2000)]})[("sonarr", 8)]
+        self.assertEqual(out, {"state": "problem", "message": "", "code": "needs-import", "release": "Company Retreat"})
+        out = nd.queue_states("sonarr", {"records": [mk("Jury.Duty.S01.2160p.WEB-GRP", 2023)]})[("sonarr", 8)]
+        self.assertEqual(out, {"state": "problem", "message": "", "code": "needs-import", "release": "Jury Duty"})
+        self.assertEqual(nd.queue_states("sonarr", {"records": [mk("Show.2003.S01", 2000)]})[("sonarr", 8)]["code"], "wrong-film")
+        self.assertEqual(nd.queue_states("sonarr", {"records": [mk("Show.2002.S01", 2000)]})[("sonarr", 8)]["code"], "needs-import")
+
+    def test_id_matched_problem_without_year_data_needs_import(self):
+        rec = {"movieId": 9, "trackedDownloadState": "importBlocked", "title": "Some.Film.1080p", "statusMessages": [{"messages": ["release was matched to movie by ID"]}]}
+        self.assertEqual(nd.queue_states("radarr", {"records": [rec]})[("radarr", 9)]["code"], "needs-import")
+
     def test_queue_and_seerr_failed_by_seerr_key(self):
         out = rstate([req("movie", 1, 1), req("movie", 2, 2, status=4)], [movie(1, lastSearchTime="2026-10-28T11:00:00Z"), movie(2)], now=NOW_UTC, queue={("radarr", 1): {"state": "importing"}}, full=True)
         self.assertEqual(out["queue"], {"movie/1": {"state": "importing"}, "movie/2": {"state": "problem", "message": "", "code": "seerr"}})
@@ -859,7 +880,7 @@ class Run(unittest.TestCase):
     def test_sonarr_queue_asks_for_the_episodes(self):
         f = Fake([])
         self.go(f, MON_2205)
-        self.assertIn(("sonarr", "/queue?page=1&pageSize=1000"), f.calls)
+        self.assertIn(("sonarr", "/queue?page=1&pageSize=1000&includeMovie=true&includeSeries=true"), f.calls)
         self.assertEqual(nd.APPS["sonarr"], "includeSeries=true&includeEpisode=true")
 
     def test_full_run_writes_the_sizes_from_the_queue(self):
