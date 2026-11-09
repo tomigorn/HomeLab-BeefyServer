@@ -25,7 +25,7 @@ STUDIO_ENTRY = "Home networks"
 PROFILES = ("global", "desktop", "mobile", "tv")
 STATE_FILE = pathlib.Path.home() / ".local" / "state" / "jellyfin-moonbase.json"
 # Moonfin's own defaults for the keys set here first: the apps write them back, so before the first run they are no choice; afterwards they may be one.
-CLIENT_DEFAULTS = {"displayFavoritesRows": False, "displayStudiosRows": False, "displayGenresRows": False, "genresRowItemFilter": "both", "studiosRowSelectedIds": "", "mediaBarAutoAdvance": True, "showSeerrButton": True}
+CLIENT_DEFAULTS = {"displayFavoritesRows": False, "displayStudiosRows": False, "displayGenresRows": False, "genresRowItemFilter": "both", "studiosRowSelectedIds": "", "mediaBarAutoAdvance": True, "showSeerrButton": True, "mediaBarTrailerPreview": True}
 
 # Seerr = our facade (limits enforced there), no push relay (third-party cloud), no server-wide Similar override, no fetch tasks without keys.
 SERVER = {
@@ -46,6 +46,7 @@ DEFAULTS = {
     "mediaBarMode": "moonfin",
     "mediaBarSourceType": "recentlyAdded",  # Latest = unwatched while HidePlayedInLatest is on
     "mediaBarAutoAdvance": True,
+    "mediaBarTrailerPreview": False,  # owner 2026-11-09: no trailer autoplay in the media bar
     "homeRowsStyle": "v2",
     "detailScreenStyle": "modern",
     "homeBackdropEnabled": True,

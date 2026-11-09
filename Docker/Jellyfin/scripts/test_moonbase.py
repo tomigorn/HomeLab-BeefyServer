@@ -157,6 +157,15 @@ class WantedTest(unittest.TestCase):
         settings = {"tv": {"mediaBarSourceType": "random"}, "mobile": {"mediaBarSourceType": "recentlyReleased"}}
         self.assertEqual(mb.adopt(settings, {"mediaBarSourceType": "random"}, {"mediaBarSourceType": new["mediaBarSourceType"]}), {"tv": {"mediaBarSourceType": "recentlyAdded"}})
 
+    def test_media_bar_trailer_autoplay_off(self):
+        d = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)["DefaultUserSettings"]
+        self.assertIs(d["mediaBarTrailerPreview"], False)
+
+    def test_stored_app_default_trailer_autoplay_switched_off_once(self):
+        stored = {"tv": {"mediaBarTrailerPreview": True}}
+        self.assertEqual(mb.adopt(stored, {}, {"mediaBarTrailerPreview": False}), {"tv": {"mediaBarTrailerPreview": False}})
+        self.assertEqual(mb.adopt(stored, {}, {"mediaBarTrailerPreview": False}, done={"tv:mediaBarTrailerPreview"}), {})
+
     def test_row_toggles_for_the_web_order(self):
         d = mb.wanted(CONFIG, LISTS, FOLDERS, STUDIOS)["DefaultUserSettings"]
         self.assertEqual((d["displayFavoritesRows"], d["displayStudiosRows"], d["displayGenresRows"], d["displayRewatchRow"], d["displaySinceYouWatchedRows"], d["genresRowItemFilter"]),
