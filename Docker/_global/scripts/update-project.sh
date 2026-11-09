@@ -4,7 +4,7 @@
 # Follows _global/UPDATE-RUNBOOK.md: snapshot image IDs, pull/build, stop and back up stateful paths
 # (bind dirs or "vol:<name>"), start/recreate, wait, verify every container of the
 # project is running (and healthy if it has a healthcheck) with no crash loop;
-# on failure restore compose/.env from the snapshot, re-tag the old images (tag refs) and recreate on the old image ids, pinned when compose still names another ref (automatic rollback).
+# on failure restore compose/.env from the snapshot (a plain up then also reverts services whose config changed without an image change), re-tag the old images (tag refs) and recreate on the old image ids, pinned when compose still names another ref (automatic rollback).
 # Before any change every old image gets rollback.invalid/<repo>:<date>-<project> (a dangling prune cannot take it; one namespace Cup excludes, sorted after the real tags); the last ROLLBACK_KEEP (3) per repo and project stay.
 # After a successful run it reports other projects' running containers made from the same tag that still run the old image ("shared tag:" lines, with the command that recreates them).
 # Everything it writes under ~/backups is owner-only (umask 077, dirs 0700, files 0600): the backups hold databases and secrets.
@@ -40,6 +40,7 @@ take_snapshot() {  # take_snapshot <dir>: copies the files with their absolute p
   while read -r f; do [[ -f $f ]] && { cp --parents "$f" "$to/root" 2>/dev/null || sudo -n cp --parents "$f" "$to/root"; }; done < "$to/files"
   touch "$to/taken"; chmod -R go-rwx "$to" 2>/dev/null || sudo -n chmod -R go-rwx "$to"
 }
+restored=0
 restore_snapshot() {
   local f n=0; [[ -f $snap/files ]] || return 0
   while read -r f; do
@@ -47,6 +48,7 @@ restore_snapshot() {
     { cp "$snap/root$f" "$f" 2>/dev/null || sudo -n cp "$snap/root$f" "$f"; } && { echo "  rollback: restored $f"; n=$((n + 1)); }
   done < "$snap/files"
   (( n )) || echo "  rollback: compose/.env unchanged since the snapshot"
+  restored=$n
 }
 
 if [[ $mode == snapshot ]]; then
@@ -222,7 +224,10 @@ if [[ -n $pins ]]; then
   while read -r f; do fargs+=(-f "$f"); done < <(compose_files)
   fargs=(-p "$proj" "${fargs[@]}" -f "$bk/rollback-override.yaml")
 fi
-docker compose "${fargs[@]}" up -d --force-recreate ${svcs:+--no-deps $svcs} 2>&1 | tail -3; sleep "${ROLLBACK_WAIT:-20}"
+docker compose "${fargs[@]}" up -d --force-recreate ${svcs:+--no-deps $svcs} 2>&1 | tail -3
+# restored compose/.env: a plain up also reverts services outside that subset whose config changed without an image change
+if (( restored )) && [[ -n $svcs ]]; then docker compose "${fargs[@]}" up -d ${SERVICES:+--no-deps $SERVICES} 2>&1 | grep -E 'Recreat|Creat|Error|error' | head -8; fi
+sleep "${ROLLBACK_WAIT:-20}"
 docker compose ps --format '{{.Name}} {{.Status}}'
 back=1
 for n in "${!oldid[@]}"; do

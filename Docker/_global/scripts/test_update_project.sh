@@ -33,15 +33,17 @@ case $1 in
     esac ;;
   ps) echo cid1; [[ -s $D/others ]] && echo other1; : ;;
   inspect)
-    read -r id ref gen < "$D/ctr"
+    sf=$D/ctr; cp=cid; [[ ${@: -1} == demo-side ]] && { sf=$D/side; cp=cidS; }
+    read -r id ref gen < "$sf"
     case "$*" in
       *"{{.Name}}|{{.Config.Image}}|"*) echo "/demo-app|$ref|$id|demo|$D/Demo|app"; cat "$D/others" 2>/dev/null; : ;;
-      *"{{.Name}} {{.Config.Image}}"*) echo "/demo-app $ref cid$gen 0 app $D/Demo/compose.yaml" ;;
-      "inspect -f {{.Image}} demo-app") echo "$id" ;;
-      "inspect -f {{.Config.Image}} {{.Image}} demo-app") echo "$ref $id" ;;
-      *"{{.State.Status}}|"*) echo "running|nohc|$id|cid$gen|0" ;;
-      *"com.docker.compose.service"*) echo app ;;
-      "inspect -f {{.State.Status}} {{.Image}} demo-app") echo "running $id" ;;
+      *"{{.Name}} {{.Config.Image}}"*) echo "/demo-app $ref cid$gen 0 app $D/Demo/compose.yaml"
+        [[ -s $D/side ]] && { read -r _ sref sgen < "$D/side"; echo "/demo-side $sref cidS$sgen 0 side $D/Demo/compose.yaml"; }; : ;;
+      "inspect -f {{.Image}} demo-"*) echo "$id" ;;
+      "inspect -f {{.Config.Image}} {{.Image}} demo-"*) echo "$ref $id" ;;
+      *"{{.State.Status}}|"*) echo "running|nohc|$id|$cp$gen|0" ;;
+      *"com.docker.compose.service"*) n=${@: -1}; echo "${n#demo-}" ;;
+      "inspect -f {{.State.Status}} {{.Image}} demo-"*) echo "running $id" ;;
       *) echo "unexpected: $*" >&2; exit 9 ;;
     esac ;;
   compose)
@@ -53,10 +55,21 @@ case $1 in
       "ps -q") echo cid1 ;;
       "ps --format") echo "demo-app Up" ;;
       pull*) new=$(awk -v r="$ref" '$1==r {print $2}' "$D/pullmap"); [[ -n $new ]] && settag "$new" "$ref"; : ;;
-      up*) id=$(lookup "$ref"); [[ -n $id ]] || { echo "Error: no such image $ref"; exit 1; }
-           read -r _ cref gen < "$D/ctr"
-           [[ -e $D/keepctr && $cref == "$ref" && " $* " != *" --force-recreate "* ]] && exit 0; echo "$id $ref $((gen + 1))" > "$D/ctr"; echo " Container demo-app Recreated"
-           [[ -e $D/migrate && $id != sha:old ]] && echo migrated > "$D/data/db/app.db"; : ;;
+      up*) force=0; [[ " $* " == *" --force-recreate "* ]] && force=1
+           tg=" $(for a in "${@:2}"; do [[ $a == -* ]] || printf '%s ' "$a"; done)"; [[ $tg == " " ]] && tg=" app side "
+           if [[ $tg == *" app "* ]]; then
+             id=$(lookup "$ref"); [[ -n $id ]] || { echo "Error: no such image $ref"; exit 1; }
+             read -r _ cref gen < "$D/ctr"; skip=0
+             # cfghash: like compose, a plain up recreates only when the image ref or the service config changed
+             if (( ! force )) && [[ $cref == "$ref" ]]; then [[ -e $D/keepctr ]] && skip=1; [[ -e $D/cfghash ]] && cmp -s "$D/appcfg" "${files[0]}" && skip=1; fi
+             if (( ! skip )); then
+               echo "$id $ref $((gen + 1))" > "$D/ctr"; cp "${files[0]}" "$D/appcfg"; echo " Container demo-app Recreated"
+               [[ -e $D/migrate && $id != sha:old ]] && echo migrated > "$D/data/db/app.db"
+             fi
+           fi
+           if [[ -s $D/side && $tg == *" side "* ]] && (( force )); then
+             read -r _ _ sgen < "$D/side"; echo "$(lookup side:1) side:1 $((sgen + 1))" > "$D/side"; echo " Container demo-side Recreated"
+           fi; : ;;
       *) : ;;
     esac ;;
   run) if [[ " $* " == *" -i "* ]]; then [[ -e $D/restorefail ]] && exit 1; cat > /dev/null; else [[ -e $D/runfail ]] && exit 1; echo "tar of ${@: -3:1}"; fi ;;
@@ -73,7 +86,7 @@ setup() {  # setup <env ref> <container ref>; tags/pullmap come from the test
   printf 'services:\n  app:\n    image: ${APP_IMAGE}\n' > "$T/Demo/compose.yaml"
   echo "APP_IMAGE=$1" > "$T/Demo/.env"
   echo "sha:old ${2:-$1} 1" > "$T/ctr"
-  : > "$T/pullmap"; : > "$T/log"; rm -rf "$T/backups" "$T/data"; rm -f "$T/configfail" "$T/runfail" "$T/restorefail" "$T/migrate" "$T/keepctr" "$T/others"
+  : > "$T/pullmap"; : > "$T/log"; rm -rf "$T/backups" "$T/data"; rm -f "$T/configfail" "$T/runfail" "$T/restorefail" "$T/migrate" "$T/keepctr" "$T/others" "$T/side" "$T/cfghash" "$T/appcfg"
 }
 run() { out=$(cd "$T" && "$U" "$T/Demo" "$@" 2>&1); rc=$?; }
 ctr() { cat "$T/ctr"; }
@@ -234,5 +247,15 @@ mkdir -p "$T/data/db"; echo original > "$T/data/db/app.db"
 CHECK=$OLDCHECK run pull vol:demo_data
 [[ $rc == 3 && $out == *"ROLLBACK FAILED demo"* && $out == *"restore"* ]] && ok "exit 3, ROLLBACK FAILED" || bad "restore failure exit 3" "rc=$rc $out"
 ! grep -q "^compose.*up -d --force-recreate" "$T/log" && ok "no recreate after a failed restore" || bad "no recreate after failed restore" "$(cat "$T/log")"
+
+echo "config-only edit rolled back while another service's image changed: the restored config is applied to every service"
+setup img:1; printf 'img:1 sha:old\nside:1 sha:sold\n' > "$T/tags"; echo "sha:sold side:1 1" > "$T/side"; touch "$T/cfghash"; cp "$T/Demo/compose.yaml" "$T/appcfg"
+run snapshot; printf '    dns: 192.0.2.53\n' >> "$T/Demo/compose.yaml"
+printf 'img:1 sha:old\nside:1 sha:snew\n' > "$T/tags"
+CHECK='! grep -q dns: "$FAKE_DIR/appcfg"' run recreate
+[[ $rc == 1 && $out == *"ROLLED BACK demo"* ]] && ok "exit 1, rolled back (was ROLLBACK FAILED)" || bad "exit 1, rolled back" "rc=$rc $out"
+! grep -q dns: "$T/appcfg" && ok "service with only a config change recreated on the restored compose" || bad "config-only service recreated" "$(cat "$T/appcfg")"
+[[ $(cat "$T/side") == "sha:sold side:1 "* ]] && ok "service with the changed image back on the old one" || bad "image-changed service rolled back" "$(cat "$T/side")"
+! grep -q "^compose.*up -d --force-recreate$" "$T/log" && ok "rollback forces only the changed services" || bad "no forced whole-project recreate" "$(grep 'compose.*up' "$T/log")"
 
 echo "$PASS passed, $FAIL failed"; [[ $FAIL == 0 ]]
