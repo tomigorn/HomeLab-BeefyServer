@@ -1454,7 +1454,7 @@ Every finished download is checked **on disk** before Sonarr/Radarr can import i
 | Step | What |
 |---|---|
 | Flush | every video file: `fsync` + drop from the page cache, so the check reads the disk, not memory |
-| SABnzbd | par2 index of the set present (`enable_par_cleanup = 0`): `par2 verify` against the files; a `damaged` target = corrupt; OK = trusted, par2 files removed. No par2, or no verdict (target missing/misnamed): zero/header check |
+| SABnzbd | par2 index of the set present (`enable_par_cleanup = 0`): `par2 verify` against the files; a `damaged` target = corrupt; OK = trusted, par2 files removed. No par2, none of the set's target files on disk (RARs deleted after unpack, obfuscated names: par2 would scan the whole video for nothing, hours on a 50 GB file), or no verdict: zero/header check |
 | qBittorrent | "Recheck torrents on completion" on (pieces hashed from disk), then the zero/header check |
 | Zero/header check | video files (mkv, mp4, ts, avi, ...): container magic at the start (EBML, `ftyp`/`moov`/..., `RIFF AVI`, TS sync) and no 1 MiB-aligned block of zeros (`INTEGRITY_ZERO_MIB`, default 1). Library scan 2026-10-29: 629 video files, 2.9 TiB on the SSDs, not one such block, so no false positive at 1 MiB |
 | Corrupt, SABnzbd | exit 1, job failed: Sonarr/Radarr blocklist the release and search again (`autoRedownloadFailed`, remove failed on); ClamAV not run |
