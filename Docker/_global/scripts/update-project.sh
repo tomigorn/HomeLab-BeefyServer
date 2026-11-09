@@ -6,6 +6,7 @@
 # project is running (and healthy if it has a healthcheck) with no crash loop;
 # on failure restore compose/.env from the snapshot, re-tag the old images (tag refs) and recreate on the old image ids, pinned when compose still names another ref (automatic rollback).
 # Before any change every old image gets rollback.invalid/<repo>:<date>-<project> (a dangling prune cannot take it; one namespace Cup excludes, sorted after the real tags); the last ROLLBACK_KEEP (3) per repo and project stay.
+# After a successful run it reports other projects' running containers made from the same tag that still run the old image ("shared tag:" lines, with the command that recreates them).
 # Everything it writes under ~/backups is owner-only (umask 077, dirs 0700, files 0600): the backups hold databases and secrets.
 # Env: SERVICES (pull/build/recreate only these, --no-deps; the verify still covers the whole project), WAIT (45), CHECK (functional check, a shell command; retried CHECK_TRIES=6 times 10 s apart),
 #      POST_CHECK=0 (skip the customization check: post-update-check.sh runs after CHECK whenever _global/post-update.d/<dir name>.sh exists, Docker/CUSTOMIZATIONS.md),
@@ -159,7 +160,24 @@ if (( ok )) && [[ -n ${CHECK:-} ]]; then
 fi
 if (( ok )) && [[ -n $custom ]]; then custom_check || ok=0; fi
 [[ ${TEST_FORCE_FAIL:-0} == 1 ]] && { echo "  check : FAIL (forced by TEST_FORCE_FAIL)"; ok=0; }
-if (( ok )); then echo "OK $proj"; exit 0; fi
+# shared_tags: other projects' running containers made from one of this project's tags that still run the image the tag pointed at before (compose never notices)
+shared_tags() {
+  local n ref want ids name cref cimg p wd svc; declare -A tagid=()
+  for n in "${!oldid[@]}"; do
+    read -r ref _ < <(docker inspect -f '{{.Config.Image}} {{.Image}}' "$n" 2>/dev/null) || continue
+    [[ -z $ref || $ref == *@* || $ref == sha256:* || -n ${tagid[$ref]:-} ]] && continue
+    want=$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null) && [[ -n $want ]] && tagid[$ref]=$want
+  done
+  (( ${#tagid[@]} )) || return 0
+  ids=$(docker ps -q 2>/dev/null); [[ -n $ids ]] || return 0
+  while IFS='|' read -r name cref cimg p wd svc; do
+    want=${tagid[$cref]:-}; name=${name#/}
+    [[ -n $want && $cimg != "$want" && $p != "$proj" ]] || continue
+    echo "  shared tag: $cref also runs in $name ($p/$svc) on the old image $(sid "$cimg"), the tag is on $(sid "$want"): SERVICES=$svc $here/update-project.sh $wd recreate"
+  done < <(docker inspect -f '{{.Name}}|{{.Config.Image}}|{{.Image}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.project.working_dir"}}|{{index .Config.Labels "com.docker.compose.service"}}' $ids 2>/dev/null)
+}
+sid() { local i=${1#sha256:}; echo "${i:0:12}"; }
+if (( ok )); then shared_tags; echo "OK $proj"; exit 0; fi
 
 echo "ROLLBACK $proj${svcs:+ (only:$svcs)}"
 restore_snapshot

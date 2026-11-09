@@ -13,11 +13,15 @@ from auto_update import (  # noqa: E402
     crosses_major,
     decide,
     failure_reason,
+    find_stale,
+    parse_container_lines,
     parse_conf,
     past_deadline,
     pick_digest,
     render_prom,
+    render_stale_prom,
     rollback_failed_message,
+    stale_plan,
     update_command,
     update_result,
 )
@@ -205,6 +209,57 @@ def test_render_prom_carries_the_reason_of_a_rollback():
     out = render_prom([{"project": "Seerr", "tier": "auto", "ref": "s:1", "result": "rolled_back", "from": "a", "to": "b",
                         "reason": "customizations missing: seerr.oidc-login"}], 1, "beefy")
     assert ',reason="customizations missing: seerr.oidc-login"} 1' in out
+
+def _ctr(name, ref, image, project="p", workdir="/srv/P", service="s"):
+    return {"name": name, "ref": ref, "image": image, "project": project, "workdir": workdir, "service": service}
+
+
+def test_parse_container_lines_reads_docker_inspect_rows():
+    text = "/wiki|caddy:alpine|sha256:old|wiki|/home/pi/Projects/Docker/Wiki|wiki\n\n"
+    assert parse_container_lines(text) == [_ctr("wiki", "caddy:alpine", "sha256:old", "wiki", "/home/pi/Projects/Docker/Wiki", "wiki")]
+
+
+def test_find_stale_only_tag_refs_whose_tag_moved():
+    cs = [_ctr("wiki", "caddy:alpine", "sha256:old"), _ctr("mock", "caddy:alpine", "sha256:new"),
+          _ctr("pin", "x:1@sha256:d", "sha256:old"), _ctr("raw", "sha256:abc", "sha256:abc"), _ctr("gone", "y:1", "sha256:y")]
+    stale = find_stale(cs, {"caddy:alpine": "sha256:new", "x:1@sha256:d": "sha256:zzz"})
+    assert [(c["name"], c["want"]) for c in stale] == [("wiki", "sha256:new")]
+
+
+ROWS = parse_conf("auto  Wiki  -  -  -\nnotify  Home-Assistant  -  -  -\nauto  mouse  sabnzbd  -  -\nedge-auto  Traefik  -  -  -\n")
+
+
+def test_stale_plan_recreates_only_in_applying_tiers_and_selected_services():
+    d = Path("/r/Docker")
+    stale = [dict(_ctr("wiki", "caddy:alpine", "sha256:old", "wiki", "/r/Docker/Wiki", "wiki"), want="sha256:new"),
+             dict(_ctr("notes", "caddy:alpine", "sha256:old", "notes", "/r/Docker/Notes", "notes"), want="sha256:new"),
+             dict(_ctr("ha", "python:3", "sha256:o", "ha", "/r/Docker/Home-Assistant", "sidecar"), want="sha256:n"),
+             dict(_ctr("prowlarr", "python:3", "sha256:o", "mouse", "/r/Docker/mouse", "helper"), want="sha256:n"),
+             dict(_ctr("sab", "python:3", "sha256:o", "mouse", "/r/Docker/mouse", "sabnzbd"), want="sha256:n"),
+             dict(_ctr("traefik", "traefik:v3", "sha256:o", "infra", "/r/Docker/Traefik", "traefik"), want="sha256:n")]
+    plans, report = stale_plan(stale, ROWS, d, {})
+    assert [(p["row"]["project"], p["services"]) for p in plans] == [("Wiki", ["wiki"]), ("mouse", ["sabnzbd"]), ("Traefik", ["traefik"])]
+    why = {c["name"]: c["why"] for c in report}
+    assert why == {"notes": "not in auto-update.conf", "ha": "tier notify", "prowlarr": "service not auto-updated"}
+
+
+def test_stale_plan_holds_back_a_ref_whose_recreate_rolled_back():
+    d = Path("/r/Docker")
+    stale = [dict(_ctr("wiki", "caddy:alpine", "sha256:old", "wiki", "/r/Docker/Wiki", "wiki"), want="sha256:new")]
+    plans, report = stale_plan(stale, ROWS, d, {"caddy:alpine": ["sha256:old", "sha256:new"]})
+    assert plans == [] and report[0]["why"] == "held back (an earlier recreate rolled back)"
+    plans, _ = stale_plan(stale, ROWS, d, {"caddy:alpine": ["sha256:a", "sha256:b"]})
+    assert len(plans) == 1
+
+
+def test_render_stale_prom_one_series_per_container_with_count_and_no_help():
+    stale = [dict(_ctr("wiki", "caddy:alpine", "sha256:old", "wiki", "/r/Docker/Wiki", "wiki"), want="sha256:new")]
+    text = render_stale_prom(stale, 1700000000, host="fastpi")
+    assert 'container_image_stale{host="fastpi",project="wiki",service="wiki",container="wiki",image="caddy:alpine",running="old",tag="new",dir="/r/Docker/Wiki"} 1' in text
+    assert 'container_image_stale_containers{host="fastpi"} 1' in text
+    assert 'container_image_stale_last_run_timestamp_seconds{host="fastpi"} 1700000000' in text
+    assert "# HELP" not in text
+    assert 'container_image_stale_containers{host="beefy"} 0' in render_stale_prom([], 1, host="beefy")
 
 
 if __name__ == "__main__":

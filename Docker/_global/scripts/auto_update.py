@@ -13,7 +13,9 @@ Only the digest behind the tag written in the repo moves; pinned version bumps s
 
 The same file runs on fastpi and beefy; host differences come from the environment (systemd unit) and the script's own location.
 
-Usage: auto_update.py [--dry-run] [project ...]
+Shared tags: after the updates, running containers whose tag another project already moved to a newer image are recreated through update-project.sh when their row applies updates (auto, edge-auto), else only logged; a recreate that rolls back holds that tag back. Every run (and --stale-only) writes container_image_stale.prom with the containers still stale.
+
+Usage: auto_update.py [--dry-run] [--stale-only] [project ...]
 Env: COOLDOWN_HOURS (24), TEST_FORCE_FAIL=1 (first functional check fails: rollback drill),
      AUTO_UPDATE_HOST (host label, default the short hostname), AUTO_UPDATE_APPLY_BY (HH:MM local: no registry check or update starts later, the rest is "deferred"),
      AUTO_UPDATE_MAX_APPLY (projects updated per run, default no limit), AUTO_UPDATE_CONF / _STATE / _TEXTFILE (paths)
@@ -168,6 +170,72 @@ def render_prom(results: list[dict], now: float, host: str = HOST) -> str:
     return "\n".join(lines) + "\n"
 
 
+# ---------------------------------------------------------------- shared tags
+
+STALE_FORMAT = ('{{.Name}}|{{.Config.Image}}|{{.Image}}|{{index .Config.Labels "com.docker.compose.project"}}|'
+                '{{index .Config.Labels "com.docker.compose.project.working_dir"}}|{{index .Config.Labels "com.docker.compose.service"}}')
+
+
+def parse_container_lines(text: str) -> list[dict]:
+    out = []
+    for line in text.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 6:
+            continue
+        name, ref, image, project, workdir, service = parts
+        out.append({"name": name.lstrip("/"), "ref": ref, "image": image, "project": project, "workdir": workdir, "service": service})
+    return out
+
+
+def is_tag_ref(ref: str) -> bool:
+    return bool(ref) and "@" not in ref and not ref.startswith("sha256:")
+
+
+def find_stale(containers: list[dict], tag_ids: dict[str, str]) -> list[dict]:
+    """Running containers made from a tag that now points at another local image (another project pulled it)."""
+    return [dict(c, want=tag_ids[c["ref"]]) for c in containers
+            if is_tag_ref(c["ref"]) and tag_ids.get(c["ref"]) and tag_ids[c["ref"]] != c["image"]]
+
+
+def stale_plan(stale: list[dict], rows: list[dict], docker_dir: Path, bad: dict[str, list[str]]) -> tuple[list[dict], list[dict]]:
+    """-> (one recreate per conf row: {row, services, stale}, the rest with the reason they are only reported)."""
+    plans: dict[int, dict] = {}
+    report = []
+    for c in stale:
+        if c["want"] in bad.get(c["ref"], []) or c["image"] in bad.get(c["ref"], []):
+            report.append(dict(c, why="held back (an earlier recreate rolled back)"))
+            continue
+        hits = [r for r in rows if c["workdir"] and Path(c["workdir"]) == docker_dir / r["project"]]
+        if not hits:
+            report.append(dict(c, why="not in auto-update.conf"))
+            continue
+        row = next((r for r in hits if not r["services"] or c["service"] in r["services"]), None)
+        if row is None:
+            report.append(dict(c, why="service not auto-updated"))
+            continue
+        if row["tier"] not in APPLYING:
+            report.append(dict(c, why=f"tier {row['tier']}"))
+            continue
+        p = plans.setdefault(id(row), {"row": row, "services": [], "stale": []})
+        if c["service"] not in p["services"]:
+            p["services"].append(c["service"])
+        p["stale"].append(c)
+    return list(plans.values()), report
+
+
+def render_stale_prom(stale: list[dict], now: float, host: str = HOST) -> str:
+    """container_image_stale (one per running container whose tag moved to another image), container_image_stale_containers, container_image_stale_last_run_timestamp_seconds. No HELP lines (republished next to fastpi's)."""
+    h = f'host="{_esc(host)}"'
+    lines = ["# TYPE container_image_stale gauge"]
+    for c in sorted(stale, key=lambda c: c["name"]):
+        labels = {"host": host, "project": c["project"], "service": c["service"], "container": c["name"], "image": c["ref"],
+                  "running": _short(c["image"]), "tag": _short(c["want"]), "dir": c["workdir"]}
+        lines.append("container_image_stale{" + ",".join(f'{k}="{_esc(v)}"' for k, v in labels.items()) + "} 1")
+    lines += ["# TYPE container_image_stale_containers gauge", f"container_image_stale_containers{{{h}}} {len(stale)}",
+              "# TYPE container_image_stale_last_run_timestamp_seconds gauge", f"container_image_stale_last_run_timestamp_seconds{{{h}}} {int(now)}"]
+    return "\n".join(lines) + "\n"
+
+
 # ---------------------------------------------------------------- I/O
 
 _docker: list[str] = []
@@ -311,9 +379,92 @@ def apply(row: dict, refs: list[str], images: dict[str, str]) -> tuple[dict[str,
     return {ref: (res if v == "pending" else v) for ref, v in out.items()}, reason
 
 
+def stale_containers() -> list[dict]:
+    ids = sh(["docker", "ps", "-q"]).stdout.split()
+    if not ids:
+        return []
+    r = sh(["docker", "inspect", "-f", STALE_FORMAT, *ids])
+    cs = parse_container_lines(r.stdout)
+    if not cs:
+        raise RuntimeError(f"docker inspect gave no containers: {r.stderr.strip()[-200:]}")
+    tags = {}
+    for ref in sorted({c["ref"] for c in cs if is_tag_ref(c["ref"])}):
+        q = sh(["docker", "image", "inspect", "-f", "{{.Id}}", ref])
+        if q.returncode == 0 and q.stdout.strip():
+            tags[ref] = q.stdout.strip()
+    return find_stale(cs, tags)
+
+
+def stale_command(c: dict) -> str:
+    return f"SERVICES={c['service']} {SCRIPTS}/update-project.sh {c['workdir']} recreate"
+
+
+def fix_stale(rows: list[dict], state: dict, results: list[dict], applied: int, dry: bool) -> int:
+    """Containers left on the old image of a tag another project pulled: recreated through update-project.sh (verify, rollback) when their row applies updates, else reported. -> projects applied so far."""
+    stale = stale_containers()
+    bad = state.setdefault("stale_bad", {})
+    plans, report = stale_plan(stale, rows, DOCKER, bad)
+    for c in report:
+        log(f"  stale: {c['name']} ({c['project']}/{c['service']}) runs {_short(c['image'])}, {c['ref']} is on {_short(c['want'])}: {c['why']}; to recreate: {stale_command(c)}")
+    for p in plans:
+        row, first = p["row"], p["stale"][0]
+        log(f"== {row['project']} ({row['tier']}): stale on a shared tag: {', '.join(c['name'] for c in p['stale'])}")
+        base = {"project": row["project"], "tier": row["tier"], "ref": first["ref"], "from": first["image"], "to": first["want"], "reason": "shared tag moved by another project"}
+        if dry:
+            log(f"  would recreate {' '.join(p['services'])}")
+            continue
+        if any(crosses_major(image_version(c["image"]), image_version(c["want"])) for c in p["stale"]):
+            log("  major jump, not recreated")
+            results.append(dict(base, result="major_held", command=stale_command(first)))
+            continue
+        if past_deadline(APPLY_BY, time.localtime()) or (MAX_APPLY and applied >= MAX_APPLY):
+            results.append(dict(base, result="deferred"))
+            continue
+        floor = resources_ok()
+        if floor:
+            log(f"  skipped: {floor}")
+            results.append(dict(base, result="skipped"))
+            continue
+        applied += 1
+        env = dict(os.environ, SERVICES=" ".join(p["services"]), CHECK=row["check"])
+        r = subprocess.run([str(SCRIPTS / "update-project.sh"), str(DOCKER / row["project"]), "recreate", *row["backups"]],
+                           env=env, text=True, capture_output=True, timeout=1800)
+        for line in r.stdout.splitlines():
+            log("  | " + line)
+        res = update_result(r.returncode)
+        out = dict(base, result=res)
+        if res != "updated":
+            out["reason"] += ": " + (failure_reason(r.stdout) or "update-project.sh failed")
+            for c in p["stale"]:
+                bad[c["ref"]] = sorted({c["image"], c["want"]})
+        if res == "rollback_failed":
+            oob(rollback_failed_message(row["project"], DOCKER / row["project"], out["reason"]))
+        log(f"  {first['ref']}: {res}")
+        results.append(out)
+    return applied
+
+
+def write_stale_prom() -> None:
+    try:
+        stale = stale_containers()
+    except Exception as e:  # noqa: BLE001
+        log(f"stale scan failed, container_image_stale.prom left as it was: {e}")
+        return
+    for c in stale:
+        log(f"  still stale: {c['name']} ({c['project']}/{c['service']}) on {_short(c['image'])}, {c['ref']} is on {_short(c['want'])}")
+    TEXTFILE.mkdir(parents=True, exist_ok=True)
+    tmp = TEXTFILE / ".container_image_stale.prom.tmp"
+    tmp.write_text(render_stale_prom(stale, time.time()))
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, TEXTFILE / "container_image_stale.prom")
+
+
 def main(argv: list[str]) -> int:
     dry = "--dry-run" in argv
     only = {a for a in argv if not a.startswith("--")}
+    if "--stale-only" in argv:
+        write_stale_prom()
+        return 0
     cooldown = float(os.environ.get("COOLDOWN_HOURS", "24"))
     STATE.mkdir(parents=True, exist_ok=True)
     lock = open(STATE / "lock", "w")
@@ -389,8 +540,13 @@ def main(argv: list[str]) -> int:
                     r["command"] = update_command(row)
                     state[key]["bad"] = True
                 log(f"  {r['ref']}: {r['result']}")
+    try:
+        applied = fix_stale(rows, state, results, applied, dry)
+    except Exception as e:  # noqa: BLE001
+        log(f"stale scan failed: {e}")
     if dry:
         return 0
+    write_stale_prom()
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=1, sort_keys=True))
     os.replace(tmp, state_path)

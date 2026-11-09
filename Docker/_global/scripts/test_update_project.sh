@@ -31,9 +31,11 @@ case $1 in
       rm) for r in "${@:3}"; do grep -v "^$r " "$D/tags" > "$D/tags.t"; mv "$D/tags.t" "$D/tags"; done ;;
       *) echo "unexpected: $*" >&2; exit 9 ;;
     esac ;;
+  ps) echo cid1; [[ -s $D/others ]] && echo other1; : ;;
   inspect)
     read -r id ref gen < "$D/ctr"
     case "$*" in
+      *"{{.Name}}|{{.Config.Image}}|"*) echo "/demo-app|$ref|$id|demo|$D/Demo|app"; cat "$D/others" 2>/dev/null; : ;;
       *"{{.Name}} {{.Config.Image}}"*) echo "/demo-app $ref cid$gen 0 app $D/Demo/compose.yaml" ;;
       "inspect -f {{.Image}} demo-app") echo "$id" ;;
       "inspect -f {{.Config.Image}} {{.Image}} demo-app") echo "$ref $id" ;;
@@ -71,7 +73,7 @@ setup() {  # setup <env ref> <container ref>; tags/pullmap come from the test
   printf 'services:\n  app:\n    image: ${APP_IMAGE}\n' > "$T/Demo/compose.yaml"
   echo "APP_IMAGE=$1" > "$T/Demo/.env"
   echo "sha:old ${2:-$1} 1" > "$T/ctr"
-  : > "$T/pullmap"; : > "$T/log"; rm -rf "$T/backups" "$T/data"; rm -f "$T/configfail" "$T/runfail" "$T/restorefail" "$T/migrate" "$T/keepctr"
+  : > "$T/pullmap"; : > "$T/log"; rm -rf "$T/backups" "$T/data"; rm -f "$T/configfail" "$T/runfail" "$T/restorefail" "$T/migrate" "$T/keepctr" "$T/others"
 }
 run() { out=$(cd "$T" && "$U" "$T/Demo" "$@" 2>&1); rc=$?; }
 ctr() { cat "$T/ctr"; }
@@ -132,6 +134,17 @@ for m in pull recreate; do
     grep -q "^compose up -d --remove-orphans --force-recreate" "$T/log" && ok "$m: recreated in the first pass" || bad "$m: recreated in the first pass" "$(grep 'compose up' "$T/log")"
   fi
 done
+
+echo "shared tag: other projects' containers still on the old image are reported after the pull"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "img:1 sha:new" > "$T/pullmap"
+printf '%s\n' "/other-web|img:1|sha:old|other|/srv/Other|web" "/fresh-web|img:1|sha:new|fresh|/srv/Fresh|web" "/x-x|img:2|sha:old|x|/srv/X|x" "/pinned|img@sha256:d1|sha:old|pin|/srv/Pin|p" "/demo-side|img:1|sha:old|demo|$T/Demo|side" > "$T/others"
+CHECK=true run pull
+[[ $rc == 0 ]] && ok "update still exits 0" || bad "update still exits 0" "rc=$rc $out"
+[[ $out == *"shared tag: img:1 also runs in other-web (other/web) on the old image sha:old"*"SERVICES=web $U /srv/Other recreate"* ]] && ok "stale container of another project reported with the command" || bad "stale container reported" "$out"
+[[ $out != *fresh-web* && $out != *x-x* && $out != *pinned* && $out != *demo-side* ]] && ok "current, other-tag, digest and own containers not reported" || bad "only stale others reported" "$out"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "/other-web|img:1|sha:old|other|/srv/Other|web" > "$T/others"
+CHECK=true run pull
+[[ $out != *"shared tag"* ]] && ok "nothing reported when the tag did not move" || bad "no report without a move" "$out"
 
 echo "container already on the tag's image: no forced recreate"
 setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; touch "$T/keepctr"
