@@ -6,10 +6,12 @@ Indexers: /health of each app; one Telegram while indexers are disabled after fa
 Quiet hours 22:00-07:00 Europe/Zurich: Telegrams are held and sent on the first run from 07:00 if still due.
 Removals (remove from the client, blocklist, search again; digest, Telegram only when the DELETE fails): a download blocked "matched to movie/series by ID" whose release year fails the guard's year rule (scripts/guard-year.jq) = guard_removed; a fake (executable / dangerous / encrypted file message, an output path with such an extension, or a completed folder with such files and no video) = malware_removed.
 ID-matched imports: a completed download blocked only with "matched to movie/series by ID" is imported (ManualImport, once per download) when the grab history, title, year, season (Sonarr) and the app's own proposals all agree; otherwise the normal blocked alert names the reason. QW_AUTO_IMPORT=0 switches it off.
+Partial season packs (Sonarr): a pack holding fewer episodes than grabbed, finished in the download client (qBittorrent / SABnzbd), every file one distinct episode of the season: its episodes are imported (or Sonarr already did), then the queue item is removed (download copy deleted, no blocklist) and the missing episodes searched; one digest line, no Telegram.
 Digest: watchdog-digest.prom (node-exporter textfile, last 48 h) in the state dir, read by fastpi's morning digest. Every send, hold and digest event is a line in watchdog-sends.log.
 Usage: scripts/queue-watchdog.py [--dry-run]   (--dry-run: only the removal and ID-match auto-import checks, prints, changes nothing)"""
 import datetime
 import html
+import importlib.util
 import json
 import os
 import pathlib
@@ -42,6 +44,10 @@ GUARD_DIGEST = {"removed", "marked-failed"}
 SUBTITLE_DIGEST = {"subtitle_repaired", "subtitle_suspect", "subtitle_forced_synced", "subtitle_forced_unverified"}
 DEFAULT_EVENTS = "/srv/appdata/radarr/guard-events:/srv/appdata/sonarr/guard-events:/srv/appdata/bazarr/subtitle-check/events"
 ID_MATCH = re.compile(r"matched to (movie|series) by ID")
+PARTIAL_MSG = "One or more episodes expected in this release were not imported or missing"
+QBIT_DONE = {"uploading", "stalledUP", "queuedUP", "pausedUP", "stoppedUP", "forcedUP"}
+KEEP = {"removeFromClient": "true", "blocklist": "false", "skipRedownload": "true"}
+PARTIAL_WAIT = 2 * 3600
 RATE_LIMIT = re.compile(r"\b429\b|request limit|too many requests|rate limit", re.I)
 FAKE_MSG = re.compile(r"(found|contains) (executable|potentially dangerous) file|encrypted download|password[- ]protected|requires a password", re.I)
 FAKE_EXT = {".exe", ".scr", ".lnk", ".msi", ".bat", ".cmd", ".com", ".pif", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".hta", ".ps1", ".jar", ".cpl", ".apk", ".sh"}
@@ -404,9 +410,9 @@ def group_label(app, recs):
     return f"{name} {'/'.join(f'S{s:02d}' for s in seasons)}".rstrip() + f": {recs[0].get('title')}"
 
 
-def id_import_files(app, api, download_id, recs):
+def id_import_files(app, api, download_id, recs, finished=None):
     """ManualImport files for an ID-matched download, or Refused(reason)."""
-    return (radarr_import_files if app == "radarr" else sonarr_import_files)(api, download_id, recs)
+    return radarr_import_files(api, download_id, recs) if app == "radarr" else sonarr_import_files(api, download_id, recs, finished)
 
 
 def radarr_import_files(api, download_id, recs):
@@ -443,7 +449,7 @@ def radarr_import_files(api, download_id, recs):
     return [{k: p.get(k) for k in keys} | {"movieId": mid, "downloadId": download_id} for p in proposals]
 
 
-def sonarr_import_files(api, download_id, recs):
+def sonarr_import_files(api, download_id, recs, finished=None):
     sids = {r.get("seriesId") for r in recs}
     if len(sids) != 1 or None in sids:
         raise Refused("queue records name no single series")
@@ -484,20 +490,28 @@ def sonarr_import_files(api, download_id, recs):
             raise Refused("Sonarr rejects a file: " + "; ".join(str(r.get("reason")) for r in p["rejections"]))
         if (p.get("series") or {}).get("id") != sid or not p.get("episodes") or not out_dir or not str(p.get("path", "")).startswith(out_dir + "/"):
             raise Refused("a proposed file is not this series' episode inside the download folder")
-    if not proposals or len(proposed) != len(set(proposed)) or set(proposed) != queued:
+    covered = set(proposed)
+    if not proposals or len(proposed) != len(covered) or not covered <= queued:
         raise Refused(f"proposed files ({len(proposed)}) do not cover exactly the {len(queued)} grabbed episodes")
+    if covered != queued:
+        part = f"partial pack ({len(covered)} of {len(queued)} episodes)"
+        if not info.get("fullSeason"):
+            raise Refused(f"proposed files ({len(proposed)}) do not cover exactly the {len(queued)} grabbed episodes")
+        why = "download client not checked" if finished is None else finished(recs[0])
+        if why:
+            raise Refused(f"{part}, download not finished: {why}")
     keys = ("path", "folderName", "releaseGroup", "quality", "languages", "indexerFlags", "releaseType")
     return [{k: p.get(k) for k in keys} | {"seriesId": sid, "episodeIds": [e["id"] for e in p["episodes"]], "downloadId": download_id} for p in proposals]
 
 
-def auto_import(app, api, records, state, out, now, cfg):
+def auto_import(app, api, records, state, out, now, cfg, finished=None):
     """ID-matched downloads: import the ones that pass, mark the rest; (download ids imported this run, rc)."""
     done, rc = set(), 0
     if not cfg.auto_import:
         return done, rc
     groups = id_match_groups(records)
     queued = {r.get("downloadId") for r in records}
-    for key in [k for k in state if k.startswith(f"autoimport:{app}:") and k.split(":", 2)[2] not in queued]:
+    for key in [k for k in state if k.startswith((f"autoimport:{app}:", f"partialdone:{app}:")) and k.split(":", 2)[2] not in queued]:
         del state[key]
     for dl, recs in groups.items():
         key = f"autoimport:{app}:{dl}"
@@ -505,7 +519,7 @@ def auto_import(app, api, records, state, out, now, cfg):
             continue
         name = group_label(app, recs)
         try:
-            files = id_import_files(app, api, dl, recs)
+            files = id_import_files(app, api, dl, recs, finished)
         except Refused as e:
             print(f"auto-import refused: {name}: {e}")
             for r in recs:
@@ -523,9 +537,151 @@ def auto_import(app, api, records, state, out, now, cfg):
             rc = 1
             continue
         print(f"auto-import: {name} ({len(files)} files, command {r.get('id')})")
-        out.digest("auto_imported", app, name)
+        missing = missing_of(recs, files)
+        if missing:
+            state[f"partial:{app}:{dl}"] = partial_entry(recs, missing, r.get("id"), now)
+        else:
+            out.digest("auto_imported", app, name)
         done.add(dl)
     return done, rc
+
+
+def missing_of(recs, files):
+    covered = {i for f in files for i in f.get("episodeIds") or []}
+    return sorted({r.get("episodeId") for r in recs if r.get("episodeId")} - covered)
+
+
+def partial_entry(recs, missing, cmd, now):
+    eps = {r.get("episodeId"): r.get("episode") or {} for r in recs}
+    season = next(iter(eps.values())).get("seasonNumber") or 0
+    labels = ", ".join(f"E{eps[i].get('episodeNumber', 0):02d}" for i in sorted(missing, key=lambda i: eps[i].get("episodeNumber", 0)))
+    return {"cmd": cmd, "since": now, "imported": sorted(set(eps) - set(missing)), "missing": list(missing), "labels": labels,
+            "title": f"{label('sonarr', dict(recs[0], episode=None))} S{season:02d}", "of": len(eps)}
+
+
+def own_partial_groups(records):
+    """{downloadId: records} of downloads Sonarr imported in part and holds only with its "episodes missing" message."""
+    def only_partial(rec):
+        sms = rec.get("statusMessages") or []
+        return (rec.get("status") == "completed" and rec.get("trackedDownloadState") in ("importBlocked", "importPending") and bool(sms)
+                and all(PARTIAL_MSG in str(sm.get("title")) and not sm.get("messages") for sm in sms))
+    return {d: recs for d, recs in groups_of(records).items() if all(only_partial(r) for r in recs)}
+
+
+def own_partial_missing(api, download_id, recs, finished):
+    """Missing episode ids of a pack Sonarr imported in part, or Refused(reason)."""
+    sids = {r.get("seriesId") for r in recs}
+    seasons = {(r.get("episode") or {}).get("seasonNumber") for r in recs}
+    if len(sids) != 1 or None in sids or len(seasons) != 1:
+        raise Refused("queue records name no single series and season")
+    queued = {r.get("episodeId") for r in recs}
+    hist = (api("GET", "/history", {"downloadId": download_id, "pageSize": 1000}) or {}).get("records") or []
+    grabs = [h for h in hist if h.get("eventType") == "grabbed"]
+    sid = next(iter(sids))
+    if not grabs or any(h.get("seriesId") != sid for h in grabs) or {h.get("episodeId") for h in grabs} != queued:
+        raise Refused("grab history is not exactly the queued episodes of this series")
+    imported = [h.get("episodeId") for h in hist if h.get("eventType") == "downloadFolderImported"]
+    if not imported or len(imported) != len(set(imported)) or not set(imported) < queued:
+        raise Refused(f"imported episodes ({len(imported)}) are not distinct queued episodes with some missing")
+    why = "download client not checked" if finished is None else finished(recs[0])
+    if why:
+        raise Refused(f"partial pack, download not finished: {why}")
+    return sorted(queued - set(imported))
+
+
+def own_partials(app, api, records, state, now, cfg, finished=None):
+    """Packs Sonarr imported in part: queue them for finish_partials; rc."""
+    rc = 0
+    if app != "sonarr" or not cfg.auto_import:
+        return rc
+    for dl, recs in own_partial_groups(records).items():
+        if f"partial:{app}:{dl}" in state or f"partialdone:{app}:{dl}" in state:
+            continue
+        name = group_label(app, recs)
+        try:
+            missing = own_partial_missing(api, dl, recs, finished)
+        except Refused as e:
+            print(f"partial pack left blocked: {name}: {e}")
+            for r in recs:
+                r["autoImport"] = str(e)
+            continue
+        except ApiError as e:
+            print(f"partial pack check failed, retried next run: {name}: {e}", file=sys.stderr)
+            rc = 1
+            continue
+        state[f"partial:{app}:{dl}"] = partial_entry(recs, missing, None, now)
+    return rc
+
+
+def finish_partials(app, api, records, state, out, now):
+    """Partial packs whose import landed: remove the queue item (no blocklist), search the missing episodes; (download ids handled or still importing, rc)."""
+    busy, rc = set(), 0
+    queue_ids = {}
+    for r in records:
+        queue_ids.setdefault(r.get("downloadId"), r.get("id"))
+    for key in [k for k in state if k.startswith(f"partial:{app}:")]:
+        dl, p = key.split(":", 2)[2], state[key]
+        try:
+            if p.get("cmd") is not None:
+                if p["since"] == now:
+                    busy.add(dl)
+                    continue
+                status = (api("GET", f"/command/{p['cmd']}") or {}).get("status")
+                if status in ("queued", "started") and now - p["since"] < PARTIAL_WAIT:
+                    busy.add(dl)
+                    continue
+                if status != "completed":
+                    print(f"partial import did not finish ({status}), left blocked: {p['title']}", file=sys.stderr)
+                    del state[key]
+                    continue
+            have = {e.get("id") for e in api("GET", "/episode", {"episodeIds": p["imported"]}) or [] if e.get("hasFile")}
+            if have != set(p["imported"]):
+                print(f"partial import: {len(have)} of {len(p['imported'])} episodes have a file, left blocked: {p['title']}", file=sys.stderr)
+                del state[key]
+                continue
+            if not p.get("removed") and dl in queue_ids:
+                api("DELETE", f"/queue/{queue_ids[dl]}", KEEP)
+            p["removed"] = True
+            api("POST", "/command", body={"name": "EpisodeSearch", "episodeIds": p["missing"]})
+        except ApiError as e:
+            if now - p["since"] > PARTIAL_WAIT:
+                print(f"partial pack: given up, left blocked: {p['title']}: {e}", file=sys.stderr)
+                del state[key]
+                continue
+            print(f"partial pack: retried next run: {p['title']}: {e}", file=sys.stderr)
+            rc = 1
+            busy.add(dl)
+            continue
+        text = f"{p['title']}: imported {len(p['imported'])} of {p['of']}, searching {p['labels']}"
+        print(f"partial pack: {text}")
+        out.digest("partial_imported", app, text)
+        del state[key]
+        state[f"partialdone:{app}:{dl}"] = now
+        busy.add(dl)
+    return busy, rc
+
+
+def download_finished(rec, qbit, sab):
+    """None when the download client reports the download complete and done with post-processing, else why not."""
+    dl = str(rec.get("downloadId") or "")
+    try:
+        if rec.get("protocol") == "torrent":
+            t = next((t for t in qbit(f"/torrents/info?hashes={dl.lower()}") or [] if str(t.get("hash", "")).lower() == dl.lower()), None)
+            if not t:
+                return "qBittorrent: torrent not found"
+            if t.get("state") not in QBIT_DONE or t.get("progress") != 1:
+                return f"qBittorrent: {t.get('state')}, {float(t.get('progress') or 0) * 100:.0f} %"
+            return None
+        if rec.get("protocol") == "usenet":
+            if any(q.get("nzo_id") == dl for q in ((sab({"mode": "queue", "nzo_ids": dl}) or {}).get("queue") or {}).get("slots") or []):
+                return "SABnzbd: still in the queue"
+            h = next((h for h in ((sab({"mode": "history", "nzo_ids": dl}) or {}).get("history") or {}).get("slots") or [] if h.get("nzo_id") == dl), None)
+            if not h:
+                return "SABnzbd: not in the history"
+            return None if h.get("status") == "Completed" else f"SABnzbd: {h.get('status')}"
+    except (ApiError, OSError, ValueError, AttributeError) as e:
+        return f"download client not reachable: {e}"
+    return f"unknown protocol {rec.get('protocol')}"
 
 
 def groups_of(records):
@@ -646,7 +802,7 @@ def removals(app, api, records, state, out, now, cfg):
     return handled, rc
 
 
-def dry_run(apps, cfg):
+def dry_run(apps, cfg, finished=None):
     """Lines describing what removals and auto_import would do; no command, no state, no message."""
     lines, n, ok = [], 0, 0
     if not cfg.auto_import:
@@ -665,17 +821,29 @@ def dry_run(apps, cfg):
             n += 1
             name = group_label(app, recs)
             try:
-                files = id_import_files(app, api, dl, recs)
+                files = id_import_files(app, api, dl, recs, finished)
             except Refused as e:
                 lines.append(f"not imported: {name}: {e}")
                 continue
             ok += 1
-            lines.append(f"would import: {name} ({len(files)} files)")
+            missing = missing_of(recs, files) if app == "sonarr" else []
+            if missing:
+                p = partial_entry(recs, missing, None, 0)
+                lines.append(f"would import {len(p['imported'])} of {p['of']}, then search {p['labels']}: {name} ({len(files)} files)")
+            else:
+                lines.append(f"would import: {name} ({len(files)} files)")
+        if app == "sonarr":
+            for dl, recs in own_partial_groups(records).items():
+                try:
+                    p = partial_entry(recs, own_partial_missing(api, dl, recs, finished), None, 0)
+                    lines.append(f"would search {p['labels']} ({len(p['imported'])} of {p['of']} imported by Sonarr): {group_label(app, recs)}")
+                except Refused as e:
+                    lines.append(f"partial pack left blocked: {group_label(app, recs)}: {e}")
     lines.append(f"id-match auto-import: {n} candidate(s), {ok} importable")
     return lines
 
 
-def run(apps, state_path, event_dirs, send, cfg, now=None):
+def run(apps, state_path, event_dirs, send, cfg, now=None, finished=None):
     now = time.time() if now is None else now
     state_path = pathlib.Path(state_path)
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
@@ -694,9 +862,12 @@ def run(apps, state_path, event_dirs, send, cfg, now=None):
         removed, r = removals(app, api, records, state, out, now, cfg)
         rc |= r
         records = [rec for rec in records if rec.get("downloadId") not in removed]
-        imported, r = auto_import(app, api, records, state, out, now, cfg)
+        imported, r = auto_import(app, api, records, state, out, now, cfg, finished)
         rc |= r
-        alerts, state = evaluate(app, [rec for rec in records if rec.get("downloadId") not in imported], state, now, cfg)
+        rc |= own_partials(app, api, [rec for rec in records if rec.get("downloadId") not in imported], state, now, cfg, finished)
+        busy, r = finish_partials(app, api, records, state, out, now)
+        rc |= r
+        alerts, state = evaluate(app, [rec for rec in records if rec.get("downloadId") not in imported | busy], state, now, cfg)
         for a in alerts:
             if a.condition != "blocked":
                 out.digest(a.condition, app, a.title)
@@ -721,7 +892,7 @@ def client(app, config):
     base = f"http://localhost:{get('Port')}{get('UrlBase')}/api/v3"
 
     def call(method, path, query=None, body=None):
-        q = APPS[app] + ("&" + urllib.parse.urlencode(query) if query else "")
+        q = APPS[app] + ("&" + urllib.parse.urlencode(query, doseq=True) if query else "")
         data = None if body is None else json.dumps(body).encode()
         headers = {"X-Api-Key": get("ApiKey")} | ({"Content-Type": "application/json"} if data else {})
         req = urllib.request.Request(f"{base}{path}?{q}", data=data, method=method, headers=headers)
@@ -743,6 +914,25 @@ def sender(script):
     return send
 
 
+def clients_finished():
+    """download_finished bound to the real qBittorrent and SABnzbd (clients of scripts/night-downloads.py)."""
+    spec = importlib.util.spec_from_file_location("night_downloads", HERE / "night-downloads.py")
+    nd = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(nd)
+
+    def wrap(make):
+        def call(*a):
+            try:
+                return make()(*a)
+            except Exception as e:
+                raise ApiError(str(e)) from None
+        return call
+    secrets = HERE.parent / "secrets"
+    qbit = wrap(lambda: nd.qbit_client(os.environ.get("QW_QBIT_URL", "http://127.0.0.1:8080") + "/api/v2", "admin", os.environ.get("QW_QBIT_PASS", secrets / "qbit-webui.password")))
+    sab = wrap(lambda: nd.sab_client(os.environ.get("QW_SAB_URL", "http://127.0.0.1:8081"), os.environ.get("QW_SAB_KEY", secrets / "hook" / "sabnzbd.apikey")))
+    return lambda rec: download_finished(rec, qbit, sab)
+
+
 def main():
     apps = {app: client(app, os.environ.get(f"QW_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml")) for app in APPS}
     dirs = os.environ.get("QW_EVENTS", DEFAULT_EVENTS).split(":")
@@ -750,7 +940,7 @@ def main():
                  data_root=os.environ.get("QW_DATA_ROOT", "/srv/video"))
     if sys.argv[1:] == ["--dry-run"]:
         try:
-            print("\n".join(dry_run(apps, cfg)))
+            print("\n".join(dry_run(apps, cfg, clients_finished())))
         except ApiError as e:
             print(f"API error: {e}", file=sys.stderr)
             return 1
@@ -759,7 +949,7 @@ def main():
         print("usage: " + __doc__.rsplit("Usage: ", 1)[1], file=sys.stderr)
         return 2
     script = os.environ.get("QW_ALERT", HERE.parent.parent / "_global" / "scripts" / "oob-alert.sh")
-    return run(apps, os.environ.get("QW_STATE", STATE_DIR / "queue-watchdog.json"), dirs, sender(script), cfg)
+    return run(apps, os.environ.get("QW_STATE", STATE_DIR / "queue-watchdog.json"), dirs, sender(script), cfg, finished=clients_finished())
 
 
 if __name__ == "__main__":

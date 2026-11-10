@@ -74,6 +74,7 @@ if want sonarr; then
   check md.sonarr-guard-year '^true false$' "$(md_guard_year sonarr '"app":"sonarr","year":2019,"second":0,"first":2019,"last":2023,"ended":false' 2024 1985)"
   check md.sonarr-id-parse '^The Boys 2024 4$' "$(md_arr sonarr 8989 '/api/v3/parse?title=The.Boys.2024.S04.2160p.AMZN.WEB-DL-GRP' | jq -r '.parsedEpisodeInfo | "\(.seriesTitleInfo.titleWithoutYear) \(.seriesTitleInfo.year) \(.seasonNumber)"' 2>&1)"
   check md.sonarr-id-import '^id-match auto-import: [0-9]+ candidate\(s\), [0-9]+ importable$' "$(python3 "$MD_DIR/scripts/queue-watchdog.py" --dry-run 2>&1 | tail -1)"
+  check md.partial-pack-clients '^SABnzbd: not in the history \| qBittorrent: torrent not found$' "$(python3 -c 'import importlib.util as u, sys; s = u.spec_from_file_location("qw", sys.argv[1]); m = u.module_from_spec(s); s.loader.exec_module(m); f = m.clients_finished(); print(f({"downloadId": "none", "protocol": "usenet"}), "|", f({"downloadId": "0" * 40, "protocol": "torrent"}))' "$MD_DIR/scripts/queue-watchdog.py" 2>&1)"
 fi
 if want radarr sonarr recyclarr; then
   check md.scoring 'all checks passed' "$(python3 "$MD_DIR/scripts/scoring-check.py" 2>&1 | tail -1)"

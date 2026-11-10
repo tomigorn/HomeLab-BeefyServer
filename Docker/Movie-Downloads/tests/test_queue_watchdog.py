@@ -1337,6 +1337,205 @@ class Fakes(Harness):
         for part in ("VisionQuest", "could not be removed", "executable"):
             self.assertIn(part, self.sent[0])
 
+PARTIAL_MSG = "One or more episodes expected in this release were not imported or missing from the release"
+ALL10 = range(1, 11)
+REPACK = {"name": "PartialPack"}
+
+
+def own_partial_queue(extra=()):
+    q = pack_queue(eps=ALL10, state="importPending")
+    for r in q:
+        r["statusMessages"] = [{"title": PARTIAL_MSG, "messages": []}] + list(extra)
+    return q
+
+
+class FakePartial(FakeSonarr):
+    def __init__(self, cmd_status="completed", **kw):
+        kw.setdefault("queue", pack_queue(eps=ALL10))
+        kw.setdefault("history", pack_history(ALL10))
+        kw.setdefault("proposals", pack_proposals())
+        super().__init__(**kw)
+        self.cmd_status, self.has_file, self.deletes = cmd_status, set(), []
+
+    def __call__(self, method, path, query=None, body=None):
+        if method == "DELETE":
+            self.paths.append(path)
+            self.deletes.append((path, dict(query or {})))
+            self.queue = []
+            return None
+        if method == "GET" and path.startswith("/command/"):
+            self.paths.append(path)
+            return {"id": int(path.rsplit("/", 1)[1]), "name": "ManualImport", "status": self.cmd_status}
+        if method == "GET" and path == "/episode":
+            self.paths.append(path)
+            if path in self.fail_on:
+                raise qw.ApiError("GET /episode: down")
+            ids = list(query["episodeIds"])
+            return [{"id": i, "hasFile": i in self.has_file} for i in ids]
+        return super().__call__(method, path, query, body)
+
+
+DONE = lambda rec: None
+KEEP_QUERY = {"removeFromClient": "true", "blocklist": "false", "skipRedownload": "true"}
+PARTIAL_TITLE = "The Boys (2019) S04: imported 8 of 10, searching E09, E10"
+
+
+class PartialPack(Harness):
+    def go(self, apps, now, finished=DONE, **cfg):
+        return qw.run(apps, self.state, [], self.send, qw.Config(**cfg), now, finished=finished)
+
+    def test_finished_partial_pack_is_imported_then_the_missing_episodes_are_searched(self):
+        api = FakePartial()
+        self.assertEqual(self.go({"sonarr": api}, T0), 0)
+        [cmd] = api.posts
+        self.assertEqual((cmd["name"], sorted(f["episodeIds"][0] for f in cmd["files"])), ("ManualImport", list(range(1001, 1009))))
+        self.assertEqual(api.deletes, [])
+        api.has_file = set(range(1001, 1009))
+        self.assertEqual(self.go({"sonarr": api}, T0 + 15 * MIN), 0)
+        self.assertEqual(api.deletes, [("/queue/101", KEEP_QUERY)])
+        self.assertEqual(api.posts[1], {"name": "EpisodeSearch", "episodeIds": [1009, 1010]})
+        self.go({"sonarr": api}, T0 + 30 * MIN)
+        self.go({"sonarr": api}, T0 + 60 * MIN)
+        self.assertEqual(len(api.posts), 2)
+        self.assertEqual(len(api.deletes), 1)
+        self.assertEqual([(e["kind"], e["app"], e["title"]) for e in digest(self.dir)], [("partial_imported", "sonarr", PARTIAL_TITLE)])
+        self.assertEqual(self.sent, [])
+
+    def test_no_blocked_telegram_while_the_import_runs(self):
+        api = FakePartial(cmd_status="started")
+        self.go({"sonarr": api}, T0)
+        self.go({"sonarr": api}, T0 + 31 * MIN)
+        self.go({"sonarr": api}, T0 + 46 * MIN)
+        self.assertEqual(self.sent, [])
+        self.assertEqual(len(api.posts), 1)
+
+    def test_partial_pack_still_post_processing_is_left_alone(self):
+        api = FakePartial()
+        busy = lambda rec: "SABnzbd: Extracting"
+        self.go({"sonarr": api}, T0, finished=busy)
+        self.assertEqual(api.posts, [])
+        self.go({"sonarr": api}, T0 + 31 * MIN, finished=busy)
+        self.assertEqual(api.posts, [])
+        [msg] = self.sent
+        self.assertIn("Auto-import: not done", msg)
+        self.assertIn("Extracting", msg)
+
+    def test_partial_pack_without_a_client_check_is_left_alone(self):
+        api = FakePartial()
+        self.go({"sonarr": api}, T0, finished=None)
+        self.assertEqual(api.posts, [])
+
+    def test_one_unparseable_file_blocks_the_import(self):
+        odd = dict(pack_proposals([1])[0], id=699, path=f"{OUT}/extras.mkv", episodes=[], rejections=[{"reason": "Unable to parse file", "type": "permanent"}])
+        api = FakePartial(proposals=pack_proposals() + [odd])
+        self.go({"sonarr": api}, T0)
+        self.assertEqual(api.posts, [])
+
+    def test_a_sample_file_blocks_the_import(self):
+        props = pack_proposals()
+        props[0] = dict(props[0], rejections=[{"reason": "Sample", "type": "permanent"}])
+        api = FakePartial(proposals=props)
+        self.go({"sonarr": api}, T0)
+        self.assertEqual(api.posts, [])
+
+    def test_season_mismatch_blocks_the_import(self):
+        props = pack_proposals()
+        props[7] = dict(props[7], seasonNumber=3, episodes=[{"id": 2008, "seasonNumber": 3, "episodeNumber": 8}])
+        for api in (FakePartial(proposals=props), FakePartial(parse=parsed(season=3))):
+            self.setUp()
+            self.go({"sonarr": api}, T0)
+            self.assertEqual(api.posts, [])
+
+    def test_two_files_for_one_episode_block_the_import(self):
+        api = FakePartial(proposals=pack_proposals(range(1, 8)) + pack_proposals([3]))
+        self.go({"sonarr": api}, T0)
+        self.assertEqual(api.posts, [])
+
+    def test_fake_file_takes_the_existing_removal_path(self):
+        api = FakePartial(queue=pack_queue(eps=ALL10, messages=(ID_MSG, EXE_MSG)))
+        self.go({"sonarr": api}, T0)
+        self.assertEqual(api.deletes, [("/queue/101", DELETE_QUERY)])
+        self.assertEqual(api.posts, [])
+        self.assertEqual([e["kind"] for e in digest(self.dir)], ["malware_removed"])
+
+    def test_import_that_did_not_land_falls_back_to_the_blocked_alert(self):
+        api = FakePartial(cmd_status="failed")
+        self.go({"sonarr": api}, T0)
+        self.go({"sonarr": api}, T0 + 15 * MIN)
+        self.go({"sonarr": api}, T0 + 46 * MIN)
+        self.assertEqual(api.deletes, [])
+        self.assertEqual(len(api.posts), 1)
+        self.assertEqual(len(self.sent), 1)
+        self.assertIn("Sonarr queue: blocked", self.sent[0])
+
+    def test_api_errors_are_retried_then_given_up_after_2_hours(self):
+        api = FakePartial()
+        self.go({"sonarr": api}, T0)
+        api.fail_on = {"/episode"}
+        self.assertEqual(self.go({"sonarr": api}, T0 + 15 * MIN), 1)
+        self.go({"sonarr": api}, T0 + 2 * HOUR + MIN)
+        self.assertNotIn("partial:sonarr:boys4", json.loads(self.state.read_text()))
+        self.assertEqual((api.deletes, len(api.posts)), ([], 1))
+
+    def test_sonarr_own_partial_import_gets_the_missing_episodes_searched(self):
+        hist = pack_history(ALL10) + pack_history(range(1, 9), event="downloadFolderImported")
+        api = FakePartial(queue=own_partial_queue(), history=hist)
+        api.has_file = set(range(1001, 1009))
+        self.assertEqual(self.go({"sonarr": api}, T0), 0)
+        self.assertEqual(api.deletes, [("/queue/101", KEEP_QUERY)])
+        self.assertEqual(api.posts, [{"name": "EpisodeSearch", "episodeIds": [1009, 1010]}])
+        self.assertEqual([e["title"] for e in digest(self.dir)], [PARTIAL_TITLE])
+        self.assertEqual(self.sent, [])
+
+    def test_sonarr_own_partial_with_a_file_it_rejected_stays_blocked(self):
+        hist = pack_history(ALL10) + pack_history(range(1, 9), event="downloadFolderImported")
+        api = FakePartial(queue=own_partial_queue([{"title": "The.Boys.S04E09.sample.mkv", "messages": ["Sample"]}]), history=hist)
+        api.has_file = set(range(1001, 1009))
+        self.go({"sonarr": api}, T0)
+        self.assertEqual((api.deletes, api.posts), ([], []))
+
+    def test_sonarr_own_partial_still_post_processing_is_left_alone(self):
+        hist = pack_history(ALL10) + pack_history(range(1, 9), event="downloadFolderImported")
+        api = FakePartial(queue=own_partial_queue(), history=hist)
+        api.has_file = set(range(1001, 1009))
+        self.go({"sonarr": api}, T0, finished=lambda rec: "qBittorrent: moving")
+        self.assertEqual((api.deletes, api.posts), ([], []))
+
+    def test_dry_run_names_the_partial_import(self):
+        lines = qw.dry_run({"sonarr": FakePartial()}, qw.Config(), finished=DONE)
+        self.assertIn(f"would import 8 of 10, then search E09, E10: The Boys (2019) S04: {PACK} (8 files)", lines)
+
+
+class DownloadFinished(unittest.TestCase):
+    def check(self, rec, torrents=(), history=(), queue=()):
+        qbit = lambda path, data=None: list(torrents)
+        sab = lambda params: {"history": {"slots": list(history)}} if params["mode"] == "history" else {"queue": {"slots": list(queue)}}
+        return qw.download_finished(rec, qbit, sab)
+
+    def test_qbittorrent_states(self):
+        rec = {"downloadId": "ABCDEF", "protocol": "torrent"}
+        for state in ("stoppedUP", "pausedUP", "uploading", "stalledUP", "queuedUP", "forcedUP"):
+            self.assertIsNone(self.check(rec, [{"hash": "abcdef", "state": state, "progress": 1}]), state)
+        for state in ("moving", "checkingUP", "checkingDL", "checkingResumeData", "downloading", "stoppedDL", "missingFiles", "error"):
+            self.assertIn(state, self.check(rec, [{"hash": "abcdef", "state": state, "progress": 1}]))
+        self.assertIsNotNone(self.check(rec, [{"hash": "abcdef", "state": "stoppedUP", "progress": 0.98}]))
+        self.assertIsNotNone(self.check(rec, []))
+
+    def test_sabnzbd_post_processing(self):
+        rec = {"downloadId": "SABnzbd_nzo_x1", "protocol": "usenet"}
+        self.assertIsNone(self.check(rec, history=[{"nzo_id": "SABnzbd_nzo_x1", "status": "Completed"}]))
+        for status in ("Extracting", "Verifying", "Repairing", "Moving", "Running", "Failed"):
+            self.assertIn(status, self.check(rec, history=[{"nzo_id": "SABnzbd_nzo_x1", "status": status}]))
+        self.assertIsNotNone(self.check(rec, history=[{"nzo_id": "SABnzbd_nzo_x1", "status": "Completed"}], queue=[{"nzo_id": "SABnzbd_nzo_x1"}]))
+        self.assertIsNotNone(self.check(rec))
+
+    def test_unknown_protocol_or_client_error(self):
+        self.assertIsNotNone(qw.download_finished({"downloadId": "x", "protocol": "unknown"}, None, None))
+
+        def down(*a, **k):
+            raise qw.ApiError("down")
+        self.assertIn("down", qw.download_finished({"downloadId": "x", "protocol": "torrent"}, down, down))
+
 
 if __name__ == "__main__":
     unittest.main()

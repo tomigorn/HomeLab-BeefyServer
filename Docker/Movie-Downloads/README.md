@@ -366,6 +366,7 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | indexers disabled after failures | Telegram | at once; 22:00–07:00 held, sent from 07:00 if still disabled |
 | guard removed / marked failed, re-searching (wrong film, dub-only) | digest `guard_removed` | at once |
 | Radarr/Sonarr "matched to movie/series by ID" imported by the watchdog ([below](#id-matched-imports)) | digest `auto_imported` | at once |
+| finished season pack with fewer episodes than the season: imported, missing ones searched ([below](#partial-season-packs)) | digest `partial_imported` (`<series> Sxx: imported 8 of 10, searching E09, E10`) | next run after the import landed |
 | "matched … by ID" download of the wrong year ([backstop](#removals-backstop-and-fakes)) removed, blocklisted, re-searched | digest `guard_removed` | at once |
 | fake download (executable / dangerous / encrypted file) removed, blocklisted, re-searched ([below](#removals-backstop-and-fakes)) | digest `malware_removed` | at once |
 | one of those removals failed | Telegram | at once, once per download; 22:00–07:00 held |
@@ -386,7 +387,7 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Sends log | `~/.local/state/movie-downloads/watchdog-sends.log`: `<ISO time> <kind> sent\|held\|digest <title>`, last 1000 lines |
 | State | `~/.local/state/movie-downloads/queue-watchdog.json`: first seen per condition, last `sizeleft`; entries of downloads that left the queue are dropped; an unreachable app keeps its entries (exit 1) |
 | Telegram | `../_global/scripts/oob-alert.sh` (direct to api.telegram.org, no edge); the token stays in `_global/secrets/` |
-| Env | `QW_AUTO_IMPORT` (`0` = off), `QW_DATA_ROOT` (`/srv/video`, the host path of `/data`), `QW_BLOCKED_MIN`, `QW_STALL_HOURS`, `QW_STATE`, `QW_EVENTS` (colon-separated dirs; default the two `guard-events` dirs + `/srv/appdata/bazarr/subtitle-check/events`), `QW_ALERT`, `QW_RADARR_CONFIG`, `QW_SONARR_CONFIG` |
+| Env | `QW_AUTO_IMPORT` (`0` = off), `QW_DATA_ROOT` (`/srv/video`, the host path of `/data`), `QW_BLOCKED_MIN`, `QW_STALL_HOURS`, `QW_STATE`, `QW_EVENTS` (colon-separated dirs; default the two `guard-events` dirs + `/srv/appdata/bazarr/subtitle-check/events`), `QW_ALERT`, `QW_RADARR_CONFIG`, `QW_SONARR_CONFIG`, `QW_QBIT_URL`, `QW_QBIT_PASS`, `QW_SAB_URL`, `QW_SAB_KEY` (download client check for partial packs; defaults `127.0.0.1:8080`, `secrets/qbit-webui.password`, `127.0.0.1:8081`, `secrets/hook/sabnzbd.apikey`) |
 | Tests | `python3 tests/test_queue_watchdog.py` |
 
 ```bash
@@ -405,7 +406,7 @@ Once per download: `DELETE /api/v3/queue/{id}?removeFromClient=true&blocklist=tr
 |---|---|
 | Backstop (`guard_removed`) | state `importBlocked` / `importPending` with "matched to movie/series by ID" on every record, and the release-title year fails the guard year rule `scripts/guard-year.jq` ([Wrong-film guard](#wrong-film-guard), same file): Radarr `/parse` year vs movie year and secondary year ±2; Sonarr series start ±2, run, episode air years ±1. No year in the title = kept. Found 2026-11-08: four wrong films (*Analyze This* ← 2002 sequel, *Drive* 2011 ← 1997, *Drive My Car*, *A Separation* ← 2026 releases) sat completed for days |
 | Fakes (`malware_removed`) | a status message `Found executable file`, `Found potentially dangerous file`, `contains executable file`, `Encrypted download detected`, password-protected; an output path ending in `.exe .scr .lnk .msi .bat .cmd .pif .vbs .ps1`; or a completed folder (read under `QW_DATA_ROOT`) with such files and no video. Not for status `failed` (the app handles those). Found 2026-11-05: a 1 GB `VisionQuest S01E08 … .exe` from a Knaben RSS grab sat 4 days |
-| Order | removals first, then the ID-matched imports, then the blocked alerts |
+| Order | removals first, then the ID-matched imports, then partial season packs, then the blocked alerts |
 | Log | `journalctl -u queue-watchdog.service`: `guard_removed: <title>: <release>: release year …` / `malware_removed: …` |
 
 #### ID-matched imports
@@ -418,7 +419,7 @@ The watchdog does that manual import (`POST /command` `ManualImport`, `importMod
 |---|---|
 | Queue | every record of the download id `completed` + `importBlocked`, and the ID-match message (`matched to series by ID`, Radarr `matched to movie by ID`) is its only message |
 | Series | one `seriesId`; every `grabbed` history record of the download id is that series, `seriesMatchType: Id`, same TVDB id |
-| Episodes | grabbed episodes = queued episodes = episodes of Sonarr's proposals (each once) |
+| Episodes | grabbed episodes = queued episodes = episodes of Sonarr's proposals (each once); fewer proposed in a finished full-season pack: [partial season packs](#partial-season-packs) |
 | Title | `/parse` title without year = series title or an alternate title (case, punctuation and a trailing year ignored); or, same year as the series exactly, whole words of the series title or an alternate title (`Company Retreat` 2026 in *Jury Duty Presents: Behind the Scenes of Company Retreat* (2026), 2026-11-09) |
 | Year | none, or ±1 of the series year or an air year of the grabbed episodes |
 | Season / episode | parsed season = queued season; a single-episode release: parsed episode numbers = queued |
@@ -430,6 +431,25 @@ The watchdog does that manual import (`POST /command` `ManualImport`, `importMod
 | Refused | nothing imported, the blocked Telegram adds `🤖 Auto-import: not done (<reason>)`; the reason is in the journal |
 | Radarr (2026-11-09) | wrong-year ID matches are removed first (backstop). The rest is imported when: one movie; every `grabbed` record is that movie, `movieMatchType: Id`, same TMDB id; `/parse` year = movie year exactly; every word of the title, original title or an alternate title is in the parsed release title (*Traffic* ← `Traffic.-.Die.Macht.des.Kartells…2000`, *Avengers: Endgame* ← `Avengers.4.Endgame.2019`); Radarr proposals: this movie, no rejection, inside the download folder. Not covered: a same-year film whose title contains the whole title (*Drive* 2011 vs a 2011 *Drive Something*) |
 | Log | `journalctl -u queue-watchdog.service`: `auto-import: <series> Sxx: <release> (n files, command id)`; digest `auto_imported` |
+
+#### Partial season packs
+
+Owner rule 2026-11-10. A season pack that holds fewer episodes than Sonarr grabbed it for (`Company.Retreat.2026.S01.Complete` with 8 of 10) is imported in part and the missing episodes searched, instead of staying blocked.
+
+| Case | What the watchdog does |
+|---|---|
+| ID-matched pack ([above](#id-matched-imports)), Sonarr proposes fewer files than queued episodes | all ID-match checks, then `ManualImport` of the files it has |
+| normal pack Sonarr imported in part itself: only status `One or more episodes expected in this release were not imported or missing`, no per-file message | nothing to import; history `downloadFolderImported` of the download id = distinct queued episodes, some missing |
+| next run: import landed (`/command/<id>` completed, every imported episode `hasFile`) | `DELETE /queue/<id>` with `removeFromClient=true`, `blocklist=false`, `skipRedownload=true` (the queue item would block the new grab; the download copy goes, as after a full import: [No seeding](#no-seeding)), then `EpisodeSearch` for the missing episodes; one digest line, no Telegram |
+
+| Check | Rule (any fails = stays blocked, the blocked Telegram names the reason) |
+|---|---|
+| Finished | Sonarr `completed` + `importBlocked` / `importPending`, and the client: qBittorrent progress 100 % in `uploading` / `stalledUP` / `queuedUP` / `pausedUP` / `stoppedUP` / `forcedUP` (not `moving`, `checking*`); SABnzbd history `Completed` (not `Verifying`, `Repairing`, `Extracting`, `Moving`, `Running`, `Failed`) and not in its queue |
+| Files | every Sonarr proposal: no rejection (sample, unparseable, quality …), at least one episode, all of them queued episodes of the parsed season, no episode twice; parsed release = full season |
+| Fakes | the [removal path](#removals-backstop-and-fakes) runs first and wins |
+| Import | command not completed within 2 h, failed, or an imported episode without a file: given up, the normal blocked Telegram follows |
+| Once | `partial:sonarr:<id>` while it runs, `partialdone:sonarr:<id>` until the download leaves the queue |
+| Log | `journalctl -u queue-watchdog.service`: `partial pack: <series> Sxx: imported 8 of 10, searching E09, E10` / `partial pack left blocked: …` |
 
 ### Can wait: downloads at night
 
