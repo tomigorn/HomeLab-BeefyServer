@@ -123,7 +123,7 @@ sudo systemd-run --wait --pipe -p User=buntu -p Group=buntu -p SupplementaryGrou
 
 New LibreTranslate release (dashboard `upstream release`): read the release notes, then in `libretranslate/Dockerfile` change tag and digest of the upstream `FROM` and of the `/etc/base-images` line (`sudo docker buildx imagetools inspect libretranslate/libretranslate:vX.Y.Z` → index digest), the `image:` tag in compose, `LOCAL_IMAGE`/`VERSION` in the test, the version in the post-update check (`st.lt-local-build`); `rebuild-local.conf` reads the tag from compose. Rebuild as above. A new release can change the exact texts in the test: check them by hand, then update.
 
-Rollback: `update-project.sh` rolls back by itself when a check fails; earlier local builds stay as `rollback.invalid/libretranslate-local:<date>-subtitle-translate`. Back to the upstream image by hand: set `image: libretranslate/libretranslate:v1.9.6` and remove `build:` in compose (the old image is also tagged `libretranslate/libretranslate:pre-rebuild-2026-11-10`), `sudo docker compose up -d libretranslate`. Models backup of 2026-11-10: `~/backups/pre-update/2026-11-10/subtitle-translate/libretranslate.tgz`.
+Rollback: `update-project.sh` rolls back by itself when a check fails; earlier local builds stay as `rollback.invalid/libretranslate-local:<date>-subtitle-translate`. Back to the upstream image by hand: set `image: libretranslate/libretranslate:v1.9.6` and remove `build:` in compose (the old image is also tagged `rollback.invalid/libretranslate:pre-rebuild-2026-11-10`), `sudo docker compose up -d libretranslate`. Models backup of 2026-11-10: `~/backups/pre-update/2026-11-10/subtitle-translate/libretranslate.tgz`.
 
 ## Update
 
