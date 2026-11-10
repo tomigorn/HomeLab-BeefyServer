@@ -4,7 +4,7 @@ When a film or episode has a human subtitle in some language but none in German 
 
 | Piece | What |
 |---|---|
-| `subtitle-libretranslate` | LibreTranslate v1.9.6, offline Argos models; internal network only (no egress, no port) |
+| `subtitle-libretranslate` | LibreTranslate v1.9.6 as local image `libretranslate-local:v1.9.6` (see "Local image"), offline Argos models; internal network only (no egress, no port) |
 | `subtitle-lingarr` | Lingarr 1.4.1, translation queue in front of LibreTranslate (`/api/translate/content`); port `127.0.0.1:9876` only, login + API key on, no Traefik route, no library mount |
 | `scripts/subtitle-translate.py` | picks the titles and the source, extracts embedded tracks, calls Lingarr, writes the file, removes replaced ones, refreshes the Jellyfin item |
 | `systemd/subtitle-translate.{service,timer}` | daily 04:46 (after the maintenance window), no new title after 05:50, one title at a time, holds `beefy-keep-awake` while running |
@@ -99,10 +99,43 @@ python3 tests/test_subtitle_translate.py
 - The script runs sandboxed (`systemd-analyze security subtitle-translate`): buntu, loopback only, writes only its state dir and `/srv/video/media`.
 - Lingarr UI if ever needed: `ssh -L 9876:127.0.0.1:9876 beefy`, then `http://localhost:9876` (admin, `secrets/lingarr.password`).
 
+## Local image
+
+Why: upstream `libretranslate/libretranslate:v1.9.6` is the newest release but ships old Debian and Python packages (openssl, gnutls, perl, krb5, certifi, urllib3, filelock: 9 critical / 44 high fixable, Trivy 2026-11-10). Owner decision 2026-11-10: rebuild it locally, same version, models and behaviour.
+
+| | |
+|---|---|
+| Dockerfile | `libretranslate/Dockerfile`: upstream's own final stage (`python:3.11-slim-bookworm` + user 1032 + `/app`), but `/app` incl. its venv copied unchanged from the official v1.9.6 image (no pip rebuild: same code, same packages); `apt-get upgrade`; certifi, urllib3, filelock, waitress raised to their fixed versions (majors held); pip/setuptools/wheel of the system Python and pip of the venv removed. Waitress is never started (gunicorn serves) |
+| Pins (A-30) | both `FROM` lines by digest; `/etc/base-images` in the image records them (post-update check `st.lt-base-current`) |
+| Same behaviour | `tests/test_libretranslate.py`: de→en→de of a fixed sentence with the exact texts of v1.9.6, version 1.9.6, and live the subtitle path (SRT → `scripts/subtitle-translate.py` → Lingarr → LibreTranslate) |
+| Result 2026-11-10 | fixable critical/high 9/44 → 0/3 (Werkzeug, setuptools-vendored jaraco.context and wheel: all on fastpi's acceptance list, so 0 open); all critical 11 → 2, high 84 → 43 (no fix upstream yet) |
+| Weekly rebuild | Fri 04:27, `rebuild-local` (`_global/rebuild-local.conf`): both pins moved to their tag's current digest, `--pull --no-cache` (fresh Debian packages), test in a throwaway container (`--image`), recreate, live test + post-update check, rollback on failure; a moved pin is committed. Deferred while `subtitle-translate.service` runs |
+| Updates noticed | fastpi `security_scan.py` (subject `localbase-beefy`, daily 04:05) checks the bases against Docker Hub: Updates dashboard rows `base image update` (new python digest, the next Friday rebuild takes it) and `upstream release` (e.g. v1.9.7 out); also in the Monday digest |
+
+Rebuild by hand. Compose cannot build here (the DOCKER-USER guard drops a build container's DNS, so `docker build --network host`; `update-project.sh … build` would not rebuild):
+
+```bash
+cd ~/Projects/Docker/Subtitle-Translate
+sudo docker build --network host --pull --no-cache -t libretranslate-local:v1.9.6 ./libretranslate
+python3 tests/test_libretranslate.py --image libretranslate-local:v1.9.6     # new image, throwaway container
+SERVICES=libretranslate CHECK="python3 tests/test_libretranslate.py" ../_global/scripts/update-project.sh . recreate
+# or the weekly job for this project now (moves the pins too):
+sudo systemd-run --wait --pipe -p User=buntu -p Group=buntu -p SupplementaryGroups=docker -p StateDirectory=rebuild-local -E HOME=/home/buntu -E REBUILD_TEXTFILE=/var/lib/auto-update/textfile python3 /home/buntu/Projects/Docker/_global/scripts/rebuild_local.py Subtitle-Translate
+```
+
+New LibreTranslate release (dashboard `upstream release`): read the release notes, then in `libretranslate/Dockerfile` change tag and digest of the upstream `FROM` and of the `/etc/base-images` line (`sudo docker buildx imagetools inspect libretranslate/libretranslate:vX.Y.Z` → index digest), the `image:` tag in compose, `LOCAL_IMAGE`/`VERSION` in the test, the version in the post-update check (`st.lt-local-build`); `rebuild-local.conf` reads the tag from compose. Rebuild as above. A new release can change the exact texts in the test: check them by hand, then update.
+
+Rollback: `update-project.sh` rolls back by itself when a check fails; earlier local builds stay as `rollback.invalid/libretranslate-local:<date>-subtitle-translate`. Back to the upstream image by hand: set `image: libretranslate/libretranslate:v1.9.6` and remove `build:` in compose (the old image is also tagged `libretranslate/libretranslate:pre-rebuild-2026-11-10`), `sudo docker compose up -d libretranslate`. Models backup of 2026-11-10: `~/backups/pre-update/2026-11-10/subtitle-translate/libretranslate.tgz`.
+
 ## Update
 
-Tier notify (`_global/auto-update.conf`): Lingarr migrates its DB. `Docker/_global/scripts/update-project.sh Docker/Subtitle-Translate pull /srv/appdata/lingarr`, then `post-update-check.sh Subtitle-Translate`.
+| Image | How |
+|---|---|
+| Lingarr | tier notify (`_global/auto-update.conf`), it migrates its DB: `Docker/_global/scripts/update-project.sh Docker/Subtitle-Translate pull /srv/appdata/lingarr`, then `post-update-check.sh Subtitle-Translate` |
+| LibreTranslate | local build, see "Local image" (auto-update reports it as `local_build`) |
 
 ## Tests
+
+`python3 tests/test_libretranslate.py [--image IMAGE]`: LibreTranslate functional test, see "Local image".
 
 `python3 tests/test_subtitle_translate.py`: source order (German only, English only, both from French, Forced only → nothing, no chaining), Bazarr's strict name match, timing-exact rewrite, ASS input, wait, replacement, dry run, deadline.
