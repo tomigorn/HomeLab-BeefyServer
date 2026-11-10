@@ -70,8 +70,19 @@ case $1 in
            if [[ -s $D/side && $tg == *" side "* ]] && (( force )); then
              read -r _ _ sgen < "$D/side"; echo "$(lookup side:1) side:1 $((sgen + 1))" > "$D/side"; echo " Container demo-side Recreated"
            fi; : ;;
+      build*) # compose v5 builds through bake: a build with network host needs --allow=network.host, which compose build cannot pass
+           if [[ " $* " == *" --print "* ]]; then net=""; [[ -e $D/hostnet ]] && net=',"network":"host"'; echo "{\"target\":{\"app\":{\"tags\":[\"$ref\"]$net}}}"; exit 0; fi
+           [[ -e $D/hostnet ]] && { echo 'additional privileges requested: pass "--allow=network.host" to grant requested privileges'; exit 1; }
+           [[ -e $D/buildfail ]] && { echo "failed to solve: process did not complete successfully: exit code: 2"; exit 1; }
+           new=$(awk -v r="$ref" '$1==r {print $2}' "$D/buildmap"); [[ -n $new ]] && settag "$new" "$ref"; : ;;
       *) : ;;
     esac ;;
+  buildx)
+    [[ $2 == bake && " $* " == *" -f - "* ]] || { echo "unexpected: $*" >&2; exit 9; }
+    def=$(cat); [[ $def == *'"network":"host"'* && " $* " != *" --allow=network.host "* ]] && { echo 'additional privileges requested: pass "--allow=network.host"'; exit 1; }
+    [[ -e $D/buildfail ]] && { echo "ERROR: failed to solve: exit code: 2"; exit 1; }
+    ref=$(sed 's/.*"tags":\["\([^"]*\)".*/\1/' <<<"$def")
+    new=$(awk -v r="$ref" '$1==r {print $2}' "$D/buildmap"); [[ -n $new ]] && settag "$new" "$ref"; : ;;
   run) if [[ " $* " == *" -i "* ]]; then [[ -e $D/restorefail ]] && exit 1; cat > /dev/null; else [[ -e $D/runfail ]] && exit 1; echo "tar of ${@: -3:1}"; fi ;;
   *) echo "unexpected: $*" >&2; exit 9 ;;
 esac
@@ -86,7 +97,7 @@ setup() {  # setup <env ref> <container ref>; tags/pullmap come from the test
   printf 'services:\n  app:\n    image: ${APP_IMAGE}\n' > "$T/Demo/compose.yaml"
   echo "APP_IMAGE=$1" > "$T/Demo/.env"
   echo "sha:old ${2:-$1} 1" > "$T/ctr"
-  : > "$T/pullmap"; : > "$T/log"; rm -rf "$T/backups" "$T/data"; rm -f "$T/configfail" "$T/runfail" "$T/restorefail" "$T/migrate" "$T/keepctr" "$T/others" "$T/side" "$T/cfghash" "$T/appcfg"
+  : > "$T/pullmap"; : > "$T/buildmap"; : > "$T/log"; rm -rf "$T/backups" "$T/data"; rm -f "$T/configfail" "$T/runfail" "$T/restorefail" "$T/migrate" "$T/keepctr" "$T/others" "$T/side" "$T/cfghash" "$T/appcfg" "$T/hostnet" "$T/buildfail"
 }
 run() { out=$(cd "$T" && "$U" "$T/Demo" "$@" 2>&1); rc=$?; }
 ctr() { cat "$T/ctr"; }
@@ -257,5 +268,27 @@ CHECK='! grep -q dns: "$FAKE_DIR/appcfg"' run recreate
 ! grep -q dns: "$T/appcfg" && ok "service with only a config change recreated on the restored compose" || bad "config-only service recreated" "$(cat "$T/appcfg")"
 [[ $(cat "$T/side") == "sha:sold side:1 "* ]] && ok "service with the changed image back on the old one" || bad "image-changed service rolled back" "$(cat "$T/side")"
 ! grep -q "^compose.*up -d --force-recreate$" "$T/log" && ok "rollback forces only the changed services" || bad "no forced whole-project recreate" "$(grep 'compose.*up' "$T/log")"
+
+echo "build: plain compose build moves the tag, the container is recreated on it"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "img:1 sha:new" > "$T/buildmap"
+CHECK=true run build
+[[ $rc == 0 && $(ctr) == "sha:new img:1 "* && $out == *"image UPDATED"* ]] && ok "built and recreated" || bad "plain build" "rc=$rc $(ctr) $out"
+grep -q "^compose build --pull" "$T/log" && ! grep -q "^buildx" "$T/log" && ok "built by compose, no bake" || bad "plain build by compose" "$(cat "$T/log")"
+
+echo "build with network host (build: network: host): really built, not reported unchanged"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "img:1 sha:new" > "$T/buildmap"; touch "$T/hostnet"
+run snapshot; CHECK='grep -q "^sha:new " "$FAKE_DIR/ctr"' run build
+[[ $rc == 0 && $(ctr) == "sha:new img:1 "* && $out == *"image UPDATED"* ]] && ok "built and recreated on the new image" || bad "host-network build" "rc=$rc $(ctr) $out"
+grep -q "^buildx bake -f - --allow=network.host" "$T/log" && ok "built through bake with the network.host entitlement" || bad "bake with --allow=network.host" "$(cat "$T/log")"
+
+echo "build fails: reported as a build failure before any recreate, no rollback"
+for f in plain hostnet; do
+  setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "img:1 sha:new" > "$T/buildmap"; touch "$T/buildfail"; [[ $f == hostnet ]] && touch "$T/hostnet"
+  run snapshot; CHECK=true run build
+  [[ $rc == 2 && $out == *"build: FAIL"* && $out == *"ABORTED demo: build failed"* ]] && ok "$f: exit 2, build failure reported" || bad "$f: build failure reported" "rc=$rc $out"
+  [[ $out != *ROLLBACK* && $out != *"image unchanged"* ]] && ok "$f: no check, no rollback" || bad "$f: no rollback" "$out"
+  ! grep -q "^compose up\|^compose stop" "$T/log" && [[ $(ctr) == "sha:old img:1 1" ]] && ok "$f: nothing recreated" || bad "$f: nothing recreated" "$(ctr) $(grep '^compose' "$T/log")"
+  [[ -e $T/backups/pre-update/pending/demo/taken ]] && ok "$f: pending snapshot kept for the next try" || bad "$f: pending snapshot kept"
+done
 
 echo "$PASS passed, $FAIL failed"; [[ $FAIL == 0 ]]

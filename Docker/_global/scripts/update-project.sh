@@ -10,7 +10,7 @@
 # Everything it writes under ~/backups is owner-only (umask 077, dirs 0700, files 0600): the backups hold databases and secrets.
 # Env: SERVICES (pull/build/recreate only these, --no-deps; the verify still covers the whole project), WAIT (45), CHECK (functional check, a shell command; retried CHECK_TRIES=6 times 10 s apart),
 #      POST_CHECK=0 (skip the customization check: post-update-check.sh runs after CHECK whenever _global/post-update.d/<dir name>.sh exists, Docker/CUSTOMIZATIONS.md),
-#      TEST_FORCE_FAIL=1 (the verify fails: rollback drill). Exit 0 ok, 1 rolled back, 2 nothing changed (no project, a backup failed or a backup path is missing), 3 rollback did not verify or the data restore failed.
+#      TEST_FORCE_FAIL=1 (the verify fails: rollback drill). Exit 0 ok, 1 rolled back, 2 nothing changed (no project, the build failed, a backup failed or a backup path is missing), 3 rollback did not verify or the data restore failed.
 # Backups: a failed or empty backup, or a missing path, aborts before up -d (old images re-tagged, stopped containers started again). A rollback after an image change restores this run's backups first (the failed data stays next to it as <path>.failed-update-<time>, a volume's as vol-<name>.failed-update-<time>.tgz); if that restore fails the services stay stopped (exit 3): the old image never starts on migrated data.
 set -uo pipefail
 umask 077
@@ -97,9 +97,25 @@ if [[ -x scripts/traefik-plugin-test.sh ]]; then
   (umask 022; scripts/traefik-plugin-test.sh "$t") || { echo "FAIL $proj: plugin test failed on traefik:$t, nothing changed"; exit 1; }
 fi
 
+# build_images: compose v5 always builds through bake, which refuses a "build: network: host" without --allow=network.host and compose build cannot pass it; such projects get compose's own bake definition (--print) built with that entitlement
+build_images() {
+  local def; def=$(docker compose build --pull --print ${SERVICES:-} 2>/dev/null)
+  if [[ -n $def ]] && python3 -c 'import json,sys; sys.exit(not any(t.get("network") == "host" for t in json.load(sys.stdin).get("target", {}).values()))' <<<"$def" 2>/dev/null; then
+    docker buildx bake -f - --allow=network.host --progress quiet <<<"$def"
+  else
+    docker compose build --pull -q ${SERVICES:-}
+  fi
+}
 case $mode in
   pull)     docker compose pull -q ${SERVICES:-} 2>&1 | grep -viE 'pulling|pulled|^$' | head -5 ;;
-  build)    docker compose build --pull -q ${SERVICES:-} 2>&1 | grep -viE '^\s*$' | tail -3 ;;
+  build)    bout=$(build_images 2>&1); brc=$?
+            grep -vE '^\s*$' <<<"$bout" | tail -3
+            if (( brc )); then
+              echo "  build: FAIL (exit $brc)"
+              for n in "${!oldid[@]}"; do IFS='|' read -r ref iid _ _ _ _ <<< "${oldid[$n]}"; [[ $ref == *@* || $ref == sha256:* ]] || docker tag "$iid" "$ref" 2>/dev/null; done
+              (( from_pending )) && [[ ! -e $pending ]] && mv "$snap" "$pending"
+              echo "ABORTED $proj: build failed, nothing updated (old images re-tagged, nothing recreated)"; exit 2
+            fi ;;
   recreate) : ;;
 esac
 
