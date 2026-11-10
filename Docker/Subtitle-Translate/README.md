@@ -112,14 +112,12 @@ Why: upstream `libretranslate/libretranslate:v1.9.6` is the newest release but s
 | Weekly rebuild | Fri 04:27, `rebuild-local` (`_global/rebuild-local.conf`): both pins moved to their tag's current digest, `--pull --no-cache` (fresh Debian packages), test in a throwaway container (`--image`), recreate, live test + post-update check, rollback on failure; a moved pin is committed. Deferred while `subtitle-translate.service` runs |
 | Updates noticed | fastpi `security_scan.py` (subject `localbase-beefy`, daily 04:05) checks the bases against Docker Hub: Updates dashboard rows `base image update` (new python digest, the next Friday rebuild takes it) and `upstream release` (e.g. v1.9.7 out); also in the Monday digest |
 
-Rebuild by hand. Compose cannot build here (the DOCKER-USER guard drops a build container's DNS, so `docker build --network host`; `update-project.sh … build` would not rebuild):
+Rebuild by hand. Compose declares `build: network: host` (the DOCKER-USER guard drops a build container's DNS); `update-project.sh … build` builds it with the `network.host` entitlement, plain `docker compose build` refuses it without a terminal:
 
 ```bash
 cd ~/Projects/Docker/Subtitle-Translate
-sudo docker build --network host --pull --no-cache -t libretranslate-local:v1.9.6 ./libretranslate
-python3 tests/test_libretranslate.py --image libretranslate-local:v1.9.6     # new image, throwaway container
-SERVICES=libretranslate CHECK="python3 tests/test_libretranslate.py" ../_global/scripts/update-project.sh . recreate
-# or the weekly job for this project now (moves the pins too):
+SERVICES=libretranslate CHECK="python3 tests/test_libretranslate.py" ../_global/scripts/update-project.sh . build   # build (cached layers), recreate, live test, post-update check, rollback
+# fresh base and packages (no cache), tested in a throwaway container first, pins moved: the weekly job now
 sudo systemd-run --wait --pipe -p User=buntu -p Group=buntu -p SupplementaryGroups=docker -p StateDirectory=rebuild-local -E HOME=/home/buntu -E REBUILD_TEXTFILE=/var/lib/auto-update/textfile python3 /home/buntu/Projects/Docker/_global/scripts/rebuild_local.py Subtitle-Translate
 ```
 

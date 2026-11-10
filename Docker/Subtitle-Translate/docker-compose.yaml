@@ -7,8 +7,10 @@ services:
 # #########################################################
 # Offline machine translation (Argos models). Internal network only: no published port, no egress.
   libretranslate:
-    # LibreTranslate v1.9.6 on a current base (libretranslate/Dockerfile). Build with docker build --network host, not compose: README "Local image".
-    build: ./libretranslate
+    # LibreTranslate v1.9.6 on a current base (libretranslate/Dockerfile). Host network: the DOCKER-USER guard drops a build container's DNS; build with update-project.sh, README "Local image".
+    build:
+      context: ./libretranslate
+      network: host
     image: libretranslate-local:v1.9.6
     container_name: subtitle-libretranslate
     restart: unless-stopped
