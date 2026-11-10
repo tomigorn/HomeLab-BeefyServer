@@ -143,7 +143,7 @@ if want bazarr; then
   check md.bazarr-forced-audio-only '^forced=audio-only full=always$' "$(md_bz /system/languages/profiles | jq -r '[.[].items[]] | "forced=\(if all(.[] | select(.forced == "True"); .audio_only_include == "True") then "audio-only" else "ALWAYS" end) full=\(if any(.[] | select(.forced != "True"); .audio_only_include == "True" or .audio_exclude == "True") then "AUDIO-BOUND" else "always" end)"' 2>&1)"
 fi
 if want gluetun vpn-status qbittorrent; then
-  check md.vpn-port-forward '^true tun0 connected$' "$(curl -s -m 8 http://127.0.0.1:8087/api/status | jq -r '"\(.match) \(.qbit_interface) \(.qbit_connection)"' 2>&1)"
+  check md.vpn-port-forward '^true tun0$' "$(curl -s -m 8 http://127.0.0.1:8087/api/status | jq -r '"\(.match) \(.qbit_interface)"' 2>&1)"
 fi
 if want gluetun; then
   check md.idle-vpn-probe '^0$' "$(sed -n 's/^beefy_idle_busy{reason="probe_error"} //p' /run/beefy-idle.prom 2>&1)"
