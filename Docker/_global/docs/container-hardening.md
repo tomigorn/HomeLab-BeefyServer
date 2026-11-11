@@ -42,10 +42,11 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | 65128 | jellyfin-popular (read_only; group 65128 reads `Jellyfin/secrets/popular`, writes `/srv/appdata/jellyfin-popular-state`) | | |
 | 65129 | subtitle-lingarr | | |
 | 65130 | subtitle-libretranslate (internal network, no egress) | | |
+| 65131 | activity-gate (nginx, read_only; group 65131 reads `Activity-Gate/secrets`) | | |
 | 65116 | gluetun files (PUID; process root) | | NET_ADMIN, NET_RAW, NET_BIND_SERVICE, DAC_OVERRIDE, CHOWN |
 | 0 | portainer_agent | | none (full socket by design, `AGENT_SECRET` required) |
 
-Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65131+.
+Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65132+.
 
 ## Root by design
 | Container | Why |
@@ -73,6 +74,7 @@ Every container has `mem_limit` (swap = same again, Docker default). Sized from 
 | movie-bazarr | 2g | 0.16 GB (peak 1.4 GB with cache) |
 | subtitle-libretranslate | 6g | 0.3 GB idle (18 models, one worker; set 2026-10-31, not yet sized from a peak) |
 | subtitle-lingarr | 1g | 0.09 GB |
+| activity-gate | 32m | nginx, one worker (2026-11-11, not yet sized from a peak) |
 | movie-qbittorrent | 6g | 8 MB (libtorrent 2 maps files: cache, reclaimed under the limit) |
 | movie-sabnzbd | 6g | 0.13 GB (par2 repair and unpack spike) |
 

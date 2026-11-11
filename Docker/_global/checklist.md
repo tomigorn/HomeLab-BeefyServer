@@ -7,3 +7,4 @@
 | Dependency-Track | ❌ | ❌ | | | |
 | Floppy | ❌ | ❌ | | | |
 | Subtitle-Translate | ❌ | ❌ | | | |
+| Activity-Gate | ❌ | ❌ | | | |

@@ -214,6 +214,14 @@ Hooks in SABnzbd / qBittorrent (`hook/download-integrity.py` runs first, then `h
 
 Portainer-Agent: no customization (the tag must match fastpi's Portainer, notify tier).
 
+## Activity-Gate
+
+| Customization | Where | Reapply | Verify | Update can break |
+|---|---|---|---|---|
+| nginx pinned by digest | `Activity-Gate/docker-compose.yaml` | new digest into compose; `update-project.sh ~/Projects/Docker/Activity-Gate recreate` | `gate.image-pin`: → pinned, running = pin; `gate.config`: nginx -t → ok | none (auto-update not listed; Cup still shows new tags) |
+| Allow-list for fastpi's activity page: exact GET request lines, keys injected from `secrets/` (start.sh → tmpfs), everything else 404/405, clients other than fastpi 403 | `Activity-Gate/gate/nginx.conf`, `gate/start.sh`, `secrets/*.apikey` (buntu:65131 0440) | compose; secrets: README "Secrets" | `gate.allowlist`: 6 contract paths → 200; `gate.refusals`: → 404 ×6, POST 405; `gate.other-client`: beefy host → 403; `gate.secrets`: → 440 65131 ×3 | a rotated Jellyfin/Radarr/Sonarr key (401 → allowlist fails); an upstream API path change; nginx `geo`/`if` semantics |
+| Gate port never keeps beefy awake | `/etc/beefy-idle.conf` `EXCLUDE_PORTS` (`Server/8-Idle-Watcher/beefy-idle.conf`) | edit `/etc/beefy-idle.conf`, `sudo Server/8-Idle-Watcher/install.sh` | `gate.idle-exclude`: → excluded | `GATE_PORT` changed without the conf |
+
 ## Host
 
 Only in `post-update-check.sh all` (no compose project).

@@ -1,0 +1,63 @@
+# =========================================================
+# Services ================================================
+# =========================================================
+services:
+# #########################################################
+# GATE ####################################################
+# #########################################################
+# Read-only allow-list for fastpi's activity page (HomeLab-FastPi Docker/Activity, README "Gate path contract").
+# fastpi polls it every 30 s, only while its Waker reports beefy up; GATE_PORT is in the idle watcher's
+# EXCLUDE_PORTS, so the polls never keep beefy awake. Exact GET request lines only, everything else 404,
+# other methods 405, other clients 403 (and beefy's DOCKER-USER drops every LAN client but fastpi).
+# Keys stay here: start.sh reads secrets/ into the container's tmpfs, fastpi holds none.
+  gate:
+    image: nginxinc/nginx-unprivileged:1.31.7-alpine3.24@sha256:b5047b9b76845eac124358373c6852377c52e4b05834a47647e955dd91cb8f1e
+    container_name: activity-gate
+    restart: unless-stopped
+    user: "65131:65131"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    entrypoint: ["sh", "/gate/start.sh"]
+    tmpfs:
+      - /tmp:uid=65131,gid=65131,mode=0700,size=16m
+    volumes:
+      - ./gate:/gate:ro
+      - ./secrets:/run/secrets/gate:ro
+      # the Seerr bar's state files (Seerr README "Indexer bar"); only the two named in nginx.conf are served
+      - ${APPDATA_ROOT}/indexer-bar:/srv/seerr-bar:ro
+    ports:
+      - "${GATE_PORT}:8080"
+    # Upstreams by container name, never via 192.168.1.102: a flow to a published port would count as use in the idle watcher.
+    networks:
+      - jellyfin
+      - movie-downloads
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    mem_limit: 32m
+    pids_limit: 32
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# =========================================================
+# Networks ================================================
+# =========================================================
+# Both exist already: jellyfin (Jellyfin project) and movie-downloads (Movie-Downloads; its members pass MOVIE-INGRESS).
+networks:
+  jellyfin:
+    external: true
+  movie-downloads:
+    external: true
+
+# =========================================================
+# Volumes =================================================
+# =========================================================
+# None.
