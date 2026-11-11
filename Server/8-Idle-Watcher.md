@@ -114,7 +114,7 @@ NET_BUSY_KBPS=200         # primary-NIC throughput
 DISK_BUSY_KBPS=2000       # data-disk read+write
 PRIMARY_NIC=enp6s0
 DATA_DISKS="sda sdb sdc"  # basenames in /proc/diskstats (tune to actual data disks)
-EXCLUDE_PORTS="22 9001"   # ports the inbound-conn probe ignores
+EXCLUDE_PORTS="22 9001 8095"   # ports the inbound-conn probe ignores (8095 = activity gate, fastpi polls it while beefy is up)
 CT_MAX_IDLE=300           # s a conntrack flow may idle and still count as in use
 CT_MIN_BYTES=1024         # bytes per sample a counted flow must move (heartbeats stay below)
 INHIBIT_FILE=/run/beefy-keep-awake

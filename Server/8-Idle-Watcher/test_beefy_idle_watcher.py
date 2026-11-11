@@ -473,5 +473,40 @@ class TestClock(unittest.TestCase):
             biw._now = real
 
 
+class TestActivityGate(unittest.TestCase):
+    """fastpi polls the activity gate (8095) every 30 s while beefy is up: that must never count as use."""
+    LOCAL = {"192.168.1.102", "127.0.0.1"}
+    LISTEN = {22, 8095, 8096, 8097, 9001}
+
+    @staticmethod
+    def shipped_conf():
+        import os
+        env = {}
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "beefy-idle.conf")) as f:
+            for line in f:
+                k, sep, v = line.strip().partition("=")
+                if sep and not k.startswith("#"):
+                    env[k] = v
+        return load_config(env)
+
+    def test_gate_port_is_excluded_in_shipped_conf(self):
+        self.assertIn(8095, self.shipped_conf()["EXCLUDE_PORTS"])
+
+    def test_inbound_gate_connection_from_fastpi_is_not_busy(self):
+        ex = self.shipped_conf()["EXCLUDE_PORTS"]
+        gate = "ESTAB 0 0 192.168.1.102:8095 192.168.1.2:51234\n"
+        self.assertEqual(count_inbound(gate, self.LISTEN, ex), 0)
+        ct = ("tcp 6 431999 ESTABLISHED src=192.168.1.2 dst=192.168.1.102 sport=51234 dport=8095 "
+              "packets=9 bytes=40000 src=172.28.11.9 dst=192.168.1.2 sport=8080 dport=51234 "
+              "packets=9 bytes=900000 [ASSURED] mark=0 use=1\n")
+        self.assertEqual(count_ct_inbound(ct, self.LOCAL, self.LISTEN, ex, 432000, 300, {}, 1024), 0)
+
+    def test_jellyfin_and_popular_connections_still_busy(self):
+        ex = self.shipped_conf()["EXCLUDE_PORTS"]
+        txt = ("ESTAB 0 0 192.168.1.102:8096 192.168.1.2:51235\n"
+               "ESTAB 0 0 192.168.1.102:8097 192.168.1.2:51236\n")
+        self.assertEqual(count_inbound(txt, self.LISTEN, ex), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
