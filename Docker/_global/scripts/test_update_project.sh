@@ -51,6 +51,7 @@ case $1 in
     (( ${#files[@]} )) || files=(compose.yaml)
     ref=$(resolve "${files[@]}")
     case "$1 $2" in
+      "config --services") echo app; echo side ;;
       "config --format") [[ -e $D/configfail ]] && exit 1; echo "{\"name\":\"demo\",\"services\":{\"app\":{\"image\":\"$ref\"}}}" ;;
       "ps -q") echo cid1 ;;
       "ps --format") echo "demo-app Up" ;;
@@ -217,6 +218,15 @@ run pull
 [[ $rc == 2 && $out == *FAIL* ]] && ok "exit 2 when the project name is empty" || bad "exit 2 on empty project" "rc=$rc $out"
 [[ -e $T/backups/pre-update/pending/other/taken ]] && ok "other projects' pending snapshots survive" || bad "other pending snapshots survive" "$(ls -R "$T/backups" 2>&1)"
 ! grep -q "^compose pull\|^compose up" "$T/log" && ok "no pull, no up" || bad "no pull, no up" "$(cat "$T/log")"
+
+echo "unknown service in SERVICES: exit 2 before anything changes, valid names listed"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "img:1 sha:new" > "$T/pullmap"
+SERVICES="app dt-db" run pull
+[[ $rc == 2 && $out == *"dt-db"*"not a service"*"app side"*"nothing changed"* ]] && ok "exit 2, unknown name and valid names in the message" || bad "unknown service aborts" "rc=$rc $out"
+! grep -qE "^compose (stop|pull|up)|^tag |^run " "$T/log" && [[ ! -d $T/backups ]] && ok "no stop, pull, up, tag or backup" || bad "nothing touched" "$(cat "$T/log")"
+setup img:1; printf 'img:1 sha:old\n' > "$T/tags"
+SERVICES=app CHECK=true run recreate
+[[ $rc == 0 && $out == *"OK demo"* ]] && ok "valid SERVICES still works" || bad "valid SERVICES" "rc=$rc $out"
 
 echo "backup path missing: update aborted before anything changes"
 setup img:1; printf 'img:1 sha:old\n' > "$T/tags"; echo "img:1 sha:new" > "$T/pullmap"

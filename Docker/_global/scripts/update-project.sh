@@ -8,7 +8,7 @@
 # Before any change every old image gets rollback.invalid/<repo>:<date>-<project> (a dangling prune cannot take it; one namespace Cup excludes, sorted after the real tags); the last ROLLBACK_KEEP (3) per repo and project stay.
 # After a successful run it reports other projects' running containers made from the same tag that still run the old image ("shared tag:" lines, with the command that recreates them).
 # Everything it writes under ~/backups is owner-only (umask 077, dirs 0700, files 0600): the backups hold databases and secrets.
-# Env: SERVICES (pull/build/recreate only these, --no-deps; the verify still covers the whole project), WAIT (45), CHECK (functional check, a shell command; retried CHECK_TRIES=6 times 10 s apart),
+# Env: SERVICES (pull/build/recreate only these, --no-deps; every name must be a service of the project (docker compose config --services), else exit 2 before anything changes; the verify still covers the whole project), WAIT (45), CHECK (functional check, a shell command; retried CHECK_TRIES=6 times 10 s apart),
 #      POST_CHECK=0 (skip the customization check: post-update-check.sh runs after CHECK whenever _global/post-update.d/<dir name>.sh exists, Docker/CUSTOMIZATIONS.md),
 #      TEST_FORCE_FAIL=1 (the verify fails: rollback drill). Exit 0 ok, 1 rolled back, 2 nothing changed (no project, the build failed, a backup failed or a backup path is missing), 3 rollback did not verify or the data restore failed.
 # Backups: a failed or empty backup, or a missing path, aborts before up -d (old images re-tagged, stopped containers started again). A rollback after an image change restores this run's backups first (the failed data stays next to it as <path>.failed-update-<time>, a volume's as vol-<name>.failed-update-<time>.tgz); if that restore fails the services stay stopped (exit 3): the old image never starts on migrated data.
@@ -21,6 +21,12 @@ here=$(cd "$(dirname "$0")" && pwd)
 cd "$dir" || { echo "FAIL $dir: no such dir"; exit 2; }
 proj=$(docker compose config --format json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])' 2>/dev/null)
 [[ -n $proj && $proj != */* && $proj != .* ]] || { echo "FAIL $dir: docker compose config gave no project name, nothing changed"; exit 2; }
+if [[ $mode != snapshot && -n ${SERVICES:-} ]]; then
+  valid=$(docker compose config --services 2>/dev/null | tr '\n' ' '); valid=${valid% }
+  [[ -n $valid ]] || { echo "FAIL $dir: docker compose config --services gave no services, nothing changed"; exit 2; }
+  for s in $SERVICES; do [[ " $valid " == *" $s "* ]] || unknown+=" $s"; done
+  [[ -z ${unknown:-} ]] || { echo "ABORTED $proj: SERVICES names${unknown} not a service of this project (valid: $valid), nothing changed"; exit 2; }
+fi
 bk="$HOME/backups/pre-update/$(date +%F)/$proj"; mkdir -p "$bk"; chmod 700 "$HOME/backups/pre-update" "${bk%/*}" "$bk"
 pending="$HOME/backups/pre-update/pending/$proj"
 name=$(basename "$(pwd -P)")
