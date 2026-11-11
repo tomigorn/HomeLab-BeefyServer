@@ -9,6 +9,6 @@ if want gate; then
   check gate.refusals '^404 404 404 404 404 404 405$' "$(echo "$(gate_codes GET /jellyfin/Sessions '/jellyfin/Sessions?ActiveWithinSeconds=61' /jellyfin/Users '/radarr/api/v3/queue?pageSize=200&includeMovie=true&x=1' /seerr/usage.json /) $(gate_codes POST /sonarr/api/v3/series)")"
   # any client but fastpi: the host reaches it through docker-proxy, so the gate sees a bridge address
   check gate.other-client '^403$' "$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$(sed -n 's/^GATE_PORT=//p' "$GATE_DIR/.env")/health" 2>&1)"
-  check gate.idle-exclude '^excluded$' "$(p=$(sed -n 's/^GATE_PORT=//p' "$GATE_DIR/.env"); grep -qE "^EXCLUDE_PORTS=\"?([0-9 ]* )?$p( [0-9 ]*)?\"?$" /etc/beefy-idle.conf && echo excluded || echo "not excluded: $p")"
+  check gate.idle-exclude '^excluded$' "$(p=$(sed -n 's/^GATE_PORT=//p' "$GATE_DIR/.env"); grep -qE "^EXCLUDE_PORTS=\"?([0-9 ]* )?$p( [0-9 ]*)?\"?[[:space:]]*(#.*)?$" /etc/beefy-idle.conf && echo excluded || echo "not excluded: $p")"
   check gate.secrets '^440 65131 440 65131 440 65131$' "$(stat -c '%a %g' "$GATE_DIR"/secrets/{jellyfin,radarr,sonarr}.apikey 2>&1 | xargs)"
 fi
