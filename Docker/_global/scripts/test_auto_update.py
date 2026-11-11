@@ -310,6 +310,72 @@ def test_seerr_sidecars_auto_update_each_with_its_own_check():
     assert "seerr" not in rows
 
 
+def _rows_of(project):
+    return [r for r in _conf_rows() if r["project"] == project]
+
+
+def test_cup_auto_updates_with_a_functional_check():
+    if not (DOCKER / "Cup").exists():
+        return
+    (row,) = _rows_of("Cup")
+    assert row["tier"] == "auto" and row["services"] == [] and "172.24.0.1:8000/api/v3/json" in row["check"]
+
+
+GRAFANA_EXPORTERS = {"node-exporter", "blackbox-exporter", "blackbox-exporter-wan", "json-exporter"}
+GRAFANA_CORE = {"prometheus", "alertmanager", "grafana", "influxdb", "telegraf"}
+
+
+def test_grafana_exporters_auto_update_and_the_core_stays_notify():
+    if not (DOCKER / "grafana").exists():
+        return
+    rows = {r["tier"]: r for r in _rows_of("grafana")}
+    assert sorted(rows) == ["auto", "notify"]
+    assert set(rows["auto"]["services"]) == GRAFANA_EXPORTERS
+    assert "exporters-scraped" in rows["auto"]["check"]
+    assert (DOCKER / "grafana" / "scripts" / "exporters-scraped.sh").exists()
+    assert set(rows["notify"]["services"]) == GRAFANA_CORE
+    assert rows["notify"]["backups"] == ["vol:monitoring__grafana_grafana_data", "vol:monitoring__grafana_influxdb_data"]
+
+
+# The manual update command backs these up; their tiers stay as they are.
+BACKED_UP = {
+    "mouse": ("notify", ["/mnt/seagate-red/qbittorrent/config", "/mnt/seagate-red/sabnzbd/config", "vol:mouse_mousehole", "vol:mouse_gluetun-data"]),
+    "Authentik": ("edge", ["vol:authentik_database-pg18"]),
+    "Portainer": ("notify", ["vol:docker_portainer_data"]),
+    "WireguardVPN": ("edge", ["./wg-easy-v15"]),
+    "CrowdSec": ("edge", ["vol:crowdsec_crowdsec_data", "vol:crowdsec_crowdsec_config"]),
+}
+
+
+def test_stateful_rows_back_up_their_data_and_keep_their_tier():
+    if not (DOCKER / "Authentik").exists():
+        return
+    for project, (tier, backups) in BACKED_UP.items():
+        (row,) = _rows_of(project)
+        assert (row["tier"], row["backups"]) == (tier, backups), project
+
+
+def test_jellyfin_popular_auto_updates_and_jellyfin_stays_notify():
+    if not (DOCKER / "Jellyfin").exists():
+        return
+    rows = {s: r for r in _rows_of("Jellyfin") for s in r["services"]}
+    assert all(r["services"] for r in _rows_of("Jellyfin"))
+    assert rows["popular"]["tier"] == "auto" and rows["popular"]["services"] == ["popular"]
+    assert "hss-popular/health" in rows["popular"]["check"]
+    assert rows["jellyfin"]["tier"] == "notify" and rows["jellyfin"]["services"] == ["jellyfin"]
+    assert rows["jellyfin"]["backups"] == ["/srv/appdata/jellyfin"]
+
+
+def test_every_docker_socket_proxy_is_pinned_by_digest():
+    found = 0
+    for f in DOCKER.glob("*/docker-compose.yaml"):
+        for line in f.read_text().splitlines():
+            if line.strip().startswith("image:") and "docker-socket-proxy" in line:
+                found += 1
+                assert "@sha256:" in line, f"{f.parent.name}: {line.strip()}"
+    assert found or not (DOCKER / "_global").exists()
+
+
 if __name__ == "__main__":
     import traceback
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
