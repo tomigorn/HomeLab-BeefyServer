@@ -16,7 +16,14 @@ set -uo pipefail
 KEEP_DAYS=${KEEP_DAYS:-14}
 STATE=${IMAGE_CLEANUP_STATE:-/var/lib/image-cleanup}
 TEXTFILE=${IMAGE_CLEANUP_TEXTFILE:-/var/lib/node-exporter/textfile}
-DRY=0; [[ ${1:-} == --dry-run ]] && DRY=1
+usage() { echo "Usage: image-cleanup.sh [--dry-run]"; }
+DRY=0
+case "$*" in
+  "") ;;
+  --dry-run) DRY=1 ;;
+  -h|--help) usage; exit 0 ;;
+  *) echo "image-cleanup.sh: unknown arguments: $*" >&2; usage >&2; exit 2 ;;
+esac
 DOCKER=${DOCKER:-docker}
 if ! $DOCKER info >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then DOCKER="sudo -n docker"; fi
 mkdir -p "$STATE" "$TEXTFILE" 2>/dev/null

@@ -469,9 +469,22 @@ def rebuild(row: dict, entry: dict, dry: bool) -> tuple[str, str]:
     return "updated", ""
 
 
+def usage_error(argv: list[str], known: set[str]) -> tuple[int, str] | None:
+    """--help -> (0, usage); an unknown option or project -> (2, why + usage); else None."""
+    usage = "Usage: " + __doc__.split("Usage: ", 1)[1].split("\n", 1)[0]
+    if "-h" in argv or "--help" in argv:
+        return 0, usage
+    bad = [a for a in argv if (a.startswith("-") and a != "--dry-run") or (not a.startswith("-") and a not in known)]
+    return (2, f"rebuild_local.py: unknown argument {' '.join(bad)}\n{usage}") if bad else None
+
+
 def main(argv: list[str]) -> int:
     dry = "--dry-run" in argv
     only = {a for a in argv if not a.startswith("--")}
+    err = usage_error(argv, {r["project"] for r in parse_conf(CONF.read_text())} if not ({"-h", "--help"} & set(argv)) else set())
+    if err:
+        print(err[1], file=sys.stdout if err[0] == 0 else sys.stderr)
+        return err[0]
     STATE.mkdir(parents=True, exist_ok=True)
     lock = open(STATE / "lock", "w")
     try:

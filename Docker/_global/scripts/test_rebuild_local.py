@@ -187,6 +187,35 @@ def test_predates_compares_image_build_time_with_the_last_context_commit():
     assert not predates("", 1793578889)
     assert not predates("2026-10-31T08:43:15Z", 0)
 
+
+def _run_cli(script, args, env_paths):
+    """Runs the script with stub docker/ssh/git/sudo on PATH that only record a call. -> (rc, output, calls, created paths)."""
+    import os
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as t:
+        tmp = Path(t)
+        (tmp / "bin").mkdir()
+        for tool in ("docker", "ssh", "git", "sudo", "curl", "trivy", "gitleaks"):
+            stub = tmp / "bin" / tool
+            stub.write_text(f"#!/bin/sh\necho {tool} \"$@\" >> {tmp}/calls\nexit 1\n")
+            stub.chmod(0o755)
+        env = dict(os.environ, PATH=f"{tmp}/bin:/usr/bin:/bin", **{k: str(tmp / k) for k in env_paths})
+        r = subprocess.run([sys.executable, str(script), *args], capture_output=True, text=True, env=env, timeout=60)
+        calls = (tmp / "calls").read_text() if (tmp / "calls").exists() else ""
+        made = [k for k in env_paths if (tmp / k).exists()]
+        return r.returncode, r.stdout + r.stderr, calls, made
+
+
+def test_help_and_unknown_options_print_usage_and_do_nothing():
+    script = Path(__file__).parent / "rebuild_local.py"
+    for args, want in ((["--help"], 0), (["-h"], 0), (["--bogus"], 2), (["--dry-run", "--bogus"], 2), (["No-Such-Project"], 2)):
+        rc, out, calls, made = _run_cli(script, args, ["REBUILD_STATE", "REBUILD_TEXTFILE"])
+        assert rc == want, (args, rc, out)
+        assert "Usage: rebuild_local.py" in out, args
+        assert calls == "" and made == [], (args, calls, made)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

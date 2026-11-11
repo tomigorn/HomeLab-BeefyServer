@@ -172,4 +172,14 @@ has "rollback tags beyond the newest ROLLBACK_KEEP per repo and project removed 
 hasnt "newest ROLLBACK_KEEP rollback tags kept" "img:$d1-demo\|img:$d2-demo\|img:$d4-demo" "$T/log"
 hasnt "another project's rollback tag of the same repo kept" "$d5-other" "$T/log"
 
+echo "--help and unknown options: usage, nothing done"
+for a in --help -h --bogus "--dry-run --bogus" extra; do
+  : > "$T/log"; rm -rf "$T/st2" "$T/tf2"
+  IMAGE_CLEANUP_STATE="$T/st2" IMAGE_CLEANUP_TEXTFILE="$T/tf2" bash "$HERE/image-cleanup.sh" $a > "$T/out" 2>&1; rc=$?
+  want=2; [[ $a == --help || $a == -h ]] && want=0
+  [[ $rc == "$want" ]] && ok "$a: exit $want" || bad "$a: exit $rc"
+  has "$a: usage printed" 'Usage: image-cleanup.sh' "$T/out"
+  [[ ! -s $T/log && ! -e $T/st2 && ! -e $T/tf2 ]] && ok "$a: no docker call, nothing written" || bad "$a: did something"
+done
+
 echo "$PASS passed, $FAIL failed"; [[ $FAIL == 0 ]]
