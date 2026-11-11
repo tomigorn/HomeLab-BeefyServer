@@ -3,6 +3,7 @@ if want cup-agent socket-proxy-unix; then
   check cup.api '^[1-9][0-9]* images$' "$(curl -s -m 8 http://127.0.0.1:8000/api/v3/json | jq -r '"\(.metrics.monitored_images) images"' 2>&1)"
 fi
 if want socket-proxy-ro; then
+  check cup.proxy-image-pin '^pinned, running = pin$' "$(ref=$(docker compose --project-directory "$DIR/../../Cup-Agent" config --format json 2>/dev/null | jq -r '.services["socket-proxy-ro"].image'); [[ $ref == *@sha256:* ]] && echo -n pinned || echo -n "not pinned: $ref"; [[ $(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null) == "$(docker inspect -f '{{.Image}}' cup-socket-proxy-ro 2>/dev/null)" ]] && echo ", running = pin" || echo ", running differs")"   # A-30
   check cup.proxy-read-only '^BUILD=0 EXEC=0 NETWORKS=0 POST=0 VOLUMES=0$' "$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' cup-socket-proxy-ro | grep -E '^(POST|EXEC|BUILD|VOLUMES|NETWORKS)=' | sort | xargs)"
 fi
 # Rollback tags (rollback.invalid/..., UPDATE-RUNBOOK.md "Rollback tags") crash-loop Cup unless excluded, and hide an in-use image if they sort first.

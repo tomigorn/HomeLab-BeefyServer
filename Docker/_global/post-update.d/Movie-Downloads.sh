@@ -149,6 +149,9 @@ if want gluetun; then
   check md.idle-vpn-probe '^0$' "$(sed -n 's/^beefy_idle_busy{reason="probe_error"} //p' /run/beefy-idle.prom 2>&1)"
 fi
 check md.network-ip-range '^172\.28\.10\.0/24 172\.28\.10\.0/25$' "$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{.IPRange}}{{end}}' movie-downloads 2>&1)"
+if want socket-proxy-heal; then
+  check md.proxy-image-pin '^pinned, running = pin$' "$(ref=$(docker compose --project-directory "$DIR/../../Movie-Downloads" config --format json 2>/dev/null | jq -r '.services["socket-proxy-heal"].image'); [[ $ref == *@sha256:* ]] && echo -n pinned || echo -n "not pinned: $ref"; [[ $(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null) == "$(docker inspect -f '{{.Image}}' movie-socket-proxy-heal 2>/dev/null)" ]] && echo ", running = pin" || echo ", running differs")"   # A-30
+fi
 if want autoheal; then
   check md.autoheal-label '^[8-9] labelled$' "$(echo "$(docker ps -q --filter label=autoheal-movie=true | wc -l) labelled")"
 fi
