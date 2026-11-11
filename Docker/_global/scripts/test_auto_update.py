@@ -10,7 +10,9 @@ from auto_update import (  # noqa: E402
     SCRIPTS,
     DOCKER,
     build_refs,
+    check_drift,
     crosses_major,
+    drift_command,
     decide,
     failure_reason,
     find_stale,
@@ -25,6 +27,7 @@ from auto_update import (  # noqa: E402
     update_command,
     update_result,
 )
+import auto_update  # noqa: E402
 
 DAY = 86400
 
@@ -260,6 +263,81 @@ def test_render_stale_prom_one_series_per_container_with_count_and_no_help():
     assert 'container_image_stale_last_run_timestamp_seconds{host="fastpi"} 1700000000' in text
     assert "# HELP" not in text
     assert 'container_image_stale_containers{host="beefy"} 0' in render_stale_prom([], 1, host="beefy")
+
+
+def _c(name, ref, image, service):
+    return {"name": name, "ref": ref, "image": image, "service": service}
+
+
+PINNED = "alpine/socat:1.8.1.3@sha256:" + "d" * 64
+
+
+def test_check_drift_container_from_latest_while_compose_pins_a_digest_is_drift_not_checked():
+    cs = [_c("socket-proxy-unix", "alpine/socat:latest", "sha256:old", "socket-proxy-unix")]
+    images, drift = check_drift(cs, {"socket-proxy-unix": PINNED}, {PINNED: "sha256:pinned"})
+    assert images == {}
+    assert [(d["name"], d["want"]) for d in drift] == [("socket-proxy-unix", PINNED)]
+
+
+def test_check_drift_matching_ref_is_checked_against_the_declared_ref():
+    cs = [_c("wiki", "caddy:alpine", "sha256:a", "wiki"), _c("p", PINNED, "sha256:pinned", "proxy")]
+    images, drift = check_drift(cs, {"wiki": "caddy:alpine", "proxy": PINNED}, {"caddy:alpine": "sha256:a", PINNED: "sha256:pinned"})
+    assert drift == [] and images == {"caddy:alpine": "sha256:a", PINNED: "sha256:pinned"}
+
+
+def test_check_drift_digest_ref_on_another_image_id_is_drift():
+    cs = [_c("p", PINNED, "sha256:other", "proxy")]
+    images, drift = check_drift(cs, {"proxy": PINNED}, {PINNED: "sha256:pinned"})
+    assert images == {} and len(drift) == 1
+
+
+def test_check_drift_ignores_docker_io_spelling_and_services_compose_does_not_name():
+    cs = [_c("a", "docker.io/library/caddy:alpine", "sha256:a", "a"), _c("b", "img-b", "sha256:b", "built"), _c("c", "redis", "sha256:c", "c")]
+    images, drift = check_drift(cs, {"a": "caddy:alpine", "c": "redis:latest"}, {})
+    assert drift == [] and set(images) == {"caddy:alpine", "img-b", "redis:latest"}
+
+
+def test_drift_command_recreates_the_drifted_services():
+    row = {"project": "Docker-Socket-Proxy", "services": [], "backups": []}
+    assert drift_command(row, ["b", "a"]) == f"SERVICES='a b' {SCRIPTS}/update-project.sh {DOCKER}/Docker-Socket-Proxy recreate"
+    row = {"project": "Portainer", "services": [], "backups": ["vol:docker_portainer_data"]}
+    assert drift_command(row, ["p"]).endswith("/Portainer recreate vol:docker_portainer_data")
+
+
+def test_render_prom_keeps_drift_and_recreated_rows():
+    out = render_prom([{"project": "P", "tier": "notify", "ref": PINNED, "result": "drift", "from": "a", "to": "b", "command": "x"},
+                       {"project": "Q", "tier": "auto", "ref": "q:1", "result": "recreated", "from": "a", "to": "b"}], 1, "fastpi")
+    assert 'result="drift"' in out and 'result="recreated"' in out
+
+
+def _no_docker(*a, **k):
+    raise AssertionError(f"docker/subprocess called: {a}")
+
+
+def _run_main(argv, tmp):
+    import io
+    import contextlib
+    saved = (auto_update.sh, auto_update.subprocess.run, auto_update.STATE, auto_update.TEXTFILE)
+    auto_update.sh = auto_update.subprocess.run = _no_docker
+    auto_update.STATE, auto_update.TEXTFILE = tmp / "state", tmp / "tf"
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = auto_update.main(argv)
+    finally:
+        auto_update.sh, auto_update.subprocess.run, auto_update.STATE, auto_update.TEXTFILE = saved
+    return rc, out.getvalue() + err.getvalue()
+
+
+def test_help_and_unknown_options_print_usage_and_do_nothing():
+    import tempfile
+    with tempfile.TemporaryDirectory() as t:
+        tmp = Path(t)
+        for argv, want in ((["--help"], 0), (["-h"], 0), (["--bogus"], 2), (["--dry-run", "--bogus"], 2), (["No-Such-Project"], 2)):
+            rc, text = _run_main(argv, tmp)
+            assert rc == want, (argv, rc)
+            assert "Usage: auto_update.py" in text, argv
+            assert not (tmp / "state").exists() and not (tmp / "tf").exists(), argv
 
 
 # Projects on purpose outside auto-update.conf: parked or stopped, no live compose project.

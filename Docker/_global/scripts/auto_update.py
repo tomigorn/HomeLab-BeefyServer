@@ -10,12 +10,17 @@ A rollback that does not verify pages out of band (oob-alert.sh), past the edge 
 
 Never crosses a major version: when the image's org.opencontainers.image.version major changes, the old image is re-tagged and the update is reported instead.
 Only the digest behind the tag written in the repo moves; pinned version bumps stay with Cup + the weekly digest.
+The ref checked is the one the compose file declares (docker compose config, with .env), never the container's own.
+
+Drift: a container whose image ref differs from the declared one (or, for a ref pinned by digest, runs another image id) is "drift", not an update: no registry check.
+auto / edge-auto rows recreate it through update-project.sh recreate (checks, rollback; result "recreated"); notify / edge rows only report it with the recreate command.
+A drift recreate that rolls back is not retried for that container image and declared ref.
 
 The same file runs on fastpi and beefy; host differences come from the environment (systemd unit) and the script's own location.
 
 Shared tags: after the updates, running containers whose tag another project already moved to a newer image are recreated through update-project.sh when their row applies updates (auto, edge-auto), else only logged; a recreate that rolls back holds that tag back. Every run (and --stale-only) writes container_image_stale.prom with the containers still stale.
 
-Usage: auto_update.py [--dry-run] [--stale-only] [project ...]
+Usage: auto_update.py [--dry-run] [--stale-only] [project ...]   (-h/--help: this text; an unknown option or project changes nothing, exit 2)
 Env: COOLDOWN_HOURS (24), TEST_FORCE_FAIL=1 (first functional check fails: rollback drill),
      AUTO_UPDATE_HOST (host label, default the short hostname), AUTO_UPDATE_APPLY_BY (HH:MM local: no registry check or update starts later, the rest is "deferred"),
      AUTO_UPDATE_MAX_APPLY (projects updated per run, default no limit), AUTO_UPDATE_CONF / _STATE / _TEXTFILE (paths)
@@ -109,6 +114,44 @@ def pick_digest(manifest: dict, running: list[str], arch: str) -> str:
     return hit[0] if hit else manifest.get("digest", "")
 
 
+def norm_ref(ref: str) -> str:
+    """docker.io/library/caddy -> caddy:latest: the spellings of one ref compare equal."""
+    for p in ("docker.io/library/", "index.docker.io/library/", "docker.io/", "index.docker.io/"):
+        if ref.startswith(p):
+            ref = ref[len(p):]
+            break
+    name = ref.split("@", 1)[0]
+    if ":" not in name.rsplit("/", 1)[-1] and not ref.startswith("sha256:"):
+        ref = name + ":latest" + ref[len(name):]
+    return ref
+
+
+def check_drift(containers: list[dict], declared: dict[str, str], local_ids: dict[str, str]) -> tuple[dict[str, str], list[dict]]:
+    """-> (declared ref -> running image id for the update check, drifted containers with want = declared ref and why).
+
+    Drift: the container's ref differs from the one compose declares for its service, or a ref pinned by digest runs another image id.
+    A tag ref on another image id is the shared-tag case (find_stale), not drift. Services compose does not name keep their own ref.
+    """
+    images, drift = {}, []
+    for c in containers:
+        want = declared.get(c["service"]) or c["ref"]
+        why = ""
+        if norm_ref(c["ref"]) != norm_ref(want):
+            why = f"runs {c['ref']}, compose declares {want}"
+        elif "@" in want and local_ids.get(want) and local_ids[want] != c["image"]:
+            why = f"runs image {_short(c['image'])}, {want} is {_short(local_ids[want])}"
+        if why:
+            drift.append(dict(c, want=want, why=why))
+        else:
+            images[want] = c["image"]
+    return images, drift
+
+
+def drift_command(row: dict, services: list[str]) -> str:
+    tail = "".join(f" {b}" for b in row["backups"])
+    return f"SERVICES='{' '.join(sorted(services))}' {SCRIPTS}/update-project.sh {DOCKER / row['project']} recreate{tail}"
+
+
 def update_command(row: dict) -> str:
     svc = f"SERVICES='{' '.join(row['services'])}' " if row["services"] else ""
     tail = "".join(f" {b}" for b in row["backups"])
@@ -124,7 +167,7 @@ def _short(d: str) -> str:
 
 
 QUIET = ("current", "local_build", "waiting")
-PRIORITY = ["rollback_failed", "rolled_back", "error", "major_held", "held_back", "skipped", "updated", "available", "deferred"]
+PRIORITY = ["rollback_failed", "rolled_back", "error", "major_held", "held_back", "skipped", "drift", "updated", "recreated", "available", "deferred"]
 SUMMARY_BUDGET = 3000
 
 
@@ -133,7 +176,7 @@ def _rank(r: dict) -> int:
 
 
 def render_prom(results: list[dict], now: float, host: str = HOST) -> str:
-    """auto_update_result (one per image, result = current|waiting|updated|rolled_back|rollback_failed|available|major_held|held_back|skipped|deferred|local_build|error; a rollback carries reason, e.g. the missing customizations), auto_update_omitted (noteworthy results left out to keep the Telegram summary under 4096 characters), auto_update_last_run_timestamp_seconds.
+    """auto_update_result (one per image, result = current|waiting|updated|rolled_back|rollback_failed|available|drift|recreated|major_held|held_back|skipped|deferred|local_build|error; a rollback carries reason, e.g. the missing customizations), auto_update_omitted (noteworthy results left out to keep the Telegram summary under 4096 characters), auto_update_last_run_timestamp_seconds.
 
     No HELP lines: fastpi republishes beefy's file next to its own, and node-exporter drops a family whose files disagree on HELP (one with, one without, or two versions).
     """
@@ -267,21 +310,40 @@ def resources_ok() -> str:
     return ""
 
 
-def project_images(row: dict) -> dict[str, str]:
-    """ref -> running image id for the project's (selected) containers."""
+def compose_config(row: dict) -> dict:
+    """The project's resolved compose config (compose files + .env), as update-project.sh reads it."""
+    d = DOCKER / row["project"]
+    r = sh(["docker", "compose", "--project-directory", str(d), "config", "--format", "json"], cwd=d)
+    if r.returncode != 0:
+        raise RuntimeError(f"docker compose config failed: {r.stderr.strip()[-200:]}")
+    return json.loads(r.stdout)
+
+
+def project_containers(row: dict) -> list[dict]:
+    """The project's (selected) containers: name, ref, image id, service."""
     d = DOCKER / row["project"]
     ids = sh(["docker", "compose", "--project-directory", str(d), "ps", "-q", *row["services"]], cwd=d).stdout.split()
-    out = {}
+    out = []
     for cid in ids:
-        ref, img = sh(["docker", "inspect", "-f", "{{.Config.Image}} {{.Image}}", cid]).stdout.split()
-        out[ref] = img
+        line = sh(["docker", "inspect", "-f", '{{.Name}}|{{.Config.Image}}|{{.Image}}|{{index .Config.Labels "com.docker.compose.service"}}', cid]).stdout.strip()
+        name, ref, img, svc = line.split("|")
+        out.append({"name": name.lstrip("/"), "ref": ref, "image": img, "service": svc})
     return out
 
 
-def local_builds(row: dict) -> set[str]:
-    d = DOCKER / row["project"]
-    r = sh(["docker", "compose", "--project-directory", str(d), "config", "--format", "json"], cwd=d)
-    return build_refs(json.loads(r.stdout)) if r.returncode == 0 else set()
+def declared_refs(config: dict) -> dict[str, str]:
+    return {k: v["image"] for k, v in (config.get("services") or {}).items() if v.get("image")}
+
+
+def project_images(row: dict, config: dict) -> tuple[dict[str, str], list[dict]]:
+    """-> (declared ref -> running image id, drifted containers); see check_drift."""
+    declared = declared_refs(config)
+    local = {}
+    for ref in {r for r in declared.values() if "@" in r}:
+        q = sh(["docker", "image", "inspect", "-f", "{{.Id}}", ref])
+        if q.returncode == 0 and q.stdout.strip():
+            local[ref] = q.stdout.strip()
+    return check_drift(project_containers(row), declared, local)
 
 
 def repo_digests(image_id: str) -> list[str]:
@@ -399,9 +461,9 @@ def stale_command(c: dict) -> str:
     return f"SERVICES={c['service']} {SCRIPTS}/update-project.sh {c['workdir']} recreate"
 
 
-def fix_stale(rows: list[dict], state: dict, results: list[dict], applied: int, dry: bool) -> int:
-    """Containers left on the old image of a tag another project pulled: recreated through update-project.sh (verify, rollback) when their row applies updates, else reported. -> projects applied so far."""
-    stale = stale_containers()
+def fix_stale(rows: list[dict], state: dict, results: list[dict], applied: int, dry: bool, skip: set[str] = frozenset()) -> int:
+    """Containers left on the old image of a tag another project pulled: recreated through update-project.sh (verify, rollback) when their row applies updates, else reported. Containers already handled as drift (skip) are left out. -> projects applied so far."""
+    stale = [c for c in stale_containers() if c["name"] not in skip]
     bad = state.setdefault("stale_bad", {})
     plans, report = stale_plan(stale, rows, DOCKER, bad)
     for c in report:
@@ -459,7 +521,74 @@ def write_stale_prom() -> None:
     os.replace(tmp, TEXTFILE / "container_image_stale.prom")
 
 
+def usage_error(argv: list[str], known: set[str]) -> tuple[int, str] | None:
+    """--help -> (0, usage); an unknown option or project -> (2, why + usage); else None."""
+    usage = "Usage: " + __doc__.split("Usage: ", 1)[1].split("\n", 1)[0]
+    if "-h" in argv or "--help" in argv:
+        return 0, usage
+    bad = [a for a in argv if (a.startswith("-") and a not in ("--dry-run", "--stale-only")) or (not a.startswith("-") and a not in known)]
+    return (2, f"auto_update.py: unknown argument {' '.join(bad)}\n{usage}") if bad else None
+
+
+def drift_result(row: dict, c: dict, result: str, **extra) -> dict:
+    return {"project": row["project"], "tier": row["tier"], "ref": c["want"], "result": result, "from": c["image"], "to": "",
+            "reason": f"drift: {c['name']} {c['why']}", **extra}
+
+
+def handle_drift(row: dict, drift: list[dict], state: dict, results: list[dict], applied: int, dry: bool) -> tuple[int, bool]:
+    """Drifted containers: recreated through update-project.sh in auto / edge-auto rows, else reported. -> (projects applied so far, recreated)."""
+    services = sorted({c["service"] for c in drift})
+    cmd = drift_command(row, services)
+    bad = state.setdefault("drift_bad", {})
+    for c in drift:
+        log(f"  {c['name']}: drift, {c['why']}; to recreate: {cmd}")
+    held = [c for c in drift if bad.get(f"{row['project']}|{c['want']}") == c["image"]]
+    if row["tier"] not in APPLYING or dry or held:
+        if held:
+            log("  an earlier drift recreate rolled back: reported, not retried")
+        elif dry and row["tier"] in APPLYING:
+            log(f"  would recreate {' '.join(services)}")
+        results.extend(drift_result(row, c, "drift", command=cmd) for c in drift)
+        return applied, False
+    if past_deadline(APPLY_BY, time.localtime()) or (MAX_APPLY and applied >= MAX_APPLY):
+        results.extend(drift_result(row, c, "deferred", command=cmd) for c in drift)
+        return applied, False
+    floor = resources_ok()
+    if floor:
+        log(f"  skipped: {floor}")
+        results.extend(drift_result(row, c, "skipped", command=cmd) for c in drift)
+        return applied, False
+    env = dict(os.environ, SERVICES=" ".join(services), CHECK=row["check"])
+    r = subprocess.run([str(SCRIPTS / "update-project.sh"), str(DOCKER / row["project"]), "recreate", *row["backups"]],
+                       env=env, text=True, capture_output=True, timeout=1800)
+    for line in r.stdout.splitlines():
+        log("  | " + line)
+    res = update_result(r.returncode)
+    res = "recreated" if res == "updated" else res
+    why = failure_reason(r.stdout) if res != "recreated" else ""
+    for c in drift:
+        out = drift_result(row, c, res)
+        if why:
+            out["reason"] += f"; {why}"
+        if res not in ("recreated", "error"):
+            bad[f"{row['project']}|{c['want']}"] = c["image"]
+            out["command"] = cmd
+        results.append(out)
+    if res == "rollback_failed":
+        oob(rollback_failed_message(row["project"], DOCKER / row["project"], "drift recreate" + (": " + why if why else "")))
+    log(f"  drift recreate: {res}")
+    return applied + 1, res == "recreated"
+
+
 def main(argv: list[str]) -> int:
+    if not ({"-h", "--help"} & set(argv)) and any(not a.startswith("-") for a in argv):
+        known = {r["project"] for r in parse_conf(CONF.read_text())}
+    else:
+        known = set()
+    err = usage_error(argv, known)
+    if err:
+        print(err[1], file=sys.stdout if err[0] == 0 else sys.stderr)
+        return err[0]
     dry = "--dry-run" in argv
     only = {a for a in argv if not a.startswith("--")}
     if "--stale-only" in argv:
@@ -476,7 +605,7 @@ def main(argv: list[str]) -> int:
     state_path = STATE / "state.json"
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
     rows = [r for r in parse_conf(CONF.read_text()) if not only or r["project"] in only]
-    results, applied = [], 0
+    results, applied, drifted = [], 0, set()
     for row in rows:
         log(f"== {row['project']} ({row['tier']})")
         if past_deadline(APPLY_BY, time.localtime()):
@@ -484,12 +613,19 @@ def main(argv: list[str]) -> int:
             results.append({"project": row["project"], "tier": row["tier"], "ref": "-", "result": "deferred"})
             continue
         try:
-            images = project_images(row)
+            config = compose_config(row)
+            images, drift = project_images(row, config)
+            if drift:
+                applied, fixed = handle_drift(row, drift, state, results, applied, dry)
+                if fixed:
+                    images, drift = project_images(row, config)
+                    results.extend(drift_result(row, c, "drift", command=drift_command(row, [c["service"]])) for c in drift)
+                drifted |= {c["name"] for c in drift}
         except Exception as e:  # noqa: BLE001
             log(f"  cannot list containers: {e}")
-            results.append({**row, "ref": "-", "result": "error"})
+            results.append({"project": row["project"], "tier": row["tier"], "ref": "-", "result": "error", "reason": str(e)[:200]})
             continue
-        todo, built = [], local_builds(row)
+        todo, built = [], build_refs(config)
         for ref, img in sorted(images.items()):
             key = f"{row['project']}|{ref}"
             running = [] if ref in built else repo_digests(img)
@@ -541,7 +677,7 @@ def main(argv: list[str]) -> int:
                     state[key]["bad"] = True
                 log(f"  {r['ref']}: {r['result']}")
     try:
-        applied = fix_stale(rows, state, results, applied, dry)
+        applied = fix_stale(rows, state, results, applied, dry, drifted)
     except Exception as e:  # noqa: BLE001
         log(f"stale scan failed: {e}")
     if dry:
