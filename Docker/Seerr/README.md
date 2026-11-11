@@ -125,7 +125,7 @@ sudo docker compose up -d seerr
 ./scripts/configure.sh          # re-applies OIDC, Radarr/Sonarr, main settings
 ```
 
-Then: `../_global/auto-update.conf` Seerr row back to all services; checks `seerr.image-local`, `seerr.rebuild-timer` and their `CUSTOMIZATIONS.md` rows out. Linked accounts stay in the DB. If the release configures OIDC differently (UI/API), adapt `configure.sh`.
+Then: `../_global/auto-update.conf`: a notify row for `seerr` (the sidecar rows stay auto); checks `seerr.image-local`, `seerr.rebuild-timer` and their `CUSTOMIZATIONS.md` rows out. Linked accounts stay in the DB. If the release configures OIDC differently (UI/API), adapt `configure.sh`.
 
 ## First login (one-time, by hand) — done 2026-10-19, owner is jane; friends auto-approve + advanced requests + view requests (defaultPermissions 24736)
 

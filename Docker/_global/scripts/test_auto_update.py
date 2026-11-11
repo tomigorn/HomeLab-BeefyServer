@@ -262,6 +262,54 @@ def test_render_stale_prom_one_series_per_container_with_count_and_no_help():
     assert 'container_image_stale_containers{host="beefy"} 0' in render_stale_prom([], 1, host="beefy")
 
 
+# Projects on purpose outside auto-update.conf: parked or stopped, no live compose project.
+UNMANAGED = {"LoyaltyCards", "LoyaltyCards-Sync", "bitwarden", "Jenkins"}
+# auto / edge-auto rows whose customization check does not exist yet.
+NO_CHECK_YET = {"M4b-Merge-Dashboard", "DDNS", "sbb-easyride-taxreport"}
+
+
+def _conf_rows():
+    return parse_conf((DOCKER / "_global" / "auto-update.conf").read_text())
+
+
+def _compose_projects():
+    found = {f.parent.name for f in DOCKER.glob("*/docker-compose.yaml") if not f.parent.name.startswith("_")}
+    return (found - {"LanguageTool"}) | {"LanguageTool/Raspi"}
+
+
+def test_every_compose_project_is_in_the_conf_or_unmanaged():
+    if not (DOCKER / "Traefik").exists():
+        return
+    listed = {r["project"] for r in _conf_rows()}
+    projects = _compose_projects()
+    assert not (projects - listed - UNMANAGED), sorted(projects - listed - UNMANAGED)
+    assert not (listed - projects), sorted(listed - projects)
+    assert not (listed & UNMANAGED)
+
+
+def test_every_auto_row_has_a_post_update_check():
+    if not (DOCKER / "Traefik").exists():
+        return
+    checks = {f.stem for f in (DOCKER / "_global" / "post-update.d").glob("*.sh")}
+    need = {r["project"] for r in _conf_rows() if r["tier"] in ("auto", "edge-auto")}
+    missing = {p for p in need if Path(p).name not in checks} - NO_CHECK_YET
+    assert not missing, sorted(missing)
+    assert not (NO_CHECK_YET - need)
+
+
+def test_seerr_sidecars_auto_update_each_with_its_own_check():
+    if not (DOCKER / "Seerr").exists():
+        return
+    seerr = [r for r in _conf_rows() if r["project"] == "Seerr"]
+    assert all(r["services"] for r in seerr)
+    rows = {s: r for r in seerr for s in r["services"]}
+    for svc in ("seerr-proxy", "download-now"):
+        assert rows[svc]["tier"] == "auto", svc
+        assert rows[svc]["services"] == [svc], svc
+        assert rows[svc]["check"], svc
+    assert "seerr" not in rows
+
+
 if __name__ == "__main__":
     import traceback
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
