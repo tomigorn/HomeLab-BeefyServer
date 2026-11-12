@@ -620,7 +620,8 @@ For a title you are no longer interested in: it leaves Continue watching, nothin
 | Resume rule (12.4) | Resume = items with `PlaybackPositionTicks > 0`, newest `LastPlayedDate` first; `MinResumePct` / `MaxResumePct` only apply when playback stops |
 | Moonfin | own long-press entry "Hide from Continue Watching", see "Moonfin (Moonbase plugin)" |
 | Deploy | `bash scripts/backup-config.sh continue-remove && python3 scripts/home-placeholders.py`, then reload the browser |
-| Tests | jsdom `home-placeholders/continue-remove.test.mjs`; `cd scripts && python3 -m unittest test_continue_remove_check test_home_placeholders`; live `python3 scripts/continue-remove-check.py` (canary-test only, also in the post-update check) |
+| Tests | jsdom `home-placeholders/continue-remove.test.mjs`; `cd scripts && python3 -m unittest test_continue_remove_check test_home_placeholders`; live `python3 scripts/continue-remove-check.py` (canary-test only, also in the post-update check `jf.continue-remove-api`) |
+| Live check film | the permanent test film *Nosferatu* (1922, TMDB 653, matched by TMDB id, not the remakes); missing → the first real film whose runtime fits, never a failure (a missing film rolled back every Jellyfin update until 2026-11-12). The ok line names it: `ok Nosferatu: …` or `ok fallback film <name> (Nosferatu missing): …`. Missing film = queue watchdog digest line `test film missing` (Movie-Downloads README "Queue watchdog") |
 
 ### Sources
 

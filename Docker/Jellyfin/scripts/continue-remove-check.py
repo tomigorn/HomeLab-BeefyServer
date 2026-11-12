@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live check of "Remove from Continue watching" (README "Remove from Continue watching") on the canary-test user only: a film and a just-started episode get a resume point, the web's write (PlaybackPositionTicks 0) must drop them from Resume and change nothing else (play count, last played, played, favourite), Next Up keeps the series, undo (old position) brings them back. The canary's data on these items is blank afterwards, also on failure.
+"""Live check of "Remove from Continue watching" (README "Remove from Continue watching") on the canary-test user only: a film and a just-started episode get a resume point, the web's write (PlaybackPositionTicks 0) must drop them from Resume and change nothing else (play count, last played, played, favourite), Next Up keeps the series, undo (old position) brings them back. The canary's data on these items is blank afterwards, also on failure. The film is the permanent test film Nosferatu (TMDB 653, Movie-Downloads public-domain-tests.md); without it any real film, so a missing test film never fails the check (the queue watchdog's digest reports it).
 Usage: continue-remove-check.py  (exit 0 = ok, 1 = FAIL)"""
 import datetime
 import pathlib
@@ -10,6 +10,7 @@ from jellyfin_api import api as live_api  # noqa: E402
 
 CANARY = "canary-test"
 TICKS = 18000000000
+TEST_FILM, TEST_TMDB = "Nosferatu", "653"
 FIELDS = ("PlaybackPositionTicks", "PlayCount", "IsFavorite", "Played", "LastPlayedDate")
 
 
@@ -45,9 +46,16 @@ def main(argv, api=live_api, out=sys.stdout):
         api("DELETE", f"/UserPlayedItems/{i}?{q}")
         write(i, {"IsFavorite": False})
 
-    # any real film whose runtime puts TICKS inside the resume window (5-90 %); collections are Movie folders without runtime
-    films = api("GET", f"/Items?{q}&Recursive=true&IncludeItemTypes=Movie&IsMissing=false&SortBy=SortName&Limit=200&EnableImages=false")["Items"]
-    film = next((f for f in films if not f.get("IsFolder") and 0.05 * (f.get("RunTimeTicks") or 0) < TICKS < 0.9 * (f.get("RunTimeTicks") or 0)), None)
+    # a real film whose runtime puts TICKS inside the resume window (5-90 %); collections are Movie folders without runtime
+    def usable(f):
+        return not f.get("IsFolder") and 0.05 * (f.get("RunTimeTicks") or 0) < TICKS < 0.9 * (f.get("RunTimeTicks") or 0)
+    hits = api("GET", f"/Items?{q}&Recursive=true&IncludeItemTypes=Movie&IsMissing=false&SearchTerm={TEST_FILM}&Fields=ProviderIds&EnableImages=false")["Items"]
+    film = next((f for f in hits if (f.get("ProviderIds") or {}).get("Tmdb") == TEST_TMDB and usable(f)), None)
+    label = TEST_FILM
+    if not film:
+        films = api("GET", f"/Items?{q}&Recursive=true&IncludeItemTypes=Movie&IsMissing=false&SortBy=SortName&Limit=200&EnableImages=false")["Items"]
+        film = next((f for f in films if usable(f)), None)
+        label = f"fallback film {film.get('Name')} ({TEST_FILM} missing)" if film else ""
     second = (api("GET", f"/Items?{q}&Recursive=true&IncludeItemTypes=Episode&ParentIndexNumber=1&IndexNumber=2&IsMissing=false&Limit=1&EnableImages=false")["Items"] or [None])[0]
     if not film or not second:
         print("FAIL: library has no film or no series with an episode 2", file=out)
@@ -85,7 +93,7 @@ def main(argv, api=live_api, out=sys.stdout):
     finally:
         for i in items:
             blank(i)
-    print("ok film and episode: only the resume point changes, undo restores, Next Up keeps the series", file=out)
+    print(f"ok {label}: film and episode: only the resume point changes, undo restores, Next Up keeps the series", file=out)
     return 0
 
 

@@ -9,15 +9,17 @@ cc = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(cc)
 
 CANARY = "c" * 32
-FILM, EP1, EP2, SERIES = "f1", "e1", "e2", "s1"
+FILM, NOSF, EP1, EP2, SERIES = "f1", "n1", "e1", "e2", "s1"
+OK = "film and episode: only the resume point changes, undo restores, Next Up keeps the series"
 BLANK = {"PlaybackPositionTicks": 0, "PlayCount": 0, "IsFavorite": False, "Played": False, "LastPlayedDate": None}
 
 
 class FakeJellyfin:
     """Jellyfin 12.4 semantics as measured live 2026-10-31: Resume = position > 0; Next Up keyed by the series' last played date, in-progress episodes only with enableResumable."""
 
-    def __init__(self, position_write_also_resets=False):
-        self.data = {i: dict(BLANK) for i in (FILM, EP1, EP2)}
+    def __init__(self, position_write_also_resets=False, nosferatu=True):
+        self.data = {i: dict(BLANK) for i in (FILM, NOSF, EP1, EP2)}
+        self.nosferatu = nosferatu
         self.resets = position_write_also_resets
         self.calls = []
 
@@ -29,10 +31,14 @@ class FakeJellyfin:
         if p == "/Users":
             return [{"Id": "x" * 32, "Name": "anna"}, {"Id": CANARY, "Name": "canary-test"}]
         if p == "/Items" and q.get("IncludeItemTypes") == "Movie":
-            # the public-domain test films are deleted after each test: the check must not depend on a named title
+            # Nosferatu (TMDB 653) is the permanent test film; the 1979 remake has the same name. Without it any real film is used.
             # collections come back as "Movie" folders without runtime and can never be resumed
-            return {"Items": [] if q.get("SearchTerm") else [{"Id": "c" * 32, "Name": "Top 10", "IsFolder": True, "RunTimeTicks": 0},
-                                                              {"Id": FILM, "Name": "Any film", "IsFolder": False, "RunTimeTicks": 90 * 60 * 10**7}]}
+            if q.get("SearchTerm"):
+                remake = {"Id": "r" * 32, "Name": "Nosferatu", "IsFolder": False, "RunTimeTicks": 107 * 60 * 10**7, "ProviderIds": {"Tmdb": "6404"}}
+                nosf = {"Id": NOSF, "Name": "Nosferatu", "IsFolder": False, "RunTimeTicks": 94 * 60 * 10**7, "ProviderIds": {"Tmdb": "653"}}
+                return {"Items": [remake] + ([nosf] if self.nosferatu and q.get("Fields") == "ProviderIds" else [])}
+            return {"Items": [{"Id": "c" * 32, "Name": "Top 10", "IsFolder": True, "RunTimeTicks": 0},
+                              {"Id": FILM, "Name": "Any film", "IsFolder": False, "RunTimeTicks": 90 * 60 * 10**7}]}
         if p == "/Items" and q.get("IncludeItemTypes") == "Episode" and q.get("IndexNumber") == "2":
             return {"Items": [{"Id": EP2, "SeriesId": SERIES}]}
         if p == f"/Shows/{SERIES}/Episodes":
@@ -70,8 +76,21 @@ class CheckTest(unittest.TestCase):
         fake = FakeJellyfin()
         out = io.StringIO()
         self.assertEqual(cc.main([], api=fake, out=out), 0)
-        self.assertEqual(out.getvalue().strip().splitlines()[-1], "ok film and episode: only the resume point changes, undo restores, Next Up keeps the series")
-        self.assertEqual(fake.data, {i: BLANK for i in (FILM, EP1, EP2)})
+        self.assertEqual(out.getvalue().strip().splitlines()[-1], f"ok Nosferatu: {OK}")
+        self.assertEqual(fake.data, {i: BLANK for i in (FILM, NOSF, EP1, EP2)})
+
+    def test_uses_nosferatu_by_tmdb_id_not_the_remake(self):
+        fake = FakeJellyfin()
+        cc.main([], api=fake, out=io.StringIO())
+        written = {p.split("/")[2] for m, p, _ in fake.calls if m == "POST"}
+        self.assertEqual(written, {NOSF, EP1})
+
+    def test_without_nosferatu_any_real_film_and_the_line_says_so(self):
+        fake = FakeJellyfin(nosferatu=False)
+        out = io.StringIO()
+        self.assertEqual(cc.main([], api=fake, out=out), 0, "a missing test film never fails the check (no rollback)")
+        self.assertEqual(out.getvalue().strip().splitlines()[-1], f"ok fallback film Any film (Nosferatu missing): {OK}")
+        self.assertEqual({p.split("/")[2] for m, p, _ in fake.calls if m == "POST"}, {FILM, EP1})
 
     def test_only_canary_items_are_written(self):
         fake = FakeJellyfin()
@@ -85,7 +104,7 @@ class CheckTest(unittest.TestCase):
         out = io.StringIO()
         self.assertEqual(cc.main([], api=fake, out=out), 1)
         self.assertIn("FAIL", out.getvalue())
-        self.assertEqual(fake.data, {i: BLANK for i in (FILM, EP1, EP2)}, "cleaned up also on failure")
+        self.assertEqual(fake.data, {i: BLANK for i in (FILM, NOSF, EP1, EP2)}, "cleaned up also on failure")
 
     def test_fails_when_position_write_is_ignored(self):
         fake = FakeJellyfin()
