@@ -81,6 +81,8 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.reply(500)
         if self.command == "GET" and p == "/downloadclient":
             return self.reply(200, CLIENTS[app])
+        if self.command == "GET" and p == "/tag":
+            return self.reply(500) if state.get("tag_down") else self.reply(200, state.get("tags", []))
         if self.command == "GET" and p in ("/movie", "/series"):
             for f in ("tmdbId", "tvdbId"):
                 if f in q:
@@ -190,6 +192,21 @@ assert_eq "recorded hash already gone from qBittorrent: no name guessing, nothin
 printf '10331\tqbit\t%s\n' "$H1" > "$T/wipe.tsv"
 run "{\"library\": [$NOTLD_LIB], \"torrents\": [$(tor "$H1" radarr N)], \"arr_down\": true}"
 assert_eq "Radarr not reachable: nothing removed anywhere, state kept, exit non-zero" "||1|10331	qbit	$H1" "$(cat "$T/qdel")|$(cat "$T/jdel")|$(nonzero)|$(state)"
+
+echo "Permanent test title (tag keep-test)"
+A=(wipe radarr 653 Nosferatu 1922)
+printf '653\tqbit\t%s\n' "$H1" > "$T/wipe.tsv"
+KEEP="{\"library\": [{\"id\": 148, \"tmdbId\": 653, \"title\": \"Nosferatu\", \"year\": 1922, \"tags\": [63, 70]}],
+  \"tags\": [{\"id\": 63, \"label\": \"old-rare\"}, {\"id\": 70, \"label\": \"keep-test\"}],
+  \"torrents\": [$(tor "$H1" radarr Nosferatu.1922.1080p)], \"jellyfin\": [$(jf n1 Movie '"Tmdb": "653"' /media/movies/Nosferatu/a.mkv)]}"
+run "$KEEP"
+assert_eq "tagged keep-test: nothing removed anywhere, state kept, exit 3" "||||3|653	qbit	$H1" "$(cat "$T/adel")|$(cat "$T/qdel")|$(cat "$T/sdel")|$(cat "$T/jdel")|$RC|$(state)"
+grep -q 'keep-test' "$T/out" && ok "  the reason is logged" || bad "  the reason is logged" "$(cat "$T/out")"
+run "${KEEP%\}}, \"tag_down\": true}"
+assert_eq "title has tags but the tag list is unreadable: nothing removed, exit 1" "||||1" "$(cat "$T/adel")|$(cat "$T/qdel")|$(cat "$T/sdel")|$(cat "$T/jdel")|$RC"
+run "${KEEP/, 70]/]}"
+assert_eq "other tags only: wiped as usual" "/base/api/v3/movie/148 {\"addImportExclusion\": \"false\", \"deleteFiles\": \"true\"}|0" "$(cat "$T/adel")|$RC"
+A=("${WIPE[@]}")
 
 echo "Titles grabbed before the state file (name match)"
 rm -f "$T/wipe.tsv"

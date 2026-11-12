@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Radarr/Sonarr Connect "Custom Script" (On Grab, On Import, On Upgrade): remembers each title's downloads (README "Delete a title"). Deleting a title in Radarr/Sonarr wipes nothing here.
-# `title-wipe-hook.sh wipe <radarr|sonarr> <tmdbId|tvdbId> [title] [year]` (run by clear-data-wipe.sh after Seerr "Clear Data"): deletes the title in Radarr/Sonarr with its files, its torrents + files in qBittorrent, its SABnzbd jobs and its Jellyfin item.
+# `title-wipe-hook.sh wipe <radarr|sonarr> <tmdbId|tvdbId> [title] [year]` (run by clear-data-wipe.sh after Seerr "Clear Data"): deletes the title in Radarr/Sonarr with its files, its torrents + files in qBittorrent, its SABnzbd jobs and its Jellyfin item. A title tagged `keep-test` is left alone (exit 3).
 # `title-wipe-hook.sh seed <radarr|sonarr>` fills the state from the app's grab history (titles grabbed before the hook existed). Needs bash, curl, jq, flock.
 set -euo pipefail
 
@@ -74,6 +74,14 @@ found=$(api "/$kind?$idf=$key") || { echo "$kind $key: $app not reachable, nothi
 found=$(jq -c --arg f "$idf" --argjson k "$key" '[.[] | select(.[$f] == $k)]' <<<"$found")
 if [ "$(jq length <<<"$found")" -gt 0 ]; then
   title=$(jq -r '.[0].title' <<<"$found"); year=$(jq -r '.[0].year // 0' <<<"$found")
+  # Permanent test title (Movie-Downloads public-domain-tests.md): nothing is wiped while it carries the tag; exit 3 tells clear-data-wipe.sh it was kept on purpose.
+  if [ "$(jq '[.[].tags // [] | .[]] | length' <<<"$found")" -gt 0 ]; then
+    tags=$(api /tag) || { echo "$kind $key: $app tag list not readable, nothing wiped" >&2; exit 1; }
+    if jq -e --argjson t "$tags" '[$t[] | select(.label == "keep-test") | .id] as $k | any(.[].tags // [] | .[]; IN($k[]))' >/dev/null <<<"$found"; then
+      echo "$kind $key: $title carries tag keep-test (permanent test title), nothing wiped; to delete it, remove the tag in $app first"
+      exit 3
+    fi
+  fi
   for id in $(jq -r '.[].id' <<<"$found"); do
     if api "/$kind/$id?deleteFiles=true&$excl=false" -X DELETE >/dev/null; then echo "$kind $key: $title removed from $app with its files"; else echo "$kind $key: $app delete of $id failed" >&2; failed=1; fi
   done

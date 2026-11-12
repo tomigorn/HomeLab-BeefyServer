@@ -2,6 +2,7 @@
 # Seerr "Clear Data" (DELETE /api/v1/media/<id>) has no event: this compares Seerr's media list with the last run and wipes every title whose row is gone, via title-wipe-hook.sh wipe (Radarr/Sonarr + files, qBittorrent, SABnzbd, Jellyfin; README "Delete a title"). Run by systemd/clear-data-wipe.timer.
 # A row that is back with a new id and no request was re-created by Seerr's own Jellyfin/Radarr/Sonarr sync: also cleared, and that row is removed after the wipe. A new row with a request (requested again) is left alone.
 # Wipes nothing on the first run (no snapshot), when Seerr's list is unreadable, empty or incomplete, when a row is back in a second listing, or when more than CW_MAX rows are gone at once (run once by hand with CW_MAX=<n> if that was intended).
+# A title the hook keeps (exit 3: tag keep-test, the permanent test film) is logged as kept, not retried, and its re-created row stays.
 # Skips blocklisted rows (status 6: un-blocklisting deletes the row) and series without a tvdb id. A failed wipe is retried on the next runs (CW_TRIES); unreadable title details (Seerr error, timeout, empty reply; not 404) keep the key pending without a wipe.
 # Also run by systemd/clear-data-wipe-added.path a few seconds after Radarr/Sonarr add a title (language-policy-hook.sh writes the stamp): a title requested and cleared within one timer interval is in the snapshot too. One run at a time (flock, CW_LOCK_WAIT seconds).
 set -uo pipefail
@@ -99,11 +100,14 @@ while IFS=$'\t' read -r k tvdb tries; do
   esac
   IFS=$'\x1f' read -r title year <<<"${ty:-}"
   if [ "$app" = radarr ]; then config=${CW_RADARR_CONFIG:-/srv/appdata/radarr/config.xml}; else config=${CW_SONARR_CONFIG:-/srv/appdata/sonarr/config.xml}; fi
-  if env TW_CONFIG="$config" TW_STATE="$(dirname "$config")/title-wipe.tsv" TW_QBIT_URL="${TW_QBIT_URL:-http://127.0.0.1:8080}" \
+  env TW_CONFIG="$config" TW_STATE="$(dirname "$config")/title-wipe.tsv" TW_QBIT_URL="${TW_QBIT_URL:-http://127.0.0.1:8080}" \
       TW_QBIT_PASS="${TW_QBIT_PASS:-$HERE/../secrets/qbit-webui.password}" \
       TW_SAB_URL="${TW_SAB_URL:-http://127.0.0.1:8081}" TW_SAB_KEY="${TW_SAB_KEY:-$HERE/../secrets/hook/sabnzbd.apikey}" \
       TW_JF_URL="${TW_JF_URL:-http://127.0.0.1:8096}" TW_JF_KEY="${TW_JF_KEY:-$HERE/../../Jellyfin/secrets/api-key}" \
-      bash "$HOOK" wipe "$app" "$id" "${title:-}" "${year:-0}" </dev/null 2>&1 | log; then
+      bash "$HOOK" wipe "$app" "$id" "${title:-}" "${year:-0}" </dev/null 2>&1 | log; wrc=${PIPESTATUS[0]}
+  if [ "$wrc" -eq 3 ]; then
+    echo "$k: kept (tag keep-test, permanent test title), nothing wiped" | log
+  elif [ "$wrc" -eq 0 ]; then
     echo "$k: wiped" | log
     # Seerr's Jellyfin/Radarr/Sonarr sync may have re-created the row (no request) while the title still existed.
     info=$(details "$k")
