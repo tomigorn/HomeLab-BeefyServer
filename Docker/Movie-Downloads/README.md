@@ -375,6 +375,7 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | indexer disabled for a request limit (429, `API Request Limit reached`, too many requests; any indexer) | digest `indexer_rate_limited` | at once, once while it stays limited |
 | indexers recovered | digest `indexer_recovered` | at once |
 | subtitle repaired / suspect ([Subtitle check](#subtitle-check)) | digest `subtitle_repaired` / `subtitle_suspect` | at once |
+| permanent test film *Nosferatu* (TMDB 653, [public-domain-tests.md](public-domain-tests.md)) not in Radarr, or no file and nothing queued / without tag `keep-test` | digest `test_film_missing` / `test_film_untagged` (never Telegram, never a check failure) | every run, one line per day |
 
 | | |
 |---|---|
@@ -503,7 +504,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now night-downloads.time
 
 | Seerr button (Manage panel, admin) | What goes |
 |---|---|
-| **Remove from Radarr** / **Remove from Sonarr** | the title in Radarr/Sonarr with its files, nothing else (torrent, SABnzbd history and Seerr request stay; Jellyfin drops the item when Radarr/Sonarr tell it the files are gone) |
+| **Remove from Radarr** / **Remove from Sonarr** | the title in Radarr/Sonarr with its files, nothing else (torrent, SABnzbd history and Seerr request stay; Jellyfin drops the item when Radarr/Sonarr tell it the files are gone). Seerr calls Radarr directly: the `keep-test` tag does **not** protect here (nor a delete in Radarr's UI) |
 | **Advanced → Clear Data** | everything: Seerr request, Radarr/Sonarr entry + files, qBittorrent torrent + files, SABnzbd history and Jellyfin item (within ~2 min) |
 
 Clear Data after an earlier Remove from Radarr/Sonarr still removes the leftovers. A new request after Clear Data starts fresh.
@@ -515,7 +516,7 @@ Seerr has no event for Clear Data (it only deletes its media row), so `scripts/c
 | Record (On Grab / Import / Upgrade) | `title-wipe-hook.sh` (Connect → Custom Script **Title wipe**, both apps) appends `<tmdbId or tvdbId> <qbit/sab> <hash or nzo id>` to `/config/title-wipe.tsv` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`). Deleting in Radarr/Sonarr wipes nothing |
 | Detect | snapshot `~/.local/state/movie-downloads/seerr-media.tsv` (type, tmdbId, tvdbId, status, row id); a row gone, or back with a new id and no request (re-created by Seerr's own Jellyfin/Radarr/Sonarr sync), = Clear Data |
 | Request cleared within 2 min | the Connect script **Language policy** writes `/config/title-added.stamp` on every add; `systemd/clear-data-wipe-added.path` runs the same script 5 s later (`clear-data-wipe-added.service`), so the new row is in the snapshot before it can be cleared. One run at a time (`flock` on `seerr-media.tsv.lock`) |
-| Never wipes | first run (snapshot only); Seerr list unreadable, empty or incomplete; row back in a second listing; title requested again; Seerr title details unreadable (error, timeout, empty reply: key stays pending, next run decides); more than 5 rows gone at once (`CW_MAX=<n> scripts/clear-data-wipe.sh` once by hand if intended); blocklisted rows (un-blocklisting deletes the row); series without tvdb id |
+| Never wipes | a Radarr title tagged `keep-test` (the permanent test film, [public-domain-tests.md](public-domain-tests.md)): nothing at all, logged `kept (tag keep-test …)`, not retried, its re-created Seerr row stays; first run (snapshot only); Seerr list unreadable, empty or incomplete; row back in a second listing; title requested again; Seerr title details unreadable (error, timeout, empty reply: key stays pending, next run decides); more than 5 rows gone at once (`CW_MAX=<n> scripts/clear-data-wipe.sh` once by hand if intended); blocklisted rows (un-blocklisting deletes the row); series without tvdb id |
 | Radarr/Sonarr | the title by exact tmdbId/tvdbId: `DELETE …?deleteFiles=true` (file to the recycle bin `/data/.recyclebin`, 7 days) |
 | qBittorrent | the recorded hashes, only in the app's own category (`radarr` / `sonarr`): torrent **and its files**. fastpi's qBittorrent is never touched |
 | SABnzbd | the recorded jobs: queue and history (`del_files=1`) |
@@ -1253,6 +1254,10 @@ Per language (profile items, `scripts/language-policy.sh` and `scripts/language-
   03:58–04:45 window (`../Jellyfin/scripts/night-tasks.py`, see the Jellyfin README): Scan Media Library daily 04:10, Trickplay
   04:24, Chapter Images 04:30, Media Segment Scan 04:33.
 
+### Permanent test film
+
+*Nosferatu* (1922, TMDB 653) always stays in the library: `jf.continue-remove-api` (Jellyfin post-update check) and the end-to-end pipeline tests use it. Radarr tag `keep-test`, Clear Data skips it, the queue watchdog digest reports it missing. Never delete it without the owner's yes: [public-domain-tests.md](public-domain-tests.md).
+
 ### Test the pipeline (no download client involved)
 
 Uses an openly licensed film so nothing copyrighted is ever fetched.
@@ -1623,7 +1628,7 @@ beefy never seeds (owner 2026-11-09, see [No seeding](#no-seeding)): torrents st
 
 ## Related
 
-- [public-domain-tests.md](public-domain-tests.md) — test titles for end-to-end pipeline tests, deleted after every test
+- [public-domain-tests.md](public-domain-tests.md) — test titles for end-to-end pipeline tests, deleted after every test except the permanent test film *Nosferatu* (never delete)
 - `../Jellyfin` — playback, reads `/srv/video/media` read-only
 - `../Seerr` — requests from users, talks to Radarr and Sonarr over this bridge
 - `../Antivirus` — ClamAV: completion scan (clamd on the internal `clamd` net) and nightly scan
