@@ -29,7 +29,10 @@ class FakeJellyfin:
         if p == "/Users":
             return [{"Id": "x" * 32, "Name": "anna"}, {"Id": CANARY, "Name": "canary-test"}]
         if p == "/Items" and q.get("IncludeItemTypes") == "Movie":
-            return {"Items": [{"Id": FILM, "Name": "Nosferatu"}]}
+            # the public-domain test films are deleted after each test: the check must not depend on a named title
+            # collections come back as "Movie" folders without runtime and can never be resumed
+            return {"Items": [] if q.get("SearchTerm") else [{"Id": "c" * 32, "Name": "Top 10", "IsFolder": True, "RunTimeTicks": 0},
+                                                              {"Id": FILM, "Name": "Any film", "IsFolder": False, "RunTimeTicks": 90 * 60 * 10**7}]}
         if p == "/Items" and q.get("IncludeItemTypes") == "Episode" and q.get("IndexNumber") == "2":
             return {"Items": [{"Id": EP2, "SeriesId": SERIES}]}
         if p == f"/Shows/{SERIES}/Episodes":

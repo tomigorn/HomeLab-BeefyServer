@@ -9,7 +9,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from jellyfin_api import api as live_api  # noqa: E402
 
 CANARY = "canary-test"
-FILM = "Nosferatu"
 TICKS = 18000000000
 FIELDS = ("PlaybackPositionTicks", "PlayCount", "IsFavorite", "Played", "LastPlayedDate")
 
@@ -46,10 +45,12 @@ def main(argv, api=live_api, out=sys.stdout):
         api("DELETE", f"/UserPlayedItems/{i}?{q}")
         write(i, {"IsFavorite": False})
 
-    film = (api("GET", f"/Items?{q}&Recursive=true&IncludeItemTypes=Movie&SearchTerm={FILM}&Limit=1")["Items"] or [None])[0]
+    # any real film whose runtime puts TICKS inside the resume window (5-90 %); collections are Movie folders without runtime
+    films = api("GET", f"/Items?{q}&Recursive=true&IncludeItemTypes=Movie&IsMissing=false&SortBy=SortName&Limit=200&EnableImages=false")["Items"]
+    film = next((f for f in films if not f.get("IsFolder") and 0.05 * (f.get("RunTimeTicks") or 0) < TICKS < 0.9 * (f.get("RunTimeTicks") or 0)), None)
     second = (api("GET", f"/Items?{q}&Recursive=true&IncludeItemTypes=Episode&ParentIndexNumber=1&IndexNumber=2&IsMissing=false&Limit=1&EnableImages=false")["Items"] or [None])[0]
     if not film or not second:
-        print("FAIL: no test film or series", file=out)
+        print("FAIL: library has no film or no series with an episode 2", file=out)
         return 1
     series = second["SeriesId"]
     eps = [e for e in api("GET", f"/Shows/{series}/Episodes?{q}&IsMissing=false&EnableImages=false")["Items"] if e.get("ParentIndexNumber") == 1]
