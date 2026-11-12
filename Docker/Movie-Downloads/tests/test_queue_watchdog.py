@@ -1537,5 +1537,76 @@ class DownloadFinished(unittest.TestCase):
         self.assertIn("down", qw.download_finished({"downloadId": "x", "protocol": "torrent"}, down, down))
 
 
+class TestFilm(unittest.TestCase):
+    """The permanent test film (public-domain-tests.md): missing = digest line only, never Telegram, never a failed run."""
+    NOSF = {"id": 148, "tmdbId": 653, "title": "Nosferatu", "year": 1922, "hasFile": True, "tags": [63, 70]}
+    TAGS = [{"id": 63, "label": "old-rare"}, {"id": 70, "label": "keep-test"}]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+        self.sent = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def radarr(self, movies, queue=(), tags=None, fail=False):
+        base = fake(queue)
+
+        def call(method, path, query=None, body=None):
+            if path == "/movie":
+                if fail:
+                    raise qw.ApiError("GET /movie: down")
+                return [m for m in movies if str(m["tmdbId"]) == str((query or {}).get("tmdbId"))]
+            if path == "/tag":
+                return self.TAGS if tags is None else tags
+            return base(method, path, query, body)
+        return call
+
+    def go(self, radarr):
+        return qw.run({"radarr": radarr}, self.dir / "queue-watchdog.json", [], lambda t: self.sent.append(t) or True, qw.Config(), T0, film=qw.test_film)
+
+    def kinds(self):
+        return [(e["kind"], e["app"], e["title"]) for e in digest(self.dir)]
+
+    def test_present_with_file_and_tag_is_quiet(self):
+        self.assertEqual(self.go(self.radarr([self.NOSF])), 0)
+        self.assertEqual(self.kinds(), [])
+
+    def test_not_in_radarr_is_a_digest_line_not_a_telegram(self):
+        self.assertEqual(self.go(self.radarr([])), 0)
+        self.assertEqual(self.kinds(), [("test_film_missing", "radarr", "Nosferatu (1922)")])
+        self.assertEqual(self.sent, [])
+
+    def test_no_file_and_nothing_queued_is_missing(self):
+        self.go(self.radarr([dict(self.NOSF, hasFile=False)]))
+        self.assertEqual(self.kinds(), [("test_film_missing", "radarr", "Nosferatu (1922)")])
+
+    def test_no_file_but_downloading_is_quiet(self):
+        self.go(self.radarr([dict(self.NOSF, hasFile=False)], queue=[dict(DOWNLOADING, movieId=148, status="paused")]))
+        self.assertEqual(self.kinds(), [])
+
+    def test_lost_keep_test_tag_is_its_own_line(self):
+        self.go(self.radarr([dict(self.NOSF, tags=[63])]))
+        self.assertEqual(self.kinds(), [("test_film_untagged", "radarr", "Nosferatu (1922)")])
+
+    def test_one_line_per_day_not_per_run(self):
+        r = self.radarr([])
+        self.go(r)
+        qw.run({"radarr": r}, self.dir / "queue-watchdog.json", [], lambda t: True, qw.Config(), T0 + 15 * MIN, film=qw.test_film)
+        self.assertEqual(len(digest(self.dir)), 1)
+
+    def test_api_error_exits_1_without_a_missing_line(self):
+        self.assertEqual(self.go(self.radarr([], fail=True)), 1)
+        self.assertEqual(self.kinds(), [])
+
+    def test_lands_in_the_prom_file_for_the_morning_digest(self):
+        self.go(self.radarr([]))
+        self.assertIn('beefy_watchdog_event_timestamp_seconds{kind="test_film_missing",app="radarr",title="Nosferatu (1922)"} 1800000000', (self.dir / "watchdog-digest.prom").read_text())
+
+    def test_main_runs_the_check(self):
+        self.assertIn("film=test_film", (ROOT / "scripts" / "queue-watchdog.py").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,7 @@ Quiet hours 22:00-07:00 Europe/Zurich: Telegrams are held and sent on the first 
 Removals (remove from the client, blocklist, search again; digest, Telegram only when the DELETE fails): a download blocked "matched to movie/series by ID" whose release year fails the guard's year rule (scripts/guard-year.jq) = guard_removed; a fake (executable / dangerous / encrypted file message, an output path with such an extension, or a completed folder with such files and no video) = malware_removed.
 ID-matched imports: a completed download blocked only with "matched to movie/series by ID" is imported (ManualImport, once per download) when the grab history, title, year, season (Sonarr) and the app's own proposals all agree; otherwise the normal blocked alert names the reason. QW_AUTO_IMPORT=0 switches it off.
 Partial season packs (Sonarr): a pack holding fewer episodes than grabbed, finished in the download client (qBittorrent / SABnzbd), every file one distinct episode of the season: its episodes are imported (or Sonarr already did), then the queue item is removed (download copy deleted, no blocklist) and the missing episodes searched; one digest line, no Telegram.
+Permanent test film (public-domain-tests.md, Nosferatu, TMDB 653): not in Radarr, no file and nothing queued = digest test_film_missing; without the keep-test tag = digest test_film_untagged. Never a Telegram, never a check failure.
 Digest: watchdog-digest.prom (node-exporter textfile, last 48 h) in the state dir, read by fastpi's morning digest. Every send, hold and digest event is a line in watchdog-sends.log.
 Usage: scripts/queue-watchdog.py [--dry-run]   (--dry-run: only the removal and ID-match auto-import checks, prints, changes nothing)"""
 import datetime
@@ -57,6 +58,7 @@ YEAR_RULE = HERE / "guard-year.jq"
 DELETE = {"removeFromClient": "true", "blocklist": "true", "skipRedownload": "false"}
 YEAR_SLACK = 1
 DIGEST_HOURS, DIGEST_MAX, SENDS_MAX, TITLE_MAX = 48, 40, 1000, 80
+TEST_FILM = {"tmdbId": 653, "title": "Nosferatu", "year": 1922, "tag": "keep-test"}
 
 
 class ApiError(Exception):
@@ -843,7 +845,22 @@ def dry_run(apps, cfg, finished=None):
     return lines
 
 
-def run(apps, state_path, event_dirs, send, cfg, now=None, finished=None):
+def test_film(api, records, out):
+    f = TEST_FILM
+    title = f"{f['title']} ({f['year']})"
+    movies = [m for m in api("GET", "/movie", {"tmdbId": f["tmdbId"]}) or [] if m.get("tmdbId") == f["tmdbId"]]
+    if not movies:
+        out.digest("test_film_missing", "radarr", title)
+        return
+    m = movies[0]
+    if not m.get("hasFile") and not any(r.get("movieId") == m.get("id") for r in records):
+        out.digest("test_film_missing", "radarr", title)
+    keep = {t.get("id") for t in api("GET", "/tag") or [] if t.get("label") == f["tag"]}
+    if not keep & set(m.get("tags") or []):
+        out.digest("test_film_untagged", "radarr", title)
+
+
+def run(apps, state_path, event_dirs, send, cfg, now=None, finished=None, film=None):
     now = time.time() if now is None else now
     state_path = pathlib.Path(state_path)
     state = json.loads(state_path.read_text()) if state_path.exists() else {}
@@ -876,6 +893,12 @@ def run(apps, state_path, event_dirs, send, cfg, now=None, finished=None):
             if r != "sent":
                 state[a.key]["alerted"].remove(a.condition)
             rc |= r == "failed"
+        if film and app == "radarr":
+            try:
+                film(api, records, out)
+            except ApiError as e:
+                print(f"radarr: test film check: {e}", file=sys.stderr)
+                rc = 1
     rc |= send_events(event_dirs, out)
     if out.held:
         state["held"] = out.held
@@ -949,7 +972,7 @@ def main():
         print("usage: " + __doc__.rsplit("Usage: ", 1)[1], file=sys.stderr)
         return 2
     script = os.environ.get("QW_ALERT", HERE.parent.parent / "_global" / "scripts" / "oob-alert.sh")
-    return run(apps, os.environ.get("QW_STATE", STATE_DIR / "queue-watchdog.json"), dirs, sender(script), cfg, finished=clients_finished())
+    return run(apps, os.environ.get("QW_STATE", STATE_DIR / "queue-watchdog.json"), dirs, sender(script), cfg, finished=clients_finished(), film=test_film)
 
 
 if __name__ == "__main__":
