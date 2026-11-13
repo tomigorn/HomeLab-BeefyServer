@@ -20,7 +20,8 @@ For end-to-end tests of the download pipeline (request → download → import �
 | Date | What |
 |---|---|
 | 2026-11-12 | requested again in Seerr (owner account, request 162) → Radarr movie 148, profile 11 (`old-rare`), tag `keep-test`; grabbed `Nosferatu.A.Symphony.of.Horror.1922.1080p.BluRay.GERMAN.DTS.x264-MAJO` (Treasure Maps, usenet, 6.5 GB download, CF 2000750) into `SABnzbd night` |
-| open | import expected after tonight's 22:05 night download; then check: Radarr file, Jellyfin item, ok line `ok Nosferatu: …`, which score the audio carries (German Blu-ray = Murnau-Stiftung restoration with Hans Erdmann's original score, †1948; confirm from the track title or disc) |
+| 2026-11-12 | imported the same day (Download now, owner request): Radarr movie 148 has the file, tag `keep-test`; Jellyfin item present; `jf.continue-remove-api` prints `ok Nosferatu: …`; post-update check Jellyfin 103/103 |
+| 2026-11-13 | file: 1080p h264, **one DTS 5.1 audio track**, subtitles English (ASS) + Czech; runtime 95:11. No track title names the score; the 5.1 track and ~95 min runtime match the 2006 Murnau-Stiftung restoration with the reconstructed Hans Erdmann score (Blu-ray releases), not confirmed from the file itself |
 
 ## Test titles (deleted after the test)
 
