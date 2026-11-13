@@ -407,7 +407,7 @@ def apply(row: dict, refs: list[str], images: dict[str, str]) -> tuple[dict[str,
     """Pull, refuse a major jump, then update-project.sh recreate with the functional and customization checks. -> (ref -> result, rollback reason)."""
     d = DOCKER / row["project"]
     services = row["services"]
-    r = sh(["docker", "compose", "pull", "-q", *services], cwd=d, timeout=1800)
+    r = sh(["docker", "compose", "pull", "-q", "--ignore-buildable", *services], cwd=d, timeout=1800)
     if r.returncode != 0:
         log(f"  pull failed: {r.stderr.strip()[-300:]}")
         return {ref: "error" for ref in refs}, ""

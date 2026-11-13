@@ -113,7 +113,7 @@ build_images() {
   fi
 }
 case $mode in
-  pull)     docker compose pull -q ${SERVICES:-} 2>&1 | grep -viE 'pulling|pulled|^$' | head -5 ;;
+  pull)     docker compose pull -q --ignore-buildable ${SERVICES:-} 2>&1 | grep -viE 'pulling|pulled|^$' | head -5 ;;
   build)    bout=$(build_images 2>&1); brc=$?
             grep -vE '^\s*$' <<<"$bout" | tail -3
             if (( brc )); then

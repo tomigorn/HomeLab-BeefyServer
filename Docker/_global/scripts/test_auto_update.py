@@ -454,6 +454,23 @@ def test_every_docker_socket_proxy_is_pinned_by_digest():
     assert found or not (DOCKER / "_global").exists()
 
 
+def test_apply_pull_skips_locally_built_services():
+    calls = []
+
+    def fake_sh(cmd, timeout=600, **kw):
+        calls.append(cmd)
+        return type("R", (), {"returncode": 1, "stderr": "", "stdout": ""})()
+
+    real = auto_update.sh
+    auto_update.sh = fake_sh
+    try:
+        auto_update.apply({"project": "X", "services": [], "backups": [], "check": "-"}, ["img:1"], {"img:1": "sha"})
+    finally:
+        auto_update.sh = real
+    pull = next(c for c in calls if c[:3] == ["docker", "compose", "pull"])
+    assert "--ignore-buildable" in pull
+
+
 if __name__ == "__main__":
     import traceback
     fns = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
