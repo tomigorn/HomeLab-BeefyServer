@@ -9,6 +9,6 @@ RUN dpkg -i /tmp/opencl-intel-legacy1/*.deb \
  && dpkg -i /tmp/opencl-intel/*.deb \
  && rm -rf /tmp/opencl-intel-legacy1 /tmp/opencl-intel
 # Side-menu links in the web client and every app that loads it (phone apps, TV web apps, desktop player).
-RUN jq '.menuLinks = [{"name": "Help Holy Grail", "icon": "help", "url": "https://wiki.holy-grail.ch/"}, {"name": "Holy Grail", "icon": "home", "url": "https://sso.holy-grail.ch/"}]' /usr/share/jellyfin/web/config.json > /tmp/config.json \
+RUN jq '.menuLinks = [{"name": "Help Holy Grail", "icon": "help", "url": "https://wiki.holy-grail.ch/apps/jellyfin/"}, {"name": "Holy Grail", "icon": "home", "url": "https://sso.holy-grail.ch/"}]' /usr/share/jellyfin/web/config.json > /tmp/config.json \
  && mv /tmp/config.json /usr/share/jellyfin/web/config.json \
  && chmod 644 /usr/share/jellyfin/web/config.json

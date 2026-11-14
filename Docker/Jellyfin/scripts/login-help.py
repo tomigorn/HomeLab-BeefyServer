@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Idempotent: the Jellyfin sign-in page (web, phone apps, TV web apps) shows a link to the public getting-started guide.
+"""Idempotent: the Jellyfin sign-in page (web, phone apps, TV web apps) links the Jellyfin page of the wiki.
 
 Usage: python3 login-help.py
 """
@@ -7,8 +7,8 @@ import sys
 
 import jellyfin_api as j
 
-TEXT = ('New here or stuck? <a href="https://wiki.holy-grail.ch/getting-started/" target="_blank" rel="noopener noreferrer">'
-        'Help: getting started with Holy Grail</a>')
+TEXT = ('Need help? <a href="https://wiki.holy-grail.ch/apps/jellyfin/" target="_blank" rel="noopener noreferrer">'
+        'Watching with Jellyfin</a> in the Holy Grail wiki')
 
 
 def updated(branding):

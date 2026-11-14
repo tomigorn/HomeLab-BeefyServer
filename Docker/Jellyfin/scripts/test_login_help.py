@@ -8,8 +8,8 @@ _spec.loader.exec_module(lh)
 
 
 class LoginHelpTest(unittest.TestCase):
-    def test_text_links_the_public_guide_in_a_new_tab(self):
-        self.assertIn('href="https://wiki.holy-grail.ch/getting-started/"', lh.TEXT)
+    def test_text_links_the_jellyfin_wiki_page_in_a_new_tab(self):
+        self.assertIn('href="https://wiki.holy-grail.ch/apps/jellyfin/"', lh.TEXT)
         self.assertIn('target="_blank"', lh.TEXT)
         self.assertIn("noopener", lh.TEXT)
 

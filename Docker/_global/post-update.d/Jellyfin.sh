@@ -9,8 +9,8 @@ jf_plugin() { jf_api /Plugins | jq -r --arg n "$1" '[.[] | select(.Name == $n)] 
 if want jellyfin; then
   check jf.local-build '^jellyfin-local:' "$(docker inspect -f '{{.Config.Image}}' jellyfin 2>&1)"
   check jf.opencl 'intel\.icd intel_legacy1\.icd' "$(docker exec jellyfin ls /etc/OpenCL/vendors 2>&1 | xargs)"
-  check jf.menu-links '^https://wiki\.holy-grail\.ch/ https://sso\.holy-grail\.ch/$' "$(docker exec jellyfin jq -r '.menuLinks[].url' /usr/share/jellyfin/web/config.json 2>&1 | xargs)"
-  check jf.login-help 'wiki\.holy-grail\.ch/getting-started/' "$(curl -s -m 10 http://127.0.0.1:8096/Branding/Configuration 2>&1)"
+  check jf.menu-links '^https://wiki\.holy-grail\.ch/apps/jellyfin/ https://sso\.holy-grail\.ch/$' "$(docker exec jellyfin jq -r '.menuLinks[].url' /usr/share/jellyfin/web/config.json 2>&1 | xargs)"
+  check jf.login-help 'wiki\.holy-grail\.ch/apps/jellyfin/' "$(curl -s -m 10 http://127.0.0.1:8096/Branding/Configuration 2>&1)"
   check jf.render-device '^ok$' "$(docker exec jellyfin sh -c 'test -w /dev/dri/renderD128 && echo ok' 2>&1)"
   check jf.encoding '^\["qsv",true,true,true,true,true\]$' "$(jf_api /System/Configuration/encoding | jq -c '[.HardwareAccelerationType,.EnableHardwareEncoding,.EnableIntelLowPowerH264HwEncoder,.EnableIntelLowPowerHevcHwEncoder,.EnableVppTonemapping,.EnableTonemapping]' 2>&1)"
   check jf.fallback-font '^true NotoSansJP-Regular\.otf$' "$(jf_api /System/Configuration/encoding | jq -r .EnableFallbackFont 2>&1) $(docker exec jellyfin ls /config/fonts 2>&1 | xargs)"

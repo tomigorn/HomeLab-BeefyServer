@@ -275,7 +275,7 @@ sign-ins only; running sessions stay until revoked in Dashboard -> Devices.
 | Redirect sign-in page to provider | off | Keeps the Jellyfin sign-in page so "Use Quick Connect" stays reachable |
 | Automatic linking | Match email to Jellyfin username | New SSO users are provisioned on first sign-in |
 
-**Help links:** side menu "Help Holy Grail" -> `https://wiki.holy-grail.ch/` and "Holy Grail" -> `https://sso.holy-grail.ch/` (`Dockerfile`, `menuLinks`); sign-in page "New here or stuck?" -> public getting-started guide (`scripts/login-help.py`, tests `python3 -m unittest test_login_help`). Shown wherever the app loads Jellyfin's web client (browser, phone apps, Samsung/LG TV, desktop player); native apps (Android TV, Swiftfin, Findroid) ignore both.
+**Help links:** side menu "Help Holy Grail" -> `https://wiki.holy-grail.ch/apps/jellyfin/` and "Holy Grail" -> `https://sso.holy-grail.ch/` (`Dockerfile`, `menuLinks`); sign-in page "Need help?" -> the same wiki page (signed-in wiki; only the account sign-up links the public guide) (`scripts/login-help.py`, tests `python3 -m unittest test_login_help`). Shown wherever the app loads Jellyfin's web client (browser, phone apps, Samsung/LG TV, desktop player); native apps (Android TV, Swiftfin, Findroid) ignore both.
 
 No Branding custom CSS is needed: in "Disable for all users" mode the plugin does the
 hiding itself (it is the plugin's documented SSO-only mode).
