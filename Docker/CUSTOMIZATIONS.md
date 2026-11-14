@@ -47,6 +47,8 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | Customization | Where | Reapply | Verify | Update can break |
 |---|---|---|---|---|
 | Local build with Intel OpenCL | `Jellyfin/Dockerfile` | `docker compose up -d --build --pull` | `jf.local-build`: image → jellyfin-local; `jf.opencl`: /etc/OpenCL/vendors → intel.icd intel_legacy1.icd | a plain lscr image loses tone-mapping fallback |
+| Side-menu links "Help Holy Grail" (wiki) and "Holy Grail" (SSO dashboard) in the web client, also in the apps that load it (phone apps, TV web apps, desktop player) | `Jellyfin/Dockerfile` (jq on `/usr/share/jellyfin/web/config.json`) | `sudo docker compose up -d --build` | `jf.menu-links`: menuLinks urls -> wiki, sso | upstream renames or moves `config.json` (build fails: the link step errors) |
+| Sign-in page help link to the public getting-started guide (Branding -> Login disclaimer) | Jellyfin DB, `Jellyfin/scripts/login-help.py` | `python3 scripts/login-help.py` | `jf.login-help`: /Branding/Configuration -> getting-started link | a settings reset or restore from an old backup |
 | /dev/dri + render group | compose | compose | `jf.render-device`: renderD128 writable → ok | render gid changed by an OS upgrade |
 | QSV encoding, low-power encoders, VPP + OpenCL tone mapping | `/config/encoding.xml` | API, Jellyfin README "Settings" | `jf.encoding`: → ["qsv",true,true,true,true,true] | reset on config migration |
 | Fallback font Noto Sans JP | `/config/fonts` | README "Network, previews" | `jf.fallback-font`: → true NotoSansJP-Regular.otf | |
