@@ -105,6 +105,8 @@
         runtime: function (x) { return ["Running time " + x.minutes + " min (expected " + x.expected + ")", { ok: "fits", warn: "10–25 % off", bad: "more than 25 % off: wrong file, sample or extras?" }[x.mark]]; },
         size: function (x) { return [gb(x.size) + (x.gbh ? " · " + x.gbh + " GB/h" : ""), x.mark === "warn" ? "very big (over " + x.limit + " GB/h)" : ""]; }
       },
+      checksOk: "checks", problemsShort: function (n) { return n + (n === 1 ? " problem" : " problems"); }, notesShort: function (n) { return n + (n === 1 ? " note" : " notes"); },
+      virusShort: { clean: "virus scan clean", pending: "virus scan pending", infected: "malware found", unknown: "not virus-scanned yet" },
       virus: { clean: "Virus scan: clean", pending: "Virus scan pending", infected: "Virus scan: malware found", unknown: "Virus scan: not scanned yet" },
       detailsLink: "Details ↗", account: "🔒 account needed", nfo: "📄 Description/NFO mentions: ",
       noMatch: "No release found for this title — the indexers don't know a version yet.", olderHint: "For an old or rare title, try “Allow older versions” above.",
@@ -171,6 +173,8 @@
         runtime: function (x) { return ["Laufzeit " + x.minutes + " Min. (erwartet " + x.expected + ")", { ok: "passt", warn: "10–25 % daneben", bad: "mehr als 25 % daneben: falsche Datei, Sample oder Extras?" }[x.mark]]; },
         size: function (x) { return [gb(x.size) + (x.gbh ? " · " + x.gbh + " GB/h" : ""), x.mark === "warn" ? "sehr gross (über " + x.limit + " GB/h)" : ""]; }
       },
+      checksOk: "Prüfungen", problemsShort: function (n) { return n + (n === 1 ? " Problem" : " Probleme"); }, notesShort: function (n) { return n + (n === 1 ? " Hinweis" : " Hinweise"); },
+      virusShort: { clean: "Virenscan sauber", pending: "Virenscan läuft", infected: "Schadsoftware gefunden", unknown: "noch nicht auf Viren geprüft" },
       virus: { clean: "Virenscan: sauber", pending: "Virenscan läuft noch", infected: "Virenscan: Schadsoftware gefunden", unknown: "Virenscan: noch nicht geprüft" },
       detailsLink: "Details ↗", account: "🔒 Konto nötig", nfo: "📄 Beschreibung/NFO nennt: ",
       noMatch: "Kein Release für diesen Titel gefunden — die Indexer kennen noch keine Version.", olderHint: "Bei einem alten oder seltenen Titel oben «Ältere Versionen erlauben» versuchen.",
@@ -255,6 +259,26 @@
       ul.appendChild(el(doc, "li", { "data-check": x.rule, "data-mark": mark, "class": "hg-m-check-" + mark, title: why }, t.marks[mark] + " " + parts[0] + (why ? ": " + why : ""), info));
     });
     return ul;
+  }
+
+  // the card's one line: resolution · audio languages · checks · virus scan; everything else is in the file list (owner 2026-11-15)
+  function summaryLine(t, x) {
+    var m = x.media && typeof x.media === "object" ? x.media : null, parts = [];
+    if (m && m.resolution) parts.push(String(m.resolution));
+    if (m) {
+      var langs = [];
+      (m.audio || []).forEach(function (a) { var l = a && a.language ? lang(t, a.language) : null; if (l && langs.indexOf(l) < 0) langs.push(l); });
+      if (langs.length) parts.push(langs.join(", "));
+    }
+    if (Array.isArray(x.checks) && x.checks.length) {
+      var bad = x.checks.filter(function (c) { return c && c.mark === "bad"; }).length, warn = x.checks.filter(function (c) { return c && c.mark === "warn"; }).length;
+      parts.push(bad ? "❌ " + t.problemsShort(bad) : warn ? "⚠️ " + t.notesShort(warn) : "✅ " + t.checksOk);
+    }
+    if (x.virus && typeof x.virus === "object") {
+      var v = x.virus;
+      parts.push(v.state === "clean" ? "✅ " + t.virusShort.clean : v.state === "infected" ? "❌ " + t.virusShort.infected + (v.signature ? " (" + String(v.signature) + ")" : "") : "⏳ " + (t.virusShort[v.state] || t.virusShort.unknown));
+    }
+    return parts.join(" · ");
   }
 
   function virusLine(doc, t, v) {
@@ -386,12 +410,8 @@
     if (x.release) {
       var dl = this.section(t.download, { "data-download": true });
       dl.appendChild(el(d, "p", { "class": "hg-m-file" }, el(d, "span", { "class": "hg-m-label", "data-file-label": true }, t.fileLabel), breakable(d, "hg-m-filename", x.release, { "data-file-name": true })));
-      var ml = mediaLine(t, x.media);
-      if (ml) dl.appendChild(el(d, "p", { "class": "hg-m-media", "data-media": true }, ml));
-      var vl = virusLine(d, t, x.virus);
-      if (vl) dl.appendChild(vl);
-      var cl = checkList(d, t, x.checks);
-      if (cl) dl.appendChild(cl);
+      var sl = summaryLine(t, x);
+      if (sl) dl.appendChild(el(d, "p", { "class": "hg-m-media", "data-summary": true }, sl));
       c.appendChild(dl);
     }
     if (x.message && code !== "unknown") c.appendChild(el(d, "details", { "class": "hg-m-raw", "data-raw": true }, el(d, "summary", null, t.raw), el(d, "p", null, String(x.message))));

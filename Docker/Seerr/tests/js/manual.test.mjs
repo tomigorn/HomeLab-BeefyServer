@@ -312,11 +312,9 @@ test("a problem reads in sections: what's wrong in plain words, what to do, the 
   assert.equal(raw.open, false);
   assert.equal(raw.querySelector("summary").textContent, "Details from Sonarr/Radarr");
   assert.match(raw.textContent, /grab history/);
-  const m = $("[data-media]").textContent;
-  assert.match(m, /1080p · H\.264/);
-  assert.match(m, /Portuguese E-AC3 5\.1/);
-  assert.match(m, /Subtitles: Portuguese, English/);
-  assert.match(m, /1\.6 GB · 45 min/);
+  assert.equal($("[data-summary]").textContent, "1080p · Portuguese, English");
+  assert.equal($("[data-download] [data-media]"), null);
+  assert.equal($("[data-download] [data-check]"), null);
 });
 
 test("an unknown arr message: a general sentence with the message itself", async () => {
@@ -338,7 +336,7 @@ test("German: labels and reason in German", async () => {
   assert.equal($("[data-file-label]").textContent, "Dateiname des Downloads:");
   assert.equal($("details[data-raw] summary").textContent, "Details von Sonarr/Radarr");
   assert.match($("[data-what]").textContent, /Release-Name passt nicht/);
-  assert.match($("[data-media]").textContent, /Portugiesisch/);
+  assert.match($("[data-summary]").textContent, /Portugiesisch, Englisch/);
 });
 
 test("file list: each file with its media and a plain reason for a rejection", async () => {
@@ -360,10 +358,16 @@ const CHECKS = [
   { rule: "runtime", mark: "ok", minutes: 31, expected: 30 },
   { rule: "size", mark: "none", size: 1.59e9, gbh: 3.1, limit: 20 }];
 
-test("checks against our rules: a mark per property with the reason for warnings and violations", async () => {
+test("checks against our rules: one line on the card, a mark per property in the file list", async () => {
   const p = e09({ details: { reason: "id-match", release: E09, message: BY_ID, episodes: 1, media: MEDIA, checks: CHECKS, virus: { state: "clean", at: "2026-11-15T04:25:00Z", signature: null } } });
-  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } } });
-  const c = (rule) => $(`[data-check="${rule}"]`);
+  const files = { token: "t", kind: "tv", files: [{ n: 0, name: E09 + ".mkv", size: 1.59e9, episodeIds: [2045], probable: true, rejections: [], media: MEDIA, checks: CHECKS, virus: { state: "clean", at: "2026-11-15T04:25:00Z" } }],
+    episodes: [{ id: 2045, label: "S01E09", title: "" }] };
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files } });
+  assert.equal($("[data-summary]").textContent, "1080p · Portuguese, English · ❌ 1 problem · ✅ virus scan clean");
+  assert.equal($("[data-check]"), null);
+  $('[data-act="files"]').click();
+  await settle();
+  const c = (rule) => $(`[data-list] [data-check="${rule}"]`);
   assert.equal(c("original").getAttribute("data-mark"), "bad");
   assert.match(c("original").textContent, /^❌ Original language \(English\): missing/);
   assert.match(c("german").textContent, /^– German/);
@@ -373,19 +377,19 @@ test("checks against our rules: a mark per property with the reason for warnings
   assert.match(c("hdr").querySelector("[data-info]").textContent, /may upgrade to 4K HDR later/);
   assert.match(c("runtime").textContent, /^✅ Running time 31 min \(expected 30\)/);
   assert.match(c("size").textContent, /1\.6 GB · 3\.1 GB\/h/);
-  assert.match($("[data-virus]").textContent, /^✅ Virus scan: clean/);
+  assert.match($("[data-list] [data-virus]").textContent, /^✅ Virus scan: clean/);
 });
 
 test("virus scan states in both languages", async () => {
-  const states = [[{ state: "pending" }, /^⏳ Virus scan pending/, /^⏳ Virenscan läuft noch/],
-    [{ state: "infected", signature: "Win.Test.EICAR_HDB-1" }, /^❌ Virus scan: malware found \(Win\.Test\.EICAR_HDB-1\)/, /^❌ Virenscan: Schadsoftware gefunden \(Win\.Test\.EICAR_HDB-1\)/],
-    [{ state: "unknown" }, /^⏳ Virus scan: not scanned yet/, /^⏳ Virenscan: noch nicht geprüft/]];
+  const states = [[{ state: "pending" }, "⏳ virus scan pending", "⏳ Virenscan läuft"],
+    [{ state: "infected", signature: "Win.Test.EICAR_HDB-1" }, "❌ malware found (Win.Test.EICAR_HDB-1)", "❌ Schadsoftware gefunden (Win.Test.EICAR_HDB-1)"],
+    [{ state: "unknown" }, "⏳ not virus-scanned yet", "⏳ noch nicht auf Viren geprüft"]];
   for (const [virus, en, de] of states) {
     const p = e09({ details: { reason: "id-match", release: E09, message: BY_ID, virus } });
     let { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } } });
-    assert.match($("[data-virus]").textContent, en);
+    assert.equal($("[data-summary]").textContent, en);
     ({ $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<")));
-    assert.match($("[data-virus]").textContent, de);
+    assert.equal($("[data-summary]").textContent, de);
   }
 });
 
