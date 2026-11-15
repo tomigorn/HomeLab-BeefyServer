@@ -319,7 +319,7 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 
 ## Menu links
 
-`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds two entries after Series in the desktop sidebar, the phone drawer and the phone bottom bar:
+`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds three entries after Series in the desktop sidebar, the phone drawer and the phone bottom bar:
 
 `indexer-bar/www/menu-links.css` (linked before `</head>`) keeps Seerr's sidebar and phone bar invisible until the script marks `html[data-hg-menu]` (on the frame after our entries are in, not waiting for images), so a fresh load (e.g. coming from books.holy-grail.ch) shows the menu once, complete, instead of entries jumping in; shown anyway after 2.5 s. `menu-links.js` is the first deferred script after `tip.js` and adds nothing before React has hydrated Seerr's server-rendered page (React's `__reactFiber$…` key on `#__next`'s first element, checked every frame, 10 s at most): an entry put in earlier made React throw error #418 and redraw the whole page.
 
@@ -327,6 +327,7 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 |---|---|---|
 | **Audiobooks** (German UI: **Hörbücher**) | `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, public via Cloudflare, Holy Grail login, group `streaming-requesters`), same tab | while the bar has at most 5 items with it |
 | **Manual interaction** (**Manuell beheben**) + amber count of open problems (none at 0; in the sidebar on the icon's corner and the label on one line, so the entry never grows; at the end in the phone drawer); active look on its page | `/manual` inside Seerr ([Manual interaction](#manual-interaction)), with Seerr's own router showing its 404 page under `/manual` (no reload: Next reloads the whole page for a path it has no page for, the menu flashed) | while the bar has at most 6 items with it (so phones without a "more" list still reach it) |
+| **Collections** (**Sammlungen**), active look on its page | `/collections` inside Seerr ([Collections](#collections)), same in-app navigation as Manual interaction | while the bar has at most 6 items with it |
 
 Count: `GET /_download-now/manual/count` once per page load, again on Seerr navigation at most every 5 min; no session or an error = no badge. Links and URL: `LINKS` at the top of the file. Seerr without a `/discover/tv` link: no entry, nothing breaks. Only menu links count: `/discover/tv` links inside `<main>` (Discover's **Popular Series** row title) are skipped, otherwise an "Audiobooks" title lands squeezed beside it (fixed 2026-10-28; Discover gets no own Audiobooks row, the menu entry covers it).
 
@@ -611,6 +612,31 @@ A title with nothing found for **7 days** (oldest request, `OVERRIDE_DAYS`; same
 | Seedless | never wakes or holds beefy: `../Movie-Downloads/README.md` "Can wait: downloads at night" (Seedless override) |
 | Tests | `python3 tests/test_manual.py` (class `Override`); JS `manual.test.mjs` (Download anyway, states EN/DE) |
 | Log | `sudo docker logs seerr-download-now \| grep 'manual override'` |
+
+## Collections
+
+Sidebar → **Collections** (German **Sammlungen**) opens `/collections` inside Seerr's page: the household builds its own Jellyfin collections from a search (owner 2026-11-15), e.g. `producer:Adam Sandler`. A saved list appears in Jellyfin under **Collections & Trending** (Jellyfin README "Native TV: Collections & Trending"): owned titles as the real items, missing ones as placeholders with the "⬇ Not downloaded yet" band and the download versions, like Top 10.
+
+| Search term | Matches |
+|---|---|
+| `actor:` / `director:` / `producer:` / `writer:` | a person's credits (producer = Producer or Executive Producer; writer = Writing department; actor without talk/news/reality shows and roles as themselves) |
+| `studio:` | production company, films only (Seerr's TV discover has no company filter) |
+| `franchise:` | a TMDB film collection, found through the films of that name |
+| `genre:` / `year:` (`1999`, `1990-1999`) / `type:` (`movie`, `series`) / `keyword:` | filters; alone only two of genre / year / keyword together |
+
+Terms combine (all must fit), at most 6, query ≤ 300 characters. A name that fits several people / studios / franchises → pick list (photo, known for); the pick is sent back as `pick=<term>:<id>` and must be one of the offered options.
+
+| Part | What |
+|---|---|
+| Page | `indexer-bar/www/collections.js`, same pattern as Manual interaction: Seerr's 404 replaced inside `<main>` after React's hydration, early mark `html[data-hg-early=collections]` (`bar-early.js`, `menu-links.css`), every text as `textContent`, posters from `image.tmdb.org` only for paths `^/[A-Za-z0-9_.-]+$`, hint box `tip.js` for the search help, EN/DE. Form: name, search, order (newest / most popular / best rated), at most 1–100 (default 50); **Preview** first, **Save** only for what was previewed. Lists of everyone below: count "n titles · m on the server", 8 posters (all on request), **Edit** / **Delete** (second tap; films stay) for the creator and admins, else "Read only — created by …" |
+| Backend | `download-now/collections_page.py`, `/_download-now/collections/`: GET `lists`, `preview?q=&sort=&max=[&pick=i:id]`; POST `save` `{id?, name, query, sort, max, picks}`, `delete` `{id, confirm: "delete"}` |
+| Who | Seerr session (nginx gate + `auth/me`); create: ADMIN or a request right (REQUEST / REQUEST_MOVIE / REQUEST_TV); edit / delete: creator or ADMIN; every user sees every list with the creator's Seerr name (never an email) |
+| Guards | POST only with Origin + JSON, body ≤ 4 KiB; name 1–60 letters, digits, simple punctuation, unique, not `Coming soon` / `Hidden Gems` / `Top 10…`; 5 lists per user, 20 in all; previews 10 per user and minute, saves / deletes every 5 s per user; TMDB only through Seerr's API with Seerr's key (never from the browser), answers cached 6 h, at most 2 calls at once, discover ≤ 5 pages; errors 502 without details |
+| Store | `/srv/appdata/seerr-collections/lists.json` (mounted rw at `/collections`, dir 65127:buntu 2750, file 0640, `.bak` of the previous version; unreadable = never overwritten): per list id `user-<slug>` (stable on rename), name, owner, query, resolved terms (ids), sort, max, titles `{k, id, t, y, p, o}` |
+| Night | backend loop 04:00–04:40, once a night: every list re-run from its stored terms (new releases join), file written only on a change; a failing list keeps its titles |
+| Jellyfin | a change of the file starts `jellyfin-user-lists.path` → `popular.py --user-lists` (release check of the list titles, own budget) → `trending.py`; collections show up in a few minutes. Deleting removes the BoxSet and the placeholders no other list uses, never library items or files |
+| Log | `sudo docker logs seerr-download-now \| grep collections` (saves, deletes, night run) |
+| Tests | `python3 tests/test_collections.py`; JS `collections.test.mjs`, `menu-links.test.mjs`, `bar-early.test.mjs`; browser `tests/test_collections_layout.py` (1280 / 390 px, command in its docstring; screenshots `-e SHOT_DIR`) |
 
 ## Delete a title
 
