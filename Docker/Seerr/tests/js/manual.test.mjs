@@ -63,14 +63,14 @@ test("one card per title: each download inside with its own actions; tabs count 
   assert.match($('[data-card="tv/312697"] [data-count]').textContent, /2 problems/);
 });
 
-test("Show files toggles to Hide files, is disabled while loading, opens again", async () => {
+test("Check files to finish importing toggles to Hide files, is disabled while loading, opens again", async () => {
   const p = problem({ type: "import", details: { release: "Some.Film.2024", message: "" } });
   let release;
   const files = { token: "t", kind: "movie", files: [{ n: 0, name: "film.mkv", size: 9e9, episodeIds: [], probable: true, rejections: [] }], episodes: [] };
   const { $, $$, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
     "/_download-now/manual/files": () => ({ status: 200, body: files }) });
   const btn = $('[data-act="files"]');
-  assert.equal(btn.textContent, "Show files");
+  assert.equal(btn.textContent, "Check files to finish importing");
   btn.click();
   assert.equal(btn.disabled, true);
   assert.equal(btn.textContent, "Loading…");
@@ -81,11 +81,17 @@ test("Show files toggles to Hide files, is disabled while loading, opens again",
   btn.click();
   await settle();
   assert.equal($$("input[data-file]").length, 0);
-  assert.equal(btn.textContent, "Show files");
+  assert.equal(btn.textContent, "Check files to finish importing");
   btn.click();
   await settle();
   assert.equal($$("input[data-file]").length, 1);
   assert.equal(calls.filter((c) => c.url.startsWith("/_download-now/manual/files")).length, 2);
+});
+
+test("German: Dateien prüfen und Import abschliessen", async () => {
+  const p = problem({ type: "import", details: { release: "Some.Film.2024", message: "" } });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
+  assert.equal($('[data-act="files"]').textContent, "Dateien prüfen und Import abschliessen");
 });
 
 test("on /manual: inside Seerr's page, Seerr's 404 hidden, a sensible title", async () => {
