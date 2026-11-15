@@ -201,6 +201,44 @@ Hardlinks still work when a download lands on ssd-hot2 or the HDD: mergerfs crea
 
 original-audio (mkvpropedit edits in place) takes the shared media lock `/run/lock/beefy-media.lock` (`flock -w 1800` in both units), so it never edits a file the mover is copying.
 
+### Storage retention
+
+Spec `docs/superpowers/specs/2026-11-15-storage-retention-design.md` (owner 2026-11-15). **Observe mode since 2026-11-16: nothing is deleted.** Moves SSD → HDD stay with the existing mover ([The mergerfs catch](#the-mergerfs-catch-and-why-it-matters-here)).
+
+| Stage (from the import date; series: its latest import) | What |
+|---|---|
+| day 0–30 | SSD |
+| day 30 | HDD (every title, kept-forever ones too; done by the mover as today) |
+| day 90 | temporary titles: media files deleted (Radarr/Sonarr delete files only, title kept, unmonitored, tag `retention-deleted`) |
+| HDD > 85 % | temporary titles past day 30 leave earlier, oldest import first, until 80 % |
+| postponed | in someone's Continue Watching (Jellyfin resume) or in a household collection (Seerr **Collections**): at most 30 days, then deleted anyway |
+| switched on | the date shown is never earlier than switch-on + 14 days (grace for the existing library) |
+
+| Keep forever by default (`../Seerr/download-now/retention_rules.py`) | Rule |
+|---|---|
+| old | released ≥ 12 years ago (year, same as the old-or-niche hook) |
+| niche | the hook's niche rule (≥ 2 years old and < 100 TMDB votes film / < 1000 votes series), tag `audio-swiss-german`, or the older-versions / Swiss German profile on a title that is not old. Rare languages: not detectable yet |
+| goated | IMDb ≥ 8.0 with ≥ 25 000 votes (Radarr `ratings.imdb`; series: Sonarr `ratings`). IMDb Top 250 is not in the local data |
+| never deleted | Keep forever (default or someone's choice in Seerr), the test film Nosferatu (TMDB 653, tag `keep-test`) |
+| choice | Seerr "♾️ Keep forever" (`../Seerr/README.md` "Storage retention"), stored in `/srv/appdata/seerr-retention/keep.json` |
+
+| Part | What |
+|---|---|
+| Classifier | `scripts/retention.py` (`systemd/retention.timer`: boot + every 30 min while awake, as buntu, never wakes beefy): Radarr/Sonarr titles, Jellyfin resume + recent episode plays, Seerr Collections, keep store; scans only the SSD branches (HDD statvfs only). Out `/srv/appdata/indexer-bar/retention.json` (per `movie\|tv/<tmdb>`: dates, default, reasons, tier, size, postponed; `summary`, `promote`) for the Seerr backend |
+| Series promotion | an episode played in the last 24 h whose season (and the next) is not fully on the SSD: logged `would promote …` and listed on the Seerr page; **nothing moves** (the promoter is not armed, see `Server/3-Storage-Layout-and-Spindown.md` §7) |
+| Placeholders after delete | once on, `~/.local/state/movie-downloads/retention-lists.json` (`Leaving soon`, `Left the server`) joins Jellyfin's own lists (`../Jellyfin/README.md` "Native TV: Collections & Trending"): owned titles real, deleted ones placeholders with the download versions. Seerr media rows are never deleted (no clear-data-wipe). Jellyfin's watched state of a deleted title is lost (new item); likes and ratings stay in Floppy |
+| Morning metrics | `media-metrics.py` → `beefy_retention_titles{state}`, `beefy_retention_leaving_7d`, `beefy_retention_delete_enabled` (fastpi panel not built) |
+| Check | `scripts/retention.py --plan` (every title: keep/delete date, tier, size, SSD until), `--dry-run`; `journalctl -u retention` |
+| Tests | `python3 tests/test_retention.py`, `bash tests/test_unit_hardening.sh`; rules `python3 ../Seerr/tests/test_retention_rules.py` |
+
+Switch deletion on (owner only):
+
+1. `retention.conf`: `RETENTION_DELETE=1`, `RETENTION_ENABLED_ON=<today>`; commit.
+2. `sudo install -m 0644 systemd/retention-delete.service systemd/retention-delete.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now retention-delete.timer` (04:19, `--apply`: at most 20 titles a night, 04:00–04:40 only).
+3. `sudo systemctl start retention.service`; the Seerr page then says "Cleanup is on", `md.retention-switch` expects `1 true`.
+
+Off again: `RETENTION_DELETE=0`, `sudo systemctl disable --now retention-delete.timer`.
+
 ## Download → library pipeline
 
 What happens after Radarr grabs a release, end to end. Everything below is set
