@@ -5,6 +5,7 @@ The browser never sees keys, paths or download links: picks are indexes into wha
 import datetime
 import difflib
 import hashlib
+import ipaddress
 import json
 import os
 import pathlib
@@ -915,6 +916,70 @@ def waiting(job):
     return {"state": job["state"], "season": job["season"], "ahead": len(ahead), "waitingFor": ahead[0]["title"] if ahead and job["state"] == "queued" else None}
 
 
+# a release's details page at the indexer (`infoUrl`): only public http(s) hosts, credential parameters cut, anything key-like left = no link
+LINK_SECRETS = {"apikey", "api_key", "api", "key", "token", "passkey", "rsskey", "r", "i", "uid", "user", "username", "pass", "password", "auth", "authkey",
+                "torrent_pass", "sid", "session", "secret", "sig", "signature"}
+LINK_IDS = {"id", "guid"}
+KEYLIKE = re.compile(r"[A-Za-z0-9_-]{24,}")
+INTERNAL_HOST = re.compile(r"(^|\.)(homelab|local|lan|internal|localhost)$|prowlarr|gluetun", re.I)
+PRIVATE_INDEXERS = ()
+
+
+def safe_link(url):
+    if not isinstance(url, str) or not url:
+        return None
+    try:
+        sp = urllib.parse.urlsplit(url)
+        host = sp.hostname or ""
+        port = sp.port
+    except ValueError:
+        return None
+    if sp.scheme not in ("http", "https") or not host or sp.username or sp.password or port not in (None, 80, 443):
+        return None
+    try:
+        ipaddress.ip_address(host)
+        return None
+    except ValueError:
+        pass
+    if "." not in host or INTERNAL_HOST.search(host) or re.search(r"apikey|api_key|passkey|rsskey|token", sp.path, re.I):
+        return None
+    keep = [(k, v) for k, v in urllib.parse.parse_qsl(sp.query, keep_blank_values=True) if k.lower() not in LINK_SECRETS]
+    if any(k.lower() not in LINK_IDS and KEYLIKE.search(v) for k, v in keep):
+        return None
+    return urllib.parse.urlunsplit((sp.scheme, sp.netloc, sp.path, urllib.parse.urlencode(keep), ""))
+
+
+def private_indexer(x):
+    """An account is needed to read the page: every usenet indexer here, plus listed private torrent trackers."""
+    name = str(x.get("indexer") or "")
+    return x.get("protocol") == "usenet" or any(p.lower() in name.lower() for p in PRIVATE_INDEXERS)
+
+
+def scout_langs(deps):
+    """Languages the NFO scout read in release descriptions (Movie-Downloads nfo-scout.json, read-only): release title → languages."""
+    d = getattr(deps, "scout_dir", None)
+    if not d:
+        return {}
+    path = os.path.join(d, "nfo-scout.json")
+    try:
+        st = os.stat(path)
+    except OSError:
+        return {}
+    key = (st.st_mtime_ns, st.st_size)
+    if CACHE.get("scout-key") != key:
+        out = {}
+        try:
+            with open(path, encoding="utf-8") as f:
+                rel = (json.load(f) or {}).get("releases") or {}
+            for v in rel.values():
+                if isinstance(v, dict) and isinstance(v.get("title"), str) and isinstance(v.get("langs"), list) and v["langs"]:
+                    out[v["title"]] = [str(x)[:40] for x in v["langs"]][:12]
+        except (OSError, ValueError, AttributeError):
+            out = {}
+        CACHE["scout-key"], CACHE["scout"] = key, out
+    return CACHE.get("scout") or {}
+
+
 def matched(x, job):
     """A release Radarr/Sonarr mapped to this very title (and season): indexers that ignore the query return their newest uploads, those are dropped."""
     if job.get("kind") == "movie":
@@ -924,6 +989,7 @@ def matched(x, job):
 
 def release_data(got, job):
     season = job.get("season")
+    langs = scout_langs(job.get("deps"))
     every = [x for x in got if isinstance(x, dict) and x.get("guid") and is_int(x.get("indexerId"))] if isinstance(got, list) else []
     items = [x for x in every if matched(x, job)]
     dropped = len(every) - len(items)
@@ -937,7 +1003,8 @@ def release_data(got, job):
                "rejections": [brief(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
                "reasons": [release_reason(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
                "gbh": round((x.get("size") or 0) / 1e9 / (job["runtime"] / 60), 1) if job.get("kind") == "movie" and job.get("runtime") and x.get("size") else None,
-               "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "age": x.get("age")} for n, x in enumerate(items)]
+               "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "age": x.get("age"),
+               "link": safe_link(x.get("infoUrl")), "private": private_indexer(x), "nfoLangs": langs.get(str(x.get("title") or "")) or None} for n, x in enumerate(items)]
     return {"season": season, "at": NOW(), "public": public, "dropped": dropped, "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": bool(x.get("rejected")), "title": str(x.get("title") or "")[:200]} for x in items]}
 
 

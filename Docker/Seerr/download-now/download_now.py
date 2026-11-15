@@ -51,6 +51,7 @@ class Deps:
     request_state_file: object = None
     download_roots: tuple = ()
     clamav_results: object = None
+    scout_dir: object = None
 
 
 def redact(text):
@@ -382,6 +383,7 @@ def deps_from_env(env):
         request_state_file=env.get("DN_REQUEST_STATE") or None,
         download_roots=tuple(x.strip() for x in env.get("DN_DOWNLOAD_ROOTS", "").split(",") if x.strip()),
         clamav_results=env.get("DN_CLAMAV_RESULTS") or None,
+        scout_dir=env.get("DN_SCOUT_DIR") or None,
         seerr_admin=seerr_admin_client(env.get("DN_SEERR", "http://seerr:5055"), secret("seerr.apikey")) if pathlib.Path(env.get("DN_SECRETS", "/run/secrets/download-now"), "seerr.apikey").is_file() else None,
     )
 

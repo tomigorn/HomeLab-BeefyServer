@@ -106,6 +106,7 @@
         size: function (x) { return [gb(x.size) + (x.gbh ? " · " + x.gbh + " GB/h" : ""), x.mark === "warn" ? "very big (over " + x.limit + " GB/h)" : ""]; }
       },
       virus: { clean: "Virus scan: clean", pending: "Virus scan pending", infected: "Virus scan: malware found", unknown: "Virus scan: not scanned yet" },
+      detailsLink: "Details ↗", account: "🔒 account needed", nfo: "📄 Description/NFO mentions: ",
       noMatch: "No release found for this title — the indexers don't know a version yet.", olderHint: "For an old or rare title, try “Allow older versions” above.",
       noneAllowed: "Releases were found, but none the profile allows.", notAllowed: function (n) { return n + " more, not allowed — show why"; },
       releaseReasons: { "cf-score": "Its score by our rules is too low (e.g. wrong language, poor source).", "required-terms": "The name lacks a term the profile requires (e.g. the language).",
@@ -171,6 +172,7 @@
         size: function (x) { return [gb(x.size) + (x.gbh ? " · " + x.gbh + " GB/h" : ""), x.mark === "warn" ? "sehr gross (über " + x.limit + " GB/h)" : ""]; }
       },
       virus: { clean: "Virenscan: sauber", pending: "Virenscan läuft noch", infected: "Virenscan: Schadsoftware gefunden", unknown: "Virenscan: noch nicht geprüft" },
+      detailsLink: "Details ↗", account: "🔒 Konto nötig", nfo: "📄 Beschreibung/NFO nennt: ",
       noMatch: "Kein Release für diesen Titel gefunden — die Indexer kennen noch keine Version.", olderHint: "Bei einem alten oder seltenen Titel oben «Ältere Versionen erlauben» versuchen.",
       noneAllowed: "Es gibt Releases, aber keines, das das Profil erlaubt.", notAllowed: function (n) { return n + " weitere, nicht erlaubt — Gründe zeigen"; },
       releaseReasons: { "cf-score": "Nach unseren Regeln zu tiefe Punktzahl (z. B. falsche Sprache, schlechte Quelle).", "required-terms": "Dem Namen fehlt ein Begriff, den das Profil verlangt (z. B. die Sprache).",
@@ -572,7 +574,16 @@
         var facts = [x.quality, gb(x.size), x.gbh ? x.gbh + " GB/h" : null, (x.languages || []).join(", "), x.protocol === "torrent" && x.seeders != null ? x.seeders + " " + t.seeders : null, x.score != null ? t.score + " " + x.score : null, x.indexer].filter(Boolean).map(String).join(" · ");
         var reasons = (x.rejections || []).map(function (raw, k) { var c = (x.reasons || [])[k]; return c && t.releaseReasons[c] ? t.releaseReasons[c] : String(raw); });
         var why = x.rejected && reasons.length ? el(d, "span", { "class": "hg-m-why" }, reasons.filter(function (v, k) { return reasons.indexOf(v) === k; }).join(" ")) : null;
-        return el(d, "li", { "data-release": true, "class": x.rejected ? "hg-m-rejected" : null }, el(d, "label", null, radio, breakable(d, "hg-m-name", x.title), el(d, "span", { "class": "hg-m-facts" }, facts), why));
+        var extra = null;
+        if ((typeof x.link === "string" && /^https?:\/\//.test(x.link)) || (x.nfoLangs || []).length) {
+          extra = el(d, "span", { "class": "hg-m-facts hg-m-wide" });
+          if (typeof x.link === "string" && /^https?:\/\//.test(x.link)) {
+            extra.appendChild(el(d, "a", { href: x.link, target: "_blank", rel: "noopener noreferrer", "data-details-link": true }, t.detailsLink));
+            if (x.private) extra.appendChild(d.createTextNode(" · " + t.account));
+          }
+          if ((x.nfoLangs || []).length) extra.appendChild(el(d, "span", { "class": "hg-m-nfo" }, (extra.firstChild ? " · " : "") + t.nfo + x.nfoLangs.map(String).join(", ")));
+        }
+        return el(d, "li", { "data-release": true, "class": x.rejected ? "hg-m-rejected" : null }, el(d, "label", null, radio, breakable(d, "hg-m-name", x.title), el(d, "span", { "class": "hg-m-facts" }, facts), why), extra);
       };
       var ok = rel.filter(function (x) { return !x.rejected; }), no = rel.filter(function (x) { return x.rejected; });
       if (ok.length) {

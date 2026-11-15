@@ -481,3 +481,23 @@ test("one waiting search per user: the message says so", () => {
   assert.equal(TEXT.en.errorCodes["too many searches"], "You already have a search waiting: this one can start when it is done.");
   assert.equal(TEXT.de.errorCodes["too many searches"], "Du hast schon eine Suche in der Warteschlange: diese kann starten, wenn sie fertig ist.");
 });
+
+test("release rows: details link at the indexer, account hint, what the NFO says", async () => {
+  const p = problem({ type: "no-release", details: { reason: "no-release", lastSearch: null, profile: "x", older: null, old: false, seasons: [] } });
+  const body = { state: "done", token: "t", dropped: 0, releases: [
+    Object.assign({}, RELEASES.releases[0], { link: "https://nzbgeek.info/geekseek.php?guid=abc", private: true, nfoLangs: ["Swiss German", "German"] }),
+    Object.assign({}, RELEASES.releases[0], { n: 2, title: "Other", link: "javascript:alert(1)", private: false, nfoLangs: null })] };
+  const { $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } }, "/_download-now/manual/releases": { status: 200, body } });
+  $$('[data-act="releases"]')[0].click();
+  await settle();
+  const [a, b] = $$("[data-release]");
+  const link = a.querySelector("a[data-details-link]");
+  assert.equal(link.getAttribute("href"), "https://nzbgeek.info/geekseek.php?guid=abc");
+  assert.equal(link.getAttribute("target"), "_blank");
+  assert.equal(link.getAttribute("rel"), "noopener noreferrer");
+  assert.equal(link.textContent, "Details ↗");
+  assert.match(a.textContent, /🔒 account needed/);
+  assert.match(a.textContent, /📄 Description\/NFO mentions: Swiss German, German/);
+  assert.equal(b.querySelector("a[data-details-link]"), null);
+  assert.doesNotMatch(b.textContent, /account needed|NFO/);
+});

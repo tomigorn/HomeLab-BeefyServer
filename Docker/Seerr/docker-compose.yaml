@@ -126,6 +126,7 @@ services:
       - DN_MANUAL_STATE=/state/manual.json
       - DN_DOWNLOAD_ROOTS=/data/usenet/complete,/data/torrents
       - DN_CLAMAV_RESULTS=/run/clamav/clamav-results.jsonl
+      - DN_SCOUT_DIR=/run/scouts
     volumes:
       - ./download-now:/app:ro
       - ./secrets/download-now:/run/secrets/download-now:ro
@@ -140,6 +141,8 @@ services:
       - ${DATA_ROOT}/torrents:/data/torrents:ro
       # ClamAV's per-file verdicts (../Antivirus hook: clamav-results.jsonl): import is refused for malware, admins only before a clean scan
       - /var/lib/clamav-scan/textfile:/run/clamav:ro
+      # Movie-Downloads' scout state (nfo-scout.json: languages read in release descriptions), read-only
+      - /home/buntu/.local/state/movie-downloads:/run/scouts:ro
     networks:
       seerr-front: {}
       movie-downloads:

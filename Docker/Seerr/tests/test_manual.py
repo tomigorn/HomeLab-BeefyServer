@@ -1447,5 +1447,52 @@ class KeyChange(unittest.TestCase):
         self.assertEqual(done, {"import": "imported", "no-release": "found", "removed": "gone"})
 
 
+class Links(unittest.TestCase):
+    def test_details_links_keep_only_harmless_parts(self):
+        same = ["https://treasure-maps.com/details/7f3b2c9a1e4d5f6a7b8c9d0e1f2a3b4c", "https://thepiratebay.org/description.php?id=78123456",
+                "https://nzbgeek.info/geekseek.php?guid=00ba44e84141ab985531452d88d34c0d", "https://knaben.xyz/thepiratebay/?id=99", "https://eztvx.to/ep/123/x/"]
+        for url in same:
+            self.assertEqual(manual.safe_link(url), url, url)
+        self.assertEqual(manual.safe_link("https://x.example.com/details/1?apikey=SECRET&id=5"), "https://x.example.com/details/1?id=5")
+        self.assertEqual(manual.safe_link("https://x.example.com/d?passkey=a&r=1&i=2&uid=3&token=t&api_key=k&key=k&rsskey=k"), "https://x.example.com/d")
+        self.assertEqual(manual.safe_link("https://x.example.com/d#frag"), "https://x.example.com/d")
+
+    def test_details_links_that_could_leak_are_dropped(self):
+        for url in ("magnet:?xt=urn:btih:abc", "http://gluetun/3/download?apikey=k&link=x", "http://192.168.1.2/x", "http://10.0.0.1/x", "http://172.20.0.1/x",
+                    "http://127.0.0.1:9696/x", "http://localhost:9696/x", "https://prowlarr.example.com/x", "https://beefy.homelab/x", "https://nas.local/x",
+                    "https://x.example.com/d?q=0123456789abcdef0123456789abcdef", "javascript:alert(1)", "https://user:pw@x.example.com/", "https://x.example.com/rss/passkey/7f3b2c9a1e4d5f6a7b8c9d0e1f2a3b4c",
+                    "", None, "https://[::1]/x", "ftp://x.example.com/"):
+            self.assertIsNone(manual.safe_link(url), url)
+
+    def test_release_list_has_details_links_never_download_links(self):
+        reset()
+        w = World(rs=state(noRelease={"movie/10248": "2026-11-14T04:17:00Z"}), requests=[request(11, "movie", 10248, ext=21)],
+                  titles={"/movie/21": {"id": 21, "title": "The Ring Thing", "year": 2004, "tmdbId": 10248, "qualityProfileId": 13}})
+        w.releases = [dict(RELEASES[1], infoUrl="https://thepiratebay.org/description.php?id=1", downloadUrl="http://gluetun/5/download?apikey=k", magnetUrl="magnet:?xt=urn:btih:x"),
+                      dict(RELEASES[1], guid="g2", protocol="usenet", indexer="NZBgeek (Prowlarr)", infoUrl="http://192.168.1.2/details/1", title="The.Ring.Thing.2004.Swiss.720p")]
+        pid = one(w, "no-release")["id"]
+        out = get(w, f"releases?id={pid}")[1]
+        self.assertEqual([(r["link"], r["private"]) for r in out["releases"]], [("https://thepiratebay.org/description.php?id=1", False), (None, True)])
+        text = json.dumps(out)
+        for leak in ("gluetun", "apikey", "magnet", "192.168"):
+            self.assertNotIn(leak, text)
+
+    def test_release_list_shows_what_the_nfo_scout_read(self):
+        reset()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        pathlib.Path(tmp.name, "nfo-scout.json").write_text(json.dumps({"releases": {
+            "NZBgeek|abc": {"title": "The.Ring.Thing.2004.German.720p", "langs": ["Swiss German", "German"], "verdict": "push"},
+            "NZBgeek|def": {"title": "Other.Film.2004", "langs": ["French"]}}}))
+        w = World(rs=state(noRelease={"movie/10248": "2026-11-14T04:17:00Z"}), requests=[request(11, "movie", 10248, ext=21)],
+                  titles={"/movie/21": {"id": 21, "title": "The Ring Thing", "year": 2004, "tmdbId": 10248, "qualityProfileId": 13}})
+        w.releases = RELEASES
+        deps = w.deps()
+        deps.scout_dir = tmp.name
+        pid = dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)[1]["open"][0]["id"]
+        out = dn.handle("GET", f"/_download-now/manual/releases?id={pid}", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)[1]
+        self.assertEqual({r["title"]: r["nfoLangs"] for r in out["releases"]}, {"The.Ring.Thing.2004.German.720p": ["Swiss German", "German"], "The.Ring.Thing.2004.DVDRip": None})
+
+
 if __name__ == "__main__":
     unittest.main()
