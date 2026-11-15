@@ -228,3 +228,14 @@ test("a Next page that renders its menu after hydration still gets the entries",
   assert.equal(links(w).length, 1);
 });
 
+test("Manual count in the sidebar: label stays on one line, the badge sits on the icon's corner, the entry's height never changes", async () => {
+  const w = load("menu-links.js", SIDEBAR + MOBILE, counting(200, { open: 3 }));
+  await settle();
+  const [side, drawer] = manual(w);
+  assert.equal(side.style.whiteSpace, "nowrap");
+  assert.equal(side.style.position, "relative");
+  const b = side.querySelector("[data-hg-count]");
+  assert.equal(b.style.position, "absolute");
+  assert.equal(b.style.marginLeft, "");
+  assert.equal(drawer.querySelector("[data-hg-count]").style.marginLeft, "auto", "phone drawer (full width): badge at the end as before");
+});

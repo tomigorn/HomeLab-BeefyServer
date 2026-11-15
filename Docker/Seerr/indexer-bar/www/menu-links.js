@@ -61,6 +61,7 @@
     else a.setAttribute("aria-label", label);
     tip(a, label);
     a.querySelectorAll("div").forEach(function (d) { d.remove(); });
+    if (a.classList.contains("group")) { a.style.position = "relative"; a.style.whiteSpace = "nowrap"; }
     return a;
   }
 
@@ -143,6 +144,8 @@
       st.background = "#d97706"; st.color = "#fff"; st.borderRadius = "9999px"; st.fontSize = "0.75rem"; st.fontWeight = "600";
       st.lineHeight = "1.25rem"; st.minWidth = "1.25rem"; st.padding = "0 0.375rem"; st.textAlign = "center";
       if (a.classList.contains("flex-col")) { st.position = "absolute"; st.top = "-0.25rem"; st.right = "-0.5rem"; }
+      // sidebar: on the icon's corner, so the label never wraps and the entry keeps its height
+      else if (a.classList.contains("group")) { st.position = "absolute"; st.top = "0.125rem"; st.left = "1.5rem"; st.fontSize = "0.6875rem"; st.lineHeight = "1rem"; st.minWidth = "1rem"; st.padding = "0 0.25rem"; }
       else st.marginLeft = "auto";
       a.appendChild(b);
     }
