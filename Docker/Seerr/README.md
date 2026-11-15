@@ -209,6 +209,7 @@ email) are not set up: Settings -> Notifications.
 | a film or series | **Request**, leave the profile on the default (4K HDR, 1080p fallback) |
 | it now, not tonight | untick **Can wait — download tonight (cheaper power)** ([Can wait](#can-wait)) |
 | it now, at daytime power price (already requested: your own request, or any title for admins) | title page → **⚡ Download now — at daytime power price** ([Download now](#download-now)) |
+| it kept on the server for good | tick **♾️ Keep forever** (old, niche and top-rated titles are ticked already; [Storage retention](#storage-retention)) |
 | an old or niche title | nothing: on add it moves to **4K preferred · older versions allowed** by itself (released ≤ 12 years ago, or ≥ 2 years old with few votes) |
 | force the older-versions profile for a new title | **Advanced** → Quality Profile **4K preferred · older versions allowed** |
 | a must-have audio language | **Advanced** → Tags `audio-<language>`: not grabbed without it |
@@ -656,6 +657,26 @@ Terms combine (all must fit), at most 6, query ≤ 300 characters. A name that f
 | Jellyfin | a change of the file starts `jellyfin-user-lists.path` → `popular.py --user-lists` (release check of the list titles, own budget) → `trending.py`; collections show up in a few minutes. Deleting removes the BoxSet and the placeholders no other list uses, never library items or files |
 | Log | `sudo docker logs seerr-download-now \| grep collections` (saves, deletes, night run) |
 | Tests | `python3 tests/test_collections.py`; JS `collections.test.mjs`, `menu-links.test.mjs`, `bar-early.test.mjs`; browser `tests/test_collections_layout.py` (1280 / 390 px, command in its docstring; screenshots `-e SHOT_DIR`) |
+
+## Storage retention
+
+Modern titles leave the server 90 days after the download, old, niche and top-rated ones stay; rules, stages and the switch: `../Movie-Downloads/README.md` "Storage retention". **Observe mode: the dates are shown, nothing is deleted.**
+
+| Where | What |
+|---|---|
+| Request dialog | ☑ **♾️ Keep forever** (DE **♾️ Für immer behalten**) right below Can wait, preset from the title's state (in the library: its state; not yet: the category default from a Radarr/Sonarr lookup; unknown title: unticked). Changed and the request created (2xx) → stored for that title; unchanged → nothing stored |
+| Title page | facts row **On the server** (DE **Auf dem Server**) after Status / Size / Requested via: pill `🗑 Leaves on 26 Jan 2027` / `♾️ Kept forever` / orange `Leaving soon · 19 Nov` (7 days before), hint box: downloaded, SSD until, HDD from, deleted on or kept because, postponed, observe note; button **♾️ Keep forever** / **Let it leave** when allowed. Titles not in the library yet: no row |
+| Requests rows and cards | the same pill in the Status field (phones: `🗑 26 Jan`, `♾️`, `Leaving soon`), one batch call per page |
+| Collections page (managers) | section **Leaving the server**: counts (kept by reason, temporary, leaving in 7 days), every temporary title by date (size, SSD/HDD, postponed / HDD full / grace), series that would move back to the SSD |
+
+| Part | What |
+|---|---|
+| Who | read: every Seerr session; **Keep forever**: anyone who may request (ADMIN, REQUEST, REQUEST_MOVIE, REQUEST_TV), on any title; **back to temporary**: a requester of the title or ADMIN / MANAGE_REQUESTS (owner's rule in the spec); the test film never changes |
+| Backend | `download-now/retention_api.py`, `/_download-now/retention/`: GET `title?type=&tmdb=`, `titles?keys=movie/1,tv/2` (≤ 100), `list` (ADMIN / MANAGE_REQUESTS); POST `keep` `{type, tmdbId, keep}` with Origin + JSON, body ≤ 1 KiB, every 3 s and 30 per hour per user. Session gate in nginx like the rest |
+| Data | `retention.json` (Movie-Downloads `retention.py`, read-only via `/run/indexer-bar`); choices `/srv/appdata/seerr-retention/keep.json` (rw `/retention`, 65127:buntu 2750, file 0640 + `.bak`, unreadable = never overwritten; per title `keep`, `by` user id, `at`) |
+| Script | `indexer-bar/www/retention.js` (injected last), every text as `textContent`, hints via `tip.js`, EN/DE |
+| Log | `sudo docker logs seerr-download-now \| grep retention` (one line per choice: user id, title, keep / temporary) |
+| Tests | `python3 tests/test_retention_api.py`, `python3 tests/test_retention_rules.py`; JS `retention.test.mjs`; browser `tests/test_retention_layout.py` (1280 / 390 px, command in its docstring) |
 
 ## Delete a title
 
