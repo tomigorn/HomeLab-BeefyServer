@@ -323,12 +323,17 @@ def scan_log(deps):
     return log
 
 
+def runtime_fits(minutes, expected):
+    """A too-big video whose parts scanned clean counts as safe only when its running time is plausible (the checks' ±runtime_warn)."""
+    return bool(minutes and expected) and abs(minutes - expected) / expected <= RULES["runtime_warn"] + 1e-9
+
+
 def virus(deps, path):
     """clean / infected (with signature) / pending (queued for the background scan) / unknown (never scanned, too big, error)."""
     log = scan_log(deps)
     x = log.get(path) or (log.get(os.path.realpath(path)) if isinstance(path, str) else None) or {}
-    state = {"clean": "clean", "infected": "infected", "queued": "pending"}.get(x.get("verdict"), "unknown")
-    if state == "clean":
+    state = {"clean": "clean", "infected": "infected", "queued": "pending", "parts-clean": "parts-clean", "parts-infected": "infected", "parts-error": "parts-error"}.get(x.get("verdict"), "unknown")
+    if state in ("clean", "parts-clean"):
         # "clean" counts only for the very file that was scanned: same size, not changed after the scan
         try:
             st = STAT(path)
@@ -337,7 +342,12 @@ def virus(deps, path):
             fits = False
         if not fits:
             state = "unknown"
-    return {"state": state, "at": x.get("at") if state != "unknown" else None, "signature": str(x.get("signature"))[:120] if state == "infected" and x.get("signature") else None}
+    out = {"state": state, "at": x.get("at") if state != "unknown" else None, "signature": str(x.get("signature"))[:120] if state == "infected" and x.get("signature") else None}
+    if state == "parts-clean":
+        out.update(minutes=x.get("minutes") if is_int(x.get("minutes")) else None, parts=x.get("parts") if is_int(x.get("parts")) else None)
+    if state == "parts-error":
+        out["why"] = str(x.get("why") or "")[:80] or None
+    return out
 
 
 class StoreUnreadable(Exception):
@@ -840,7 +850,7 @@ def files(dn, deps, me, p, q):
         plist = arr("/qualityprofile")
     except Exception:
         title, plist = None, []
-    out, probing = [], time.monotonic()
+    out, probing, expected = [], time.monotonic(), []
     biggest = max(range(len(props)), key=lambda n: props[n].get("size") or 0) if props else None
     for n, x in enumerate(props):
         name = str(x.get("relativePath") or x.get("name") or x["path"]).replace("\\", "/").rsplit("/", 1)[-1]
@@ -855,9 +865,11 @@ def files(dn, deps, me, p, q):
                     "virus": virus(deps, x["path"]),
                     "episodeIds": guess, "probable": bool(guess) if i["kind"] == "tv" else n == biggest})
         qid = ((x.get("quality") or {}).get("quality") or {}).get("id")
-        out[-1]["checks"] = checks(out[-1]["media"], check_context(title, plist, i["kind"], qid, runtime.get(guess[0]) if len(guess) == 1 else None))
+        ctx = check_context(title, plist, i["kind"], qid, runtime.get(guess[0]) if len(guess) == 1 else None)
+        out[-1]["checks"] = checks(out[-1]["media"], ctx)
+        expected.append(ctx["expected"])
     public = {"kind": i["kind"], "files": out, "episodes": [{"id": e["id"], "label": f"S{e.get('seasonNumber') or 0:02d}E{e.get('episodeNumber') or 0:02d}", "title": str(e.get("title") or "")[:80]} for e in episodes]}
-    data = {"props": props, "episodes": {e["id"]: bool(e.get("hasFile")) for e in episodes}, "public": public}
+    data = {"props": props, "episodes": {e["id"]: bool(e.get("hasFile")) for e in episodes}, "public": public, "expected": expected}
     CACHE[("files", p["id"])] = (NOW(), data)
     token = keep(p["id"], "files", me, data)
     return dict(public, token=token)
@@ -1153,9 +1165,10 @@ def do_import(deps, me, admin, p, req):
         if scan["state"] == "infected":
             print(f"manual: user {me.get('id')} import of {p['key']} refused, malware ({scan['signature']})", flush=True)
             raise Refused(403, "malware")
-        if scan["state"] != "clean" and not admin:
+        safe = scan["state"] == "clean" or scan["state"] == "parts-clean" and runtime_fits(scan.get("minutes"), (o.get("expected") or [])[n] if n < len(o.get("expected") or []) else None)
+        if not safe and not admin:
             raise Refused(403, "virus scan pending")
-        if scan["state"] != "clean":
+        if not safe:
             print(f"manual: admin {me.get('id')} imports {p['key']} with virus scan {scan['state']}", flush=True)
         hard = [str(rj.get("reason") if isinstance(rj, dict) else rj) for rj in x.get("rejections") or [] if hard_rejection(rj.get("reason") if isinstance(rj, dict) else rj)]
         entry = {"path": x["path"], "quality": x.get("quality"), "languages": x.get("languages") or [], "releaseGroup": x.get("releaseGroup"),

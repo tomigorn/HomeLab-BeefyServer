@@ -505,3 +505,21 @@ test("release rows: details link at the indexer, account hint, what the NFO says
   assert.equal(b.querySelector("a[data-details-link]"), null);
   assert.doesNotMatch(b.textContent, /account needed|NFO/);
 });
+
+test("too big for the full virus scan: parts scan shown as it is", async () => {
+  const cases = [[{ state: "parts-clean", minutes: 34, parts: 1 }, "⚪ Too big for the full virus scan · ✅ attachments and subtitles scanned clean · ✅ genuine video", "✅ parts scanned clean",
+    "⚪ Zu gross für den vollen Virenscan · ✅ Anhänge und Untertitel sauber · ✅ echtes Video", "✅ Teile sauber"],
+    [{ state: "parts-error", why: "no video stream" }, "⚪ Too big for the full virus scan · ⚠️ parts scan not possible (no video stream): admins only", "⚠️ only partly scannable",
+    "⚪ Zu gross für den vollen Virenscan · ⚠️ Teil-Scan nicht möglich (no video stream): nur Admins", "⚠️ nur teilweise prüfbar"]];
+  for (const [virus, full, short, fullDe, shortDe] of cases) {
+    const p = e09({ details: { reason: "id-match", release: E09, message: BY_ID, virus } });
+    const files = { token: "t", kind: "tv", files: [{ n: 0, name: E09 + ".mkv", size: 2.48e9, episodeIds: [2045], probable: true, rejections: [], virus }], episodes: [{ id: 2045, label: "S01E09", title: "" }] };
+    for (const [body, f, sh] of [[PAGE, full, short], [PAGE.replace(">Series<", ">Serien<"), fullDe, shortDe]]) {
+      const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files } }, undefined, body);
+      assert.equal($("[data-summary]").textContent, sh);
+      $('[data-act="files"]').click();
+      await settle();
+      assert.equal($("[data-list] [data-virus]").textContent, f);
+    }
+  }
+});

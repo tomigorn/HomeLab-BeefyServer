@@ -106,7 +106,9 @@
         size: function (x) { return [gb(x.size) + (x.gbh ? " · " + x.gbh + " GB/h" : ""), x.mark === "warn" ? "very big (over " + x.limit + " GB/h)" : ""]; }
       },
       checksOk: "checks", problemsShort: function (n) { return n + (n === 1 ? " problem" : " problems"); }, notesShort: function (n) { return n + (n === 1 ? " note" : " notes"); },
-      virusShort: { clean: "virus scan clean", pending: "virus scan pending", infected: "malware found", unknown: "not virus-scanned yet" },
+      virusShort: { clean: "virus scan clean", pending: "virus scan pending", infected: "malware found", unknown: "not virus-scanned yet", "parts-clean": "parts scanned clean", "parts-error": "only partly scannable" },
+      tooBig: "Too big for the full virus scan", partsClean: "attachments and subtitles scanned clean", genuine: "genuine video",
+      partsError: function (why) { return "parts scan not possible" + (why ? " (" + why + ")" : "") + ": admins only"; },
       virus: { clean: "Virus scan: clean", pending: "Virus scan pending", infected: "Virus scan: malware found", unknown: "Virus scan: not scanned yet" },
       detailsLink: "Details ↗", account: "🔒 account needed", nfo: "📄 Description/NFO mentions: ",
       noMatch: "No release found for this title — the indexers don't know a version yet.", olderHint: "For an old or rare title, try “Allow older versions” above.",
@@ -174,7 +176,9 @@
         size: function (x) { return [gb(x.size) + (x.gbh ? " · " + x.gbh + " GB/h" : ""), x.mark === "warn" ? "sehr gross (über " + x.limit + " GB/h)" : ""]; }
       },
       checksOk: "Prüfungen", problemsShort: function (n) { return n + (n === 1 ? " Problem" : " Probleme"); }, notesShort: function (n) { return n + (n === 1 ? " Hinweis" : " Hinweise"); },
-      virusShort: { clean: "Virenscan sauber", pending: "Virenscan läuft", infected: "Schadsoftware gefunden", unknown: "noch nicht auf Viren geprüft" },
+      virusShort: { clean: "Virenscan sauber", pending: "Virenscan läuft", infected: "Schadsoftware gefunden", unknown: "noch nicht auf Viren geprüft", "parts-clean": "Teile sauber", "parts-error": "nur teilweise prüfbar" },
+      tooBig: "Zu gross für den vollen Virenscan", partsClean: "Anhänge und Untertitel sauber", genuine: "echtes Video",
+      partsError: function (why) { return "Teil-Scan nicht möglich" + (why ? " (" + why + ")" : "") + ": nur Admins"; },
       virus: { clean: "Virenscan: sauber", pending: "Virenscan läuft noch", infected: "Virenscan: Schadsoftware gefunden", unknown: "Virenscan: noch nicht geprüft" },
       detailsLink: "Details ↗", account: "🔒 Konto nötig", nfo: "📄 Beschreibung/NFO nennt: ",
       noMatch: "Kein Release für diesen Titel gefunden — die Indexer kennen noch keine Version.", olderHint: "Bei einem alten oder seltenen Titel oben «Ältere Versionen erlauben» versuchen.",
@@ -276,13 +280,18 @@
     }
     if (x.virus && typeof x.virus === "object") {
       var v = x.virus;
-      parts.push(v.state === "clean" ? "✅ " + t.virusShort.clean : v.state === "infected" ? "❌ " + t.virusShort.infected + (v.signature ? " (" + String(v.signature) + ")" : "") : "⏳ " + (t.virusShort[v.state] || t.virusShort.unknown));
+      parts.push(v.state === "clean" || v.state === "parts-clean" ? "✅ " + t.virusShort[v.state] : v.state === "infected" ? "❌ " + t.virusShort.infected + (v.signature ? " (" + String(v.signature) + ")" : "")
+        : v.state === "parts-error" ? "⚠️ " + t.virusShort["parts-error"] : "⏳ " + (t.virusShort[v.state] || t.virusShort.unknown));
     }
     return parts.join(" · ");
   }
 
   function virusLine(doc, t, v) {
     if (!v || typeof v !== "object") return null;
+    if (v.state === "parts-clean" || v.state === "parts-error") {
+      var txt = "⚪ " + t.tooBig + " · " + (v.state === "parts-clean" ? "✅ " + t.partsClean + " · ✅ " + t.genuine : "⚠️ " + t.partsError(v.why ? String(v.why) : null));
+      return el(doc, "p", { "class": "hg-m-virus hg-m-virus-" + v.state, "data-virus": true }, txt);
+    }
     var icon = { clean: "✅", infected: "❌" }[v.state] || "⏳", text = t.virus[v.state] || t.virus.unknown;
     if (v.state === "infected" && v.signature) text += " (" + String(v.signature) + ")";
     if (v.state === "clean" && v.at) text += " (" + when(t, v.at) + ")";

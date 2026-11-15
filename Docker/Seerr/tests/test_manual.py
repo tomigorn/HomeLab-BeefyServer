@@ -137,13 +137,13 @@ class World:
         return dn.Deps(seerr=self.seerr, arr=self.arr, qbit=None, sab=None, origins={ORIGIN}, seerr_admin=self.admin,
                        manual_file=str(self.store), request_state_file=str(self.rs_file), clamav_results=str(self.clamav))
 
-    def scanned(self, path, verdict="clean", sig=None, at="2026-11-15T02:00:00Z", size=None):
+    def scanned(self, path, verdict="clean", sig=None, at="2026-11-15T02:00:00Z", size=None, **extra):
         if size is None:
             size = os.path.getsize(path) if os.path.exists(path) else 1
         if not os.path.exists(path):
             FAKE_FILES.setdefault(path, (size, T - DAY))
         with open(self.clamav, "a") as f:
-            f.write(json.dumps({"at": at, "path": path, "size": size, "verdict": verdict, "signature": sig, "mode": "queue"}) + "\n")
+            f.write(json.dumps({"at": at, "path": path, "size": size, "verdict": verdict, "signature": sig, "mode": "queue", **extra}) + "\n")
 
 
 FAKE_FILES = {}
@@ -1209,6 +1209,42 @@ class Virus(unittest.TestCase):
         self.assertEqual((self.files()["state"], self.files()["signature"]), ("infected", "Win.Test.EICAR_HDB-1"))
         self.w.scanned(self.path, "skipped")
         self.assertEqual(self.files()["state"], "unknown")
+
+    def test_too_big_for_clamd_but_parts_clean_and_runtime_fits_imports_for_everyone(self):
+        self.w.titles["/series/54"] = {"id": 54, "title": "Company Retreat", "runtime": 30}
+        self.w.scanned(self.path, "parts-clean", minutes=31, parts=2, video=True)
+        v = self.files()
+        self.assertEqual((v["state"], v["minutes"]), ("parts-clean", 31))
+        self.assertEqual(self.imp()[0], 200)
+
+    def test_parts_clean_with_a_wrong_running_time_is_for_admins(self):
+        self.w.titles["/series/54"] = {"id": 54, "title": "Company Retreat", "runtime": 30}
+        self.w.scanned(self.path, "parts-clean", minutes=60, parts=1, video=True)
+        self.files()
+        self.assertEqual(self.imp(), (403, {"error": "virus scan pending"}))
+        self.w.me = ADMIN
+        self.files()
+        self.assertEqual(self.imp()[0], 200)
+
+    def test_parts_without_a_known_running_time_are_for_admins(self):
+        self.w.scanned(self.path, "parts-clean", minutes=31, parts=1, video=True)
+        self.files()
+        self.assertEqual(self.imp(), (403, {"error": "virus scan pending"}))
+
+    def test_malware_in_the_parts_is_malware(self):
+        self.w.scanned(self.path, "parts-infected", "Win.Test.EICAR_HDB-1")
+        self.w.me = ADMIN
+        self.assertEqual(self.files()["state"], "infected")
+        self.assertEqual(self.imp(), (403, {"error": "malware"}))
+
+    def test_a_failed_parts_scan_is_for_admins(self):
+        self.w.scanned(self.path, "parts-error", why="no video stream")
+        v = self.files()
+        self.assertEqual((v["state"], v["why"]), ("parts-error", "no video stream"))
+        self.assertEqual(self.imp(), (403, {"error": "virus scan pending"}))
+        self.w.me = ADMIN
+        self.files()
+        self.assertEqual(self.imp()[0], 200)
 
     def test_a_replaced_file_is_not_clean_any_more(self):
         self.w.scanned(self.path)
