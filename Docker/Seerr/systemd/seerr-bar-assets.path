@@ -1,0 +1,9 @@
+[Unit]
+Description=New version for the injected Seerr scripts on every change in indexer-bar/www
+Documentation=file:///home/buntu/Projects/Docker/Seerr/README.md
+
+[Path]
+PathChanged=/home/buntu/Projects/Docker/Seerr/indexer-bar/www
+
+[Install]
+WantedBy=multi-user.target

@@ -247,6 +247,7 @@ A thin bar at the top of every Seerr page (everyone who can open Requests sees i
 | Session gate | `usage.json`, `night-waiting.json`, `request-state.json` and `/_download-now/` (not `/health`) need a Seerr session: nginx `auth_request` asks Seerr `GET /api/v1/auth/me` with the caller's own cookie (or `X-Api-Key`/`X-Api-User`), cached 10 s per credentials; none/invalid = 401. The bar scripts render only after a 200, never on `/login`, `/setup`, `/resetpassword`, and re-check after client-side navigation (login without reload). Check: `seerr.data-needs-session` |
 | Shared code | `bar.js` + `bar.css` are one codebase with the requests bar above AudioBookRequest (fastpi, HomeLab-FastPi `Docker/Audiobook-Requests`): canonical here, vendored there unchanged; config = attributes on the `<script>` tag, app wording (disk hints, panel note) comes from `usage.json` (`indexer-usage.py`). Format: `indexer-bar/schema.md`. Change here, run both test suites, then on fastpi `Docker/Audiobook-Requests/scripts/sync-bar.sh` (fastpi's post-update check `books.bar-shared` compares the hashes) |
 | `/_indexer-bar/` | `indexer-bar/www/` (bar.js, bar.css, starting.html, can-wait.js, menu-links.js, night-label.js, download-now.js); `usage.json` and `night-waiting.json` from `/srv/appdata/indexer-bar/` |
+| Caching | every injected URL ends in `?v=<version>` (first 12 hex of sha256 over `www/`, names + contents); that URL is cached a year (`private, max-age=31536000, immutable`: browser only, never a shared cache), any other `?v=` or none `no-cache`; the JSON data stays `no-store`. No manual bump: `systemd/seerr-bar-assets.path` runs `scripts/bar-assets.sh` on every change in `www/`, which writes `/srv/appdata/indexer-bar/asset-version.conf` (`set $hg_v "…";`, included by `nginx.conf`) and reloads seerr-proxy (a second later every page names the new URL). Version: `scripts/bar-assets.sh version`. Check `seerr.asset-cache` |
 | Collector | `scripts/indexer-usage.py` as buntu, `systemd/indexer-usage.timer` every minute: Prowlarr `GET /api/v1/indexer` + `/api/v1/history/since`, counts queries + RSS (searches) and grabs (downloads) per indexer in its window; Bazarr `/api/providers`, `/api/system/jobs`, `/api/movies/history`, `/api/episodes/history` and the provider accounts (below) for the subtitle chips. Writes names and counts only, no keys, no queries, no titles |
 | Subtitles | one chip per Bazarr provider in `limits.toml` `[subtitles.*]`, per UTC day (resets 00:00 UTC = 01:00 CET). **SubDL**: requests and downloads used / limit, exact from SubDL's `GET /api/v1/me` (works with the free key; does not count as a request), every 5 min. **OpenSubtitles**: downloads used / allowed, exact from `/api/v1/infos/user` every 10 min (login token kept 12 h), VIP = ★; red with "download limit reached, retry …" while Bazarr pauses it (`/api/providers`). Downloads are the higher of the account count and Bazarr's history (provider, actions downloaded/manual/upgraded), so new downloads show within a minute. Account down or no key: SubDL ≈ searches / 2000 (estimate: Bazarr's finished search jobs, movie ≈ 1 request, episode ≈ 3), OpenSubtitles downloads from the history without a limit. Bazarr down: "Subtitle usage unavailable", indexers unaffected |
 | Subtitle keys | `scripts/subtitle-keys.py` copies the SubDL key and the OpenSubtitles login + the API key Bazarr uses (from Bazarr's config and `get_providers.py`, needs sudo) to `secrets/indexer-bar/` (`subdl.apikey`, `opensubtitles.json`, 0400, gitignored). Re-run after changing a key/password in Bazarr or a Bazarr update (`seerr.bar-subtitle-accounts` fails). Bazarr key `../Movie-Downloads/secrets/hook/bazarr.apikey` (read only). State: `~/.local/state/indexer-bar/subtitle-searches.json` (hashed job ids and counts), `subtitle-accounts.json` (0600, cached numbers + OpenSubtitles token). Errors log only the HTTP status, never a credential |
@@ -278,16 +279,17 @@ Install (once):
 ```bash
 sudo install -d -o buntu -g buntu -m 0755 /srv/appdata/indexer-bar
 sudo install -m 0644 systemd/indexer-usage.service systemd/indexer-usage.timer /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now indexer-usage.timer
+sudo install -m 0644 systemd/seerr-bar-assets.path systemd/seerr-bar-assets.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now indexer-usage.timer seerr-bar-assets.path && sudo systemctl start seerr-bar-assets.service
 sudo docker compose up -d
 ```
 
 | Check | Command |
 |---|---|
-| Tests | `python3 tests/test_indexer_usage.py`, `python3 tests/test_subtitle_keys.py`; JS `node --test` in `tests/js` (`bar*.test.mjs`) |
+| Tests | `python3 tests/test_indexer_usage.py`, `python3 tests/test_subtitle_keys.py`, `bash tests/test_bar_assets.sh`; JS `node --test` in `tests/js` (`bar*.test.mjs`) |
 | Browser test | once `sudo docker build --network host -t seerr-bar-test:local tests/browser-image`, then `sudo docker run --rm --network none -v $PWD:/w:ro -w /w seerr-bar-test:local python3 tests/test_bar_layout.py` (screenshots: `-e SHOT_DIR=/shots -v <dir>:/shots`) |
 | Subtitle keys | `scripts/subtitle-keys.py` (once, and after a key change in Bazarr) |
-| Injected | `curl -sL localhost:5055/ \| grep _indexer-bar` |
+| Injected | `curl -sL localhost:5055/ \| grep _indexer-bar` (each with `?v=` = `scripts/bar-assets.sh version`) |
 | Data | `scripts/indexer-usage.py && python3 -m json.tool /srv/appdata/indexer-bar/usage.json \| head` |
 | Timer | `systemctl list-timers indexer-usage.timer; journalctl -u indexer-usage -n 5` |
 

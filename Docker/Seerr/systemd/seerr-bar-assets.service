@@ -1,0 +1,11 @@
+[Unit]
+Description=Version of the injected Seerr scripts (sha256 of indexer-bar/www) for seerr-proxy, reload on a change
+Documentation=file:///home/buntu/Projects/Docker/Seerr/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+Group=buntu
+SupplementaryGroups=docker
+ExecStart=/home/buntu/Projects/Docker/Seerr/scripts/bar-assets.sh
