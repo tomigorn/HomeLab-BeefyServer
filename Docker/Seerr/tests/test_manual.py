@@ -2043,7 +2043,7 @@ class ImportedByHand(unittest.TestCase):
         self.later(60)
         problems(self.w)
         self.assertEqual(self.stored()["resolved"]["how"], "imported")
-        self.assertEqual(self.w.writes, [("radarr", "DELETE", "/queue/31?removeFromClient=false&blocklist=false&skipRedownload=true", None)])
+        self.assertEqual(self.w.writes, [("radarr", "DELETE", "/queue/31?removeFromClient=true&blocklist=false&skipRedownload=true", None)])
         self.later(3 * 3600)
         out = problems(self.w)
         self.assertEqual(out["open"], [])
@@ -2061,7 +2061,7 @@ class ImportedByHand(unittest.TestCase):
         problems(self.w)
         r = self.stored()
         self.assertEqual((r["resolved"]["how"], [a["action"] for a in r["actions"]]), ("import", ["import"]))
-        self.assertIn(("radarr", "DELETE", "/queue/31?removeFromClient=false&blocklist=false&skipRedownload=true", None), self.w.writes)
+        self.assertIn(("radarr", "DELETE", "/queue/31?removeFromClient=true&blocklist=false&skipRedownload=true", None), self.w.writes)
 
     def test_movie_file_imported_counts_too(self):
         self.imported(event="movieFileImported")
@@ -2095,8 +2095,8 @@ class ImportedByHand(unittest.TestCase):
         w.episodes[1]["hasFile"] = True
         manual.CACHE.clear()
         self.assertEqual(problems(w)["open"], [])
-        self.assertEqual(w.writes, [("sonarr", "DELETE", "/queue/1?removeFromClient=false&blocklist=false&skipRedownload=true", None),
-                                    ("sonarr", "DELETE", "/queue/2?removeFromClient=false&blocklist=false&skipRedownload=true", None)])
+        self.assertEqual(w.writes, [("sonarr", "DELETE", "/queue/1?removeFromClient=true&blocklist=false&skipRedownload=true", None),
+                                    ("sonarr", "DELETE", "/queue/2?removeFromClient=true&blocklist=false&skipRedownload=true", None)])
 
 
 if __name__ == "__main__":

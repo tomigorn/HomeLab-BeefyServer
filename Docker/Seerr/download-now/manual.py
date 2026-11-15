@@ -59,8 +59,8 @@ GRACE = 1800
 RELEASE_TIMEOUT = 120
 DECLINED, FAILED_REQUEST = 3, 4
 IMPORT_EVENTS = {"downloadFolderImported", "movieFileImported", "episodeFileImported"}
-# a leftover queue entry of a download imported by hand: gone from the queue only, never blocklisted, the client's copy left to the usual cleanup
-STALE_QUEUE = "removeFromClient=false&blocklist=false&skipRedownload=true"
+# a leftover queue entry of a download imported by hand (only once the library has the file): removed with its client copy like queue-watchdog's KEEP, never blocklisted
+STALE_QUEUE = "removeFromClient=true&blocklist=false&skipRedownload=true"
 PROBLEM_STATES = {"importBlocked", "importFailed", "failedPending", "failed"}
 FAILED_STATES = {"failedPending", "failed"}
 PID = re.compile(r"^[0-9a-f]{12}$")
