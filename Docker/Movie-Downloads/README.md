@@ -1123,7 +1123,7 @@ Radarr/Sonarr read languages only from the release name, so `MULTi` = the origin
 |---|---|
 | `~/.local/state/movie-downloads/nfo-scout.log` | every decision (also `journalctl -u nfo-scout`) |
 | `/srv/appdata/{radarr,sonarr}/dub-only.json` | dub-only list for the guard: in the app's `/config` (already mounted, read by the guard like `guard-events/`), no new mount, no restart; scripts/ is the git-tracked read-only code mount, not for state. Env `NS_RADARR_DUB_ONLY` / `NS_SONARR_DUB_ONLY` |
-| `~/.local/state/movie-downloads/nfo-scout.json` | per release (`<indexer>\|<id>`): `langs`/`none`/`skip`/`failed`, languages, pushed, approved; `abbr\|<indexer>\|<id>`: language-code candidates; call counters, unsupported/refused indexers. Delete an entry to re-check it |
+| `~/.local/state/movie-downloads/nfo-scout.json` | per release (`<indexer>\|<id>`): `langs`/`none`/`skip`/`failed`, languages, `lines` (the up to 5 NFO lines that named them, for Seerr's Manual interaction), pushed, approved; `abbr\|<indexer>\|<id>`: language-code candidates; `ondemand`: reads for Seerr (below); call counters, unsupported/refused indexers. Delete an entry to re-check it |
 
 ```bash
 cd ~/Projects/Docker/Movie-Downloads/systemd
@@ -1178,6 +1178,29 @@ Verified 2026-11-15 (`/parse`, nothing pushed):
 | Radarr, *Ikiru* (Japanese) | `Ikiru.1952.1080p.BluRay.JPN.ENG.FLAC.x264-GRP` | English, −49997250 | Japanese, English, 5002751 |
 | Radarr, *Chungking Express* (Chinese) | `…1994.2160p.UHD.BluRay.CHI.ENG.GER.DTS-HD.MA.HDR.x265-GRP` | English, German, −79997250 | + Chinese, 27002751 |
 | Radarr, *Decision to Leave* (Korean) | `…2022.2160p.WEB-DL.ITA-KOR-ENG.DDP5.1.HDR.H.265-GRP` | Italian, Korean, English | Radarr reads `KOR`: no candidate |
+
+### Scout requests
+
+Seerr's Manual interaction shows per release what the scouts read ("📄 NFO: …", "📄 Description: …", the matching lines) and offers **Read description** for one not read yet (Seerr README "Manual interaction"). The indexer keys and FlareSolverr stay here: Seerr's `download-now` only writes a request file.
+
+| Part | What |
+|---|---|
+| Request | `/srv/appdata/seerr-scout-requests/<16 hex>.req` (JSON: indexer, protocol, guid, infoUrl, title, Seerr user id; folder 65127:buntu 2770); answer `<id>.result.json` (`done` + languages, `refused` + why, `failed` + why), kept 7 days |
+| Runner | `scripts/scout-requests.py`, started by `systemd/scout-requests.path` when a `.req` appears (`scout-requests.service`: buntu, sandboxed like nfo-scout, FlareSolverr URL resolved as root first like description-scout); waits while `nfo-scout` or `description-scout` run (same state files) |
+| Usenet | NZBgeek / NzbPlanet / Treasure Maps through the NFO scout's own `languages()` (t=details / t=getnfo, its `Budget`: Treasure Maps 50 calls per 24 h and below 70 % of its window, refused/unsupported indexers, call delay) → `nfo-scout.json` `releases` with `langs` + `lines` |
+| Torrents | TPB, Knaben→TPB, 1337x pages through the description scout's fetch (FlareSolverr in the VPN): languages from the NFO parser plus the description scout's `DS_LANGUAGES` regex (Swiss German) → `description-scout.json` `read\|<btih>` (`langs`, `lines`); the scout's own `btih:` verdicts are untouched |
+| Limits | on top of the scouts' own: `SR_NFO_DAY` 30 NFO reads and `SR_DESC_DAY` 30 description reads per 24 h (`ondemand` in each state file); used up → "daily limit reached, try tomorrow". Seerr: at most 5 waiting reads per user, 30 in all |
+| Log | `~/.local/state/movie-downloads/scout-requests.log`, `journalctl -u scout-requests` |
+
+```bash
+sudo install -d -o 65127 -g buntu -m 2770 /srv/appdata/seerr-scout-requests
+cd ~/Projects/Docker/Movie-Downloads/systemd
+sudo install -m 0644 scout-requests.service scout-requests.path /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now scout-requests.path
+python3 ../tests/test_scout_requests.py
+```
+
+- Verified 2026-11-15: *The Ring Thing* `The.Ring.Thing.2004.PLDUB.DVDRiP.XviD-CNS` (TPB) read on demand in 2 s: "AUDiO LANGUAGE..: Polish".
 
 ### Subtitles (Bazarr)
 

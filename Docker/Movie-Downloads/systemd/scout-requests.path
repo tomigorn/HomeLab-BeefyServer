@@ -1,0 +1,10 @@
+[Unit]
+Description=Seerr Manual interaction asked to read a release's NFO or description
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Path]
+PathExistsGlob=/srv/appdata/seerr-scout-requests/*.req
+Unit=scout-requests.service
+
+[Install]
+WantedBy=multi-user.target

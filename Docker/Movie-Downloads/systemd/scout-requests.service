@@ -1,0 +1,38 @@
+[Unit]
+Description=Read one release's NFO or description on demand (Seerr Manual interaction), within the scouts' limits
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+RuntimeDirectory=scout-requests
+ExecStartPre=+/home/buntu/Projects/Docker/Movie-Downloads/scripts/description-scout.py --resolve-flaresolverr /run/scout-requests/flaresolverr
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/scout-requests.py
+# waits up to 30 min while nfo-scout or description-scout run
+TimeoutStartSec=40min
+NoNewPrivileges=true
+PrivateTmp=true
+# Parses indexer NFO and description text (untrusted): buntu, sandboxed; writes only the scouts' state dir and the request folder.
+ReadWritePaths=/home/buntu/.local/state/movie-downloads /srv/appdata/seerr-scout-requests
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources

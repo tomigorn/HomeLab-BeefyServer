@@ -126,14 +126,23 @@ def key_kind(key, block):
     return "other"
 
 
-def audio_languages(text):
-    """Audio languages an NFO names (Radarr/Sonarr names, in order): values of audio/language keys, their indented continuation lines and MediaInfo audio blocks; subtitle parts are dropped."""
+LINES_MAX, LINE_LEN = 5, 160
+
+
+def audio_languages(text, lines=None):
+    """Audio languages an NFO names (Radarr/Sonarr names, in order): values of audio/language keys, their indented continuation lines and MediaInfo audio blocks; subtitle parts are dropped.
+    lines: a list that gets the (at most 5) lines that named them, cut to 160 characters, for Seerr's Manual interaction."""
     found, block, section, section_indent = [], None, None, -1
+    current = [""]
 
     def collect(s):
+        named = False
         for name in words_to_languages(without_subtitles(s)):
+            named = True
             if name not in found:
                 found.append(name)
+        if named and lines is not None and len(lines) < LINES_MAX and current[0] not in lines:
+            lines.append(current[0])
 
     for raw in (text or "").splitlines():
         line = ANSI.sub("", raw).replace("\t", "    ")
@@ -142,6 +151,7 @@ def audio_languages(text):
             section = None
             continue
         indent, body = first.start(), line[first.start():].rstrip()
+        current[0] = body[:LINE_LEN]
         head = MEDIAINFO_HEADER.fullmatch(body.casefold())
         if head:
             block = "audio" if head.group(1) == "audio" else "sub" if head.group(1) == "text" else "other"
@@ -562,7 +572,12 @@ class Scout:
         self.last_call[idx] = time.monotonic()
         try:
             body = self.fetch(idx, source, gid)
-            langs = details_languages(body, gid) if source == "details" else audio_languages(nfo_text(body, gid))
+            lines = []
+            if source == "details":
+                langs = details_languages(body, gid)
+                lines = [f"Language: {', '.join(langs)}"] if langs else []
+            else:
+                langs = audio_languages(nfo_text(body, gid), lines)
         except Unsupported as e:
             self.unsupported[idx] = {"at": self.now, "why": str(e), "function": source}
             self.save()
@@ -580,7 +595,7 @@ class Scout:
             self.log(f"{name}: '{r['title']}' ({idx}): t={source} failed ({errors}/{MAX_ERRORS}): {e}")
             return None
         verdict = "langs" if len(langs) >= 2 else "none"
-        self.releases[key] = {"verdict": verdict, "langs": langs, "title": r["title"], "source": source, "at": time.strftime("%Y-%m-%d", time.localtime(self.now))}
+        self.releases[key] = {"verdict": verdict, "langs": langs, "lines": lines, "title": r["title"], "source": source, "at": time.strftime("%Y-%m-%d", time.localtime(self.now))}
         self.save()
         self.log(f"{name}: '{r['title']}' ({idx}, {source}): audio {', '.join(langs) or 'not named'}" + ("" if verdict == "langs" else ", not pushed"))
         return langs if verdict == "langs" else None

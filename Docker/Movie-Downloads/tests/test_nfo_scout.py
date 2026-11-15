@@ -56,6 +56,36 @@ DETAILS = ('<rss><channel><item><title>A.Separation.2011.MULTi.1080p.BluRay.x264
 GID = "abcdef0123456789abcdef0123456789"
 
 
+class Lines(unittest.TestCase):
+    def test_the_lines_that_named_audio_languages(self):
+        lines = []
+        text = "Video ....: 1080p\n  AUDIO ....: German, English\n  SUBS .....: French\nRuntime: 90 min\n"
+        self.assertEqual(nfo.audio_languages(text, lines), ["German", "English"])
+        self.assertEqual(lines, ["AUDIO ....: German, English"])
+
+    def test_at_most_five_lines_each_cut(self):
+        lines = []
+        nfo.audio_languages("\n".join(f"Audio {n}: German " + "x" * 300 for n in range(9)), lines)
+        self.assertEqual(len(lines), 5)
+        self.assertTrue(all(len(l) <= 160 for l in lines))
+
+    def test_scout_keeps_the_lines_with_the_languages(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = pathlib.Path(d) / "state.json"
+            fetch = lambda idx, fn, gid: RSS_NFO
+            s = nfo.Scout(None, None, None, fetch, state, lambda m: None, usage=usage(), now=NOW)
+            s.languages("x", {"indexer": "NzbPlanet", "title": "X.2011.MULTi.1080p-GRP"}, GID, "NzbPlanet|" + GID)
+            entry = json.loads(state.read_text())["releases"]["NzbPlanet|" + GID]
+            self.assertEqual((entry["langs"], entry["lines"]), (["Persian", "French"], ["AUDIO ....: Persian, French"]))
+
+    def test_details_answer_keeps_a_language_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = pathlib.Path(d) / "state.json"
+            s = nfo.Scout(None, None, None, lambda idx, fn, gid: DETAILS, state, lambda m: None, usage=usage(), now=NOW)
+            s.languages("x", {"indexer": "NZBgeek", "title": "A.Separation"}, GID, "NZBgeek|" + GID)
+            self.assertEqual(json.loads(state.read_text())["releases"]["NZBgeek|" + GID]["lines"], ["Language: French, Persian"])
+
+
 class Answers(unittest.TestCase):
     def test_getnfo_rss(self):
         self.assertEqual(nfo.nfo_text(RSS_NFO, GID).strip().splitlines()[0].strip(), "AUDIO ....: Persian, French")
