@@ -21,6 +21,8 @@ RECENT = {}
 LOOKUPS = {}
 LOOKUP_TTL = 600
 LOOKUP_MAX = 500
+LOOKUP_PER_MIN = 20
+LOOKUP_HITS = {}
 LOCK = threading.Lock()
 now_ts = time.time
 
@@ -53,6 +55,8 @@ def read_doc(path):
 def read_store(path):
     p = pathlib.Path(path)
     if not p.exists():
+        if p.with_name(p.name + ".bak").exists():
+            raise StoreUnreadable("missing while its .bak exists")
         return {"titles": {}}
     try:
         data = json.loads(p.read_text())
@@ -64,25 +68,50 @@ def read_store(path):
 
 
 def overrides(path):
+    """{key | tvdb/<id>: keep}; a series choice also counts for its TVDB id (Seerr and Sonarr may disagree on the TMDB id)."""
     try:
         titles = read_store(path)["titles"]
     except StoreUnreadable:
         return {}
-    return {k: v["keep"] for k, v in titles.items() if isinstance(v, dict) and isinstance(v.get("keep"), bool)}
+    out = {}
+    for k, v in titles.items():
+        if isinstance(v, dict) and isinstance(v.get("keep"), bool):
+            out[k] = v["keep"]
+            if isinstance(v.get("tvdb"), int) and v["tvdb"] > 0:
+                out.setdefault(f"tvdb/{v['tvdb']}", v["keep"])
+    return out
+
+
+def override_for(ovs, key, entry):
+    if key in ovs:
+        return ovs[key]
+    tvdb = (entry or {}).get("tvdb")
+    return ovs.get(f"tvdb/{tvdb}") if tvdb else None
 
 
 def write_store(path, data):
+    """The store is never missing: new content to a temp file (fsync), the old file hard-linked to .bak, then the temp file atomically over it."""
     p = pathlib.Path(path)
-    if p.exists():
-        try:
-            os.replace(p, p.with_name(p.name + ".bak"))
-        except OSError:
-            pass
     fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".keep-")
     with os.fdopen(fd, "w") as f:
         json.dump(data, f, indent=1, sort_keys=True)
+        f.flush()
+        os.fsync(f.fileno())
     os.chmod(tmp, 0o640)
+    if p.exists():
+        link = p.with_name(f".keep-bak-{os.getpid()}-{threading.get_ident()}")
+        try:
+            os.unlink(link)
+        except FileNotFoundError:
+            pass
+        os.link(p, link)
+        os.replace(link, p.with_name(p.name + ".bak"))
     os.replace(tmp, p)
+    d = os.open(p.parent, os.O_RDONLY)
+    try:
+        os.fsync(d)
+    finally:
+        os.close(d)
 
 
 def enabled_on(doc):
@@ -90,6 +119,40 @@ def enabled_on(doc):
         return datetime.date.fromisoformat(doc["enabledOn"]) if doc.get("deleteEnabled") and doc.get("enabledOn") else None
     except (TypeError, ValueError):
         return None
+
+
+def tvdb_of(media):
+    for v in (((media or {}).get("externalIds") or {}).get("tvdbId"), ((media or {}).get("mediaInfo") or {}).get("tvdbId")):
+        if isinstance(v, int) and not isinstance(v, bool) and v > 0:
+            return v
+    return None
+
+
+def find_entry(doc, kind, tmdb, media):
+    """(retention.json key, entry): by Seerr's TMDB id, a series also by its TVDB id."""
+    k = rr.key(kind, tmdb)
+    if isinstance(doc["titles"].get(k), dict):
+        return k, doc["titles"][k]
+    tvdb = tvdb_of(media) if kind == "tv" else None
+    if tvdb:
+        for key, e in doc["titles"].items():
+            if isinstance(e, dict) and e.get("kind") == "tv" and e.get("tvdb") == tvdb:
+                return key, e
+    return k, None
+
+
+def is_kept(deps, key):
+    """True unless the title is known and temporary: unknown titles, unreadable data and the test film count as kept (for other backends that would delete files)."""
+    try:
+        doc = json.loads(pathlib.Path(deps.retention_file).read_text())
+        entry = doc["titles"].get(key)
+        ovs = overrides(deps.retention_keep)
+        read_store(deps.retention_keep)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, StoreUnreadable):
+        return True
+    if not isinstance(entry, dict) or rr.protected(key, []):
+        return True
+    return rr.effective(entry, override_for(ovs, key, entry), datetime.date.today())["keep"]
 
 
 def card(entry, override, today, since):
@@ -102,12 +165,18 @@ def year_of(media, kind):
     return int(s[:4]) if s[:4].isdigit() else None
 
 
-def lookup_default(dn, deps, kind, tmdb, media, today):
-    """reasons for a title not in the library yet: Radarr/Sonarr lookup (IMDb rating, votes, year; cached 10 min), else the year from Seerr."""
+def lookup_default(dn, deps, kind, tmdb, media, today, uid=None):
+    """reasons for a title not in the library yet: Radarr/Sonarr lookup (IMDb rating, votes, year; cached 10 min, LOOKUP_PER_MIN uncached per user), else the year from Seerr."""
     k, t = rr.key(kind, tmdb), now_ts()
     hit = LOOKUPS.get(k)
     if hit and t - hit[0] < LOOKUP_TTL:
         return hit[1]
+    with LOCK:
+        recent = [x for x in LOOKUP_HITS.get(uid, []) if t - x < 60]
+        over = len(recent) >= LOOKUP_PER_MIN
+        LOOKUP_HITS[uid] = recent if over else recent + [t]
+    if over:
+        return rr.reasons(kind, year_of(media, kind), today.year)
     why = _lookup(dn, deps, kind, tmdb, media, today)
     with LOCK:
         if len(LOOKUPS) >= LOOKUP_MAX:
@@ -138,14 +207,15 @@ def _lookup(dn, deps, kind, tmdb, media, today):
 def title_state(dn, deps, me, kind, tmdb, media, today, lookup=True):
     doc = read_doc(deps.retention_file)
     k = rr.key(kind, tmdb)
-    ov = overrides(deps.retention_keep).get(k)
-    entry = doc["titles"].get(k)
-    out = {"key": k, "known": isinstance(entry, dict), "deleteEnabled": bool(doc.get("deleteEnabled")), "updated": doc.get("updated")}
+    ek, entry = find_entry(doc, kind, tmdb, media)
+    ovs = overrides(deps.retention_keep)
+    ov = ovs.get(k) if k in ovs else override_for(ovs, ek, entry if entry else {"tvdb": tvdb_of(media) if kind == "tv" else None})
+    out = {"key": k, "entryKey": ek, "known": isinstance(entry, dict), "deleteEnabled": bool(doc.get("deleteEnabled")), "updated": doc.get("updated")}
     if out["known"]:
         out.update({f: entry.get(f) for f in ("imported", "ssdUntil", "hddFrom", "tier", "reasons", "default")})
         out.update(card(entry, ov, today, enabled_on(doc)))
     else:
-        why = lookup_default(dn, deps, kind, tmdb, media, today) if lookup else rr.reasons(kind, year_of(media, kind), today.year)
+        why = lookup_default(dn, deps, kind, tmdb, media, today, me.get("id")) if lookup else rr.reasons(kind, year_of(media, kind), today.year)
         out.update(reasons=why, default=bool(why))
         out.update(card({"default": bool(why), "due": None, "protected": rr.protected(k, [])}, ov, today, None))
     locked = out["source"] == "protected"
@@ -173,7 +243,7 @@ def full_list(deps, today):
     for k, e in doc["titles"].items():
         if not isinstance(e, dict) or not rr.parse_key(k):
             continue
-        st = rr.effective(e, ovs.get(k), today, since)
+        st = rr.effective(e, override_for(ovs, k, e), today, since)
         counts["titles"] += 1
         counts["keep" if st["keep"] else "temporary"] += 1
         for r in e.get("reasons") or []:
@@ -220,7 +290,10 @@ def keep(dn, deps, me, req, auth, today):
         except StoreUnreadable as e:
             print(f"retention: keep store unreadable ({e}), not written", flush=True)
             return 503, {"error": "store"}
-        store["titles"][k] = {"keep": want, "by": me["id"], "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
+        rec = {"keep": want, "by": me["id"], "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
+        if kind == "tv" and tvdb_of(media):
+            rec["tvdb"] = tvdb_of(media)
+        store["titles"][k] = rec
         write_store(deps.retention_keep, store)
     print(f"retention: user {me['id']} set {k} to {'keep forever' if want else 'temporary'}", flush=True)
     return 200, title_state(dn, deps, me, kind, tmdb, media, today)
@@ -266,7 +339,7 @@ def handle(dn, method, path, headers, body, deps, today=None):
             return 400, {"error": "too many keys"}
         doc = read_doc(deps.retention_file)
         ovs, since = overrides(deps.retention_keep), enabled_on(doc)
-        out = {k: card(doc["titles"][k], ovs.get(k), today, since) for k in keys if rr.parse_key(k) and isinstance(doc["titles"].get(k), dict)}
+        out = {k: card(doc["titles"][k], override_for(ovs, k, doc["titles"][k]), today, since) for k in keys if rr.parse_key(k) and isinstance(doc["titles"].get(k), dict)}
         return 200, {"titles": out, "deleteEnabled": bool(doc.get("deleteEnabled"))}
     w = wanted(url)
     if not w:

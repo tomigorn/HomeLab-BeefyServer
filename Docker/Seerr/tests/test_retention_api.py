@@ -32,7 +32,8 @@ DOC = {"updated": "2026-12-20T10:00:00+01:00", "deleteEnabled": False, "enabledO
            "movie/10": {"t": "New Film", "y": 2025, "kind": "movie", "imported": "2026-10-01", "ssdUntil": "2026-10-31", "hddFrom": "2026-10-31", "due": "2026-12-30", "default": False, "reasons": [], "protected": False, "tier": "hdd", "size": 2**34, "postponed": None},
            "movie/11": {"t": "Old Film", "y": 1980, "kind": "movie", "imported": "2026-10-01", "ssdUntil": "2026-10-31", "hddFrom": "2026-10-31", "due": "2026-12-30", "default": True, "reasons": ["old"], "protected": False, "tier": "hdd", "size": 2**33, "postponed": None},
            "movie/653": {"t": "Nosferatu", "y": 1922, "kind": "movie", "imported": "2026-10-01", "ssdUntil": "2026-10-31", "hddFrom": "2026-10-31", "due": "2026-12-30", "default": True, "reasons": ["old"], "protected": True, "tier": "ssd", "size": 2**30, "postponed": None},
-           "tv/20": {"t": "New Show", "y": 2025, "kind": "tv", "imported": "2026-12-01", "ssdUntil": "2026-12-31", "hddFrom": "2026-12-31", "due": "2027-03-01", "default": False, "reasons": [], "protected": False, "tier": "ssd", "size": 2**35, "postponed": "in-progress"},
+           "tv/20": {"t": "New Show", "y": 2025, "kind": "tv", "imported": "2026-12-01", "ssdUntil": "2026-12-31", "hddFrom": "2026-12-31", "due": "2027-03-01", "default": False, "reasons": [], "protected": False, "tier": "ssd", "size": 2**35, "postponed": "in-progress", "tvdb": 4020},
+           "tv/21": {"t": "Other Ids", "y": 2025, "kind": "tv", "imported": "2026-12-01", "ssdUntil": "2026-12-31", "hddFrom": "2026-12-31", "due": "2027-03-01", "default": False, "reasons": [], "protected": False, "tier": "ssd", "size": 2**33, "postponed": None, "tvdb": 4021},
        },
        "promote": [{"key": "tv/20", "title": "New Show", "seasons": [2], "played": "2026-12-20T09:00:00Z"}]}
 
@@ -54,7 +55,7 @@ class World:
         self.data.write_text(json.dumps(DOC))
         self.keep = self.d / "store" / "keep.json"
         self.keep.parent.mkdir()
-        self.media = {"movie/10": media("movie", 10, [7]), "movie/11": media("movie", 11, [5], "1980-01-01"), "tv/20": media("tv", 20, [7]),
+        self.media = {"movie/10": media("movie", 10, [7]), "movie/11": media("movie", 11, [5], "1980-01-01"), "tv/20": media("tv", 20, [7], tvdb=4020), "tv/22": media("tv", 22, [7], tvdb=4021),
                       "movie/30": media("movie", 30, [], "2000-03-03"), "movie/653": media("movie", 653, [1], "1922-03-04"), "tv/40": media("tv", 40, [], "2024-01-01", tvdb=4040)}
         self.arr_calls = []
 
@@ -96,6 +97,7 @@ class Base(unittest.TestCase):
         self.w = World(self.tmp.name)
         ra.RECENT.clear()
         ra.LOOKUPS.clear()
+        ra.LOOKUP_HITS.clear()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -175,10 +177,83 @@ class List(Base):
         self.assertEqual(self.w.get("jane", "list")[0], 403)
         code, r = self.w.get("admin", "list")
         self.assertEqual(code, 200)
-        self.assertEqual([i["key"] for i in r["items"]], ["movie/10", "tv/20"])
-        self.assertEqual(r["counts"], {"titles": 4, "keep": 2, "temporary": 2, "old": 2, "niche": 0, "goated": 0, "override": 0, "protected": 1, "soon": 0})
+        self.assertEqual([i["key"] for i in r["items"]], ["movie/10", "tv/21", "tv/20"])
+        self.assertEqual(r["counts"], {"titles": 5, "keep": 2, "temporary": 3, "old": 2, "niche": 0, "goated": 0, "override": 0, "protected": 1, "soon": 0})
         self.assertEqual(r["promote"][0]["seasons"], [2])
         self.assertFalse(r["deleteEnabled"])
+
+
+class Series(Base):
+    def test_title_found_by_tvdb_when_seerr_and_sonarr_disagree_on_tmdb(self):
+        r = self.w.get("jane", "title?type=tv&tmdb=22")[1]
+        self.assertEqual((r["known"], r["key"], r["entryKey"]), (True, "tv/22", "tv/21"))
+
+    def test_override_found_by_tvdb(self):
+        self.w.keep.write_text(json.dumps({"titles": {"tv/99": {"keep": True, "tvdb": 4020}}}))
+        r = self.w.get("jane", "title?type=tv&tmdb=20")[1]
+        self.assertEqual((r["state"], r["source"]), ("keep", "override"))
+        self.assertEqual(self.w.get("jane", "titles?keys=tv/20")[1]["titles"]["tv/20"]["state"], "keep")
+
+    def test_keep_stores_the_tvdb_id_with_the_series(self):
+        self.assertEqual(self.w.post("jane", {"type": "tv", "tmdbId": 20, "keep": True})[0], 200)
+        self.assertEqual(json.loads(self.w.keep.read_text())["titles"]["tv/20"], {"keep": True, "tvdb": 4020, "by": 7, "at": json.loads(self.w.keep.read_text())["titles"]["tv/20"]["at"]})
+
+
+class Store(Base):
+    def test_write_never_leaves_a_moment_without_the_file_and_keeps_a_backup(self):
+        self.w.keep.write_text(json.dumps({"titles": {"movie/1": {"keep": True}}}))
+        seen, real_replace, real_rename, synced = [], ra.os.replace, ra.os.rename, []
+        def replace(a, b):
+            seen.append(self.w.keep.exists())
+            return real_replace(a, b)
+        def rename(a, b):
+            raise AssertionError("rename")
+        ra.os.replace, ra.os.rename = replace, rename
+        real_fsync = ra.os.fsync
+        ra.os.fsync = lambda fd: (synced.append(fd), real_fsync(fd))
+        try:
+            ra.write_store(self.w.keep, {"titles": {"movie/2": {"keep": False}}})
+        finally:
+            ra.os.replace, ra.os.rename, ra.os.fsync = real_replace, real_rename, real_fsync
+        self.assertTrue(seen and all(seen))
+        self.assertTrue(synced)
+        self.assertEqual(json.loads(self.w.keep.read_text())["titles"], {"movie/2": {"keep": False}})
+        self.assertEqual(json.loads(self.w.keep.with_name("keep.json.bak").read_text())["titles"], {"movie/1": {"keep": True}})
+        self.assertEqual(stat.S_IMODE(os.stat(self.w.keep).st_mode), 0o640)
+
+    def test_first_write_has_no_backup(self):
+        ra.write_store(self.w.keep, {"titles": {}})
+        self.assertFalse(self.w.keep.with_name("keep.json.bak").exists())
+
+    def test_missing_store_with_a_backup_is_not_written(self):
+        self.w.keep.with_name("keep.json.bak").write_text(json.dumps({"titles": {}}))
+        self.assertEqual(self.w.post("jane", {"type": "movie", "tmdbId": 10, "keep": True})[0], 503)
+        self.assertFalse(self.w.keep.exists())
+
+
+class Kept(Base):
+    def test_kept_titles_for_other_backends(self):
+        self.assertTrue(ra.is_kept(self.w.deps, "movie/11"))
+        self.assertTrue(ra.is_kept(self.w.deps, "movie/653"))
+        self.assertFalse(ra.is_kept(self.w.deps, "movie/10"))
+        self.assertTrue(ra.is_kept(self.w.deps, "movie/999"))
+        self.w.keep.write_text(json.dumps({"titles": {"movie/10": {"keep": True}}}))
+        self.assertTrue(ra.is_kept(self.w.deps, "movie/10"))
+        self.w.data.write_text("{")
+        self.assertTrue(ra.is_kept(self.w.deps, "movie/10"))
+
+
+class Lookups(Base):
+    def test_uncached_default_lookups_are_rate_limited_per_user(self):
+        self.w.media["movie/31"] = media("movie", 31, [], "2000-01-01")
+        old, ra.LOOKUP_PER_MIN = ra.LOOKUP_PER_MIN, 1
+        try:
+            self.w.get("jane", "title?type=movie&tmdb=30&default=1")
+            r = self.w.get("jane", "title?type=movie&tmdb=31&default=1")[1]
+        finally:
+            ra.LOOKUP_PER_MIN = old
+        self.assertEqual(len(self.w.arr_calls), 1)
+        self.assertEqual(r["reasons"], ["old"])
 
 
 class Keep(Base):
