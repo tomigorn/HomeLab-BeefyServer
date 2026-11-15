@@ -101,7 +101,7 @@ services:
 # /_download-now/ here; every call is checked against Seerr (admin / manage-requests, or the caller's own request).
 # Holds the Radarr/Sonarr/SABnzbd keys (secrets/download-now, scripts/download-now-setup.sh); qBittorrent
 # lets 172.28.10.205 in without a password. Publishes nothing. Also the Manual interaction backend
-# (README "Manual interaction"): reads request-state.json, keeps its problem list in the state volume.
+# (README "Manual interaction"): reads request-state.json, keeps its problem list in the state volume. And the Collections backend (README "Collections").
   download-now:
     # python alpine + ffprobe (Manual interaction reads resolution, codecs, audio and subtitle tracks of finished downloads)
     build:
@@ -128,6 +128,7 @@ services:
       - DN_CLAMAV_RESULTS=/run/clamav/clamav-results.jsonl
       - DN_SCOUT_DIR=/run/scouts
       - DN_SCOUT_REQUESTS=/run/scout-requests
+      - DN_COLLECTIONS=/collections/lists.json
     volumes:
       - ./download-now:/app:ro
       - ./secrets/download-now:/run/secrets/download-now:ro
@@ -146,6 +147,8 @@ services:
       - /home/buntu/.local/state/movie-downloads:/run/scouts:ro
       # "Read description": request files for Movie-Downloads' scout-requests runner (65127:buntu 2770); the indexer keys stay with the runner
       - /srv/appdata/seerr-scout-requests:/run/scout-requests
+      # Collections (README "Collections"): the own lists, read by Jellyfin's popular.py as buntu (65127:buntu 2750, lists.json 0640)
+      - /srv/appdata/seerr-collections:/collections
     networks:
       seerr-front: {}
       movie-downloads:
