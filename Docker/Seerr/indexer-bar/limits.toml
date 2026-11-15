@@ -34,6 +34,7 @@ name = "Treasure Maps"
 kind = "indexer"
 expires = 2031-11-17
 
+# Eweka good price: Black Friday deal €37.50 for 15 months (= €2.50/month) in 2024 and 2025, starts early November, ends early December; regular ~€6/month (€71.88/year). Often new customers only.
 [[subscriptions]]
 name = "Eweka"
 kind = "Usenet provider"
