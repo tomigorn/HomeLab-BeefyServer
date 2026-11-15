@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Trending sync: fills the hidden libraries "Trending items" (films: movie.nfo, poster.jpg, fanart.jpg, clips as hard links) and "Trending shows" (series: tvshow.nfo, art, clips as Season 00 episodes) with one placeholder folder per listed title not in the library, keeps the 37 collections (BoxSets tagged hss-trending) in step,
+"""Trending sync: fills the hidden libraries "Trending items" (films: movie.nfo, poster.jpg and landscape.jpg with the "Not downloaded yet" band, fanart.jpg, clips as hard links) and "Trending shows" (series: tvshow.nfo, art, clips as Season 00 episodes) with one placeholder folder per listed title not in the library, keeps the 37 collections (BoxSets tagged hss-trending) in step,
 writes the request index for the TV hook (/srv/appdata/jellyfin-popular/trending-index.json) and the JavaScript Injector entry "Trending hidden" (window.HssTrendingHide).
 Inputs: lists.json, coming-list.json, details.json, coming.json, Seerr media (read only), request-state.json. Never prints API keys.
-Exit 0 ok, 1 inputs stale (> 9 days) or Jellyfin error (published state kept), 2 usage. Usage: trending.py [--dry-run]"""
+--check-band (read only): a sample of placeholders must serve a Primary and a Thumb with the "Not downloaded yet" band, owned titles a Primary without it.
+Exit 0 ok, 1 inputs stale (> 9 days), Jellyfin error (published state kept) or band check failed, 2 usage. Usage: trending.py [--dry-run | --check-band [--sample N]]"""
 import argparse
 import base64
 import contextlib
@@ -282,9 +283,10 @@ def desired(ph, images, logos, today=None):
     base = images.get("w780", poster_path(ph))
     marks = with_logos(ph.marks, logos)
     date = tm.date_label(ph.coming_date, ph.coming_ep, today) if today else None
-    out["poster.jpg"] = KEEP if base is Images.FAILED or marks is None else art.poster(base, ph.badge, ph.title, marks, date)
+    out["poster.jpg"] = KEEP if base is Images.FAILED or marks is None else art.poster(base, ph.badge, ph.title, marks, date, placeholder=True)
     back = images.get("w1280", (ph.info or {}).get("b"))
     out["fanart.jpg"] = KEEP if back is Images.FAILED else art.fanart(back)
+    out["landscape.jpg"] = KEEP if back is Images.FAILED else art.thumb(back, ph.title)
     return out
 
 
@@ -898,15 +900,69 @@ def signalled(path, since):
         return False
 
 
+def spread(items, n):
+    """At most n items, evenly spaced over the list."""
+    if len(items) <= n:
+        return list(items)
+    return [items[i * len(items) // n] for i in range(n)]
+
+
+def served(io, iid, kind):
+    try:
+        return io.jf_raw("GET", f"/Items/{iid}/Images/{kind}", None, "image/jpeg")
+    except FAILURES:
+        return None
+
+
+def check_band(io, paths, log, sample):
+    """Read only: (placeholders banded, thumbs banded, real items clean) over a sample; returns 0 when all hold."""
+    folders = io.jf("GET", "/Library/VirtualFolders")
+    lib_ids = {k: tm.library_id(folders, tm.LIBRARIES[k]) for k in KINDS}
+    if not all(lib_ids.values()):
+        log("band bad: a trending library is missing")
+        return 1
+    phs = []
+    for kind in KINDS:
+        top = [i for i in listing(io, lib_ids[kind], kind) if i["Type"] in ("Movie", "Series")]
+        phs += spread(sorted(top, key=lambda i: i.get("Path") or ""), sample)
+    have = owned(io, lib_ids["movie"])
+    marked = set((read_json(paths.state).get("real") or {}))
+    reals = sorted(have.values(), key=lambda i: (i not in marked, i))[:sample]
+    banded = thumbs = clean = 0
+    for i in phs:
+        name = folder_of(i["Path"]) or pathlib.PurePosixPath(i["Path"]).name
+        for kind, label in (("Primary", "no band"), ("Thumb", "no banded thumb")):
+            if art.has_band(served(io, i["Id"], kind)):
+                banded, thumbs = (banded + 1, thumbs) if kind == "Primary" else (banded, thumbs + 1)
+            else:
+                log(f"{label}: {name}")
+    for i in reals:
+        if art.has_band(served(io, i, "Primary")):
+            log(f"real item banded: {i}")
+        else:
+            clean += 1
+    ok = phs and banded == thumbs == len(phs) and clean == len(reals)
+    log(f"band {'ok' if ok else 'bad'}: placeholders {banded}/{len(phs)}, thumbs {thumbs}/{len(phs)}, real items clean {clean}/{len(reals)}")
+    return 0 if ok else 1
+
+
 def main(argv=None, io=None, paths=None, now=None, out=None):
     out = out or sys.stdout
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true", help="print what would change, write nothing")
+    ap.add_argument("--check-band", action="store_true", help="read only: sampled placeholders carry the Not downloaded yet band, owned titles do not")
+    ap.add_argument("--sample", type=int, default=6, help="placeholders per library and owned titles checked by --check-band (default 6)")
     try:
         args = ap.parse_args(argv)
     except SystemExit as e:
         return 2 if e.code else 0
     io, paths = io or Io(), paths or Paths()
+    if args.check_band:
+        try:
+            return check_band(io, paths, lambda m: print(m, file=out, flush=True), max(1, args.sample))
+        except (JellyfinError, *FAILURES) as e:
+            print(f"band bad: {type(e).__name__}: {e}", file=out, flush=True)
+            return 1
     clock = (lambda: now) if now else (lambda: datetime.datetime.now(datetime.timezone.utc))
 
     def log(msg):

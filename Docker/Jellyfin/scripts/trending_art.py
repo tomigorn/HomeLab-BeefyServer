@@ -9,8 +9,10 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 SANS = "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
 EMOJI = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
+NARROW = "/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Bold.ttf"
 W, H = 600, 900
 BW, BH = 1920, 1080
+TW, TH = 1280, 720
 WHITE = (255, 255, 255)
 RED = (200, 24, 24)
 GREEN = (34, 160, 80)
@@ -401,6 +403,8 @@ def badge_none(im, p0=(0, H), p1=(W, 0), size=50, centre=None):
 
 # Low and flat band of a title-only poster, the title above it.
 LOW_BAND = ((-60, 846), (660, 534))
+# Low band of a title-only placeholder, kept above the "Not downloaded yet" band.
+LOW_BAND_ABOVE = ((-60, 760), (660, 560))
 # Steep band left of the mark stack, clear of the title art at the bottom of a poster.
 STEEP_BAND = ((-100, 926), (290, -80))
 STEEP_TEXT = (135, 318)
@@ -513,16 +517,17 @@ def date_font(label):
     return DATE_FONTS[-1]
 
 
-def date_box(label):
-    """Bottom-left pill of the release date, below the mark stack and the state pill."""
+def date_box(label, placeholder=False):
+    """Bottom-left pill of the release date, below the mark stack and the state pill; on a placeholder above its band."""
     w = 14 + DATE_ICON + 12 + round(font(date_font(label)).getlength(label)) + 24
-    return (22, DATE_BOTTOM - DATE_H, 22 + w, DATE_BOTTOM)
+    bottom = H - BAND_H - 12 if placeholder else DATE_BOTTOM
+    return (22, bottom - DATE_H, 22 + w, bottom)
 
 
-def date_pill(im, label):
+def date_pill(im, label, placeholder=False):
     layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
-    x0, y0, x1, y1 = date_box(label)
+    x0, y0, x1, y1 = date_box(label, placeholder)
     d.rounded_rectangle((x0, y0, x1, y1), radius=DATE_H // 2, fill=PILL)
     icon = emoji(CALENDAR, DATE_ICON)
     if icon is not None:
@@ -531,7 +536,64 @@ def date_pill(im, label):
     return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
 
 
-def title_box(badge, n_marks=0):
+BAND_H, TBAND_H, BAND_ACCENT_H, BAND_TEXT = 128, 150, 8, "Not downloaded yet"
+BAND_FILL = (8, 8, 12, 224)
+BAND_ACCENT = (255, 183, 3)
+
+
+def band_font(room, biggest):
+    """The largest narrow bold size up to biggest that fits room."""
+    for size in range(biggest, 30, -2):
+        if font(size, NARROW).getlength(BAND_TEXT) <= room:
+            return font(size, NARROW)
+    return font(30, NARROW)
+
+
+def band(im, h=BAND_H):
+    """Bottom band of a placeholder, h high: amber top edge, dark translucent fill, a white circle with a down arrow and "Not downloaded yet"."""
+    w, ih = im.size
+    layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    y0 = ih - h
+    d.rectangle((0, y0, w, ih), fill=BAND_FILL)
+    d.rectangle((0, y0, w, y0 + BAND_ACCENT_H - 1), fill=BAND_ACCENT + (255,))
+    cy = y0 + BAND_ACCENT_H + (h - BAND_ACCENT_H) // 2
+    r = round(h * 0.27)
+    cx = 24 + r
+    d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=WHITE)
+    arrow_down(d, cx, cy - 1, round(r * 1.18), (16, 16, 20))
+    d.text((cx + r + 18, cy + 1), BAND_TEXT, font=band_font(w - cx - r - 18 - 24, round(h * 0.55)), fill=WHITE, anchor="lm")
+    return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
+
+
+def has_band(data):
+    """True when the poster or thumb carries the placeholder band (any size or format the server serves)."""
+    try:
+        im = Image.open(io.BytesIO(data)).convert("RGB")
+    except Exception:
+        return False
+    w, h, bh = (TW, TH, TBAND_H) if im.width > im.height else (W, H, BAND_H)
+    im = im.resize((w, h), Image.BILINEAR)
+    y0 = h - bh
+    r, g, b = (sum(c) / len(c) for c in zip(*im.crop((40, y0 + 2, w - 40, y0 + BAND_ACCENT_H - 2)).getdata()))
+    dark = sum(sum(p) for p in im.crop((0, y0 + 16, 14, h)).getdata()) / (14 * (bh - 16))
+    return r > 200 and 140 < g < 225 and b < 90 and dark < 210
+
+
+def thumb(back, title):
+    """16:9 Thumb of a placeholder: its backdrop (the title on a dark gradient without one) with the "Not downloaded yet" band."""
+    pic = decode(back)
+    if pic is not None:
+        im = cover(pic, (TW, TH))
+    else:
+        im = gradient((TW, TH), (45, 52, 72), (14, 16, 24))
+        draw_text_block(ImageDraw.Draw(im), title, (80, 60, TW - 80, TH - TBAND_H - 40), 80)
+    return to_jpeg(band(im, TBAND_H))
+
+
+def title_box(badge, n_marks=0, placeholder=False):
+    if n_marks and placeholder:
+        return (110, 620, 460, H - BAND_H - 12)
     if n_marks:
         return (100, 700, W - 40, 880)
     if badge != "none":
@@ -546,11 +608,11 @@ def title_poster(title, box=(50, 250, W - 50, 650)):
     return im
 
 
-def poster(base, badge, title, marks=(), date=None):
-    """Placeholder or library poster: state pill top left, red band when not downloadable, marks = [(list key, rank, logo bytes)] stacked on the right, date = release date label bottom left."""
+def poster(base, badge, title, marks=(), date=None, placeholder=False):
+    """Placeholder or library poster: state pill top left, red band when not downloadable, marks = [(list key, rank, logo bytes)] stacked on the right, date = release date label bottom left; a placeholder gets the "Not downloaded yet" band at the bottom."""
     marks = list(marks or ())
     pic = decode(base)
-    im = cover(pic, (W, H)) if pic is not None else title_poster(title, title_box(badge, len(marks)))
+    im = cover(pic, (W, H)) if pic is not None else title_poster(title, title_box(badge, len(marks), placeholder))
     if badge == "found":
         im = badge_pill(im, "Download", "arrow", (255, 255, 255), (16, 16, 20))
     elif badge == "requested":
@@ -561,11 +623,13 @@ def poster(base, badge, title, marks=(), date=None):
         if marks:
             im = badge_none(im, *STEEP_BAND, centre=STEEP_TEXT)
         elif pic is None:
-            im = badge_none(im, *LOW_BAND, size=44)
+            im = badge_none(im, *(LOW_BAND_ABOVE if placeholder else LOW_BAND), size=44)
         else:
             im = badge_none(im)
     im = mark_stack(im, marks)
-    return to_jpeg(date_pill(im, date) if date else im)
+    if date:
+        im = date_pill(im, date, placeholder)
+    return to_jpeg(band(im) if placeholder else im)
 
 
 def fanart(base):

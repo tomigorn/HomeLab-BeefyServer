@@ -218,6 +218,91 @@ class Art(unittest.TestCase):
             px = rgb_pixels(im.crop((170, 720, 580, 880)))
             self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, marks)
 
+    def test_placeholder_band_at_the_bottom_readable_from_the_sofa(self):
+        y0 = ta.H - ta.BAND_H
+        self.assertGreaterEqual(ta.BAND_H, 110)
+        self.assertLessEqual(ta.BAND_H, 160)
+        for colour in ((0, 0, 0), (255, 255, 255), (90, 120, 160), (230, 180, 20)):
+            for badge, marks, date in ((None, [], None), ("found", [HOME1], None), ("requested", [], "Thu 5 Nov"), ("downloading", [HOME1, HORROR3, NETFLIX5, COMEDY7, HOME10], None), ("none", [], None), ("none", [HOME1, HORROR3], "Wed 4 Nov · S01E05")):
+                plain = load(ta.poster(img(colour), badge, "Title", marks, date)).convert("RGB")
+                data = ta.poster(img(colour), badge, "Title", marks, date, placeholder=True)
+                im = load(data).convert("RGB")
+                case = (colour, badge, len(marks), date)
+                self.assertTrue(ta.has_band(data), case)
+                self.assertLess(sum(mean(im, (0, y0 + 12, 14, ta.H))), 3 * 70, case)
+                text = [(x, y) for y in range(y0 + 8, ta.H) for x in range(0, ta.W, 2) if min(im.getpixel((x, y))) > 225]
+                self.assertGreater(len(text), 1500, case)
+                xs, ys = [x for x, _ in text], [y for _, y in text]
+                self.assertGreaterEqual(max(xs) - min(xs), 440, case)
+                self.assertGreaterEqual(max(ys) - min(ys), 44, case)
+                self.assertGreaterEqual(min(xs), 16, case)
+                self.assertLessEqual(max(xs), ta.W - 16, case)
+                top = (0, 0, ta.W, 560)
+                diff = max(max(abs(a - b) for a, b in zip(p, q)) for p, q in zip(rgb_pixels(im.crop(top)), rgb_pixels(plain.crop(top))))
+                self.assertLess(diff, 14, case)
+
+    def test_band_says_not_downloaded_yet(self):
+        self.assertEqual(ta.BAND_TEXT, "Not downloaded yet")
+
+    def test_only_placeholders_get_the_band(self):
+        for colour in ((0, 0, 0), (255, 255, 255), (20, 22, 28), (255, 183, 3)):
+            for badge, marks, date in ((None, [], None), (None, [HOME1, HORROR3], "Wed 4 Nov · S01E05"), ("found", [], None), ("none", [HOME1], None)):
+                self.assertFalse(ta.has_band(ta.poster(img(colour), badge, "Title", marks, date)), (colour, badge))
+        self.assertFalse(ta.has_band(b"not an image"))
+        self.assertFalse(ta.has_band(None))
+
+    def test_band_is_found_after_the_server_scales_or_recompresses(self):
+        data = ta.poster(img((240, 240, 240)), "found", "Title", [HOME1], placeholder=True)
+        for size in ((300, 450), (600, 900), (1000, 1500)):
+            for fmt in ("JPEG", "WEBP"):
+                out = io.BytesIO()
+                load(data).convert("RGB").resize(size, Image.LANCZOS).save(out, fmt, quality=70)
+                self.assertTrue(ta.has_band(out.getvalue()), (size, fmt))
+
+    def test_placeholder_thumb_carries_the_band_for_focused_landscape_cards(self):
+        for back in (img(size=(1280, 720)), img((255, 255, 255), (780, 439)), None, b"not an image"):
+            data = ta.thumb(back, "A Title")
+            im = load(data).convert("RGB")
+            self.assertEqual((load(data).format, im.size), ("JPEG", (ta.TW, ta.TH)))
+            self.assertTrue(ta.has_band(data))
+            y0 = ta.TH - ta.TBAND_H
+            text = [(x, y) for y in range(y0 + 8, ta.TH) for x in range(0, ta.TW, 3) if min(im.getpixel((x, y))) > 225]
+            xs, ys = [x for x, _ in text], [y for _, y in text]
+            self.assertGreaterEqual(max(xs) - min(xs), 500)
+            self.assertGreaterEqual(max(ys) - min(ys), 54)
+        self.assertFalse(ta.has_band(ta.fanart(img(size=(1280, 720)))))
+        self.assertGreater(len(set(load(ta.thumb(None, "A Title")).convert("L").crop((0, 0, ta.TW, 400)).tobytes())), 20)
+
+    def test_placeholder_poster_is_rendered_from_the_original_each_time(self):
+        a = ta.poster(img(), "found", "Title", [HOME1], placeholder=True)
+        self.assertEqual(a, ta.poster(img(), "found", "Title", [HOME1], placeholder=True))
+
+    def test_placeholder_date_pill_and_title_sit_above_the_band(self):
+        y0 = ta.H - ta.BAND_H
+        for label in ("Thu 5 Nov", "Wed 29 Sep 2027 · S12E104"):
+            x0, by0, x1, by1 = ta.date_box(label, placeholder=True)
+            self.assertLessEqual(by1, y0 - 8)
+            self.assertGreaterEqual(by1 - by0, 70)
+            for bx0, mby0, bx1, mby1 in ta.mark_boxes([1, 3, 5, 7]):
+                self.assertLess(mby1, by0)
+            self.assertEqual(ta.date_box(label), ta.date_box(label, placeholder=False))
+        for badge in (None, "found", "none"):
+            for n in (0, 1, 5):
+                self.assertLessEqual(ta.title_box(badge, n, placeholder=True)[3], y0 - 8, (badge, n))
+            self.assertEqual(ta.title_box(badge, 1), ta.title_box(badge, 1, placeholder=False))
+
+    def test_unavailable_title_poster_with_band_keeps_the_title_clear(self):
+        title = "A Very Long Unmatched Movie Title That Wraps Around"
+        for marks in ([], [HOME1, HORROR3, NETFLIX5, COMEDY7, HOME10]):
+            im = load(ta.poster(None, "none", title, marks, placeholder=True)).convert("RGB")
+            x0, y0, x1, y1 = ta.title_box("none", len(marks), placeholder=True)
+            boxes = ta.mark_boxes([m[1] for m in marks[:4]]) + ([ta.plus_box(len(marks) - 4, 4)] if len(marks) > 4 else [])
+            for bx0, by0, bx1, by1 in boxes:
+                self.assertTrue(bx1 < x0 or bx0 > x1 or by1 < y0 or by0 > y1, marks)
+            px = rgb_pixels(im.crop((x0, y0, x1, y1)))
+            self.assertEqual(sum(1 for r, g, b in px if r > 150 and g < 80 and b < 80), 0, marks)
+            self.assertGreater(sum(1 for p in px if min(p) > 230), 500, marks)
+
     def test_fanart_and_tile(self):
         self.assertIsNone(ta.fanart(None))
         self.assertIsNone(ta.fanart(b"not an image"))

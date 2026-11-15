@@ -212,6 +212,16 @@ class FakeIo:
             self.uploads += 1
             self.tags[i] = f"up{self.uploads}"
             return b""
+        m = re.fullmatch(r"/Items/(\w+)/Images/(Primary|Thumb)", path)
+        if m and method == "GET":
+            name = "poster.jpg" if m.group(2) == "Primary" else "landscape.jpg"
+            for i in self.library + [x for x in self.tv if x["Type"] == "Series"]:
+                if i["Id"] == m.group(1):
+                    root, rel = (self.paths.shows, i["Path"][len(tr.JF_SHOWS) + 1:]) if i["Type"] == "Series" else (self.paths.library, i["Path"][len(tr.JF_PATH) + 1:].split("/")[0])
+                    f = root / rel / name
+                    if not f.is_file():
+                        raise urllib.error.HTTPError(path, 404, "not found", {}, None)
+                    return f.read_bytes()
         self.images[path] = data
         return b""
 
@@ -296,8 +306,8 @@ class Desired(unittest.TestCase):
         coming = {"items": [{"d": "c5", "date": "2026-11-04", "kind": "tv", "ref": "tv/5", "tmdb": 5, "s": 1, "e": 5}]}
         p = tm.plan({"home": {"movies": [], "shows": []}, "rows": []}, coming, {"c5": {"t": {"en": "Gamma"}, "ref": "tv/5"}}, {}, {})
         ph = next(iter(p.placeholders.values()))
-        self.assertEqual(tr.desired(ph, self.NoImages(), {}, datetime.date(2026, 10, 30))["poster.jpg"], tr.art.poster(None, ph.badge, "Gamma", [], "Wed 4 Nov · S01E05"))
-        self.assertEqual(tr.desired(ph, self.NoImages(), {}, datetime.date(2026, 11, 5))["poster.jpg"], tr.art.poster(None, ph.badge, "Gamma", []))
+        self.assertEqual(tr.desired(ph, self.NoImages(), {}, datetime.date(2026, 10, 30))["poster.jpg"], tr.art.poster(None, ph.badge, "Gamma", [], "Wed 4 Nov · S01E05", placeholder=True))
+        self.assertEqual(tr.desired(ph, self.NoImages(), {}, datetime.date(2026, 11, 5))["poster.jpg"], tr.art.poster(None, ph.badge, "Gamma", [], placeholder=True))
 
     def test_poster_carries_the_rank_and_unranked_posters_are_unchanged(self):
         lists = {"home": {"movies": [entry(1, 4, "Ranked")], "shows": []},
@@ -306,17 +316,43 @@ class Desired(unittest.TestCase):
         by = {ph.title: ph for ph in p.placeholders.values()}
         ranked, plain = by["Ranked"], by["Plain"]
         logos = {"home-movies": None, "service-8-movie": None}
-        self.assertEqual(tr.desired(ranked, self.NoImages(), logos)["poster.jpg"], tr.art.poster(None, ranked.badge, "Ranked", [("home-movies", 4, None)]))
-        self.assertNotEqual(tr.desired(ranked, self.NoImages(), logos)["poster.jpg"], tr.art.poster(None, ranked.badge, "Ranked"))
-        self.assertEqual(tr.desired(plain, self.NoImages(), logos)["poster.jpg"], tr.art.poster(None, plain.badge, "Plain", [("service-8-movie", 1, None)]))
+        self.assertEqual(tr.desired(ranked, self.NoImages(), logos)["poster.jpg"], tr.art.poster(None, ranked.badge, "Ranked", [("home-movies", 4, None)], placeholder=True))
+        self.assertNotEqual(tr.desired(ranked, self.NoImages(), logos)["poster.jpg"], tr.art.poster(None, ranked.badge, "Ranked", placeholder=True))
+        self.assertEqual(tr.desired(plain, self.NoImages(), logos)["poster.jpg"], tr.art.poster(None, plain.badge, "Plain", [("service-8-movie", 1, None)], placeholder=True))
         self.assertIs(tr.desired(plain, self.NoImages(), {"service-8-movie": tr.Images.FAILED})["poster.jpg"], tr.KEEP)
+
+    def test_every_placeholder_poster_and_thumb_carry_the_band(self):
+        lists = {"home": {"movies": [entry(1, 4, "Found"), entry(2, 5, "None", found=False)], "shows": [show(3, 1, "Show")]}, "rows": []}
+        coming = {"items": [{"d": "c5", "date": "2026-11-04", "kind": "movie", "ref": "movie/5", "tmdb": 5}]}
+        p = tm.plan(lists, coming, {"c5": {"t": {"en": "Coming"}, "ref": "movie/5"}}, {}, {})
+        self.assertEqual(len(p.placeholders), 4)
+        for ph in p.placeholders.values():
+            out = tr.desired(ph, self.NoImages(), {"home-movies": None, "home-shows": None}, datetime.date(2026, 10, 30))
+            self.assertTrue(tr.art.has_band(out["poster.jpg"]), ph.title)
+            self.assertTrue(tr.art.has_band(out["landscape.jpg"]), ph.title)
+
+    def test_thumb_from_the_cached_backdrop_and_kept_when_its_download_failed(self):
+        class Back:
+            def __init__(self, data):
+                self.data = data
+
+            def get(self, size, path):
+                return self.data if size == "w1280" else None
+        p = tm.plan({"home": {"movies": [entry(1, 1, "Alpha")], "shows": []}, "rows": []}, {"items": []}, {"d1": {"t": {"en": "Alpha"}, "b": "/b1.jpg", "ref": "movie/1"}}, {}, {})
+        ph = next(iter(p.placeholders.values()))
+        back = jpeg((1, 200, 1))
+        out = tr.desired(ph, Back(back), {"home-movies": None})
+        self.assertEqual(out["landscape.jpg"], tr.art.thumb(back, ph.title))
+        self.assertEqual(out["fanart.jpg"], tr.art.fanart(back))
+        self.assertFalse(tr.art.has_band(out["fanart.jpg"]))
+        self.assertIs(tr.desired(ph, Back(tr.Images.FAILED), {"home-movies": None})["landscape.jpg"], tr.KEEP)
 
 
 class SyncTest(Base):
     def test_writes_folder_files_and_hardlinks(self):
         self.assertEqual(self.run_sync(), 0, self.out)
         a = self.folder("Alpha")
-        for f in ("movie.nfo", "poster.jpg", "fanart.jpg"):
+        for f in ("movie.nfo", "poster.jpg", "fanart.jpg", "landscape.jpg"):
             self.assertTrue((a / f).is_file(), f)
         self.assertIn("<sorttitle>01-01 Alpha</sorttitle>", (a / "movie.nfo").read_text())
         now, night = a / "Alpha (2026) - ⬇ Download movie now.mp4", a / "Alpha (2026) - 🌙 Download movie tonight · lower power cost.mp4"
@@ -329,6 +365,28 @@ class SyncTest(Base):
         self.assertFalse((self.paths.library / "Owned (2026)").exists())
         self.assertEqual(oct(os.stat(a / "movie.nfo").st_mode & 0o777), "0o644")
         self.assertNotIn("sort title not applied", self.out)
+
+    def test_placeholder_art_is_drawn_from_the_untouched_cache(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        cache = {f: f.read_bytes() for f in self.paths.cache.iterdir()}
+        self.assertTrue(cache)
+        self.assertFalse(any(tr.art.has_band(b) for b in cache.values()))
+        self.assertTrue(tr.art.has_band((self.folder("Alpha") / "poster.jpg").read_bytes()))
+        poster = (self.folder("Alpha") / "poster.jpg").read_bytes()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual({f: f.read_bytes() for f in self.paths.cache.iterdir()}, cache)
+        self.assertEqual((self.folder("Alpha") / "poster.jpg").read_bytes(), poster)
+
+    def test_title_leaving_the_library_becomes_a_banded_placeholder_again(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse((self.paths.library / "Owned (2026)").exists())
+        self.io.owned = []
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertTrue(tr.art.has_band((self.paths.library / "Owned (2026)" / "poster.jpg").read_bytes()))
+        self.io.owned = [{"Id": "real9", "Type": "Movie", "ProviderIds": {"Tmdb": "9"}, "Path": "/media/movies/Owned (2026)/Owned.mkv", "ParentId": "movies"}]
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertFalse((self.paths.library / "Owned (2026)").exists())
+        self.assertFalse(tr.art.has_band(self.io.primary["real9"]))
 
     def test_second_run_changes_nothing(self):
         self.assertEqual(self.run_sync(), 0, self.out)
@@ -577,7 +635,7 @@ class SyncTest(Base):
         self.assertEqual(self.run_sync(), 0, self.out)
         d = self.show_dir("Delta")
         self.assertFalse((self.paths.library / "Delta (2026)").exists())
-        for f in ("tvshow.nfo", "poster.jpg", "fanart.jpg"):
+        for f in ("tvshow.nfo", "poster.jpg", "fanart.jpg", "landscape.jpg"):
             self.assertTrue((d / f).is_file(), f)
         self.assertFalse((d / "movie.nfo").exists())
         nfo = (d / "tvshow.nfo").read_text()
@@ -680,9 +738,9 @@ class SyncTest(Base):
         self.assertEqual(self.run_sync(), 0, self.out)
         d = self.paths.shows / "Instadocs AI Gone Wild"
         self.assertFalse((self.paths.library / "Instadocs AI Gone Wild").exists())
-        self.assertEqual(sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file()), ["Season 00/S00E01.mp4", "Season 00/S00E01.nfo", "poster.jpg", "tvshow.nfo"])
+        self.assertEqual(sorted(p.relative_to(d).as_posix() for p in d.rglob("*") if p.is_file()), ["Season 00/S00E01.mp4", "Season 00/S00E01.nfo", "landscape.jpg", "poster.jpg", "tvshow.nfo"])
         self.assertEqual(os.stat(d / "Season 00" / "S00E01.mp4").st_ino, os.stat(self.paths.clips / "unavailable.mp4").st_ino)
-        self.assertEqual((d / "poster.jpg").read_bytes(), tr.art.poster(None, "none", "Instadocs: AI Gone Wild", [("home-shows", 3, None)]))
+        self.assertEqual((d / "poster.jpg").read_bytes(), tr.art.poster(None, "none", "Instadocs: AI Gone Wild", [("home-shows", 3, None)], placeholder=True))
         nfo = (d / "tvshow.nfo").read_text()
         self.assertIn("<title>Instadocs: AI Gone Wild</title>", nfo)
         self.assertIn(f"<plot>{tm.PREFIX['none']}</plot>", nfo)
@@ -798,6 +856,7 @@ class RealArt(Base):
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual((self.paths.originals / "real9.jpg").read_bytes(), self.ORIGINAL)
         self.assertEqual(self.io.primary["real9"], self.badged())
+        self.assertFalse(tr.art.has_band(self.io.primary["real9"]))
         self.assertEqual(oct(os.stat(self.paths.originals / "real9.jpg").st_mode & 0o777), "0o644")
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertFalse(any("/Images/" in c[1] for c in self.writes()))
@@ -912,6 +971,47 @@ class RealArt(Base):
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(self.io.primary["real9"], self.ORIGINAL)
         self.assertIn("originals folder missing", self.out)
+
+
+class BandCheck(Base):
+    def check(self):
+        self.io.calls = []
+        out = io.StringIO()
+        rc = tr.main(["--check-band"], io=self.io, paths=self.paths, now=NOW, out=out)
+        self.out = out.getvalue()
+        self.assertEqual([c for c in self.io.calls if c[0] != "GET"], [])
+        return rc
+
+    def test_placeholders_banded_and_real_items_clean(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertEqual(self.check(), 0, self.out)
+        self.assertRegex(self.out.strip().splitlines()[-1], r"^band ok: placeholders 5/5, thumbs 5/5, real items clean 1/1$")
+
+    def test_a_placeholder_without_the_band_fails(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        (self.folder("Alpha") / "poster.jpg").write_bytes(jpeg())
+        self.assertEqual(self.check(), 1, self.out)
+        self.assertIn("band bad: placeholders 4/5", self.out)
+        self.assertIn("Alpha (2026)", self.out)
+
+    def test_a_missing_thumb_fails(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        (self.folder("Alpha") / "landscape.jpg").unlink()
+        self.assertEqual(self.check(), 1, self.out)
+        self.assertIn("thumbs 4/5", self.out)
+
+    def test_a_real_item_with_the_band_fails(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.io.primary["real9"] = tr.art.poster(jpeg(), None, "", placeholder=True)
+        self.assertEqual(self.check(), 1, self.out)
+        self.assertIn("real items clean 0/1", self.out)
+
+    def test_sample_is_capped(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.io.calls = []
+        out = io.StringIO()
+        self.assertEqual(tr.main(["--check-band", "--sample", "2"], io=self.io, paths=self.paths, now=NOW, out=out), 0, out.getvalue())
+        self.assertIn("placeholders 4/4", out.getvalue())
 
 
 class MoonfinOrder(Base):
