@@ -59,7 +59,7 @@
 
   // Phone bottom bar (icon above label): Seerr shows up to 5 links there, more go into its "more" list. With a "more" button the entries go into that list; without one each joins the bar while the bar stays within the entry's `bar` size.
   function attach(doc) {
-    var tvs = doc.querySelectorAll(ANCHOR);
+    var tvs = doc.querySelectorAll(ANCHOR), added = 0;
     for (var i = 0; i < tvs.length; i++) {
       var tv = tvs[i], bar = tv.parentElement;
       // main holds page content: Discover's "Popular Series" slider title links to /discover/tv as well
@@ -77,10 +77,24 @@
         bar.insertBefore(a, after.nextSibling);
         after = a;
         placed++;
+        added++;
       }
     }
     paint(doc);
     mark(doc);
+    return added;
+  }
+
+  // menu-links.css keeps Seerr's menu hidden until this mark: set once the page has loaded and nothing had to be put back for a moment (Seerr's first render can drop our entries)
+  var settle = null;
+  function settled(win) {
+    var root = win.document.documentElement;
+    if (root.hasAttribute("data-hg-menu")) return;
+    clearTimeout(settle);
+    settle = setTimeout(function () {
+      if (win.document.readyState !== "complete") { win.addEventListener("load", function () { settled(win); }, { once: true }); return; }
+      root.setAttribute("data-hg-menu", "");
+    }, 300);
   }
 
   // a page of ours inside Seerr (/manual): Seerr's router shows its 404 page under our path (as a direct load does), so the layout stays; Next reloads the whole page for a path it has no page for
@@ -148,6 +162,7 @@
   try {
     if (!window.MutationObserver || !document.body) return;
     attach(document);
+    settled(window);
     var fresh = function () {
       if (!window.fetch || Date.now() - asked < 300000) return;
       asked = Date.now();
@@ -155,7 +170,7 @@
     };
     fresh();
     new MutationObserver(function () {
-      try { attach(document); fresh(); } catch (e) { /* never break Seerr */ }
+      try { if (attach(document)) settled(window); fresh(); } catch (e) { /* never break Seerr */ }
     }).observe(document.body, { childList: true, subtree: true });
   } catch (e) { /* never break Seerr */ }
 })();

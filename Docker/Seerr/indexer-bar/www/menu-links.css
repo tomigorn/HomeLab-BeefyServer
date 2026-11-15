@@ -1,0 +1,3 @@
+/* Seerr's sidebar and phone bar stay invisible until menu-links.js has put its entries in (html[data-hg-menu]), so a fresh page load does not show them jumping into place; shown anyway after 2.5 s */
+html:not([data-hg-menu]) :is(div, nav):has(> a[href="/discover/tv"]):not(main *) { visibility: hidden; animation: hg-menu-show 0s 2.5s forwards; }
+@keyframes hg-menu-show { to { visibility: visible; } }

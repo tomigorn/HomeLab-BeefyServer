@@ -290,6 +290,8 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 
 `indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds two entries after Series in the desktop sidebar, the phone drawer and the phone bottom bar:
 
+`indexer-bar/www/menu-links.css` (linked before `</head>`) keeps Seerr's sidebar and phone bar invisible until the script marks `html[data-hg-menu]` (page loaded, entries in place for 300 ms), so a fresh load (e.g. coming from books.holy-grail.ch) shows the menu once, complete, instead of entries jumping in; shown anyway after 2.5 s.
+
 | Entry | Opens | Phone bottom bar (no "more" button; with one: in the "more" list) |
 |---|---|---|
 | **Audiobooks** (German UI: **Hörbücher**) | `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, public via Cloudflare, Holy Grail login, group `streaming-requesters`), same tab | while the bar has at most 5 items with it |

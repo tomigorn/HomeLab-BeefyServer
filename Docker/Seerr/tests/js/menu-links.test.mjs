@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { load, SIDEBAR, MOBILE, tick } from "./fixture.mjs";
 
 const links = (w) => [...w.document.querySelectorAll('[data-hg-link="audiobooks"]')];
@@ -173,4 +174,21 @@ test("a click on the Manual entry navigates inside Seerr when its router is ther
   const plain = new w.MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true });
   manual(w)[0].dispatchEvent(plain);
   assert.equal(pushed.length, 1);
+});
+
+test("menu shown only once our entries are in place: html gets data-hg-menu after the page settled", async () => {
+  const w = load("menu-links.js", SIDEBAR);
+  assert.equal(w.document.documentElement.hasAttribute("data-hg-menu"), false);
+  await new Promise((r) => setTimeout(r, 450));
+  assert.equal(w.document.documentElement.hasAttribute("data-hg-menu"), true);
+});
+
+test("menu-links.css hides Seerr's menu until ready, outside page content, and shows it anyway after a timeout", () => {
+  const css = readFileSync(new URL("../../indexer-bar/www/menu-links.css", import.meta.url), "utf8");
+  assert.match(css, /html:not\(\[data-hg-menu\]\)/);
+  assert.match(css, /:has\(> ?a\[href="\/discover\/tv"\]\)/);
+  assert.match(css, /:not\(main \*\)/);
+  assert.match(css, /visibility: ?hidden/);
+  assert.match(css, /animation:[^;]*\b2\.5s/);
+  assert.match(css, /@keyframes[^{]*\{ ?to ?\{ ?visibility: ?visible/);
 });
