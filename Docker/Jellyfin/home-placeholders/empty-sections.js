@@ -818,6 +818,8 @@
   var PARTS = ["base", "recent", "discover"];
   var SLOT_WAIT_MS = 4000;
   var SLOT_SLACK_MS = 1000;
+  // An empty plugin answer ({"Items":[],...}) is under 100 bytes, one title alone over 500.
+  var EMPTY_ANSWER_BYTES = 200;
 
   function readCache(storage, userId) {
     try {
@@ -1074,7 +1076,9 @@
         if (listed && !realOf(container, id).length) return false;
         if (now - since > SLOT_WAIT_MS) return false;
         var a = answered[id];
-        return !a || !(a.at >= from);
+        if (!a || !(a.at >= from)) return true;
+        // Answered with titles: the plugin is still drawing them, so the slot is not empty.
+        return a.bytes > EMPTY_ANSWER_BYTES && realOf(container, id).length > 0;
       };
     }
 

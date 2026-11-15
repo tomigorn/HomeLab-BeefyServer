@@ -1231,3 +1231,21 @@ test("fixed slots: an answer from an earlier home load does not count for this o
   }
 });
 
+test("fixed slots: a section that answered with titles keeps its skeleton until the plugin shows them, no 'Nothing here yet' in between", async () => {
+  const h = timedHome();
+  try {
+    h.list(1000);
+    h.answer("HiddenGems", 1100, FULL_ANSWER);
+    h.at(1500);
+    h.c.innerHTML = section("NextUp", 3, 1) + section("HiddenGems", 8, 0, true);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(h.c.querySelector('[data-hss-placeholder="HiddenGems"][data-hss-loading]'), "answered, but the plugin still draws it");
+    const real = h.c.querySelector(".verticalSection.HiddenGems");
+    real.querySelector(".itemsContainer").innerHTML = '<div class="card"></div>';
+    real.classList.remove("hide");
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(h.c.querySelector('[data-hss-placeholder="HiddenGems"]'), null);
+  } finally {
+    h.win.close();
+  }
+});
