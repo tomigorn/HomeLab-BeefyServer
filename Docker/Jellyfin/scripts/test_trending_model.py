@@ -102,6 +102,22 @@ class UserLists(unittest.TestCase):
         self.assertEqual(len(p.art["user-pat"]), 4)
 
 
+class RetentionLists(unittest.TestCase):
+    """Storage retention (Movie-Downloads README "Storage retention"): "Leaving soon" holds the real items, a title whose files went comes back as a requestable placeholder in "Left the server"."""
+
+    def test_leaving_titles_real_gone_titles_placeholders_with_download_versions(self):
+        l = lists()
+        l["user"] = [user_row("user-retention-leaving", "Leaving soon", [item("movie", 131, 1, "Still Here", o=True)], owner="the server"),
+                     user_row("user-retention-gone", "Left the server", [item("movie", 132, 1, "Deleted Film", f="2160p", x="t132"), item("tv", 233, 2, "Deleted Show", season=1)], owner="the server")]
+        p = tm.plan(l, coming(), {}, {"movie/131": "jf131"}, {})
+        members = dict((s["key"], m) for s, m in p.collections)
+        self.assertEqual(members["user-retention-leaving"], [("real", "jf131")])
+        self.assertEqual(members["user-retention-gone"], [("ph", "Deleted Film (2026)"), ("ph", "Deleted Show (2026)")])
+        film = p.placeholders["Deleted Film (2026)"]
+        self.assertEqual((film.state, film.x, film.marks), ("found", "t132", []))
+        self.assertEqual(p.placeholders["Deleted Show (2026)"].kind, "tv")
+
+
 class Plan(unittest.TestCase):
     def test_owned_title_is_real_member(self):
         l = lists(movies=[item("movie", 121, 1, "Owned Film", o=True)])

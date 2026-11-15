@@ -41,6 +41,8 @@ ALLOW_FILE = pathlib.Path("/srv/appdata/jellyfin-popular/allow.json")
 PROM_FILE = pathlib.Path.home() / ".local" / "state" / "jellyfin-popular.prom"
 OVERRIDES = HERE / "popular-overrides.tsv"
 USER_FILE = pathlib.Path("/srv/appdata/seerr-collections/lists.json")
+# Movie-Downloads' storage retention (README "Storage retention"): "Leaving soon" and "Left the server" as own lists; written only once deletion is switched on
+RETENTION_FILE = pathlib.Path("/home/buntu/.local/state/movie-downloads/retention-lists.json")
 LOCK_FILE = STATE_FILE.with_name("jellyfin-popular.lock")
 LOCK_WAIT = 2400
 USER_SEARCH_MAX = int(os.environ.get("POP_USER_SEARCH_MAX", "150"))
@@ -676,6 +678,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
         user_lists = [{"id": r["id"], "name": r["name"]["en"], "owner": r.get("owner") or "", "query": r.get("query") or "", "items": [(i["k"], i["id"]) for i in r.get("items") or [] if i.get("id")]}
                       for r in prev if isinstance(r, dict) and r.get("id")]
         say(f"own lists unreadable ({user_file}): the {len(user_lists)} published ones kept")
+    user_lists = user_lists + [r for r in read_user_lists(RETENTION_FILE) or [] if r["id"].startswith("user-retention-") and all(r["id"] != u["id"] for u in user_lists)]
     user_cands = {ul["id"]: [c for c in (candidate(k, t) for k, t in ul["items"]) if c] for ul in user_lists}
     seen, todo = set(), []
     for c in [c for cs in user_cands.values() for c in cs]:

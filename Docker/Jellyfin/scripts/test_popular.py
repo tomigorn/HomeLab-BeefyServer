@@ -12,6 +12,7 @@ import urllib.error
 _spec = importlib.util.spec_from_file_location("popular", pathlib.Path(__file__).with_name("popular.py"))
 pop = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(pop)
+pop.RETENTION_FILE = pathlib.Path("/nonexistent/retention-lists.json")
 
 HEAD = "country_name\tcountry_iso2\tweek\tcategory\tweekly_rank\tshow_title\tseason_title\tcumulative_weeks_in_top_10"
 
@@ -707,6 +708,20 @@ class UserLists(unittest.TestCase):
         self.uf.write_text(json.dumps({"lists": []}))
         self.assertEqual(self.run_main(fake, self.sf)[0], 0)
         self.assertEqual(self.published()["user"], [])
+
+    def test_storage_retention_lists_join_the_own_lists(self):
+        self.write(("user-pat", "Pat produced", "q", [("movie", 101)]))
+        rf = self.sf.with_name("retention-lists.json")
+        rf.write_text(json.dumps({"lists": [{"id": "user-retention-gone", "name": "Left the server", "ownerName": "the server", "query": "files deleted", "items": [{"k": "movie", "id": 103}]},
+                                            {"id": "user-pat", "name": "Clash", "ownerName": "x", "items": []}, {"id": "user-other", "name": "Not ours", "items": [{"k": "movie", "id": 104}]}]}))
+        pop.RETENTION_FILE = rf
+        try:
+            self.assertEqual(self.run_main(FakeIo(), self.sf)[0], 0)
+        finally:
+            pop.RETENTION_FILE = pathlib.Path("/nonexistent/retention-lists.json")
+        rows = self.published()["user"]
+        self.assertEqual([(r["id"], r["owner"]) for r in rows], [("user-pat", "jane"), ("user-retention-gone", "the server")])
+        self.assertEqual([i["id"] for i in rows[1]["items"]], [103])
 
     def test_own_list_searches_have_a_daily_budget_for_everyone(self):
         self.write(("user-pat", "Pat produced", "q", [("movie", 105), ("movie", 103)]))
