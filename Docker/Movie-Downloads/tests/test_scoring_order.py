@@ -19,12 +19,15 @@ SWISS = lf.SWISS
 TWIN = lf.ENGLISH_ORIGINAL_SUFFIX
 PROFILES = {
     "radarr": {"4k": "4K HDR - UHD Bluray + WEB (1080p fallback)", "any": "4K preferred · older versions allowed",
-               "hd": "HD Bluray + WEB", "anime": "Anime - Remux + WEB 1080p"},
+               "hd": "HD Bluray + WEB", "anime": "Anime - 4K HDR (1080p fallback)", "anime-any": "Anime - 4K HDR · older versions allowed"},
     "sonarr": {"4k": "4K HDR - WEB-2160p (1080p fallback)", "any": "4K preferred · older versions allowed",
-               "hd": "WEB-1080p", "anime": "Anime - Bluray + WEB 1080p", "silent": "4K preferred · older versions allowed - silent film"},
+               "hd": "WEB-1080p", "anime": "Anime - Bluray + WEB 1080p", "anime-any": "Anime - Bluray + WEB 1080p · older versions allowed",
+               "silent": "4K preferred · older versions allowed - silent film"},
 }
-# Profiles with the small bonuses (extra dubs, extras, a season pack) and the minimum upgrade step above them; anime and Swiss German keep step 1 and no bonuses.
-BONUS_KINDS = ("4k", "any", "hd", "silent")
+# Profiles with the small bonuses (extra dubs, extras, a season pack) and the minimum upgrade step above them; Swiss German keeps step 1 and no bonuses.
+# Anime (owner 2026-11-15): the normal scoring plus the anime group tiers; series top 1080p, films top 4K HDR.
+BONUS_KINDS = ("4k", "any", "hd", "silent", "anime", "anime-any")
+ANIME_KINDS = ("anime", "anime-any")
 # Audio ladder (owner 2026-10-31, recyclarr.yml): lossless formats equal; objects (Atmos, DTS:X) a small plus on lossless; lossy by real quality, DD+ Atmos on top.
 AUDIO = {"TrueHD ATMOS": 3000, "DTS X": 3000, "TrueHD": 2750, "DTS-HD MA": 2750, "FLAC": 2750, "PCM": 2750, "DD+ ATMOS": 2250, "ATMOS (undefined)": 2250,
          "DTS-HD HRA": 2000, "DD+": 1750, "DTS-ES": 1000, "DTS": 750, "DD": 750, "AAC": 500}
@@ -38,7 +41,9 @@ MINOR = {
                "group": {"WEB Tier 01": 1700, "WEB Tier 02": 1650, "WEB Tier 03": 1600, "WEB Scene": 1600, None: 0},
                "small": {"NF": 75, "UHD Streaming Boost": 75, "HD Streaming Boost": 75, "Repack/Proper": 25, "Repack2": 50, "Repack3": 75}},
 }
-ANIME_MINOR = {"group": {"Anime BD Tier 01": 1400, "Remux Tier 01": 975, None: 0}, "small": {"VRV": 10, "CR": 6, "v1": 1, "v2": 2, "v4": 4, "Repack3": 7}}
+# Anime versions (v2 = the group's fixed re-release) score like repacks, so a fix upgrades past the step of 25; streaming services stay tie-breakers.
+ANIME_MINOR = {"group": {"Anime BD Tier 01": 1400, "Anime BD Tier 02": 1300, None: 0},
+               "small": {"VRV": 10, "CR": 6, "v1": 0, "v2": 25, "v3": 50, "v4": 75, "Repack/Proper": 25, "Repack2": 50, "Repack3": 75}}
 # Ranking penalties, not rejects: TRaSH `v0` (-51); own `Remux: smaller encode wins` keeps a remux at or below a 2160p encode.
 REMUX = "Remux: smaller encode wins"
 REMUX_SCORE = -6000
@@ -152,11 +157,11 @@ class Base(unittest.TestCase):
         for app, kind, name in every_profile():
             twin = name.endswith(TWIN)
             orig = "English" if twin else ("Italian" if app == "radarr" else "Spanish")
-            # The TRaSH HD and anime templates score no audio formats.
-            minor = ANIME_MINOR | {"audio": {None: 0}} if kind == "anime" else MINOR[app] | ({"audio": {None: 0}} if kind == "hd" else {})
+            # The TRaSH HD template scores no audio formats; anime has the audio ladder (owner 2026-11-15).
+            minor = ANIME_MINOR | {"audio": AUDIO | {None: 0}} if kind in ANIME_KINDS else MINOR[app] | ({"audio": {None: 0}} if kind == "hd" else {})
             if app == "radarr":
                 minor = minor | {"small": minor["small"] | VERSIONS}
-            resolutions = (1080, 2160) if kind in ("4k", "any", "silent") else (1080,)
+            resolutions = (1080, 2160) if kind in ("4k", "any", "silent") or (app == "radarr" and kind in ANIME_KINDS) else (1080,)
             prof = profile(app, name)
             prof["scores"] = {k: v for group in minor.values() for k, v in group.items() if k} | prof["scores"]
             self.cases.append((app, kind, name, twin, orig, minor, resolutions, prof))
@@ -225,13 +230,12 @@ class Order(Base):
                     three = score(p, matched(app, orig, [orig, "English", "German"], group=self.best(minor)["group"]))
                 self.assertGreater(three, five)
                 bonuses = [v for k in ("audio", "group") for v in minor[k].values() if v > 0]
-                if kind != "anime":
-                    bonuses += [v for k, v in minor["small"].items() if v > 0 and not k.startswith("Repack")]
+                bonuses += [v for k, v in minor["small"].items() if v > 0 and not k.startswith("Repack") and not re.fullmatch(r"v\d", k)]
                 self.assertGreater(min(bonuses), 0)
 
     def test_e_streaming_web_tier_01_beats_an_extra_dub(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
-            if app == "sonarr" and kind != "anime":
+            if app == "sonarr" and kind not in ANIME_KINDS:
                 with self.subTest(profile=name):
                     tier = [orig, "German"] if twin else [orig, "English"]
                     dub = "Italian" if orig != "Italian" else "French"
@@ -249,7 +253,7 @@ class Order(Base):
     def test_f_negatives_still_reject(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             richest = matched(app, orig, [orig, "English", "German"] + self.extras(app, orig), hdr=True, **self.best(minor))
-            top = score(p, richest) + (p["scores"].get("Anime Dual Audio", 0))
+            top = score(p, richest)
             for cf, s in p["scores"].items():
                 if s < 0 and cf not in MILD_NEGATIVES:
                     with self.subTest(app=app, profile=name, reject=cf):
@@ -261,18 +265,40 @@ class Order(Base):
         bad = {"radarr": ["DV (w/o HDR fallback)", "Upscaled", "BR-DISK", "LQ", "LQ (Release Title)", "Generated Dynamic HDR", "x265 (no HDR/DV)", "3D", "AV1"],
                "sonarr": ["DV (w/o HDR fallback)", "Upscaled", "BR-DISK", "LQ", "LQ (Release Title)", "x265 (no HDR/DV)", "AV1"]}
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
-            if kind in ("4k", "any"):
+            if kind in ("4k", "any") or (app == "radarr" and kind in ANIME_KINDS):
+                # Anime keeps x265 without HDR (its encodes are x265 10-bit) and rejects 4K without HDR instead.
+                want = [c for c in bad[app] if c != "x265 (no HDR/DV)"] + ["SDR"] if kind in ANIME_KINDS else bad[app]
                 with self.subTest(app=app, profile=name):
-                    self.assertEqual({c: p["scores"].get(c) for c in bad[app]}, {c: -50000000 for c in bad[app]})
+                    self.assertEqual({c: p["scores"].get(c) for c in want}, {c: -50000000 for c in want})
 
     def test_h_2160p_sdr_accepted(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
-            if 2160 in resolutions:
+            if 2160 in resolutions and kind not in ANIME_KINDS:
                 with self.subTest(app=app, profile=name):
                     self.assertEqual(p["scores"].get("SDR", 0), 0)
                     top = [orig, "German"] if twin else [orig, "English"]
                     self.assertGreaterEqual(score(p, matched(app, orig, top, 2160, hdr=False)), p["min"])
                     self.assertGreaterEqual(score(p, matched(app, orig, [orig], 2160, hdr=False)), p["min"])
+
+    def test_h_anime_films_reject_2160p_without_hdr(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if app == "radarr" and kind in ANIME_KINDS:
+                with self.subTest(profile=name):
+                    self.assertLess(score(p, matched(app, orig, [orig, "English", "German"], 2160, hdr=False, **self.best(minor))), p["min"])
+                    self.assertGreaterEqual(score(p, matched(app, orig, [orig], 2160, hdr=True)), p["min"])
+                    self.assertGreaterEqual(score(p, matched(app, orig, [orig], 1080, hdr=False)), p["min"])
+
+    def test_anime_like_the_normal_profiles(self):
+        for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
+            if kind in ANIME_KINDS:
+                with self.subTest(app=app, profile=name):
+                    raw = profile(app, name)
+                    self.assertEqual(raw["min"], 0, "minimum score like the normal profiles")
+                    self.assertEqual(raw["scores"].get("Anime Dual Audio", 0), 0, "dual audio is the language tier already")
+                    self.assertEqual(raw["scores"].get("x265 (no HDR/DV)", 0), 0, "no Golden Rule for anime")
+                    self.assertEqual({a: raw["scores"].get(a) for a in AUDIO}, AUDIO)
+                    self.assertEqual({v: raw["scores"].get(v) for v in ("v2", "v3", "v4")}, {"v2": 25, "v3": 50, "v4": 75})
+                    self.assertEqual(raw["scores"].get("v0"), -51)
 
     def test_i_2160p_hdr_beats_2160p_sdr_with_more_languages(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
@@ -297,8 +323,8 @@ class Order(Base):
 
 class Upgrades(Base):
     def test_cutoff_values(self):
-        want = {"sonarr": {"4k": (25000000, 20000000), "any": (25000000, 20000000), "hd": (5000000, None), "anime": (5000000, None), "silent": (25000000, None)},
-                "radarr": {"4k": (26000000, 21000000), "any": (26000000, 21000000), "hd": (6000000, None), "anime": (6000000, None)}}
+        want = {"sonarr": {"4k": (25000000, 20000000), "any": (25000000, 20000000), "hd": (5000000, None), "anime": (5000000, None), "anime-any": (5000000, None), "silent": (25000000, None)},
+                "radarr": {"4k": (26000000, 21000000), "any": (26000000, 21000000), "hd": (6000000, None), "anime": (26000000, None), "anime-any": (26000000, None)}}
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             with self.subTest(app=app, profile=name):
                 self.assertEqual(p["cutoff"], want[app][kind][twin])
@@ -343,14 +369,16 @@ class Upgrades(Base):
             tiers = self.tiers(twin, orig)
             with self.subTest(app=app, profile=name):
                 base = matched(app, orig, [orig])
-                fix, broken = ({"v2"}, {"v1"}) if kind == "anime" else ({"Repack/Proper"}, set())
+                fix, broken = ({"v2"}, {"v1"}) if kind in ANIME_KINDS else ({"Repack/Proper"}, set())
                 gains = {"repack / anime v2": score(p, base | fix) - score(p, base | broken),
                          "best group": score(p, base | {self.best(minor)["group"]}) - score(p, base)}
                 if max(minor["audio"].values()) > 0:
                     gains["DD+ over AAC"] = score(p, base | {"DD+"}) - score(p, base | {"AAC"})
                     gains["TrueHD Atmos over DTS-HD MA"] = score(p, base | {"TrueHD ATMOS"}) - score(p, base | {"DTS-HD MA"})
-                if kind != "anime":
-                    gains["Repack2 over Repack"] = score(p, base | {"Repack2"}) - score(p, base | {"Repack/Proper"})
+                gains["Repack2 over Repack"] = score(p, base | {"Repack2"}) - score(p, base | {"Repack/Proper"})
+                if kind in ANIME_KINDS:
+                    gains["anime tier 02 -> 01"] = score(p, base | {"Anime BD Tier 01"}) - score(p, base | {"Anime BD Tier 02"})
+                else:
                     gains["group tier 02 -> 01"] = score(p, base | {"WEB Tier 01"}) - score(p, base | {"WEB Tier 02"})
                     gains["remaster" if app == "radarr" else "streaming service"] = score(p, base | {"Remaster" if app == "radarr" else "NF"}) - score(p, base)
                 for what, gain in gains.items():
@@ -493,10 +521,12 @@ class SeasonPack(Base):
             if app == "sonarr" and kind in BONUS_KINDS:
                 tier = [orig, "German"] if twin else [orig, "English"]
                 dubs = self.extras(app, orig)[:MAX_TITLE_DUBS]
-                pack = score(p, matched(app, orig, tier + dubs, 2160, hdr=True, group="WEB Tier 02", extra=(SEASON_PACK,)))
-                for what, single in (("repack", {"Repack/Proper"}), ("group tier 01", set()), ("streaming service", {"NF"})):
+                t1, t2 = ("Anime BD Tier 01", "Anime BD Tier 02") if kind in ANIME_KINDS else ("WEB Tier 01", "WEB Tier 02")
+                singles = (("repack", {"Repack/Proper"}), ("group tier 01", set())) + ((("anime v2", {"v2"}),) if kind in ANIME_KINDS else (("streaming service", {"NF"}),))
+                pack = score(p, matched(app, orig, tier + dubs, 2160, hdr=True, group=t2, extra=(SEASON_PACK,)))
+                for what, single in singles:
                     with self.subTest(profile=name, single=what):
-                        cfs = matched(app, orig, tier, 2160, hdr=True, group="WEB Tier 01" if what == "group tier 01" else "WEB Tier 02", small=tuple(single))
+                        cfs = matched(app, orig, tier, 2160, hdr=True, group=t1 if what == "group tier 01" else t2, small=tuple(single))
                         self.assertGreater(score(p, cfs), pack)
 
     def test_season_pack_never_beats_a_better_language_tier_or_hdr(self):
@@ -537,7 +567,7 @@ class RealQuality(Base):
         return [c for c in self.cases if max(c[5]["audio"].values()) > 0]
 
     def test_audio_is_scored_in_the_4k_and_any_profiles_of_both_apps(self):
-        self.assertEqual({(c[0], c[1]) for c in self.audio_cases()}, {(a, k) for a in PROFILES for k in ("4k", "any")} | {("sonarr", "silent")})
+        self.assertEqual({(c[0], c[1]) for c in self.audio_cases()}, {(a, k) for a in PROFILES for k in ("4k", "any") + ANIME_KINDS} | {("sonarr", "silent")})
         for app in PROFILES:
             for name in [PROFILES[app]["4k"], PROFILES[app]["4k"] + TWIN, PROFILES[app]["any"], PROFILES[app]["any"] + TWIN, SWISS]:
                 with self.subTest(app=app, profile=name):
@@ -582,15 +612,14 @@ class RealQuality(Base):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             with self.subTest(app=app, profile=name):
                 base = matched(app, orig, [orig, "English"], 2160, hdr=True)
-                if kind == "anime":
+                if kind in ANIME_KINDS:
                     self.assertGreater(score(p, base | {"v2"}), score(p, base | {"v1"}))
-                    continue
                 self.assertGreater(score(p, base | {"Repack/Proper"}), score(p, base))
                 self.assertGreater(score(p, base | {"Repack2"}), score(p, base | {"Repack/Proper"}))
 
     def test_better_tier_group_is_higher(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
-            if kind == "anime":
+            if kind in ANIME_KINDS:
                 continue
             with self.subTest(app=app, profile=name):
                 base = matched(app, orig, [orig, "English"], 2160, hdr=True)
@@ -732,8 +761,11 @@ class Bonuses(Base):
                     with self.subTest(app=app, profile=name, step=f"{better} over {worse}"):
                         self.assertGreater(score(p, matched(app, orig, tiers[0], audio=better)), score(p, matched(app, orig, tiers[0] + every, audio=worse, extra=bonus)))
             title = self.extras(app, orig)[:MAX_TITLE_DUBS]
-            minors = [("Repack/Proper", None), ("Repack2", "Repack/Proper"), ("WEB Tier 01", "WEB Tier 02")]
-            minors += [("Remaster", None)] if app == "radarr" else [("NF", None)]
+            minors = [("Repack/Proper", None), ("Repack2", "Repack/Proper")]
+            if kind in ANIME_KINDS:
+                minors += [("Anime BD Tier 01", "Anime BD Tier 02"), ("v2", "v1")] + ([("Remaster", None)] if app == "radarr" else [])
+            else:
+                minors += [("WEB Tier 01", "WEB Tier 02")] + ([("Remaster", None)] if app == "radarr" else [("NF", None)])
             for better, worse in minors:
                 with self.subTest(app=app, profile=name, step=f"{better} over {worse}", dubs=len(title)):
                     lo = {worse} if worse else set()
@@ -817,7 +849,7 @@ class SilentFilms(Base):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             if app != "radarr" or twin:
                 continue
-            group = "Anime BD Tier 01" if kind == "anime" else "WEB Tier 01"
+            group = "Anime BD Tier 01" if kind in ANIME_KINDS else "WEB Tier 01"
             with self.subTest(profile=name):
                 self.assertGreaterEqual(score(p, matched(app, "French", ["English"], group=group, year=1915)), p["min"])
                 self.assertGreaterEqual(score(p, matched(app, "French", ["English"], group=group, year=1929)), p["min"])
@@ -918,6 +950,39 @@ class OwnRejects(unittest.TestCase):
             for app, kind, prof in list(every_profile()) + [(app, "swiss", SWISS) for app in PROFILES]:
                 with self.subTest(app=app, profile=prof, cf=name):
                     self.assertEqual(profile(app, prof)["scores"].get(name), -2000000 if prof == SWISS else -50000000)
+
+
+class AnimeQualities(unittest.TestCase):
+    """Owner 2026-11-15: no remux; Blu-ray encodes kept; series top 1080p, films top 4K HDR; the `older versions allowed` twins add 720p down to Unknown."""
+    LOW = ["HDTV-1080p", "Bluray-720p", "WEB 720p", "HDTV-720p", "Bluray-576p", "Bluray-480p", "WEB 480p", "DVD", "SDTV", "Unknown"]
+    SONARR_LOW = ["HDTV-1080p", "WEB 720p", "Bluray-720p", "HDTV-720p", "Bluray-576p", "WEB 480p", "Bluray-480p", "DVD", "SDTV", "Unknown"]
+
+    def qualities(self, app, name):
+        inst = CFG[app]["movies" if app == "radarr" else "series"]
+        p = next(q for q in inst["quality_profiles"] if q.get("name") == name)
+        flat = [x for q in p["qualities"] for x in (q.get("qualities") or [q["name"]])]
+        return [q["name"] for q in p["qualities"]], flat, p["upgrade"]["until_quality"]
+
+    def test_series(self):
+        top, flat, until = self.qualities("sonarr", PROFILES["sonarr"]["anime"])
+        self.assertEqual(top, ["Bluray-1080p", "WEB 1080p"])
+        self.assertEqual(until, "Bluray-1080p")
+        top, flat, until = self.qualities("sonarr", PROFILES["sonarr"]["anime-any"])
+        self.assertEqual(top, ["Bluray-1080p", "WEB 1080p"] + self.SONARR_LOW)
+        self.assertEqual(until, "Bluray-1080p")
+
+    def test_films(self):
+        top, flat, until = self.qualities("radarr", PROFILES["radarr"]["anime"])
+        self.assertEqual(top, ["Bluray-2160p", "WEB 2160p", "Bluray-1080p", "WEB 1080p"])
+        self.assertEqual(until, "Bluray-2160p")
+        top, flat, until = self.qualities("radarr", PROFILES["radarr"]["anime-any"])
+        self.assertEqual(top, ["Bluray-2160p", "WEB 2160p", "Bluray-1080p", "WEB 1080p"] + self.LOW)
+
+    def test_no_remux_anywhere_in_anime(self):
+        for app in PROFILES:
+            for kind in ANIME_KINDS:
+                with self.subTest(app=app, kind=kind):
+                    self.assertFalse([q for q in self.qualities(app, PROFILES[app][kind])[1] if "Remux" in q])
 
 
 class SwissGerman(unittest.TestCase):

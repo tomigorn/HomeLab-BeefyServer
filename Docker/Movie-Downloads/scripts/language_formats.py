@@ -8,10 +8,9 @@ import sys
 ORIGINAL_ENGLISH = "Language: Original + English"
 EXTRA_PREFIX = "Extra audio: "
 ORIGINAL_ENGLISH_SCORE = 5_000_000
-# Each extra dub: a tie-breaker, below the minimum upgrade step (README "Which version gets downloaded"); none in the Swiss German and anime profiles (step 1 there).
+# Each extra dub: a tie-breaker, below the minimum upgrade step (README "Which version gets downloaded"); none in the Swiss German profile (step 1 there).
 EXTRA_SCORE = 1
 SWISS = "Swiss German (Mundart) only - any quality"
-ANIME_PREFIX = "Anime - "
 SWISS_ORIGINAL_ENGLISH_SCORE = 20_000
 ENGLISH_ORIGINAL_SUFFIX = " - English original"
 NOT_EXTRA = {"Any", "Original", "Unknown", "English", "German"}
@@ -41,7 +40,7 @@ def score(profile_name, format_name):
             return SWISS_ORIGINAL_ENGLISH_SCORE
         return 0 if profile_name.endswith(ENGLISH_ORIGINAL_SUFFIX) else ORIGINAL_ENGLISH_SCORE
     if format_name.startswith(EXTRA_PREFIX):
-        return 0 if profile_name == SWISS or profile_name.startswith(ANIME_PREFIX) else EXTRA_SCORE
+        return 0 if profile_name == SWISS else EXTRA_SCORE
     raise KeyError(format_name)
 
 

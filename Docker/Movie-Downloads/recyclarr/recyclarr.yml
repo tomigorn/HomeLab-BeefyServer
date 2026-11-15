@@ -8,7 +8,7 @@
 ## folder, Connect, ...) are untouched.
 ##
 ## Based on the official templates `uhd-bluray-web` + `hd-bluray-web` +
-## `anime-remux-1080p` (Radarr) and `web-2160p-combined` + `web-1080p` +
+## `anime-remux-1080p` (Radarr, group tiers only) and `web-2160p-combined` + `web-1080p` +
 ## `anime-remux-1080p` (Sonarr), `recyclarr config list templates`.
 ## See README "Download -> library pipeline", "Series (Sonarr)" and "Languages".
 ##
@@ -18,15 +18,15 @@
 ##   > bonuses: Radarr `Extras: included` 5, Sonarr `Season Pack` 5, each extra dub 1 (owner 2026-10-31, README "Which version gets downloaded").
 ## Size and bitrate score 0. Audio ladder (both apps): lossless formats equal, Atmos/DTS:X a small plus.
 ## `German DL` = German + original audio (2000000). `Language: Original + English` (5000000) and
-## `Extra audio: <language>` (1 each, 0 in anime and Swiss German) are native custom formats created by scripts/language-policy.sh,
+## `Extra audio: <language>` (1 each, 0 in Swiss German) are native custom formats created by scripts/language-policy.sh,
 ## not TRaSH ones, hence the `except`/`except_patterns` on every reset_unmatched_scores.
 ## Every reject is -50000000: the best possible positive sum (~33000000) must stay below the minimum score of 0.
 ## Radarr 4K/Any: Remux-2160p is allowed in the `WEB 2160p + Remux` group (below Bluray-2160p) with `Remux: smaller encode wins` -6000 (min score -10000 there), so a remux never outranks a 2160p encode.
 ## 2160p SDR is allowed (owner 2026-10-26: 4K SDR beats 1080p HDR); HDR still beats SDR inside one quality.
 ## Upgrades stop at 4K HDR + original + English (25000000, Radarr + a longer cut 26000000; English-original twins: HDR + original/English 20000000, German DL is taken at grab time but not chased); the 1080p-only
-## HD and anime profiles at original + English (5000000). An upgrade at the
+## HD and anime series profiles at original + English (5000000); anime films like the 4K default. An upgrade at the
 ## same quality needs +25 (min_upgrade_format_score, owner 2026-10-31): below the cutoff any real improvement upgrades (better audio, group tier, repack 25/50/75, remaster, streaming
-## service, cut, language rung, HDR); the bonuses alone (up to 18 dubs + extras or a pack = 24) never do. Anime and Swiss German: no bonuses, step 1.
+## service, cut, language rung, HDR); the bonuses alone (up to 18 dubs + extras or a pack = 24) never do. Swiss German: no bonuses, step 1. Anime (owner 2026-11-15): scored like the 4K default plus anime group tiers, no remux.
 ## Silent films (before 1930) are exempt from the original-audio reject: Radarr's own `Language: Not Original (sound film)` needs a film from 1930 on (profile language Any,
 ## scripts/language-policy.sh), Sonarr moves silent series to `4K preferred · older versions allowed - silent film` (hook + language-policy.sh).
 ## Radarr (owner 2026-10-30): `Edition: longer cut` 1000000 between the language rungs and audio/group; cutoffs +1000000 (26000000 / 21000000 / 6000000).
@@ -224,12 +224,11 @@ radarr:
           until_score: 6000000
         min_upgrade_format_score: 25
 
-      # Anime films, picked by hand (Seerr has no anime profile for movies): TRaSH
-      # "[Anime] Remux-1080p" - Remux/Bluray 1080p first, WEB 1080p below. No
-      # Golden Rule here: anime encodes are x265 10-bit as a matter of course.
-      # Minimum score 100 is TRaSH's: a release from no known group is skipped.
+      # Anime films (owner 2026-11-15): the 4K default's scoring (HDR, languages, audio ladder, bonuses, step 25, cutoff 4K HDR + original + English + a longer cut)
+      # plus the TRaSH anime group tiers of the "[Anime] Remux-1080p" template. No remux; Blu-ray encodes kept; 4K only with HDR (`SDR` rejected: anime 4K
+      # without HDR is an upscaled 1080p stream); no Golden Rule (anime encodes are x265 10-bit). Picked by hand (Seerr has no anime profile for movies).
       - trash_id: 722b624f9af1e492284c4bc842153a38  # [Anime] Remux-1080p
-        name: Anime - Remux + WEB 1080p
+        name: Anime - 4K HDR (1080p fallback)
         reset_unmatched_scores:
           enabled: true
           except:
@@ -238,9 +237,51 @@ radarr:
             - "^Extra audio: "
         upgrade:
           allowed: true
-          until_quality: Remux 1080p
-          until_score: 6000000
-        min_upgrade_format_score: 1
+          until_quality: Bluray-2160p
+          until_score: 26000000
+        min_upgrade_format_score: 25
+        min_format_score: 0
+        qualities:
+          - name: Bluray-2160p
+          - name: WEB 2160p
+            qualities: [WEBRip-2160p, WEBDL-2160p]
+          - name: Bluray-1080p
+          - name: WEB 1080p
+            qualities: [WEBRip-1080p, WEBDL-1080p]
+      # Old and niche anime films (language-policy-hook.sh, like `4K preferred · older versions allowed`): the same, plus 720p down to Unknown.
+      - trash_id: 722b624f9af1e492284c4bc842153a38  # [Anime] Remux-1080p
+        name: Anime - 4K HDR · older versions allowed
+        reset_unmatched_scores:
+          enabled: true
+          except:
+            - "Language: Original + English"
+          except_patterns:
+            - "^Extra audio: "
+        upgrade:
+          allowed: true
+          until_quality: Bluray-2160p
+          until_score: 26000000
+        min_upgrade_format_score: 25
+        min_format_score: 0
+        qualities:
+          - name: Bluray-2160p
+          - name: WEB 2160p
+            qualities: [WEBRip-2160p, WEBDL-2160p]
+          - name: Bluray-1080p
+          - name: WEB 1080p
+            qualities: [WEBRip-1080p, WEBDL-1080p]
+          - name: HDTV-1080p
+          - name: Bluray-720p
+          - name: WEB 720p
+            qualities: [WEBRip-720p, WEBDL-720p]
+          - name: HDTV-720p
+          - name: Bluray-576p
+          - name: Bluray-480p
+          - name: WEB 480p
+            qualities: [WEBRip-480p, WEBDL-480p]
+          - name: DVD
+          - name: SDTV
+          - name: Unknown
 
     # The 1080p fallback tier needs the HD group-tier scores that the plain UHD
     # profile has no use for, so a good 1080p Bluray encode beats a poor one.
@@ -263,10 +304,12 @@ radarr:
             score: 1000000
           - name: HD Bluray + WEB
             score: 1000000
-          - name: Anime - Remux + WEB 1080p
+          - name: Anime - 4K HDR (1080p fallback)
             score: 1000000
           - name: Swiss German (Mundart) only - any quality
             score: 2000
+          - name: Anime - 4K HDR · older versions allowed
+            score: 1000000
       # Versions, not cuts: TRaSH default scores in the audio/group tier. IMAX (more picture) and a remaster (new transfer) are visible, so they upgrade below the cutoff. Theatrical neutral.
       - trash_ids:
           - eecf3a857724171f968a66cb5719e152  # IMAX
@@ -282,7 +325,9 @@ radarr:
             score: 800
           - name: HD Bluray + WEB
             score: 800
-          - name: Anime - Remux + WEB 1080p
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 800
+          - name: Anime - 4K HDR · older versions allowed
             score: 800
       - trash_ids:
           - 570bc9ebecd92723d2d21500f4be314c  # Remaster
@@ -299,7 +344,9 @@ radarr:
             score: 25
           - name: HD Bluray + WEB
             score: 25
-          - name: Anime - Remux + WEB 1080p
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 25
+          - name: Anime - 4K HDR · older versions allowed
             score: 25
       - trash_ids:
           - e9001909a4c88013a359d0b9920d7bea  # Theatrical Cut
@@ -314,7 +361,9 @@ radarr:
             score: 0
           - name: HD Bluray + WEB
             score: 0
-          - name: Anime - Remux + WEB 1080p
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 0
+          - name: Anime - 4K HDR · older versions allowed
             score: 0
       # Audio ladder (owner 2026-10-31, README "Which version gets downloaded"), replaces the TRaSH defaults (TrueHD Atmos 5000 > DTS X 4500 > TrueHD 2750 > DTS-HD MA 2500 > FLAC/PCM 2250, AAC 1000 > DD 750)
       # so lossless formats never swap for each other. 4K, Any and Swiss German profiles; HD and anime stay unscored (TRaSH templates). Other audio (MP3, Opus, none) 0.
@@ -333,6 +382,10 @@ radarr:
             score: 3000
           - name: Swiss German (Mundart) only - any quality
             score: 3000
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 3000
+          - name: Anime - 4K HDR · older versions allowed
+            score: 3000
       # lossless = uncompressed, all equal
       - trash_ids:
           - 3cafb66171b47f226146a0770576870f  # TrueHD
@@ -350,6 +403,10 @@ radarr:
             score: 2750
           - name: Swiss German (Mundart) only - any quality
             score: 2750
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 2750
+          - name: Anime - 4K HDR · older versions allowed
+            score: 2750
       # best lossy: DD+ with height channels (Atmos with no codec named is almost always DD+ from streaming)
       - trash_ids:
           - 1af239278386be2919e1bcee0bde047e  # DD+ ATMOS
@@ -365,6 +422,10 @@ radarr:
             score: 2250
           - name: Swiss German (Mundart) only - any quality
             score: 2250
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 2250
+          - name: Anime - 4K HDR · older versions allowed
+            score: 2250
       # high-bitrate lossy 7.1
       - trash_ids:
           - 8e109e50e0a0b83a5098b056e13bf6db  # DTS-HD HRA
@@ -378,6 +439,10 @@ radarr:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: 2000
           - name: Swiss German (Mundart) only - any quality
+            score: 2000
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 2000
+          - name: Anime - 4K HDR · older versions allowed
             score: 2000
       # E-AC3
       - trash_ids:
@@ -393,6 +458,10 @@ radarr:
             score: 1750
           - name: Swiss German (Mundart) only - any quality
             score: 1750
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 1750
+          - name: Anime - 4K HDR · older versions allowed
+            score: 1750
       # DTS core + 6.1 back channel
       - trash_ids:
           - f9f847ac70a0af62ea4a08280b859636  # DTS-ES
@@ -406,6 +475,10 @@ radarr:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: 1000
           - name: Swiss German (Mundart) only - any quality
+            score: 1000
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 1000
+          - name: Anime - 4K HDR · older versions allowed
             score: 1000
       # DTS core = AC3
       - trash_ids:
@@ -422,6 +495,10 @@ radarr:
             score: 750
           - name: Swiss German (Mundart) only - any quality
             score: 750
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 750
+          - name: Anime - 4K HDR · older versions allowed
+            score: 750
       # stereo / low channel lossy
       - trash_ids:
           - 240770601cc226190c367ef59aba7463  # AAC
@@ -435,6 +512,10 @@ radarr:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: 500
           - name: Swiss German (Mundart) only - any quality
+            score: 500
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 500
+          - name: Anime - 4K HDR · older versions allowed
             score: 500
       # Remux (owner 2026-10-31): the untouched disc stream (largest); good encodes look the same at a fraction of the size, so they win. Remux-2160p sits in the
       # `WEB 2160p + Remux` group (below Bluray-2160p, above 1080p); -6000 > best audio 3000 + IMAX/IMAX Enhanced 1600 + remasters/Criterion 75 + Repack3 7, so it never outranks a 2160p WEB
@@ -466,6 +547,10 @@ radarr:
             score: 5
           - name: HD Bluray + WEB
             score: 5
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 5
+          - name: Anime - 4K HDR · older versions allowed
+            score: 5
       # Repacks (owner 2026-10-31): a fix is a real improvement, so each repack clears the minimum upgrade step 25 (TRaSH 5/6/7 would sit below it).
       - trash_ids:
           - e7718d7a3ce595f289bfee26adc178f5  # Repack/Proper
@@ -480,6 +565,10 @@ radarr:
             score: 25
           - name: HD Bluray + WEB
             score: 25
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 25
+          - name: Anime - 4K HDR · older versions allowed
+            score: 25
       - trash_ids:
           - ae43b294509409a6a13919dedd4764c4  # Repack2
         assign_scores_to:
@@ -492,6 +581,10 @@ radarr:
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
             score: 50
           - name: HD Bluray + WEB
+            score: 50
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 50
+          - name: Anime - 4K HDR · older versions allowed
             score: 50
       - trash_ids:
           - 5caaaa1c08c1742aa4342d8c4cc463f2  # Repack3
@@ -506,6 +599,10 @@ radarr:
             score: 75
           - name: HD Bluray + WEB
             score: 75
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 75
+          - name: Anime - 4K HDR · older versions allowed
+            score: 75
       - trash_ids:
           - ed27ebfef2f323e964fb1f61391bcb35  # HD Bluray Tier 01
           - c20c8647f2746a1f4c4262b0fbbeeeae  # HD Bluray Tier 02
@@ -516,7 +613,8 @@ radarr:
           - name: 4K preferred · older versions allowed - English original
           - name: 4K HDR - UHD Bluray + WEB (1080p fallback) - English original
           - name: Swiss German (Mundart) only - any quality
-
+          - name: Anime - 4K HDR (1080p fallback)
+          - name: Anime - 4K HDR · older versions allowed
       # German + original audio (TRaSH "German DL"): 2000000 beats any original-only
       # release of the same quality, even with every extra language (< 10000 with audio)
       # but stays below original + English (5000000), owner's order 2026-10-25. "(undefined)" catches German-named
@@ -536,10 +634,12 @@ radarr:
             score: 2000000
           - name: HD Bluray + WEB
             score: 2000000
-          - name: Anime - Remux + WEB 1080p
+          - name: Anime - 4K HDR (1080p fallback)
             score: 2000000
           - name: Swiss German (Mundart) only - any quality
             score: 20000
+          - name: Anime - 4K HDR · older versions allowed
+            score: 2000000
       # Own formats (recyclarr/custom-formats, a local resource provider in recyclarr/settings.yml), scored only in the Swiss German profile.
       # `Audio: Swiss German` = the gsw pattern from scripts/languages.tsv (tests/test_audio_terms.py keeps both equal); it beats any non-Swiss file (upgrade) and lands in the file name.
       # Resolution steps (50000) are larger than the best language + audio + HDR sum (~35000), so resolution ranks first inside the one quality group.
@@ -574,8 +674,10 @@ radarr:
       - trash_ids:
           - 4a3b087eea2ce012fcc1ce319259a3be  # Anime Dual Audio
         assign_scores_to:
-          - name: Anime - Remux + WEB 1080p
-            score: 5000000
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 0
+          - name: Anime - 4K HDR · older versions allowed
+            score: 0
       # HDR first: any HDR release beats any non-HDR one of the same quality (2160p and 1080p), whatever its languages and audio.
       # TRaSH `HDR` is the one HDR format (DV with HDR10 fallback, HDR10, HDR10+, HLG, PQ); DV without fallback is rejected below.
       - trash_ids:
@@ -591,7 +693,9 @@ radarr:
             score: 20000000
           - name: HD Bluray + WEB
             score: 20000000
-          - name: Anime - Remux + WEB 1080p
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 20000000
+          - name: Anime - 4K HDR · older versions allowed
             score: 20000000
       # Dub only (`German`), no original audio, and every unwanted format: -50000000.
       # `Bad Group: BlackBit` / `Bad Group: Vyndros` / `Bad Group: CSWEB` (own, recyclarr/custom-formats): TRaSH's Bad Dual Groups needs a parsed group, `... H.265 BlackBit.mkv` (no dash) escaped it.
@@ -624,7 +728,9 @@ radarr:
             score: -50000000
           - name: HD Bluray + WEB
             score: -50000000
-          - name: Anime - Remux + WEB 1080p
+          - name: Anime - 4K HDR (1080p fallback)
+            score: -50000000
+          - name: Anime - 4K HDR · older versions allowed
             score: -50000000
       # Swiss German profile: a Swiss German dub of a foreign film is wanted, so `German` (dub only) and `Language: Not Original` stay 0 there.
       # Rejects are -2000000 there: `Audio: Swiss German` (1000000) + resolution (up to 200000) must not lift a rejected release over the minimum of 0.
@@ -656,6 +762,51 @@ radarr:
         assign_scores_to:
           - name: Swiss German (Mundart) only - any quality
             score: -50000
+      # Anime versions like repacks (owner 2026-11-15): v2/v3/v4 = the group's fixed re-release, past the upgrade step of 25; v1 neutral, v0 (pre-release) TRaSH's -51.
+      - trash_ids:
+          - c259005cbaeb5ab44c06eddb4751e70c  # v0
+        assign_scores_to:
+          - name: Anime - 4K HDR (1080p fallback)
+            score: -51
+          - name: Anime - 4K HDR · older versions allowed
+            score: -51
+      - trash_ids:
+          - 5f400539421b8fcf71d51e6384434573  # v1
+        assign_scores_to:
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 0
+          - name: Anime - 4K HDR · older versions allowed
+            score: 0
+      - trash_ids:
+          - 3df5e6dfef4b09bb6002f732bed5b774  # v2
+        assign_scores_to:
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 25
+          - name: Anime - 4K HDR · older versions allowed
+            score: 25
+      - trash_ids:
+          - db92c27ba606996b146b57fbe6d09186  # v3
+        assign_scores_to:
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 50
+          - name: Anime - 4K HDR · older versions allowed
+            score: 50
+      - trash_ids:
+          - d4e5e842fad129a3c097bdb2d20d31a0  # v4
+        assign_scores_to:
+          - name: Anime - 4K HDR (1080p fallback)
+            score: 75
+          - name: Anime - 4K HDR · older versions allowed
+            score: 75
+      # Like the 4K default: Dolby Vision without HDR fallback rejected and, for films, 4K without HDR (an upscaled 1080p stream).
+      - trash_ids:
+          - 923b6abef9b17f937fab56cfcf89e1f1  # DV (w/o HDR fallback)
+          - 9c38ebb7384dada637be8899efa68e6f  # SDR
+        assign_scores_to:
+          - name: Anime - 4K HDR (1080p fallback)
+            score: -50000000
+          - name: Anime - 4K HDR · older versions allowed
+            score: -50000000
       # Anime-only rejects: raws (no subtitles), low-quality groups, English dub
       # without the Japanese track, French hardsubs (TRaSH -10000, a reject).
       - trash_ids:
@@ -664,7 +815,9 @@ radarr:
           - b0fdc5897f68c9a68c70c25169f77447  # Anime LQ Groups
           - b23eae459cc960816f2d6ba84af45055  # Dubs Only
         assign_scores_to:
-          - name: Anime - Remux + WEB 1080p
+          - name: Anime - 4K HDR (1080p fallback)
+            score: -50000000
+          - name: Anime - 4K HDR · older versions allowed
             score: -50000000
       - trash_ids:
           - 839bea857ed2c0a8e084f3cbdbd65ecb  # x265 (no HDR/DV)
@@ -683,7 +836,6 @@ radarr:
         assign_scores_to:
           - name: HD Bluray + WEB
             score: -50000000
-
     custom_format_groups:
       add:
         # x265 only where it earns its keep (HDR/DV 4K); 1080p stays x264, which
@@ -920,11 +1072,9 @@ sonarr:
           until_score: 5000000
         min_upgrade_format_score: 25
 
-      # Anime: Seerr sends every series TMDB calls anime here (series type `anime`,
-      # same root folder). TRaSH "[Anime] Remux-1080p": Bluray 1080p (remux or
-      # encode) first, WEB 1080p below, no Golden Rule (anime is x265 10-bit by
-      # default), TRaSH anime group tiers and streaming services. Minimum score
-      # 100 is TRaSH's: a release from no known group is skipped.
+      # Anime series (owner 2026-11-15): Seerr sends every series TMDB calls anime here (series type `anime`, same root folder). Top 1080p (anime is made in 1080p;
+      # 2160p anime streams are upscales), Blu-ray encode above WEB, no remux. Scoring like the 4K default (languages, audio ladder, bonuses, step 25) plus the TRaSH
+      # anime group tiers; cutoff 1080p + original + English. No Golden Rule (anime encodes are x265 10-bit).
       - trash_id: 20e0fc959f1f1704bed501f23bdae76f  # [Anime] Remux-1080p
         name: Anime - Bluray + WEB 1080p
         reset_unmatched_scores:
@@ -935,9 +1085,45 @@ sonarr:
             - "^Extra audio: "
         upgrade:
           allowed: true
-          until_quality: Bluray 1080p
+          until_quality: Bluray-1080p
           until_score: 5000000
-        min_upgrade_format_score: 1
+        min_upgrade_format_score: 25
+        min_format_score: 0
+        qualities:
+          - name: Bluray-1080p
+          - name: WEB 1080p
+            qualities: [WEBRip-1080p, WEBDL-1080p]
+      # Old and niche anime series (language-policy-hook.sh): the same, plus 720p down to Unknown.
+      - trash_id: 20e0fc959f1f1704bed501f23bdae76f  # [Anime] Remux-1080p
+        name: Anime - Bluray + WEB 1080p · older versions allowed
+        reset_unmatched_scores:
+          enabled: true
+          except:
+            - "Language: Original + English"
+          except_patterns:
+            - "^Extra audio: "
+        upgrade:
+          allowed: true
+          until_quality: Bluray-1080p
+          until_score: 5000000
+        min_upgrade_format_score: 25
+        min_format_score: 0
+        qualities:
+          - name: Bluray-1080p
+          - name: WEB 1080p
+            qualities: [WEBRip-1080p, WEBDL-1080p]
+          - name: HDTV-1080p
+          - name: WEB 720p
+            qualities: [WEBRip-720p, WEBDL-720p]
+          - name: Bluray-720p
+          - name: HDTV-720p
+          - name: Bluray-576p
+          - name: WEB 480p
+            qualities: [WEBRip-480p, WEBDL-480p]
+          - name: Bluray-480p
+          - name: DVD
+          - name: SDTV
+          - name: Unknown
 
     # Same language scoring as the movies (see the Radarr comments).
     custom_formats:
@@ -961,6 +1147,8 @@ sonarr:
             score: 2000000
           - name: Swiss German (Mundart) only - any quality
             score: 20000
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 2000000
       # Audio ladder, the same as Radarr (owner 2026-10-31): 4K, Any and Swiss German profiles; WEB-1080p and anime stay unscored.
       # lossless + objects (height channels), equal
       - trash_ids:
@@ -978,6 +1166,10 @@ sonarr:
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: 3000
           - name: Swiss German (Mundart) only - any quality
+            score: 3000
+          - name: Anime - Bluray + WEB 1080p
+            score: 3000
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
             score: 3000
       # lossless = uncompressed, all equal
       - trash_ids:
@@ -998,6 +1190,10 @@ sonarr:
             score: 2750
           - name: Swiss German (Mundart) only - any quality
             score: 2750
+          - name: Anime - Bluray + WEB 1080p
+            score: 2750
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 2750
       # best lossy: DD+ with height channels (Atmos with no codec named is almost always DD+ from streaming)
       - trash_ids:
           - 4232a509ce60c4e208d13825b7c06264  # DD+ ATMOS
@@ -1015,6 +1211,10 @@ sonarr:
             score: 2250
           - name: Swiss German (Mundart) only - any quality
             score: 2250
+          - name: Anime - Bluray + WEB 1080p
+            score: 2250
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 2250
       # high-bitrate lossy 7.1
       - trash_ids:
           - cfa5fbd8f02a86fc55d8d223d06a5e1f  # DTS-HD HRA
@@ -1030,6 +1230,10 @@ sonarr:
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: 2000
           - name: Swiss German (Mundart) only - any quality
+            score: 2000
+          - name: Anime - Bluray + WEB 1080p
+            score: 2000
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
             score: 2000
       # E-AC3
       - trash_ids:
@@ -1047,6 +1251,10 @@ sonarr:
             score: 1750
           - name: Swiss German (Mundart) only - any quality
             score: 1750
+          - name: Anime - Bluray + WEB 1080p
+            score: 1750
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 1750
       # DTS core + 6.1 back channel
       - trash_ids:
           - c1a25cd67b5d2e08287c957b1eb903ec  # DTS-ES
@@ -1062,6 +1270,10 @@ sonarr:
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: 1000
           - name: Swiss German (Mundart) only - any quality
+            score: 1000
+          - name: Anime - Bluray + WEB 1080p
+            score: 1000
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
             score: 1000
       # DTS core = AC3
       - trash_ids:
@@ -1080,6 +1292,10 @@ sonarr:
             score: 750
           - name: Swiss German (Mundart) only - any quality
             score: 750
+          - name: Anime - Bluray + WEB 1080p
+            score: 750
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 750
       # stereo / low channel lossy
       - trash_ids:
           - a50b8a0c62274a7c38b09a9619ba9d86  # AAC
@@ -1095,6 +1311,10 @@ sonarr:
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: 500
           - name: Swiss German (Mundart) only - any quality
+            score: 500
+          - name: Anime - Bluray + WEB 1080p
+            score: 500
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
             score: 500
       # Own formats (recyclarr/custom-formats/sonarr), scored only in the Swiss German profile, as in Radarr.
       # Sonarr gives DVD a resolution (480p), so `Resolution: SD` covers DVD and there is no DVD format here.
@@ -1170,6 +1390,10 @@ sonarr:
             score: 5
           - name: WEB-1080p
             score: 5
+          - name: Anime - Bluray + WEB 1080p
+            score: 5
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 5
       # Repacks, as in Radarr: each clears the minimum upgrade step 25.
       - trash_ids:
           - ec8fa7296b64e8cd390a1600981f3923  # Repack/Proper
@@ -1186,6 +1410,10 @@ sonarr:
             score: 25
           - name: WEB-1080p
             score: 25
+          - name: Anime - Bluray + WEB 1080p
+            score: 25
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 25
       - trash_ids:
           - eb3d5cc0a2be0db205fb823640db6a3c  # Repack2
         assign_scores_to:
@@ -1200,6 +1428,10 @@ sonarr:
           - name: 4K HDR - WEB-2160p (1080p fallback) - English original
             score: 50
           - name: WEB-1080p
+            score: 50
+          - name: Anime - Bluray + WEB 1080p
+            score: 50
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
             score: 50
       - trash_ids:
           - 44e7c4de10ae50265753082e5dc76047  # Repack3
@@ -1216,11 +1448,17 @@ sonarr:
             score: 75
           - name: WEB-1080p
             score: 75
+          - name: Anime - Bluray + WEB 1080p
+            score: 75
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 75
       - trash_ids:
           - 418f50b10f1907201b6cfdf881f467b7  # Anime Dual Audio
         assign_scores_to:
           - name: Anime - Bluray + WEB 1080p
-            score: 5000000
+            score: 0
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 0
       # HDR first, as in Radarr.
       - trash_ids:
           - 505d871304820ba7106b693be6fe4a9e  # HDR
@@ -1238,6 +1476,8 @@ sonarr:
           - name: WEB-1080p
             score: 20000000
           - name: Anime - Bluray + WEB 1080p
+            score: 20000000
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
             score: 20000000
       # No original audio: rejected, except on the silent profile (owner 2026-10-31: a silent series has intertitles, any language tag is fine there).
       - trash_ids:
@@ -1257,6 +1497,8 @@ sonarr:
             score: -50000000
           - name: 4K preferred · older versions allowed - silent film
             score: 0
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: -50000000
       - trash_ids:
           - 8a9fcdbb445f2add0505926df3bb7b8a  # German
           - 15a05bc7c1a36e2b57fd628f8977e2fc  # AV1
@@ -1284,6 +1526,52 @@ sonarr:
             score: -50000000
           - name: Anime - Bluray + WEB 1080p
             score: -50000000
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: -50000000
+      # Anime versions like repacks (owner 2026-11-15): v2/v3/v4 = the group's fixed re-release, past the upgrade step of 25; v1 neutral, v0 (pre-release) TRaSH's -51.
+      - trash_ids:
+          - d2d7b8a9d39413da5f44054080e028a3  # v0
+        assign_scores_to:
+          - name: Anime - Bluray + WEB 1080p
+            score: -51
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: -51
+      - trash_ids:
+          - 273bd326df95955e1b6c26527d1df89b  # v1
+        assign_scores_to:
+          - name: Anime - Bluray + WEB 1080p
+            score: 0
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 0
+      - trash_ids:
+          - 228b8ee9aa0a609463efca874524a6b8  # v2
+        assign_scores_to:
+          - name: Anime - Bluray + WEB 1080p
+            score: 25
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 25
+      - trash_ids:
+          - 0e5833d3af2cc5fa96a0c29cd4477feb  # v3
+        assign_scores_to:
+          - name: Anime - Bluray + WEB 1080p
+            score: 50
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 50
+      - trash_ids:
+          - 4fc15eeb8f2f9a749f918217d4234ad8  # v4
+        assign_scores_to:
+          - name: Anime - Bluray + WEB 1080p
+            score: 75
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: 75
+      # Like the 4K default: Dolby Vision without HDR fallback rejected.
+      - trash_ids:
+          - 9b27ab6498ec0f31a3353992e19434ca  # DV (w/o HDR fallback)
+        assign_scores_to:
+          - name: Anime - Bluray + WEB 1080p
+            score: -50000000
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
+            score: -50000000
       - trash_ids:
           - 07a32f77690263bb9fda1842db7e273f  # VOSTFR
           - b4a1b3d705159cdca36d71e57ca86871  # Anime Raws
@@ -1291,6 +1579,8 @@ sonarr:
           - 9c14d194486c4014d422adc64092d794  # Dubs Only
         assign_scores_to:
           - name: Anime - Bluray + WEB 1080p
+            score: -50000000
+          - name: Anime - Bluray + WEB 1080p · older versions allowed
             score: -50000000
       - trash_ids:
           - 9b64dff695c2115facf1b6ea59c9bd07  # x265 (no HDR/DV)
@@ -1311,7 +1601,6 @@ sonarr:
         assign_scores_to:
           - name: WEB-1080p
             score: -50000000
-
     custom_format_groups:
       add:
         # x265 only for HDR/4K; 1080p stays x264 (direct-plays everywhere).
