@@ -63,6 +63,14 @@ class Lines(unittest.TestCase):
         self.assertIn("beefy_downloads_night_waiting 2", t)
         self.assertIn(f"beefy_downloads_night_window_start_timestamp_seconds {int(start.timestamp())}", t)
 
+    def test_retention(self):
+        t = mm.retention_lines({"deleteEnabled": False, "summary": {"keep": 94, "temporary": 55, "leaving7d": 2, "next": "2027-01-23"}})
+        self.assertIn('beefy_retention_titles{state="keep"} 94', t)
+        self.assertIn('beefy_retention_titles{state="temporary"} 55', t)
+        self.assertIn("beefy_retention_leaving_7d 2", t)
+        self.assertIn("beefy_retention_delete_enabled 0", t)
+        self.assertEqual(mm.retention_lines({"titles": {}}), "")
+
     def test_indexers(self):
         t = mm.indexer_lines({"ok": True, "generated": "2026-10-29T00:28:03Z", "indexers": [
             {"name": "Treasure Maps", "searches": {"used": 272, "limit": None}, "downloads": {"used": 13, "limit": 400}}]})

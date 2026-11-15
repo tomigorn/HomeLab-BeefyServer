@@ -198,6 +198,12 @@ class Output(unittest.TestCase):
         self.assertEqual((doc["deleteEnabled"], doc["enabledOn"], doc["hdd"]["usedPct"], doc["titles"], doc["skipped"]), (False, None, 50.0, entries, 1))
         self.assertEqual(doc["rules"]["deleteDays"], 90)
 
+    def test_summary_for_the_morning_metrics(self):
+        lib = library()
+        e = rt.classify(lib.titles, {}, set(), set(), set(), (100, 10), datetime.date(2027, 1, 25))
+        self.assertEqual(rt.summary(e, {"movie/1001": True}, datetime.date(2027, 1, 25), None), {"keep": 6, "temporary": 1, "leaving7d": 0, "next": "2027-02-09"})
+        self.assertEqual(rt.summary(e, {}, datetime.date(2027, 1, 25), None)["leaving7d"], 1)
+
     def test_switch_needs_both_flag_and_date(self):
         self.assertEqual(rt.Switch.from_env({}), rt.Switch(False, None))
         self.assertEqual(rt.Switch.from_env({"RETENTION_DELETE": "1"}), rt.Switch(False, None))

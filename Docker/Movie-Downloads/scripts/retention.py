@@ -231,9 +231,20 @@ def classify(titles, overrides, collections, progress, hot, hdd, today):
     return entries
 
 
-def document(entries, promote, now, switch, hdd, skipped):
+def summary(entries, overrides, today, since):
+    out = {"keep": 0, "temporary": 0, "leaving7d": 0, "next": None}
+    for k, e in entries.items():
+        st = rr.effective(e, overrides.get(k), today, since)
+        out["keep" if st["keep"] else "temporary"] += 1
+        if not st["keep"] and st["deleteOn"]:
+            out["leaving7d"] += st["soon"]
+            out["next"] = min(out["next"] or st["deleteOn"], st["deleteOn"])
+    return out
+
+
+def document(entries, promote, now, switch, hdd, skipped, totals=None):
     total, used = hdd
-    return {"updated": now.isoformat(timespec="seconds"), "deleteEnabled": switch.on, "enabledOn": switch.since.isoformat() if switch.since else None,
+    return {"summary": totals, "updated": now.isoformat(timespec="seconds"), "deleteEnabled": switch.on, "enabledOn": switch.since.isoformat() if switch.since else None,
             "rules": {"ssdDays": rr.SSD_DAYS, "deleteDays": rr.DELETE_DAYS, "soonDays": rr.SOON_DAYS, "postponeMaxDays": rr.POSTPONE_MAX_DAYS, "graceDays": rr.GRACE_DAYS,
                       "hddStartPct": round(HDD_START * 100), "hddTargetPct": round(HDD_TARGET * 100)},
             "hdd": {"usedPct": round(100 * used / total, 1) if total else None}, "titles": entries, "promote": promote, "skipped": len(skipped)}
@@ -407,12 +418,12 @@ def main(argv=None):
     entries = classify(lib.titles, overrides, collections, progress, hot, hdd, now.date())
     promote = promotions(lib.titles, plays, hot)
     switch = Switch.from_env(env)
-    doc = document(entries, promote, now, switch, hdd, lib.skipped)
+    doc = document(entries, promote, now, switch, hdd, lib.skipped, summary(entries, overrides, now.date(), switch.since))
     if a.plan:
         print("\n".join(plan_lines(doc, overrides, now.date())))
         return 0
-    keep = sum(rr.effective(e, overrides.get(k), now.date())["keep"] for k, e in entries.items())
-    print(f"retention: {len(entries)} titles, {keep} kept forever, {len(entries) - keep} temporary, HDD {doc['hdd']['usedPct']} %{'' if switch.on else ', observe mode'}", flush=True)
+    sm = doc["summary"]
+    print(f"retention: {len(entries)} titles, {sm['keep']} kept forever, {sm['temporary']} temporary, next would-delete {sm['next']}, HDD {doc['hdd']['usedPct']} %{'' if switch.on else ', observe mode'}", flush=True)
     for p in promote:
         print(f"retention: would promote {p['key']} ({p['title']}) seasons {p['seasons']} to the SSD (played {p['played']}); observe only, nothing moved", flush=True)
     if lib.skipped:

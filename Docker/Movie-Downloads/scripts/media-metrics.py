@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Request, download and indexer figures for fastpi's Grafana "Homelab — morning view" (fastpi Docker/grafana/README.md).
-Reads the files the night run and the indexer bar already write (request-state.json, night-waiting.json, usage.json, night-downloads.json) plus Seerr /request/count and the Radarr/Sonarr imports of the last night window (22:00-06:00); counts and sizes only, no titles or users.
+Reads the files the night run and the indexer bar already write (request-state.json, night-waiting.json, usage.json, night-downloads.json, retention.json) plus Seerr /request/count and the Radarr/Sonarr imports of the last night window (22:00-06:00); counts and sizes only, no titles or users.
 Writes ~/.local/state/movie-downloads/media-metrics.prom; fastpi's beefy-idle-pull.sh copies it every 5 min (kept while beefy sleeps). A source that fails is left out and counted in beefy_media_metrics_errors.
 Run by systemd/media-metrics.timer every 5 min while beefy is awake (never wakes it).
 Usage: scripts/media-metrics.py"""
@@ -82,6 +82,14 @@ def indexer_lines(usage, host="beefy"):
     return "\n".join(out) + "\n"
 
 
+def retention_lines(doc):
+    sm = doc.get("summary") if isinstance(doc, dict) else None
+    if not isinstance(sm, dict):
+        return ""
+    return "".join([f'beefy_retention_titles{{state="keep"}} {sm.get("keep", 0)}\n', f'beefy_retention_titles{{state="temporary"}} {sm.get("temporary", 0)}\n',
+                    f'beefy_retention_leaving_7d {sm.get("leaving7d", 0)}\n', f'beefy_retention_delete_enabled {int(bool(doc.get("deleteEnabled")))}\n'])
+
+
 def _json(path):
     try:
         return json.loads(pathlib.Path(path).read_text())
@@ -118,6 +126,11 @@ def main():
         except (nd.ApiError, OSError) as e:
             print(f"media-metrics: {app}: {e}", file=sys.stderr)
             errors += 1
+    retention = _json(BAR / "retention.json")
+    if retention is None:
+        errors += 1
+    else:
+        parts.append(retention_lines(retention))
     parts.append(night_lines(_json(STATE_DIR / "night-downloads.json"), _json(BAR / "night-waiting.json"), history, start, end))
     parts.append(f"beefy_media_metrics_errors {errors}\nbeefy_media_metrics_updated_timestamp_seconds {int(now.timestamp())}\n")
     OUT.parent.mkdir(parents=True, exist_ok=True)
