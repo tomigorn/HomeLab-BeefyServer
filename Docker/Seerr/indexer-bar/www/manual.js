@@ -884,7 +884,7 @@
     var doc = win.document, main = doc.querySelector("main");
     var here = win.location.pathname.replace(/\/+$/, "") === ROUTE;
     if (!here) {
-      doc.documentElement.removeAttribute("data-hg-early");
+      if (doc.documentElement.getAttribute("data-hg-early") === "manual") doc.documentElement.removeAttribute("data-hg-early");
       if (app) { if (app.root.parentNode) app.root.parentNode.removeChild(app.root); app = null; }
       var m = doc.querySelector("main[data-hg-manual]");
       if (m) m.removeAttribute("data-hg-manual");
@@ -905,7 +905,7 @@
       app.start();
     }
     if (app.root.parentNode !== main || main.firstChild !== app.root) main.insertBefore(app.root, main.firstChild);
-    doc.documentElement.removeAttribute("data-hg-early");
+    if (doc.documentElement.getAttribute("data-hg-early") === "manual") doc.documentElement.removeAttribute("data-hg-early");
     var title = app.t.title + " - Seerr";
     if (app.data && doc.title !== title) doc.title = title;
   }

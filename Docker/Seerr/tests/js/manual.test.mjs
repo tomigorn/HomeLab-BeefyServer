@@ -778,3 +778,11 @@ test("the early /manual mark goes once our page is in, and on any other page", a
   await settle();
   assert.equal(w2.document.documentElement.hasAttribute("data-hg-early"), false);
 });
+
+test("on /collections the early mark of that page is left for collections.js", async () => {
+  const { w } = await page({}, "https://requests.example.com/collections");
+  w.document.documentElement.setAttribute("data-hg-early", "collections");
+  w.document.body.insertAdjacentHTML("beforeend", "<p>x</p>");
+  await settle();
+  assert.equal(w.document.documentElement.getAttribute("data-hg-early"), "collections");
+});
