@@ -135,6 +135,7 @@ def reset(now=T):
     cp.THROTTLE.clear()
     cp.FLOOD.clear()
     cp.MEM.clear()
+    cp.BUSY.clear()
 
 
 def q(text, **params):
@@ -414,6 +415,130 @@ class Night(unittest.TestCase):
         cp.CACHE.clear()
         cp.nightly(dn, w.deps())
         self.assertEqual(len(w.stored()["lists"][0]["items"]), 3)
+
+
+class Hardening(unittest.TestCase):
+    """Findings of the security review: memory, threads, races, names, file modes."""
+
+    def setUp(self):
+        reset()
+
+    def test_cache_keeps_only_the_fields_used_and_stays_under_its_size(self):
+        big = dict(CREDITS)
+        big["cast"] = [dict(film(1000 + i, f"Film {i}", "2001-01-01", character="Hero"), overview="x" * 5000, backdropPath="/b.jpg") for i in range(50)]
+        w = World(routes={"/person/601/combined_credits?language=en": big})
+        w.get(q("actor:Solo Person"))
+        entry = cp.CACHE["/person/601/combined_credits?language=en"]
+        self.assertNotIn("overview", json.dumps(entry[1]))
+        self.assertLess(entry[2], 50 * 400)
+        cp.CACHE_BYTES, old = 2000, cp.CACHE_BYTES
+        try:
+            cp.CACHE.clear()
+            cp.FLOOD.clear()
+            w.get(q("actor:Solo Person"))
+            self.assertLessEqual(sum(e[2] for e in cp.CACHE.values()), 2000 + 20000)
+            self.assertLessEqual(len(cp.CACHE), 2)
+        finally:
+            cp.CACHE_BYTES = old
+
+    def test_expired_answers_are_dropped_on_insert(self):
+        w = World()
+        w.get(q("producer:Solo Person"))
+        n = len(cp.CACHE)
+        cp.NOW = lambda: T + cp.CACHE_TTL + 1
+        cp.FLOOD.clear()
+        w.get(q("studio:Fake Studio"))
+        self.assertLess(len(cp.CACHE), n + 2)
+        self.assertTrue(all(T + cp.CACHE_TTL + 1 - e[0] < cp.CACHE_TTL for e in cp.CACHE.values()))
+
+    def test_busy_server_answers_429_at_once_instead_of_queueing(self):
+        w = World()
+        for _ in range(cp.IN_FLIGHT):
+            self.assertTrue(cp.SLOTS.acquire(blocking=False))
+        try:
+            self.assertEqual(w.get(q("producer:Solo Person")), (429, {"error": "busy"}))
+            self.assertEqual(w.save(), (429, {"error": "busy"}))
+        finally:
+            for _ in range(cp.IN_FLIGHT):
+                cp.SLOTS.release()
+        self.assertEqual(w.get(q("producer:Solo Person"))[0], 200)
+
+    def test_one_preview_or_save_per_user_at_a_time(self):
+        w = World()
+        cp.BUSY.add(USER["id"])
+        self.assertEqual(w.get(q("producer:Solo Person")), (429, {"error": "busy"}))
+        self.assertEqual(w.as_user(OTHER).get(q("producer:Solo Person"))[0], 200)
+        cp.BUSY.clear()
+        self.assertEqual(w.as_user(USER).get(q("producer:Solo Person"))[0], 200)
+        self.assertEqual(cp.BUSY, set())
+
+    def test_tmdb_calls_per_query_are_capped(self):
+        w = World()
+        cp.CALL_BUDGET, old = 2, cp.CALL_BUDGET
+        try:
+            self.assertEqual(w.get(q("producer:Solo Person keyword:heist")), (400, {"error": "too-broad"}))
+        finally:
+            cp.CALL_BUDGET = old
+
+    def test_non_object_picks_are_400(self):
+        w = World()
+        for picks in ([1], "0:501", 5):
+            cp.THROTTLE.clear()
+            self.assertEqual(w.save(picks=picks), (400, {"error": "pick"}))
+
+    def test_backup_is_group_readable_only(self):
+        w = World()
+        w.save()
+        w.save(name="Second")
+        self.assertEqual(stat.S_IMODE(os.stat(w.store.with_name("lists.json.bak")).st_mode), 0o640)
+
+    def test_creator_names_outside_the_name_charset_become_user_n(self):
+        w = World(me={"id": 12, "username": "<b>evil</b>", "permissions": 32})
+        w.save()
+        self.assertEqual(w.stored()["lists"][0]["ownerName"], "user 12")
+        w.as_user({"id": 13, "jellyfinUsername": "Kim Example", "permissions": 32}).save(name="Kims")
+        self.assertEqual(w.stored()["lists"][1]["ownerName"], "Kim Example")
+
+    def test_edit_rechecks_owner_and_list_inside_the_lock(self):
+        w = World()
+        w.save()
+        lid = w.stored()["lists"][0]["id"]
+        real = cp.run_query
+
+        def swap(deps, req):
+            out = real(deps, req)
+            lists = cp.load(deps)
+            lists[0].update(owner=5, created="2030-01-01T00:00:00Z")
+            cp.save(deps, lists)
+            return out
+        cp.run_query = swap
+        try:
+            self.assertEqual(w.save(id=lid, name="Mine again")[0], 409)
+        finally:
+            cp.run_query = real
+        self.assertEqual(w.stored()["lists"][0]["name"], "Pat produced")
+
+    def test_night_refresh_skips_a_list_edited_meanwhile(self):
+        cp.NOW = lambda: datetime.datetime(2026, 11, 16, 4, 5).timestamp()
+        w = World()
+        w.save()
+        w.seerr.routes["/person/601/combined_credits?language=en"] = {"cast": [], "crew": [film(26, "New Release", "2026-11-01", job="Producer")]}
+        cp.CACHE.clear()
+        real = cp.evaluate
+
+        def edit_during(deps, terms, sort, cap, **kw):
+            out = real(deps, terms, sort, cap, **kw)
+            lists = cp.load(deps)
+            lists[0].update(name="Edited", updated="2026-11-16T03:06:00Z", items=[{"k": "movie", "id": 1, "t": "x", "y": 2000, "p": None, "o": False}])
+            cp.save(deps, lists)
+            return out
+        cp.evaluate = edit_during
+        try:
+            cp.nightly(dn, w.deps())
+        finally:
+            cp.evaluate = real
+        lst = w.stored()["lists"][0]
+        self.assertEqual((lst["name"], [i["id"] for i in lst["items"]]), ("Edited", [1]))
 
 
 if __name__ == "__main__":

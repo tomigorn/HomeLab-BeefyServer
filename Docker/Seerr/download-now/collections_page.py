@@ -22,9 +22,18 @@ MEM = {}
 CACHE_LOCK = threading.Lock()
 THROTTLE_LOCK = threading.Lock()
 STORE_LOCK = threading.Lock()
-TMDB_SLOTS = threading.BoundedSemaphore(2)
+BUSY_LOCK = threading.Lock()
+# previews and saves in flight overall, one per user; more = 429 at once, no thread waits
+IN_FLIGHT = 3
+SLOTS = threading.BoundedSemaphore(IN_FLIGHT)
+BUSY = set()
+CTX = threading.local()
+# TMDB calls (cache misses) one query may make
+CALL_BUDGET = 40
 CACHE_TTL = 6 * 3600
-CACHE_MAX = 3000
+# cache of the reduced answers, bounded by their JSON length (the container has 160 MiB)
+CACHE_BYTES = 30 * 1024 * 1024
+ROW_KEYS = ("id", "mediaType", "title", "name", "releaseDate", "firstAirDate", "popularity", "voteAverage", "genreIds", "posterPath", "adult", "job", "department", "character")
 PREVIEW_MAX = 10
 PREVIEW_WINDOW = 60
 SAVE_GAP = 5
@@ -137,20 +146,58 @@ def check_terms(terms):
         raise Refused(400, "anchor-or-filter")
 
 
+def row(r):
+    if not isinstance(r, dict):
+        return None
+    out = {k: r[k] for k in ROW_KEYS if k in r}
+    if isinstance(r.get("mediaInfo"), dict):
+        out["mediaInfo"] = {"status": r["mediaInfo"].get("status")}
+    if isinstance(r.get("knownFor"), list):
+        out["knownFor"] = [{"title": k.get("title"), "name": k.get("name")} for k in r["knownFor"][:3] if isinstance(k, dict)]
+    for k in ("profilePath", "logoPath", "originCountry"):
+        if k in r:
+            out[k] = r[k]
+    return out
+
+
+def slim(data):
+    """Only the fields this page reads: results / cast / crew / parts as reduced rows, a film's collection, the page count."""
+    if not isinstance(data, dict):
+        return {}
+    out = {k: [x for x in map(row, data[k]) if x] for k in ("results", "cast", "crew", "parts") if isinstance(data.get(k), list)}
+    if "totalPages" in data:
+        out["totalPages"] = data["totalPages"]
+    c = data.get("collection")
+    if isinstance(c, dict):
+        out["collection"] = {"id": c.get("id"), "name": c.get("name"), "posterPath": c.get("posterPath")}
+    return out
+
+
 def tmdb(deps, path):
-    """Seerr's TMDB answer for path (Seerr's API key), cached CACHE_TTL; at most two calls at once."""
+    """Seerr's TMDB answer for path (Seerr's API key), reduced and cached CACHE_TTL; every miss counts against the query's call budget."""
     now = NOW()
     with CACHE_LOCK:
         hit = CACHE.get(path)
         if hit and now - hit[0] < CACHE_TTL:
             return hit[1]
-    with TMDB_SLOTS:
-        data = deps.seerr_admin(path)
+    left = getattr(CTX, "calls", None)
+    if left is not None:
+        if left <= 0:
+            raise Refused(400, "too-broad")
+        CTX.calls = left - 1
+    data = slim(deps.seerr_admin(path))
+    size = len(json.dumps(data))
     with CACHE_LOCK:
-        if len(CACHE) >= CACHE_MAX:
-            for k, _ in sorted(CACHE.items(), key=lambda kv: kv[1][0])[:CACHE_MAX // 10]:
+        for k in [k for k, e in CACHE.items() if now - e[0] >= CACHE_TTL]:
+            del CACHE[k]
+        if size <= CACHE_BYTES:
+            total = sum(e[2] for e in CACHE.values())
+            for k, e in sorted(CACHE.items(), key=lambda kv: kv[1][0]):
+                if total + size <= CACHE_BYTES:
+                    break
+                total -= e[2]
                 del CACHE[k]
-        CACHE[path] = (now, data)
+            CACHE[path] = (now, data, size)
     return data
 
 
@@ -390,6 +437,7 @@ def save(deps, lists):
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         shutil.copyfile(path, path.with_name(path.name + ".bak"))
+        os.chmod(path.with_name(path.name + ".bak"), 0o640)
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(json.dumps({"updated": ts(NOW()), "lists": lists}, ensure_ascii=False, indent=1))
@@ -400,11 +448,12 @@ def save(deps, lists):
 
 
 def person(u):
+    """The creator's name as it goes to Jellyfin (overview, poster): Seerr / Jellyfin / Plex name in the name charset, else "user N"."""
     for k in ("username", "jellyfinUsername", "plexUsername"):
-        v = u.get(k)
-        if isinstance(v, str) and v.strip() and "@" not in v:
-            return v.strip()[:60]
-    return f"user {u.get('id')}"
+        v = " ".join(u.get(k).split()) if isinstance(u.get(k), str) else ""
+        if v and len(v) <= NAME_MAX and NAME_OK.match(v):
+            return v
+    return f"user {int(u.get('id') or 0)}"
 
 
 def slug(name, taken):
@@ -427,6 +476,8 @@ def options(req):
     if cap is None or not 1 <= cap <= MAX_CAP:
         raise Refused(400, "max")
     picks = {}
+    if not isinstance(req.get("picks") or {}, dict):
+        raise Refused(400, "pick")
     for k, v in (req.get("picks") or {}).items():
         try:
             picks[int(k)] = int(v)
@@ -506,6 +557,8 @@ def do_save(deps, me, req):
         cur = next((l for l in lists if l["id"] == lid), None) if lid else None
         if lid and not cur:
             raise Refused(404, "not-found")
+        if cur and (cur.get("created") != old.get("created") or not (cur.get("owner") == me.get("id") or is_admin(me))):
+            raise Refused(409, "changed")
         if not cur and (len(lists) >= LIMIT_TOTAL or sum(1 for l in lists if l.get("owner") == me.get("id")) >= LIMIT_USER):
             raise Refused(409, "limit-total" if len(lists) >= LIMIT_TOTAL else "limit-user")
         if any(fold(l["name"]) == fold(name) and l["id"] != lid for l in lists):
@@ -564,9 +617,30 @@ def handle(dn, method, path, headers, body, deps):
         me = None
     if not isinstance(me, dict) or not isinstance(me.get("id"), int) or isinstance(me.get("id"), bool):
         return 403, {"error": "forbidden"}
-    try:
-        if sub == "lists":
+    if sub == "lists":
+        try:
             return 200, view(deps, me)
+        except StoreUnreadable as e:
+            print(f"collections: store unreadable ({e})", flush=True)
+            return 503, {"error": "store"}
+    if sub in ("preview", "save"):
+        with BUSY_LOCK:
+            if me["id"] in BUSY or not SLOTS.acquire(blocking=False):
+                return 429, {"error": "busy"}
+            BUSY.add(me["id"])
+        CTX.calls = CALL_BUDGET
+        try:
+            return work(dn, deps, me, sub, url, req)
+        finally:
+            CTX.calls = None
+            with BUSY_LOCK:
+                BUSY.discard(me["id"])
+            SLOTS.release()
+    return work(dn, deps, me, sub, url, req)
+
+
+def work(dn, deps, me, sub, url, req):
+    try:
         if sub == "preview":
             if flooding(me["id"]):
                 return 429, {"error": "slow-down"}
@@ -606,12 +680,15 @@ def nightly(dn, deps):
             lists = load(deps)
         except StoreUnreadable:
             return 0
-    fresh = {}
+    fresh, seen = {}, {l["id"]: l.get("updated") for l in lists}
     for l in lists:
+        CTX.calls = CALL_BUDGET
         try:
             fresh[l["id"]] = evaluate(deps, l["terms"], l.get("sort") or "release", int(l.get("max") or MAX_DEFAULT))[0]
         except Exception as e:
             print(f"collections night {l.get('id')}: {type(e).__name__} {dn.redact(e)}", flush=True)
+        finally:
+            CTX.calls = None
     with STORE_LOCK:
         try:
             lists = load(deps)
@@ -620,7 +697,7 @@ def nightly(dn, deps):
         changed = False
         for l in lists:
             items = fresh.get(l["id"])
-            if items is not None and items != l.get("items"):
+            if items is not None and items != l.get("items") and l.get("updated") == seen.get(l["id"]):
                 l.update(items=items, refreshed=ts(NOW()))
                 changed = True
         if changed:
