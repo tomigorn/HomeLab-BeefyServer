@@ -1,6 +1,6 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { load, tick, tipText, SEERR_TIP } from "./fixture.mjs";
+import { load, tick, tipText, SEERR_TIP, mouseAt } from "./fixture.mjs";
 
 const open = [];
 afterEach(() => { while (open.length) open.pop().close(); });
@@ -327,4 +327,46 @@ test("moving into Seerr's interactive download box keeps the box pinned to its p
   w.dispatchEvent(new w.Event("resize"));
   assert.equal(seerr.__hgTipFor, w.document.getElementById("pill"));
   assert.deepEqual(pos(seerr), ["400px", "326px"]);
+});
+
+const enterAt = (w, el, x, y) => { const e = new w.MouseEvent("pointerenter", { cancelable: true, clientX: x, clientY: y }); Object.defineProperty(e, "pointerType", { value: "mouse" }); el.dispatchEvent(e); };
+
+test("an element that slides under a resting mouse gets no hint; the next real move over it shows it", () => {
+  const w = page('<span id="a">Remux</span>');
+  const a = w.document.getElementById("a");
+  w.hgTip.set(a, "The untouched disc copy");
+  mouseAt(w, 50, 20);
+  enterAt(w, a, 50, 20);
+  assert.equal(shown(w), false);
+  mouseAt(w, 50, 20, a);
+  assert.equal(shown(w), false, "same spot: still not moved");
+  mouseAt(w, 52, 21, a);
+  assert.ok(shown(w));
+});
+
+test("after a page load without any mouse move, an element under the cursor stays quiet until the mouse moves", () => {
+  const w = load("tip.js", '<span id="a">Remux</span>', null, undefined, undefined, { moved: false });
+  open.push(w);
+  const a = w.document.getElementById("a");
+  w.hgTip.set(a, "The untouched disc copy");
+  enterAt(w, a, 300, 200);
+  assert.equal(shown(w), false);
+  mouseAt(w, 301, 200, a);
+  assert.ok(shown(w));
+});
+
+test("moving the mouse onto an element shows its hint at once; leaving forgets a pending one", () => {
+  const w = page('<span id="a">a</span><span id="b">b</span>');
+  const [a, b] = ["a", "b"].map((id) => w.document.getElementById(id));
+  w.hgTip.set(a, "first");
+  w.hgTip.set(b, "second");
+  mouseAt(w, 10, 10);
+  enterAt(w, a, 12, 10);
+  assert.equal(tipText(box(w)), "first");
+  a.dispatchEvent(ev(w, "pointerleave"));
+  mouseAt(w, 12, 10, a);
+  enterAt(w, b, 12, 10);
+  b.dispatchEvent(ev(w, "pointerleave"));
+  mouseAt(w, 30, 10, b);
+  assert.equal(shown(w), false, "left b before moving: nothing pending");
 });

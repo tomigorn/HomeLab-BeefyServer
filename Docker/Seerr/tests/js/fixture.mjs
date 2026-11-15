@@ -73,14 +73,22 @@ function noTitles(w) {
   Object.defineProperty(w.HTMLElement.prototype, "title", { ...prop, set(value) { titleSets.push(`<${this.tagName.toLowerCase()}> ${value}`); prop.set.call(this, value); } });
 }
 
-// A DOM with the given body; `before` runs in the window before the script (stubs), then tip.js (loaded first, as seerr-proxy does; `tip: false` = a page without it) and the script itself.
-export function load(script, body, before, url = "https://requests.example.com/movie/1", head = BAR_TAG, { tip = true } = {}) {
+// A DOM with the given body; `before` runs in the window before the script (stubs), then tip.js (loaded first, as seerr-proxy does; `tip: false` = a page without it) and the script itself; `moved: false` = the mouse has not moved since the page loaded.
+export function load(script, body, before, url = "https://requests.example.com/movie/1", head = BAR_TAG, { tip = true, moved = true } = {}) {
   const dom = new JSDOM(`<!doctype html><html><head>${head}</head><body>${body}</body></html>`, { runScripts: "outside-only", url });
   noTitles(dom.window);
   if (before) before(dom.window);
   if (script !== "tip.js" && tip) dom.window.eval(readFileSync(new URL("tip.js", WWW), "utf8"));
   dom.window.eval(readFileSync(new URL(script, WWW), "utf8"));
+  if (moved) mouseAt(dom.window, -1, -1);
   return dom.window;
+}
+
+// A real mouse move (pointermove) to x, y on el (default: the document).
+export function mouseAt(w, x, y, el = w.document) {
+  const e = new w.MouseEvent("pointermove", { bubbles: true, cancelable: true, clientX: x, clientY: y });
+  Object.defineProperty(e, "pointerType", { value: "mouse" });
+  el.dispatchEvent(e);
 }
 
 export const tick = () => new Promise((r) => setTimeout(r, 0));

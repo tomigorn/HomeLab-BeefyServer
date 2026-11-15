@@ -12,7 +12,7 @@
     "[data-hg-tip-merged]{max-width:22rem;padding:0 0 .25rem;margin-bottom:.25rem;border-bottom:1px solid #374151;font-size:.875rem;line-height:1.25rem;white-space:normal;overflow-wrap:anywhere;text-align:left}" +
     "[data-hg-tip-merged].hg-tip-roomy{max-width:none;padding:.75rem 1rem;margin:0}" +
     "[data-hg-tip-pin]{position:fixed !important;left:var(--hg-tip-x) !important;top:var(--hg-tip-y) !important;right:auto !important;bottom:auto !important;transform:none !important;margin:0 !important}";
-  var cur = null, host = null, pointer = null, last = null;
+  var cur = null, host = null, pointer = null, last = null, mouse = null;
 
   function sections(c) {
     if (typeof c === "function") { try { c = c(); } catch (e) { c = null; } }
@@ -245,8 +245,19 @@
     if (el.__hgTipWired) return;
     el.__hgTipWired = true;
     el.addEventListener("pointerdown", function (ev) { pointer = ev.pointerType; el.__hgTipPt = ev.pointerType; });
-    el.addEventListener("pointerenter", function (ev) { if (ev.pointerType === "mouse") show(doc, el); });
-    el.addEventListener("pointerleave", function (ev) { if (ev.pointerType === "mouse" && cur === el) hide(doc); });
+    // only a moving mouse opens a hint: an element sliding under a resting cursor (page load, re-render) waits for the next move
+    el.addEventListener("pointerenter", function (ev) {
+      if (ev.pointerType !== "mouse") return;
+      if (mouse && (mouse.x !== ev.clientX || mouse.y !== ev.clientY)) { el.__hgTipWait = null; show(doc, el); }
+      else el.__hgTipWait = { x: ev.clientX, y: ev.clientY };
+    });
+    el.addEventListener("pointermove", function (ev) {
+      var at = el.__hgTipWait;
+      if (ev.pointerType !== "mouse" || !at || (at.x === ev.clientX && at.y === ev.clientY)) return;
+      el.__hgTipWait = null;
+      show(doc, el);
+    });
+    el.addEventListener("pointerleave", function (ev) { if (ev.pointerType !== "mouse") return; el.__hgTipWait = null; if (cur === el) hide(doc); });
     el.addEventListener("focus", function () { if (el.__hgTipPt !== "touch") show(doc, el); });
     el.addEventListener("blur", function () { if (cur === el && !host) hide(doc); });
     el.addEventListener("click", function (ev) {
@@ -278,6 +289,8 @@
   var api = { set: set, get: function (el) { return el ? el.__hgTip || null : null; }, text: text, headline: headline, show: function (el) { return show(el.ownerDocument, el); }, hide: function () { hide(document); }, render: render };
   if (typeof window === "undefined") return;
   window.hgTip = api;
+  // where the mouse last really moved (capture: runs before the element listeners of the same event)
+  document.addEventListener("pointermove", function (ev) { if (ev.pointerType === "mouse") mouse = { x: ev.clientX, y: ev.clientY }; }, true);
   if (document.body) global(document);
   else document.addEventListener("DOMContentLoaded", function () { global(document); });
 })();

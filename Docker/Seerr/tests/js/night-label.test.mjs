@@ -797,7 +797,11 @@ test("hints are static: a pill's hint shows once above it (never inside Seerr's 
   const click = ev("click");
   chip.dispatchEvent(click);
   assert.equal(click.defaultPrevented, false, "a mouse click goes straight through");
-  assert.ok(!types.some((t) => /move/.test(t)), types.join(","));
+  chip.dispatchEvent(ev("pointerenter"));
+  const at = [tip.style.left, tip.style.top];
+  for (const x of [5, 40, 90]) { const m = new w.MouseEvent("pointermove", { bubbles: true, clientX: x, clientY: x }); Object.defineProperty(m, "pointerType", { value: "mouse" }); chip.dispatchEvent(m); }
+  assert.deepEqual([tip.style.left, tip.style.top], at, "the box does not follow the mouse");
+  assert.ok(!types.some((t) => /mousemove/.test(t)), types.join(","));
 });
 
 test("night-paused popup: patched before the next paint, the bar keeps its width and does not animate", async () => {
