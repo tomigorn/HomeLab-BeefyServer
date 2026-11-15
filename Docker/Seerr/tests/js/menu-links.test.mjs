@@ -239,3 +239,8 @@ test("Manual count in the sidebar: label stays on one line, the badge sits on th
   assert.equal(b.style.marginLeft, "");
   assert.equal(drawer.querySelector("[data-hg-count]").style.marginLeft, "auto", "phone drawer (full width): badge at the end as before");
 });
+
+test("menu-links.css hides Seerr's 404 on a fresh /manual load until our page is in, shown anyway after 3 s", () => {
+  const css = readFileSync(new URL("../../indexer-bar/www/menu-links.css", import.meta.url), "utf8");
+  assert.match(css, /html\[data-hg-early="manual"\] main > :not\(#hg-manual\) \{[^}]*visibility: hidden[^}]*animation: hg-menu-show 0s 3s forwards/);
+});

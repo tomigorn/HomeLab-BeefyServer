@@ -78,3 +78,9 @@ test("first answer fails (network): the reserved strip goes away", async () => {
   await tick(); await tick(); await tick();
   assert.equal(on(w), false);
 });
+
+test("a fresh load of /manual is marked so Seerr's 404 stays hidden until our page is in; other pages are not", () => {
+  assert.equal(early("https://requests.example.com/manual").document.documentElement.getAttribute("data-hg-early"), "manual");
+  assert.equal(early("https://requests.example.com/manual/").document.documentElement.getAttribute("data-hg-early"), "manual");
+  assert.equal(early("https://requests.example.com/requests").document.documentElement.hasAttribute("data-hg-early"), false);
+});

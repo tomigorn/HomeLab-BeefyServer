@@ -765,3 +765,16 @@ test("Next page elsewhere: nothing hidden while waiting for hydration", async ()
   await new Promise((r) => setTimeout(r, 40));
   assert.equal(w.document.documentElement.hasAttribute("data-hg-manual-wait"), false);
 });
+
+test("the early /manual mark goes once our page is in, and on any other page", async () => {
+  const mark = (win) => win.document.documentElement.setAttribute("data-hg-early", "manual");
+  const s = world({ "/api/v1/auth/me": ME, "/_download-now/manual/problems": { status: 200, body: { open: [problem()], done: [], admin: false } } });
+  const w = load("manual.js", PAGE, (win) => { s.before(win); mark(win); }, "https://requests.example.com/manual");
+  await settle();
+  assert.ok(w.document.querySelector("main #hg-manual"));
+  assert.equal(w.document.documentElement.hasAttribute("data-hg-early"), false);
+  const o = world({});
+  const w2 = load("manual.js", PAGE, (win) => { o.before(win); mark(win); }, "https://requests.example.com/discover/movies");
+  await settle();
+  assert.equal(w2.document.documentElement.hasAttribute("data-hg-early"), false);
+});
