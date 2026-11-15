@@ -1,6 +1,6 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { load, tick } from "./fixture.mjs";
+import { load, tick, tipText, SEERR_TIP } from "./fixture.mjs";
 
 const BOYS_ID = "6504de6a-8b7c-4a6a-afc7-9f1da33bbde4";
 const item = (downloadId, status, title, episode) => ({ downloadId, status, title, size: 1000, sizeLeft: status === "downloading" ? 400 : 1000, timeLeft: null, estimatedCompletionTime: null, externalId: 1, mediaType: episode ? "tv" : "movie", ...(episode && { episode }) });
@@ -72,7 +72,7 @@ const downloadBlock = (name, status, pct = 0) => `
 const shown = (w, el) => w.getComputedStyle(el).display !== "none";
 const visibleText = (w, root) => [...root.querySelectorAll("*")].filter((e) => !e.children.length && shown(w, e) && [...ancestors(e)].every((a) => shown(w, a))).map((e) => e.textContent.trim()).filter(Boolean).join("|");
 function* ancestors(e) { for (let a = e.parentElement; a; a = a.parentElement) yield a; }
-const visibleTip = (w) => { const t = w.document.getElementById("hg-flag-tip"); return t && shown(w, t) ? t.textContent : null; };
+const visibleTip = (w) => { const t = w.document.getElementById("hg-tip"); return t && shown(w, t) ? tipText(t) : null; };
 const open = [];
 afterEach(() => { while (open.length) open.pop().close(); });
 const night = (body, xhr, path) => { const w = load("night-label.js", body, xhr, "https://requests.example.com" + path); open.push(w); return w; };
@@ -378,9 +378,11 @@ test("one merged hint on the whole badge and card pill; a tap shows it, a second
   assert.equal(badgeEl.querySelector("[data-hg-flag-own]").hasAttribute("title"), false);
   const tap = (el) => { const d = new w.MouseEvent("pointerdown", { bubbles: true }); Object.defineProperty(d, "pointerType", { value: "touch" }); el.dispatchEvent(d); el.dispatchEvent(new w.MouseEvent("click", { bubbles: true, cancelable: true })); };
   tap(chip);
-  const tip = w.document.getElementById("hg-flag-tip");
+  const BOX = "🌙 Waiting for the night\nDownloads at night (cheaper power)\n🧭 No release found yet\nSearched again in tonight's scheduled search (04:17)";
+  const tip = w.document.getElementById("hg-tip");
   assert.ok(tip && shown(w, tip));
-  assert.equal(tip.textContent, MERGED);
+  assert.equal(tipText(tip), BOX);
+  assert.equal(tip.querySelectorAll(".hg-tip-sep").length, 1);
   assert.equal(card, 0);
   tap(chip);
   assert.equal(card, 1);
@@ -388,7 +390,7 @@ test("one merged hint on the whole badge and card pill; a tap shows it, a second
   tap(badgeEl.querySelector("span"));
   assert.equal(link, 0);
   assert.ok(shown(w, tip));
-  assert.equal(tip.textContent, MERGED);
+  assert.equal(tipText(tip), BOX);
   tap(badgeEl);
   assert.equal(link, 1);
   w.document.body.dispatchEvent(new w.MouseEvent("click", { bubbles: true }));
@@ -712,6 +714,25 @@ test("problem with Seerr's own overlay: ⚠️ and its hint stay next to the spi
   assert.equal(flagTip(de), "Muss manuell importiert werden (Release-Titel: 'Company Retreat')");
 });
 
+test("Processing pill needing an import: with Seerr's download popover one box (our block first), without it our box; release on its own line", async () => {
+  const imp = { state: "problem", message: "", code: "needs-import", release: "Company.Retreat.2026.1080p.WEB-<b>GRP</b>" };
+  const w = rsPage(header(badge("movie/550", "Processing", "")), "/movie/550", live({ queue: { "movie/550": imp } }));
+  await settle();
+  const pill = w.document.querySelector(".media-status a");
+  const BLOCK = "⚠️ Needs a manual import\nRelease:\nCompany.Retreat.2026.1080p.WEB-<b>GRP</b>\nWhat to do: open Manual interaction";
+  hover(w, pill);
+  assert.equal(visibleTip(w), BLOCK);
+  assert.equal(w.document.querySelector("#hg-tip .hg-tip-mono").textContent, imp.release);
+  w.document.body.insertAdjacentHTML("beforeend", SEERR_TIP(`<ul><li>${downloadBlock("Company.Retreat.2026.1080p.WEB-GRP", "downloading", 40)}</li></ul>`));
+  await tick();
+  const boxes = [...w.document.querySelectorAll("#hg-tip, body > .z-50")].filter((b) => shown(w, b));
+  assert.equal(boxes.length, 1, "exactly one box");
+  assert.equal(tipText(boxes[0].firstElementChild), BLOCK);
+  assert.ok(boxes[0].firstElementChild.nextElementSibling.querySelector(".p-4"), "Seerr's download bars below our block");
+  assert.equal(boxes[0].querySelector("b"), null);
+  unhover(w, pill);
+});
+
 test("no 🌙 when the queue state is problem", async () => {
   const w = rsPage(requestCard("movie/560", "Jury").replace(badge("movie/560"), plainBadge("movie/560")), "/requests",
     live({ canWait: ["movie/560"], queue: { "movie/560": { state: "problem", message: "", code: "needs-import", release: "Jury Duty" } } }));
@@ -752,18 +773,22 @@ test("hints are static: a pill's hint shows once above it (never inside Seerr's 
   const pill = w.document.querySelector(".media-status a");
   assert.equal(pill.hasAttribute("title"), false);
   pill.dispatchEvent(ev("pointerenter"));
-  assert.equal(visibleTip(w), "Waiting for the night — downloads at night (cheaper power)");
-  w.document.body.insertAdjacentHTML("beforeend", '<div class="z-50 text-sm absolute font-normal bg-gray-800">Manage Movie</div>');
+  assert.equal(visibleTip(w), "🌙 Waiting for the night\nDownloads at night (cheaper power)");
+  w.document.body.insertAdjacentHTML("beforeend", SEERR_TIP("Manage Movie"));
   await tick();
-  assert.equal(w.document.body.lastElementChild.textContent, "Manage Movie", "Seerr's popup stays as it is");
+  const seerr = w.document.querySelector("body > .z-50");
+  assert.equal(visibleTip(w), null, "one box: ours went into Seerr's");
+  assert.equal(tipText(seerr.querySelector("[data-hg-tip-merged]")), "🌙 Waiting for the night\nDownloads at night (cheaper power)");
+  assert.match(seerr.textContent, /Manage Movie$/);
   pill.dispatchEvent(ev("pointerleave"));
+  seerr.remove();
   assert.equal(visibleTip(w), null);
   const chip = w.document.querySelector('[role="link"] [data-hg-night]');
   chip.dispatchEvent(ev("pointerenter"));
-  const tip = w.document.getElementById("hg-flag-tip");
+  const tip = w.document.getElementById("hg-tip");
   assert.ok(tip && shown(w, tip));
-  assert.equal(tip.textContent, "Waiting for the night — downloads at night (cheaper power)");
-  assert.equal(chip.getAttribute("aria-describedby"), "hg-flag-tip");
+  assert.equal(tipText(tip), "🌙 Waiting for the night\nDownloads at night (cheaper power)");
+  assert.equal(chip.getAttribute("aria-describedby"), "hg-tip");
   assert.ok(tip.style.top);
   w.document.dispatchEvent(new w.KeyboardEvent("keydown", { key: "Escape" }));
   assert.equal(shown(w, tip), false);
@@ -841,7 +866,7 @@ const ownCard = (key, name, pill) => `
 const hover = (w, el) => { const e = new w.MouseEvent("pointerenter", { cancelable: true }); Object.defineProperty(e, "pointerType", { value: "mouse" }); el.dispatchEvent(e); };
 const unhover = (w, el) => { const e = new w.MouseEvent("pointerleave", { cancelable: true }); Object.defineProperty(e, "pointerType", { value: "mouse" }); el.dispatchEvent(e); };
 
-test("every request card's pill shows its own hint in our static box, with or without a Seerr popup", async () => {
+test("every request card's pill shows its own hint: in Seerr's popup when that opens, else in our box", async () => {
   const rs = { value: live({ canWait: ["tv/76479", "movie/700"], noRelease: { "movie/700": "2026-10-28T10:00:23Z" }, queue: { "tv/76479": { state: "paused" } }, imported: ["movie/120"] }) };
   const routes = { ...RS_ROUTES, "/api/v1/movie/120": details("movie", 120, "Fellowship", "/fellowship.jpg", []) };
   Object.defineProperty(routes, RS_URL, { get: () => rs.value, enumerable: true });
@@ -851,22 +876,24 @@ test("every request card's pill shows its own hint in our static box, with or wi
   assert.deepEqual(pills.map((p) => visibleText(w, p)), ["🌙 Tonight", "Requested|✅", "Requested|🌙|🧭"]);
 
   hover(w, pills[0]);
-  w.document.body.insertAdjacentHTML("beforeend", `<div class="z-50 text-sm absolute font-normal bg-gray-800">${downloadBlock(BOYS_ITEM.title, "paused")}</div>`);
+  assert.match(visibleTip(w), /^🌙 Waiting for the night\nStarts automatically at 22:05/);
+  w.document.body.insertAdjacentHTML("beforeend", SEERR_TIP(downloadBlock(BOYS_ITEM.title, "paused")));
   await tick();
-  const popup = w.document.body.lastElementChild;
-  assert.match(visibleTip(w), /^Waiting for the night 🌙 — Starts automatically at 22:05/);
-  assert.equal(popup.querySelector("[data-hg-pop-hint]"), null, "nothing of ours inside Seerr's moving popup");
+  const popup = w.document.querySelector("body > .z-50");
+  assert.equal(visibleTip(w), null, "one box only");
+  assert.match(tipText(popup.firstElementChild), /^🌙 Waiting for the night\nStarts automatically at 22:05/);
+  assert.ok(popup.querySelector(".p-4"), "Seerr's download block stays below");
   unhover(w, pills[0]);
   popup.remove();
 
   hover(w, pills[1]);
-  assert.equal(visibleTip(w), "Downloaded — in Jellyfin shortly");
-  assert.equal(pills[1].getAttribute("aria-describedby"), "hg-flag-tip");
+  assert.equal(visibleTip(w), "✅ Downloaded\nIn Jellyfin shortly");
+  assert.equal(pills[1].getAttribute("aria-describedby"), "hg-tip");
   unhover(w, pills[1]);
   assert.equal(visibleTip(w), null);
 
   hover(w, pills[2]);
-  assert.equal(visibleTip(w), "Waiting for the night · No release found yet — searched again in tonight's scheduled search (04:17), downloads at night when found");
+  assert.equal(visibleTip(w), "🌙 Waiting for the night\nDownloads at night (cheaper power)\n🧭 No release found yet\nSearched again in tonight's scheduled search (04:17)");
   unhover(w, pills[2]);
 
 });
@@ -927,13 +954,13 @@ test("title page pill hint: mouse hover shows it above the pill once, touch need
   const ev = (t, type) => { const e = new w.MouseEvent(t, { bubbles: true, cancelable: true }); Object.defineProperty(e, "pointerType", { value: type }); return e; };
   const pill = w.document.querySelector(".media-status a");
   pill.dispatchEvent(ev("pointerenter", "mouse"));
-  assert.equal(visibleTip(w), "Downloading now — 60 %");
+  assert.equal(visibleTip(w), "Downloading now\n60 %");
   pill.dispatchEvent(ev("pointerleave", "mouse"));
   assert.equal(visibleTip(w), null);
   const tap = ev("click", "touch");
   pill.dispatchEvent(ev("pointerdown", "touch"));
   pill.dispatchEvent(tap);
-  assert.equal(visibleTip(w), "Downloading now — 60 %");
+  assert.equal(visibleTip(w), "Downloading now\n60 %");
   assert.equal(tap.defaultPrevented, true, "the first tap only shows the hint");
   const before = pill.getAttribute("data-hg-hint");
   await settle();
@@ -974,5 +1001,5 @@ test("touch tap: the browser focuses the link before the click, the first tap st
   const tap = ev("click", "touch");
   pill.dispatchEvent(tap);
   assert.equal(tap.defaultPrevented, true);
-  assert.equal(visibleTip(w), "Requested — approved, waiting for the search");
+  assert.equal(visibleTip(w), "Requested\nApproved, waiting for the search");
 });

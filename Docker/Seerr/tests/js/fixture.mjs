@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { afterEach } from "node:test";
 import { JSDOM } from "jsdom";
 
 const WWW = new URL("../../indexer-bar/www/", import.meta.url);
@@ -43,10 +44,31 @@ export function modal(title, ok = "Request") {
 // bar.js config as seerr-proxy injects it (nginx.conf sub_filter).
 export const BAR_TAG = `<script data-ib-data="/_indexer-bar/usage.json" data-ib-no-bar="^/(login|setup|resetpassword)(/|$)" data-ib-lang-hook="hgNightLabel" data-ib-lang-probe='a[href="/discover/tv"]' data-ib-lang-de="Serien"></script>`;
 
-// A DOM with the given body; `before` runs in the window before the script (stubs), then the script itself.
+// Seerr's Tooltip portal (src/components/Common/Tooltip), as react-popper-tooltip puts it into body.
+export const SEERR_TIP = (inner) => `<div class="z-50 text-sm absolute font-normal bg-gray-800 px-2 py-1 rounded border border-gray-600 shadow text-gray-100">${inner}</div>`;
+
+// The text of a hint box (ours or our block in Seerr's), one line per line.
+export const tipText = (box) => (box ? [...box.querySelectorAll("[data-hg-tip-line]")].map((e) => e.textContent).join("\n") : null);
+
+// Plain browser tooltips (title) are not ours any more: every test fails when a script sets one. bar.js is converted separately.
+const titleSets = [];
+afterEach(() => { if (titleSets.length) throw new Error("title tooltip set: " + titleSets.splice(0).join(" | ")); });
+function noTitles(w) {
+  const set = w.Element.prototype.setAttribute;
+  w.Element.prototype.setAttribute = function (name, value) {
+    if (String(name).toLowerCase() === "title") titleSets.push(`<${this.tagName.toLowerCase()}> ${value}`);
+    return set.call(this, name, value);
+  };
+  const prop = Object.getOwnPropertyDescriptor(w.HTMLElement.prototype, "title");
+  Object.defineProperty(w.HTMLElement.prototype, "title", { ...prop, set(value) { titleSets.push(`<${this.tagName.toLowerCase()}> ${value}`); prop.set.call(this, value); } });
+}
+
+// A DOM with the given body; `before` runs in the window before the script (stubs), then tip.js (loaded first, as seerr-proxy does) and the script itself.
 export function load(script, body, before, url = "https://requests.example.com/movie/1", head = BAR_TAG) {
   const dom = new JSDOM(`<!doctype html><html><head>${head}</head><body>${body}</body></html>`, { runScripts: "outside-only", url });
+  if (script !== "bar.js") noTitles(dom.window);
   if (before) before(dom.window);
+  if (script !== "tip.js") dom.window.eval(readFileSync(new URL("tip.js", WWW), "utf8"));
   dom.window.eval(readFileSync(new URL(script, WWW), "utf8"));
   return dom.window;
 }

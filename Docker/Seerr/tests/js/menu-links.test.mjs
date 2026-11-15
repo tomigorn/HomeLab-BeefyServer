@@ -82,7 +82,7 @@ test("German UI: the entry reads Hörbücher", () => {
   const w = load("menu-links.js", SIDEBAR.replace(">Series</a>", ">Serien</a>"));
   const [a] = links(w);
   assert.equal(a.textContent.trim(), "Hörbücher");
-  assert.equal(a.getAttribute("title"), "Hörbücher");
+  assert.equal(w.hgTip.get(a), "Hörbücher");
 });
 
 const manual = (w) => [...w.document.querySelectorAll('[data-hg-link="manual"]')];
@@ -119,7 +119,13 @@ test("open problems: count badge on every Manual entry, asked once", async () =>
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "/_download-now/manual/count");
   assert.equal(manual(w)[0].getAttribute("aria-label"), null);
-  assert.match(manual(w)[0].getAttribute("title"), /3/);
+  assert.equal(w.hgTip.get(manual(w)[0]), "Manual interaction (3)");
+  const tap = new w.MouseEvent("click", { bubbles: true, cancelable: true });
+  const down = new w.MouseEvent("pointerdown", { bubbles: true });
+  Object.defineProperty(down, "pointerType", { value: "touch" });
+  manual(w)[0].dispatchEvent(down);
+  manual(w)[0].dispatchEvent(tap);
+  assert.equal(w.document.getElementById("hg-tip"), null, "a tap on a menu link navigates, no hint first");
 });
 
 test("no open problems or no session: no badge", async () => {

@@ -31,6 +31,13 @@
     return svg;
   }
 
+  // hover / focus only: a tap on a menu entry navigates at once
+  function tip(a, text) {
+    if (a.__hgTipText === text) return;
+    a.__hgTipText = text;
+    if (typeof window !== "undefined" && window.hgTip) window.hgTip.set(a, text, { tap: false });
+  }
+
   function entry(doc, tv, link) {
     var a = tv.cloneNode(true);
     a.setAttribute("data-hg-link", link.id);
@@ -52,7 +59,7 @@
     a.setAttribute("data-hg-label", label);
     if (text) text.nodeValue = label;
     else a.setAttribute("aria-label", label);
-    a.setAttribute("title", label);
+    tip(a, label);
     a.querySelectorAll("div").forEach(function (d) { d.remove(); });
     return a;
   }
@@ -124,7 +131,7 @@
     for (var i = 0; i < all.length; i++) {
       var a = all[i], b = a.querySelector("[data-hg-count]"), label = a.getAttribute("data-hg-label") || "";
       var want = count > 0 ? String(count) : null, title = want ? label + " (" + want + ")" : label;
-      if (a.getAttribute("title") !== title) a.setAttribute("title", title);
+      tip(a, title);
       if (a.hasAttribute("aria-label") && a.getAttribute("aria-label") !== title) a.setAttribute("aria-label", title);
       if (!want) { if (b) b.remove(); continue; }
       if (b) { if (b.textContent !== want) b.textContent = want; continue; }

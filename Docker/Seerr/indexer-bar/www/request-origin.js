@@ -12,14 +12,14 @@
       pill: { jellyfin: "via Jellyfin", moonfin: "via Moonfin", tv: "via TV" },
       name: { jellyfin: "Jellyfin", moonfin: "Moonfin", tv: "TV" },
       hint: { jellyfin: "Requested with 🌙/⚡ on Jellyfin's Popular page", moonfin: "Requested in the Moonfin app", tv: "Requested on the TV by playing a Popular placeholder" },
-      service: "Seerr lists it under the service user Jellyfin popular; requested by {n}",
+      by: "Requested by:", service: "Seerr lists it under the service user Jellyfin popular",
       fact: "Requested via",
     },
     de: {
       pill: { jellyfin: "über Jellyfin", moonfin: "über Moonfin", tv: "über TV" },
       name: { jellyfin: "Jellyfin", moonfin: "Moonfin", tv: "TV" },
       hint: { jellyfin: "Mit 🌙/⚡ auf Jellyfins Beliebt-Seite angefragt", moonfin: "In der Moonfin-App angefragt", tv: "Am TV angefragt, durch Abspielen eines Beliebt-Platzhalters" },
-      service: "Seerr führt sie unter dem Dienstkonto Jellyfin popular; angefragt von {n}",
+      by: "Angefragt von:", service: "Seerr führt sie unter dem Dienstkonto Jellyfin popular",
       fact: "Angefragt über",
     },
   };
@@ -64,15 +64,15 @@
   }
 
   function hintOf(e, l) {
-    var t = TEXT[l].hint[e.source];
-    return e.service && e.name ? t + " · " + TEXT[l].service.replace("{n}", e.name) : t;
+    var t = TEXT[l];
+    return { title: t.hint[e.source], rows: e.service && e.name ? [[t.by, e.name], t.service] : [] };
   }
 
-  function hint(el, text) {
-    if (el.__hgOriginHint === text) return;
-    el.__hgOriginHint = text;
-    if (window.hgNightLabel && window.hgNightLabel.hint) window.hgNightLabel.hint(el, text);
-    else el.setAttribute("title", text);
+  function hint(el, content) {
+    var key = JSON.stringify(content);
+    if (el.__hgOriginHint === key) return;
+    el.__hgOriginHint = key;
+    if (window.hgTip) window.hgTip.set(el, content);
   }
 
   function pillText(e, l) {
@@ -154,7 +154,7 @@
     if (row.firstChild.textContent !== TEXT[l].fact) row.firstChild.textContent = TEXT[l].fact;
     if (row.lastChild.textContent !== text) row.lastChild.textContent = text;
     if (after.nextElementSibling !== row) after.after(row);
-    hint(row, hints.join("\n"));
+    hint(row, hints);
   }
 
   function style(doc) {

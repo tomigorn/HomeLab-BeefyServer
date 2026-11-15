@@ -14,8 +14,8 @@
   var PREV_KEY = "hg-size-sort-page-size";
   var ALL_ROWS = "100";
   var TEXT = {
-    en: { size: "Size", season: "Season", specials: "Specials", of: "{a} of {b} episodes", episodes: ["{a} episode", "{a} episodes"], avg: "⌀ {a}/ep", remux: "⚠️ Remux", big: "⚠️ very big", remuxHint: "Remux: the untouched disc copy, far bigger than a normal release", bigHint: "Over {a} GB per hour of running time", queued: "in queue", problem: "problem", off: "Off", modes: { desc: "Largest total", asc: "Smallest total", "file-desc": "Largest per file", "file-asc": "Smallest per file", "hour-desc": "Largest per hour", "hour-asc": "Smallest per hour" }, aria: "Sort by size", page: "Sorted within this page ({a} of {b})", locale: "en-GB" },
-    de: { size: "Grösse", season: "Staffel", specials: "Specials", of: "{a} von {b} Episoden", episodes: ["{a} Episode", "{a} Episoden"], avg: "⌀ {a}/Ep.", remux: "⚠️ Remux", big: "⚠️ sehr gross", remuxHint: "Remux: unveränderte Kopie der Disc, viel grösser als ein normales Release", bigHint: "Über {a} GB pro Stunde Laufzeit", queued: "in der Warteschlange", problem: "Problem", off: "Aus", modes: { desc: "Grösste gesamt", asc: "Kleinste gesamt", "file-desc": "Grösste pro Datei", "file-asc": "Kleinste pro Datei", "hour-desc": "Grösste pro Stunde", "hour-asc": "Kleinste pro Stunde" }, aria: "Nach Grösse sortieren", page: "Innerhalb dieser Seite sortiert ({a} von {b})", locale: "de-CH" },
+    en: { size: "Size", season: "Season", specials: "Specials", of: "{a} of {b} episodes", episodes: ["{a} episode", "{a} episodes"], avg: "⌀ {a}/ep", remux: "⚠️ Remux", big: "⚠️ very big", remuxHint: "The untouched disc copy, far bigger than a normal release", bigTitle: "⚠️ Very big", bigHint: "Over {a} GB per hour of running time", here: "This one:", queued: "in queue", problem: "problem", off: "Off", modes: { desc: "Largest total", asc: "Smallest total", "file-desc": "Largest per file", "file-asc": "Smallest per file", "hour-desc": "Largest per hour", "hour-asc": "Smallest per hour" }, aria: "Sort by size", page: "Sorted within this page ({a} of {b})", locale: "en-GB" },
+    de: { size: "Grösse", season: "Staffel", specials: "Specials", of: "{a} von {b} Episoden", episodes: ["{a} Episode", "{a} Episoden"], avg: "⌀ {a}/Ep.", remux: "⚠️ Remux", big: "⚠️ sehr gross", remuxHint: "Unveränderte Kopie der Disc, viel grösser als ein normales Release", bigTitle: "⚠️ Sehr gross", bigHint: "Über {a} GB pro Stunde Laufzeit", here: "Hier:", queued: "in der Warteschlange", problem: "Problem", off: "Aus", modes: { desc: "Grösste gesamt", asc: "Kleinste gesamt", "file-desc": "Grösste pro Datei", "file-asc": "Kleinste pro Datei", "hour-desc": "Grösste pro Stunde", "hour-asc": "Kleinste pro Stunde" }, aria: "Nach Grösse sortieren", page: "Innerhalb dieser Seite sortiert ({a} von {b})", locale: "de-CH" },
   };
   var RESTORE_WAIT = 2000;
   // GB per hour of running time above which a file is "very big" (owner's limits)
@@ -72,9 +72,15 @@
       p.className = "hg-size-warn";
       p.setAttribute("data-hg-size-warn", k);
       p.textContent = k === "remux" ? TEXT[l].remux : TEXT[l].big;
-      p.setAttribute("title", k === "remux" ? TEXT[l].remuxHint : fill(TEXT[l].bigHint, series(entry) ? BIG.episode : BIG.movie, ""));
+      p.setAttribute("tabindex", "0");
+      var r = perHour(entry);
+      tip(p, k === "remux" ? { title: TEXT[l].remux, rows: [TEXT[l].remuxHint] } : { title: TEXT[l].bigTitle, rows: [fill(TEXT[l].bigHint, series(entry) ? BIG.episode : BIG.movie, ""), [TEXT[l].here, bytes(r, l) + "/h"]] });
       el.appendChild(p);
     });
+  }
+
+  function tip(el, content, opts) {
+    if (window.hgTip) window.hgTip.set(el, content, opts);
   }
 
   function sizeText(entry, l, problem) {
@@ -230,9 +236,11 @@
     ellipsis(value);
   }
 
+  // the full text in the hint box, only while it is cut off
   function ellipsis(value) {
-    if (!value.hasAttribute("data-hg-ellipsis")) value.setAttribute("data-hg-ellipsis", "");
-    if (value.getAttribute("title") !== value.textContent) value.setAttribute("title", value.textContent);
+    if (value.hasAttribute("data-hg-ellipsis")) return;
+    value.setAttribute("data-hg-ellipsis", "");
+    tip(value, function () { return value.scrollWidth > value.clientWidth ? value.textContent : ""; });
   }
 
   // the facts column (Status ... Size) of a row: room before the buttons, text-only values cut with an ellipsis and the full text as tooltip
@@ -251,11 +259,12 @@
     for (var i = 0; i < own.length; i++) if (!own[i].firstElementChild) ellipsis(own[i]);
   }
 
-  function setHint(el, hint) {
-    if (el.__hgHint === hint) return;
-    el.__hgHint = hint;
-    if (window.hgNightLabel && window.hgNightLabel.hint) window.hgNightLabel.hint(el, hint);
-    else if (hint) el.setAttribute("title", hint); else el.removeAttribute("title");
+  function setHint(el, rows) {
+    var key = JSON.stringify(rows);
+    if (el.__hgHintKey === key) return;
+    el.__hgHintKey = key;
+    if (rows.length) el.setAttribute("tabindex", "0"); else el.removeAttribute("tabindex");
+    tip(el, rows.length ? { rows: rows } : null);
   }
 
   function seasonName(n, l) { return n === "0" ? TEXT[l].specials : TEXT[l].season + " " + n; }
@@ -275,7 +284,7 @@
     if (el.textContent !== text) el.textContent = text;
     if (el.parentElement !== field || el.nextElementSibling) field.appendChild(el);
     var eps = entry.episodes && typeof entry.episodes === "object" ? entry.episodes : {};
-    setHint(el, Object.keys(eps).sort(function (a, b) { return a - b; }).map(function (n) { return seasonName(n, l) + ": " + episodeCount(eps[n], l); }).join("\n"));
+    setHint(el, Object.keys(eps).sort(function (a, b) { return a - b; }).map(function (n) { return [seasonName(n, l) + ":", episodeCount(eps[n], l)]; }));
   }
 
   // one more line: every row of the list (placeholders too) one line taller on wide screens, so nothing jumps when a row loads
@@ -408,7 +417,7 @@
     });
     if (state.mode) sortRows(list, values); else unsort(list);
     var hint = state.mode && current.total > list.rows.length ? fill(TEXT[l].page, list.rows.length, current.total) : "";
-    if ((select.getAttribute("title") || "") !== hint) { if (hint) select.setAttribute("title", hint); else select.removeAttribute("title"); }
+    if (select.__hgHint !== hint) { select.__hgHint = hint; tip(select, hint || null, { tap: false }); }
   }
 
   // the shown rows with their Seerr request ids (request-origin.js), [] while the list is not matched
@@ -424,11 +433,11 @@
 
   function seasonHint(entry, l) {
     var seasons = entry && entry.seasons && typeof entry.seasons === "object" ? entry.seasons : null;
-    if (!seasons) return "";
+    if (!seasons) return [];
     return Object.keys(seasons).sort(function (a, b) { return a - b; }).map(function (n) {
       var x = seasons[n] || {};
-      return TEXT[l].season + " " + n + ": " + bytes(x.size || 0, l) + " · " + fill(TEXT[l].of, x.files || 0, x.of || 0);
-    }).join("\n");
+      return [TEXT[l].season + " " + n + ":", bytes(x.size || 0, l) + " · " + fill(TEXT[l].of, x.files || 0, x.of || 0)];
+    });
   }
 
   // title page: one row after Status in Seerr's facts panel; nothing known = no row (requested: "—")

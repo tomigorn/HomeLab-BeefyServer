@@ -98,15 +98,19 @@
     return e;
   }
 
-  // the title's 🌙🧭📅 from night-label.js, one merged hint on the whole group (hover; tap on touch)
+  function tip(e, content, opts) {
+    if (typeof window !== "undefined" && window.hgTip) window.hgTip.set(e, content, opts);
+  }
+
+  // the title's 🌙🧭📅 from night-label.js, one hint box on the whole group (hover; tap on touch)
   function icons(doc, key) {
     var nl = typeof window !== "undefined" && window.hgNightLabel;
     var list = [];
     try { list = nl && nl.icons ? nl.icons(key) || [] : []; } catch (e) { list = []; }
     if (!list.length) return [];
     var hint = nl.hintText ? nl.hintText(list) : list.map(function (x) { return x[1]; }).join(" · ");
-    var s = el(doc, "span", { "data-hg-icon": "", role: "img", title: hint, "aria-label": hint }, list.map(function (x) { return x[0]; }).join(""));
-    if (nl.hint) nl.hint(s, hint);
+    var s = el(doc, "span", { "data-hg-icon": "", role: "img", tabindex: "0", "aria-label": hint }, list.map(function (x) { return x[0]; }).join(""));
+    tip(s, nl.tipContent ? nl.tipContent(list) : hint);
     return [s];
   }
 
@@ -149,7 +153,8 @@
         var tag = state.tags.filter(function (x) { return x.label === label; })[0] || { label: label, kind: label.split("-")[0], name: label };
         var c = el(doc, "span", { "data-tag": label }, tagText(tag, t));
         if (r.editable) {
-          var x = el(doc, "button", { type: "button", "aria-label": t.remove + " " + tagText(tag, t), title: t.remove }, "×");
+          var x = el(doc, "button", { type: "button", "aria-label": t.remove + " " + tagText(tag, t) }, "×");
+          tip(x, t.remove, { tap: false });
           x.addEventListener("click", function () { draft.tags = draft.tags.filter(function (l) { return l !== label; }); drawTags(); dirty(); });
           c.appendChild(x);
         }

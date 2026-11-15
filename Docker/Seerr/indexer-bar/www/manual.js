@@ -264,7 +264,9 @@
       var f = x && t.checks[x.rule], mark = x && t.marks[x.mark] ? x.mark : "none";
       if (!f) return;
       var parts = f(x), why = parts[1] || "", info = parts[2] ? el(doc, "span", { "class": "hg-m-info", "data-info": true }, " · " + parts[2]) : null;
-      ul.appendChild(el(doc, "li", { "data-check": x.rule, "data-mark": mark, "class": "hg-m-check-" + mark, title: why }, t.marks[mark] + " " + parts[0] + (why ? ": " + why : ""), info));
+      var li = el(doc, "li", { "data-check": x.rule, "data-mark": mark, "class": "hg-m-check-" + mark }, t.marks[mark] + " " + parts[0] + (why ? ": " + why : ""), info);
+      if (why && (mark === "warn" || mark === "bad")) tip(li, { title: t.marks[mark] + " " + parts[0], rows: [why.charAt(0).toUpperCase() + why.slice(1)].concat(parts[2] ? [parts[2]] : []) });
+      ul.appendChild(li);
     });
     return ul;
   }
@@ -288,6 +290,11 @@
         : v.state === "parts-error" ? "⚠️ " + t.virusShort["parts-error"] : "⏳ " + (t.virusShort[v.state] || t.virusShort.unknown));
     }
     return parts.join(" · ");
+  }
+
+  function tip(e, content) {
+    var h = e.ownerDocument.defaultView && e.ownerDocument.defaultView.hgTip;
+    if (h) h.set(e, content);
   }
 
   function virusLine(doc, t, v) {

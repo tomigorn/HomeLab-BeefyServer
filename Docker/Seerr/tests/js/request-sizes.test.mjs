@@ -2,6 +2,8 @@ import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { load, tick, SIDEBAR } from "./fixture.mjs";
 
+const hint = (w, el) => w.hgTip.text(w.hgTip.get(el));
+
 const SIZES = { 62: { size: 45327147274 }, 63: { size: 41234770435 }, 54: { size: 22865343090, files: 5, of: 6 }, 57: { queued: 5378662671 } };
 const STATE = { canWait: [], sizes: SIZES, updated: new Date().toISOString() };
 const LIST_URL = "/api/v1/request?take=10&skip=0&filter=all&mediaType=all&sort=added&sortDirection=desc";
@@ -169,7 +171,7 @@ test("sorting with more requests than shown switches Seerr to 100 per page, off 
   choose(w, "desc");
   await settle();
   assert.deepEqual(seen, ["100"]);
-  assert.equal(w.document.querySelector("[data-hg-size-sort] select").getAttribute("title"), "Sorted within this page (5 of 44)");
+  assert.equal(hint(w, w.document.querySelector("[data-hg-size-sort] select")), "Sorted within this page (5 of 44)");
   choose(w, "");
   await settle();
   assert.deepEqual(seen, ["100", "10"]);
@@ -277,10 +279,10 @@ test("title page: a Size row right after Status, styled like Seerr's facts", asy
 });
 
 test("title page series: total, episodes, per-season hint; German", async () => {
-  const hints = [];
-  const w = await title("/tv/84773", { before: (win) => { win.hgNightLabel = { lang: () => "de", hint: (el, text) => hints.push(text) }; } });
-  assert.equal(w.document.querySelector("[data-hg-size-fact]").textContent, "Grösse122.0 GB · 13 von 16 Episoden");
-  assert.deepEqual(hints, ["Staffel 1: 82.0 GB · 8 von 8 Episoden\nStaffel 2: 40.0 GB · 5 von 8 Episoden"]);
+  const w = await title("/tv/84773", { before: (win) => { win.hgNightLabel = { lang: () => "de" }; } });
+  const row = w.document.querySelector("[data-hg-size-fact]");
+  assert.equal(row.textContent, "Grösse122.0 GB · 13 von 16 Episoden");
+  assert.equal(hint(w, row), "Staffel 1: 82.0 GB · 8 von 8 Episoden\nStaffel 2: 40.0 GB · 5 von 8 Episoden");
 });
 
 test("title page: queued shows the expected size, nothing hides the row unless requested (then —)", async () => {
@@ -311,7 +313,7 @@ test("title page: another title in the same panel updates the row, no Status row
 });
 
 // Layout: the facts column ends before the buttons, text-only values truncate with an ellipsis and keep the full text as a tooltip
-test("facts column: marked for the gap before the buttons, text-only values get an ellipsis and the full text as title", async () => {
+test("facts column: marked for the gap before the buttons, text-only values get an ellipsis and the full text in the hint box while cut off", async () => {
   const by = (r) => item(r).replace("1 hour ago", '1 hour ago by <a href="/users/1" class="group flex items-center truncate"><span class="truncate">Jane</span></a>');
   const w = await requests({ rows: [by(REQS[0]), ...REQS.slice(1)] });
   const rows = [...w.document.querySelectorAll(".max-w-8xl > div.py-2")];
@@ -319,9 +321,12 @@ test("facts column: marked for the gap before the buttons, text-only values get 
   const col = rows[0].querySelector("[data-hg-facts]");
   const value = (name) => [...col.querySelectorAll(".card-field")].find((f) => f.firstElementChild.textContent === name).children[1];
   assert.ok(value("Profile").hasAttribute("data-hg-ellipsis"));
-  assert.equal(value("Profile").getAttribute("title"), "4K");
+  assert.equal(hint(w, value("Profile")), "", "not cut off: no box");
   assert.equal(value("Requested").hasAttribute("data-hg-ellipsis"), false);
-  assert.equal(value("Size").getAttribute("title"), "≈ 5.4 GB · in queue");
+  const size = value("Size");
+  Object.defineProperty(size, "scrollWidth", { value: 300 });
+  Object.defineProperty(size, "clientWidth", { value: 120 });
+  assert.equal(hint(w, size), "≈ 5.4 GB · in queue");
   const css = w.document.getElementById("hg-size-style").textContent;
   assert.match(css, /@media \(min-width:1280px\)\{[^}]*\[data-hg-facts\]\{padding-right:1rem !important\}/);
   assert.match(css, /\[data-hg-ellipsis\]\{display:block;/);
@@ -357,21 +362,21 @@ const pills = (w) => [...w.document.querySelectorAll(".max-w-8xl > div.py-2")].m
 const episodes = (w) => [...w.document.querySelectorAll(".max-w-8xl > div.py-2")].map((r) => { const e = r.querySelector("[data-hg-episodes]"); return e ? e.textContent : null; });
 
 test("series: the episodes of the requested seasons beside the season badges, per season on hover", async () => {
-  const hints = [];
-  const w = await requests({ state: { ...STATE, sizes: RICH }, before: (win) => { win.hgNightLabel = { hint: (el, text) => hints.push(text) }; } });
+  const w = await requests({ state: { ...STATE, sizes: RICH } });
   assert.deepEqual(episodes(w), [null, null, "· 6 episodes", "· 36 episodes", null]);
   const e = w.document.querySelectorAll(".max-w-8xl > div.py-2")[3].querySelector("[data-hg-episodes]");
   assert.equal(e.parentElement.firstElementChild.textContent, "Season");
   assert.equal(e.previousElementSibling.className, "hide-scrollbar flex");
   assert.equal(e.nextElementSibling, null);
-  assert.ok(hints.includes("Season 1: 10 episodes\nSeason 2: 12 episodes\nSeason 3: 14 episodes"));
+  assert.equal(hint(w, e), "Season 1: 10 episodes\nSeason 2: 12 episodes\nSeason 3: 14 episodes");
+  assert.equal(e.getAttribute("tabindex"), "0");
 });
 
 test("episodes in German, one episode singular", async () => {
   const sizes = { ...RICH, 54: { ...RICH[54], of: 1, files: 1, episodes: { 1: 1 } } };
   const de = await requests({ state: { ...STATE, sizes }, before: (win) => { win.hgNightLabel = { lang: () => "de" }; } });
   assert.deepEqual(episodes(de), [null, null, "· 1 Episode", "· 36 Episoden", null]);
-  assert.equal(de.document.querySelectorAll(".max-w-8xl > div.py-2")[3].querySelector("[data-hg-episodes]").getAttribute("title"), "Staffel 1: 10 Episoden\nStaffel 2: 12 Episoden\nStaffel 3: 14 Episoden");
+  assert.equal(hint(de, de.document.querySelectorAll(".max-w-8xl > div.py-2")[3].querySelector("[data-hg-episodes]")), "Staffel 1: 10 Episoden\nStaffel 2: 12 Episoden\nStaffel 3: 14 Episoden");
   const en = await requests({ state: { ...STATE, sizes } });
   assert.equal(episodes(en)[2], "· 1 episode");
 });
@@ -389,6 +394,9 @@ test("Size line: average/ep, GB per hour, warnings for remux and very big", asyn
   const warn = line.querySelectorAll("[data-hg-size-warn]");
   assert.deepEqual([...warn].map((p) => [p.className, p.getAttribute("data-hg-size-warn")]), [["hg-size-warn", "remux"], ["hg-size-warn", "big"]]);
   assert.equal(line.children[1].textContent, "80.0 GB · 40.0 GB/h");
+  assert.equal(hint(w, warn[0]), "⚠️ Remux\nThe untouched disc copy, far bigger than a normal release");
+  assert.equal(hint(w, warn[1]), "⚠️ Very big\nOver 30 GB per hour of running time\nThis one: 40.0 GB/h");
+  assert.equal(warn[0].getAttribute("tabindex"), "0");
   assert.match(w.document.getElementById("hg-size-style").textContent, /\.hg-size-warn\{[^}]*flex-shrink:0/);
 });
 
@@ -399,6 +407,7 @@ test("very big: over 30 GB/h for films, over 20 GB/h for episodes; German", asyn
   const de = await requests({ state: { ...STATE, sizes }, before: (win) => { win.hgNightLabel = { lang: () => "de" }; } });
   assert.deepEqual(pills(de), [[], [], [], ["⚠️ sehr gross"], ["⚠️ sehr gross"]]);
   assert.equal(lines(de)[3], "Grösse21.0 GB · ⌀ 21.0 GB/Ep. · 21.0 GB/h⚠️ sehr gross");
+  assert.equal(hint(de, de.document.querySelectorAll(".max-w-8xl > div.py-2")[3].querySelector("[data-hg-size-warn]")), "⚠️ Sehr gross\nÜber 20 GB pro Stunde Laufzeit\nHier: 21.0 GB/h");
 });
 
 test("no runtime: no GB/h and no very big; queued: no GB/h, no warnings", async () => {
@@ -422,7 +431,7 @@ test("title page: GB/h and warnings in the Size row", async () => {
   assert.equal(row.textContent, "Size45.3 GB · 2160p HDR10 · 15.3 GB/h⚠️ Remux");
   assert.equal(row.lastChild.className, "media-fact-value");
   assert.deepEqual([...row.querySelectorAll("[data-hg-size-warn]")].map((p) => p.getAttribute("data-hg-size-warn")), ["remux"]);
-  const t = await title("/tv/84773", { media, before: (win) => { win.hgNightLabel = { lang: () => "de", hint: () => {} }; } });
+  const t = await title("/tv/84773", { media, before: (win) => { win.hgNightLabel = { lang: () => "de" }; } });
   assert.equal(t.document.querySelector("[data-hg-size-fact]").textContent, "Grösse122.0 GB · 13 von 16 Episoden · 23.5 GB/h⚠️ sehr gross");
 });
 

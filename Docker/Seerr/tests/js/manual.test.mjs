@@ -362,7 +362,7 @@ test("checks against our rules: one line on the card, a mark per property in the
   const p = e09({ details: { reason: "id-match", release: E09, message: BY_ID, episodes: 1, media: MEDIA, checks: CHECKS, virus: { state: "clean", at: "2026-11-15T04:25:00Z", signature: null } } });
   const files = { token: "t", kind: "tv", files: [{ n: 0, name: E09 + ".mkv", size: 1.59e9, episodeIds: [2045], probable: true, rejections: [], media: MEDIA, checks: CHECKS, virus: { state: "clean", at: "2026-11-15T04:25:00Z" } }],
     episodes: [{ id: 2045, label: "S01E09", title: "" }] };
-  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files } });
+  const { $, w } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files } });
   assert.equal($("[data-summary]").textContent, "1080p · Portuguese, English · ❌ 1 problem · ✅ virus scan clean");
   assert.equal($("[data-check]"), null);
   $('[data-act="files"]').click();
@@ -370,6 +370,8 @@ test("checks against our rules: one line on the card, a mark per property in the
   const c = (rule) => $(`[data-list] [data-check="${rule}"]`);
   assert.equal(c("original").getAttribute("data-mark"), "bad");
   assert.match(c("original").textContent, /^❌ Original language \(English\): missing/);
+  assert.equal(w.hgTip.text(w.hgTip.get(c("original"))), "❌ Original language (English)\nMissing, dubbed only");
+  assert.equal(w.hgTip.get(c("quality")), null, "nothing more to say on a passed check");
   assert.match(c("german").textContent, /^– German/);
   assert.match(c("quality").textContent, /^✅ Quality WEBDL-1080p: allowed by the profile/);
   assert.match(c("quality").querySelector("[data-info]").textContent, /may upgrade to WEB 2160p later/);

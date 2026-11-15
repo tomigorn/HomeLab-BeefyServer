@@ -31,9 +31,10 @@ function fakeXHR(routes, posts, calls) {
         setTimeout(() => this.onload && this.onload(), 0);
       }
     };
-    w.hgNightLabel = { released: [], release(ids) { this.released.push(...ids); }, spinner() { const s = w.document.createElement("span"); s.setAttribute("data-hg-spin", ""); return s; }, hint(el, text) { el.setAttribute("data-hg-hint", text); } };
+    w.hgNightLabel = { released: [], release(ids) { this.released.push(...ids); }, spinner() { const s = w.document.createElement("span"); s.setAttribute("data-hg-spin", ""); return s; } };
   };
 }
+const hint = (w) => w.hgTip.text(w.hgTip.get(box(w)));
 const settle = async () => { for (let i = 0; i < 8; i++) { await new Promise((r) => setTimeout(r, 30)); await tick(); } };
 const API = "/_download-now/api?type=movie&tmdb=673";
 const FORBIDDEN = { status: 403, body: { state: "error", error: "forbidden" } };
@@ -58,14 +59,15 @@ test("admin: a title waiting for the night gets the button first in the title's 
   assert.ok(b.classList.contains("button-md"));
   assert.match(b.textContent, /⚡ Download now — at daytime power price/);
   assert.equal(b.disabled, false);
-  assert.match(b.title, /Waiting for the night 🌙/);
+  assert.equal(hint(w), "Waiting for the night 🌙\nStarts at once instead, at the higher daytime power price.");
+  assert.equal(w.hgTip.get(b).title, "Waiting for the night 🌙");
 });
 
 test("requester: own title (backend allows) gets the button", async () => {
   const w = page(titlePage(), routes(ME.requester, "searching"));
   await settle();
   assert.ok(box(w));
-  assert.match(box(w).title, /Nothing grabbed yet/);
+  assert.match(hint(w), /^Nothing grabbed yet\n/);
 });
 
 test("requester: someone else's title (backend 403) gets nothing", async () => {
@@ -135,7 +137,7 @@ test("press fails: error text, button usable again", async () => {
   await settle();
   assert.equal(box(w).tagName, "BUTTON");
   assert.equal(box(w).disabled, false);
-  assert.match(box(w).title, /❌ Failed/);
+  assert.equal(hint(w), "❌ Failed\nTry again, or ask an admin");
   assert.match(box(w).textContent, /❌ Failed/);
 });
 
@@ -144,7 +146,7 @@ test("German UI: German texts; series pages use type tv", async () => {
   const w = page(titlePage("Angefragt", "Trailer ansehen"), r, {}, [], "/tv/76479");
   await settle();
   assert.match(box(w).textContent, /⚡ Jetzt herunterladen — zum Tagstrompreis/);
-  assert.match(box(w).title, /Wartet auf die Nacht 🌙/);
+  assert.match(hint(w), /^Wartet auf die Nacht 🌙\n/);
 });
 
 test("German from the user's Seerr language too", async () => {
@@ -248,17 +250,17 @@ test("a grab during the search: spinner + Downloading with a hint, never the ✅
   await settle();
   assert.equal(box(w).textContent, "Downloading");
   assert.ok(box(w).querySelector("[data-hg-spin]"));
-  assert.equal(box(w).getAttribute("data-hg-hint"), "Downloading now at the daytime power price (started with Download now)");
+  assert.equal(hint(w), "Downloading now at the daytime power price (started with Download now)");
   assert.equal(box(w).getAttribute("tabindex"), "0");
 });
 
-test("grab chip without the night-label script: ◌ in the text, hint as title; German", async () => {
+test("grab chip without the night-label script: ◌ in the text, hint in the hint box; German", async () => {
   const r = routes(ME.requester, null, { [API]: st("downloading", search(null, { last: "2026-10-28T10:00:23Z" })) });
   const w = load("download-now.js", titlePage("Verarbeiten"), (win) => { fakeXHR(r, {}, [])(win); delete win.hgNightLabel; }, "https://requests.example.com/movie/673");
   opened.push(w);
   await settle();
   assert.equal(box(w).textContent, "◌ Lädt herunter");
-  assert.equal(box(w).title, "Lädt jetzt zum Tagstrompreis herunter (mit Jetzt herunterladen gestartet)");
+  assert.equal(hint(w), "Lädt jetzt zum Tagstrompreis herunter (mit Jetzt herunterladen gestartet)");
 });
 
 test("leaving the title stops the polling", async () => {

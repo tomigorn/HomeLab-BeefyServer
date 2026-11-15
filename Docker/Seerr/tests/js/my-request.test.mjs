@@ -30,7 +30,7 @@ function fakeXHR(routes, posts, calls) {
         setTimeout(() => this.onload && this.onload(), 0);
       }
     };
-    w.hgNightLabel = { hintText: (list) => "Waiting for the night · " + list[1][1], icons: (key) => (key === "movie/1480613" ? [["🌙", "Waiting for the night — downloads at night (cheaper power)"], ["🧭", "No release found yet"]] : []) };
+    w.hgNightLabel = { hintText: (list) => "Waiting for the night · " + list[1][1], tipContent: (list) => list.map((x) => ({ title: x[0] + " " + x[1] })), icons: (key) => (key === "movie/1480613" ? [["🌙", "Waiting for the night — downloads at night (cheaper power)"], ["🧭", "No release found yet"]] : []) };
   };
 }
 const settle = async () => { for (let i = 0; i < 8; i++) { await new Promise((r) => setTimeout(r, 20)); await tick(); } };
@@ -57,11 +57,15 @@ test("own request: a collapsible card under the title header shows profile, tags
   assert.match(sum, /🌙🧭/);
   const icon = p.querySelector("[data-hg-icon]");
   assert.equal(icon.textContent, "🌙🧭");
-  assert.equal(icon.getAttribute("title"), "Waiting for the night · No release found yet");
+  assert.equal(w.hgTip.text(w.hgTip.get(icon)), "🌙 Waiting for the night — downloads at night (cheaper power)\n🧭 No release found yet");
+  assert.equal(icon.getAttribute("tabindex"), "0");
   assert.equal(icon.getAttribute("aria-label"), "Waiting for the night · No release found yet");
   assert.equal(p.querySelector("select[name=profile]").value, "7");
   assert.deepEqual([...p.querySelectorAll("[data-tag]")].map((e) => e.getAttribute("data-tag")), ["audio-swiss-german"]);
   assert.match(p.querySelector("[data-tag]").textContent, /Audio: Swiss German/);
+  const x = p.querySelector("[data-tag] button");
+  assert.equal(w.hgTip.get(x), "Remove");
+  assert.equal(x.getAttribute("aria-label"), "Remove Audio: Swiss German");
   assert.deepEqual([...p.querySelectorAll("select[name=add] option")].map((o) => o.value), ["", "audio-german", "subs-spanish"]);
   assert.equal(p.querySelector("input[name=canWait]").checked, true);
   assert.equal(p.querySelector("button[data-save]").disabled, true);

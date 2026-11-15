@@ -89,18 +89,23 @@
     return c;
   }
 
+  function tip(el, text) {
+    var h = typeof window !== "undefined" && window.hgTip;
+    if (!h) return;
+    // "First sentence. The rest" or "Head — rest": the first part in bold
+    var i = text.indexOf(". ");
+    h.set(el, i > 0 ? { title: text.slice(0, i), rows: [text.slice(i + 2)] } : h.headline(text));
+  }
+
   // downloading: the drawn spinner of the legend (✅ means available), with the static hint of the status badges
   function grabbedChip(doc, t) {
     var c = chip(doc, t.grabbed, true), nl = typeof window !== "undefined" && window.hgNightLabel;
-    if (nl && nl.spinner && nl.hint) {
+    if (nl && nl.spinner) {
       var sp = nl.spinner();
       sp.style.marginRight = ".4rem";
       c.insertBefore(sp, c.firstChild);
-      nl.hint(c, t.grabbedHint);
-    } else {
-      c.textContent = "◌ " + t.grabbed;
-      c.title = t.grabbedHint;
-    }
+    } else c.textContent = "◌ " + t.grabbed;
+    tip(c, t.grabbedHint);
     c.setAttribute("tabindex", "0");
     c.style.cursor = "help";
     return c;
@@ -167,7 +172,7 @@
     b.className = LOOK;
     b.style.cssText = COLOURS;
     b.textContent = label || (note ? t.button + " · " + note : t.button);
-    b.title = note || t[state];
+    tip(b, note || t[state]);
     b.setAttribute("aria-label", t.button + ". " + (note || t[state]));
     b.addEventListener("click", function () { press(doc, b, t, title, state); });
     return b;

@@ -87,7 +87,9 @@ test("Requests: a pill per Jellyfin-made request, the person for service-user on
   const p = w.document.querySelector("[data-hg-origin]");
   assert.equal(p.parentElement.querySelector(".card-field-name").textContent, "Requested");
   assert.equal(p.getAttribute("data-hg-origin"), "jellyfin");
-  assert.match(w.document.querySelectorAll("[data-hg-origin]")[1].getAttribute("title"), /service user Jellyfin popular; requested by John Doe/);
+  const tv = w.document.querySelectorAll("[data-hg-origin]")[1];
+  assert.equal(w.hgTip.text(w.hgTip.get(tv)), "Requested on the TV by playing a Popular placeholder\nRequested by: John Doe\nSeerr lists it under the service user Jellyfin popular");
+  assert.equal(w.hgTip.get(tv).title, "Requested on the TV by playing a Popular placeholder");
 });
 
 test("Requests: every visible row gets its size, also other users' requests", async () => {
@@ -95,11 +97,12 @@ test("Requests: every visible row gets its size, also other users' requests", as
   assert.deepEqual(sizes(w), ["≈ 5.4 GB · in queue", "45.3 GB", "22.9 GB · 5 of 6 episodes · ⌀ 4.6 GB/ep", "1.0 GB"]);
 });
 
-test("Requests: German labels; hint through the night label's hint box", async () => {
-  const hints = [];
-  const w = await requests({ label: "Angefragt", before: (win) => { win.hgNightLabel = { lang: () => "de", hint: (el, text) => hints.push(text) }; } });
+test("Requests: German labels and hints in the shared hint box", async () => {
+  const w = await requests({ label: "Angefragt", before: (win) => { win.hgNightLabel = { lang: () => "de" }; } });
   assert.deepEqual(pills(w), ["über Jellyfin", "über TV · John Doe", "über Moonfin", null]);
-  assert.ok(hints.includes("Mit 🌙/⚡ auf Jellyfins Beliebt-Seite angefragt"));
+  const [jf, tv] = w.document.querySelectorAll("[data-hg-origin]");
+  assert.equal(w.hgTip.text(w.hgTip.get(jf)), "Mit 🌙/⚡ auf Jellyfins Beliebt-Seite angefragt");
+  assert.equal(w.hgTip.text(w.hgTip.get(tv)), "Am TV angefragt, durch Abspielen eines Beliebt-Platzhalters\nAngefragt von: John Doe\nSeerr führt sie unter dem Dienstkonto Jellyfin popular");
 });
 
 test("Requests: no origin data (no session, backend down) = Seerr unchanged; sizes stay", async () => {
@@ -146,7 +149,10 @@ test("title page: a Requested via row after Size, with the person", async () => 
 
 test("title page: several requests listed once each; only direct Seerr requests = no row", async () => {
   const w = await titlePage("/tv/213375", [41, 54, 57]);
-  assert.equal(w.document.querySelector("[data-hg-origin-fact]").textContent, "Requested viaMoonfin (Jane Doe), Jellyfin (Jane Doe)");
+  const row = w.document.querySelector("[data-hg-origin-fact]");
+  assert.equal(row.textContent, "Requested viaMoonfin (Jane Doe), Jellyfin (Jane Doe)");
+  assert.equal(w.hgTip.text(w.hgTip.get(row)), "Requested in the Moonfin app\nRequested with 🌙/⚡ on Jellyfin's Popular page");
+  assert.equal(w.hgTip.get(row).length, 2, "one section per way, a line between");
   const none = await titlePage("/tv/224377", [41]);
   assert.equal(none.document.querySelector("[data-hg-origin-fact]"), null);
 });

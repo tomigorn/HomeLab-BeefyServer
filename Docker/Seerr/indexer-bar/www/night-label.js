@@ -18,8 +18,8 @@
     de: { spin: "Lädt gerade herunter", avail: "In Jellyfin verfügbar", part: "Teilweise verfügbar" },
   };
   var LIVE = {
-    en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", wrongFilm: "Wrong film downloaded (release from {ry}, film is {y}), being replaced", needsImport: "Needs a manual import (release title: '{r}')", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", removed: "Removed from Radarr/Sonarr — nothing searches for it; request it again or delete the request", locale: "en-GB" },
-    de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", wrongFilm: "Falscher Film heruntergeladen (Release von {ry}, Film ist von {y}), wird ersetzt", needsImport: "Muss manuell importiert werden (Release-Titel: '{r}')", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", removed: "Aus Radarr/Sonarr entfernt — nichts sucht danach; neu anfragen oder die Anfrage löschen", locale: "de-CH" },
+    en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", wrongFilm: "Wrong film downloaded (release from {ry}, film is {y}), being replaced", needsImport: "Needs a manual import (release title: '{r}')", importHead: "Needs a manual import", release: "Release:", todo: "What to do:", todoText: "open Manual interaction", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", removed: "Removed from Radarr/Sonarr — nothing searches for it; request it again or delete the request", locale: "en-GB" },
+    de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", wrongFilm: "Falscher Film heruntergeladen (Release von {ry}, Film ist von {y}), wird ersetzt", needsImport: "Muss manuell importiert werden (Release-Titel: '{r}')", importHead: "Muss manuell importiert werden", release: "Release:", todo: "Was tun:", todoText: "«Manuell beheben» öffnen", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", removed: "Aus Radarr/Sonarr entfernt — nichts sucht danach; neu anfragen oder die Anfrage löschen", locale: "de-CH" },
   };
   var TITLE = {
     en: { requested: "Requested — approved, waiting for the search", processing: "Processing — handed to Radarr/Sonarr", declined: "Declined — an admin refused the request", unknown: "Unknown — Seerr has no state for it", deleted: "Deleted — removed from Jellyfin" },
@@ -103,10 +103,14 @@
     return L.problem + (p.message ? ": " + p.message : "");
   }
 
+  // [icon, one-line text, hint box section (optional)]
   function liveList(f, l) {
     var L = LIVE[l], out = [];
     if (f.removed) out.push(["⚠️", L.removed]);
-    if (f.problem) out.push(["⚠️", problemText(f.problem, L)]);
+    if (f.problem) {
+      var p = f.problem;
+      out.push(p.code === "needs-import" && p.release ? ["⚠️", problemText(p, L), { title: "⚠️ " + L.importHead, rows: [[L.release, ""], { mono: String(p.release) }, [L.todo, L.todoText]] }] : ["⚠️", problemText(p, L)]);
+    }
     if (f.pending) out.push(["⏳", L.pending]);
     if (f.search) {
       var t = clock(f.search.started, l);
@@ -158,88 +162,22 @@
     return list.map(function (x) { return x[0] === "🌙" ? FLAGS[l].moonShort : x[0] === "🧭" && moon ? x[1] + FLAGS[l].compassNight : x[1]; }).join(" · ");
   }
 
-  function hideTip(doc) {
-    var tip = doc.getElementById("hg-flag-tip");
-    if (!tip) return;
-    tip.style.display = "none";
-    if (tip.__for && tip.__for.getAttribute("aria-describedby") === "hg-flag-tip") tip.__for.removeAttribute("aria-describedby");
+  // hint box content for a list of icons: one section each, headline in bold, the detail below
+  function tipContent(list) {
+    var tip = typeof window !== "undefined" && window.hgTip;
+    return list.map(function (x) {
+      if (x[2]) return x[2];
+      var h = tip ? tip.headline(x[1]) : x[1], icon = x[0] ? x[0] + " " : "";
+      return typeof h === "string" ? { title: icon + h } : { title: icon + h.title, rows: h.rows };
+    });
   }
 
-  // one static hint box anchored to the badge (below it; a status pill's above it, away from Seerr's popup), never following the mouse; Escape closes it
-  function showTip(doc, el) {
-    var tip = doc.getElementById("hg-flag-tip");
-    if (!tip) {
-      tip = doc.createElement("div");
-      tip.id = "hg-flag-tip";
-      tip.setAttribute("role", "tooltip");
-      doc.body.appendChild(tip);
-      doc.addEventListener("click", function (e) { if (e.target !== tip) hideTip(doc); });
-      doc.addEventListener("keydown", function (e) { if (e.key === "Escape") hideTip(doc); });
-      (doc.defaultView || window).addEventListener("scroll", function () { hideTip(doc); }, true);
-    }
-    if (tip.__for && tip.__for !== el && tip.__for.getAttribute("aria-describedby") === "hg-flag-tip") tip.__for.removeAttribute("aria-describedby");
-    tip.textContent = el.__hgHint;
-    tip.__for = el;
-    if (!el.hasAttribute("aria-describedby")) el.setAttribute("aria-describedby", "hg-flag-tip");
-    var r = el.getBoundingClientRect(), vw = (doc.defaultView && doc.defaultView.innerWidth) || 360;
-    tip.style.display = "block";
-    tip.style.left = Math.max(8, Math.min(Math.round(r.left), vw - 264)) + "px";
-    placeTip(tip, el, el.__hgPop ? "above" : "below");
-    return tip;
-  }
-
-  function placeTip(tip, el, side) {
-    var r = el.getBoundingClientRect(), h = tip.offsetHeight;
-    if (side === "above" && r.top - h - 6 < 4) side = "below";
-    tip.setAttribute("data-side", side);
-    tip.style.top = Math.round(side === "above" ? r.top - h - 6 : r.bottom + 6) + "px";
-  }
-
-  // mouse: the hint shows while hovering; keyboard focus shows it too; touch: the first tap shows it, a second tap goes through (link, card). pop = a status pill, possibly a Seerr popup trigger
-  function tapHint(doc, el, text, pop) {
+  // the hint on an element (shared hint box, tip.js): data-hg-hint keeps the one-line text
+  function tapHint(doc, el, text, content) {
     el.__hgHint = text;
-    el.__hgPop = !!pop;
     if (text) el.setAttribute("data-hg-hint", text); else el.removeAttribute("data-hg-hint");
-    if (el.__hgTap) return;
-    el.__hgTap = true;
-    el.addEventListener("pointerdown", function (ev) { el.__hgPt = ev.pointerType; });
-    el.addEventListener("pointerenter", function (ev) {
-      if (ev.pointerType !== "mouse" || !el.__hgHint) return;
-      state.hover = el;
-      showTip(doc, el);
-    });
-    el.addEventListener("pointerleave", function (ev) {
-      if (ev.pointerType !== "mouse") return;
-      if (state.hover === el) state.hover = null;
-      var tip = doc.getElementById("hg-flag-tip");
-      if (tip && tip.__for === el) hideTip(doc);
-    });
-    el.addEventListener("focus", function () { if (el.__hgHint && el.__hgPt !== "touch") showTip(doc, el); });
-    el.addEventListener("blur", function () { var tip = doc.getElementById("hg-flag-tip"); if (tip && tip.__for === el) hideTip(doc); });
-    el.addEventListener("click", function (ev) {
-      var touch = el.__hgPt === "touch";
-      el.__hgPt = null;
-      if (!el.__hgHint || !touch) return;
-      var tip = doc.getElementById("hg-flag-tip");
-      if (tip && tip.__for === el && tip.style.display !== "none") { hideTip(doc); return; }
-      ev.preventDefault();
-      ev.stopPropagation();
-      showTip(doc, el);
-    });
-  }
-
-  // Seerr's popup follows the cursor: our hint stays put on the other side of the pill, so the two never cover each other
-  function popAside(doc, node) {
-    var el = state.hover, tip = doc.getElementById("hg-flag-tip");
-    if (!el || !tip || tip.__for !== el || tip.style.display === "none" || !/\bz-50\b/.test(node.className || "") || !/\babsolute\b/.test(node.className || "")) return;
-    var view = doc.defaultView, later = view && view.requestAnimationFrame ? function (f) { view.requestAnimationFrame(function () { view.requestAnimationFrame(f); }); } : function (f) { setTimeout(f, 32); };
-    later(function () {
-      if (!node.isConnected || tip.__for !== el || tip.style.display === "none") return;
-      var p = node.getBoundingClientRect(), r = el.getBoundingClientRect();
-      if (!p.height) return;
-      var side = p.top + p.height / 2 < r.top + r.height / 2 ? "below" : "above";
-      if (tip.getAttribute("data-side") !== side) placeTip(tip, el, side);
-    });
+    var tip = doc.defaultView && doc.defaultView.hgTip;
+    if (tip) tip.set(el, text ? content || text : null);
   }
 
   // Seerr's own mini badge: spinner = downloading, green check = available, green minus = partly available
@@ -447,9 +385,8 @@
     root.removeAttribute("data-hg-night-icons");
     root.removeAttribute("data-hg-night-solid");
     if (root.getAttribute("role") === "img") root.removeAttribute("role");
-    root.__hgHint = null;
     root.__hgFlagsKey = null;
-    root.removeAttribute("data-hg-hint");
+    tapHint(root.ownerDocument, root, "");
     root.removeAttribute("data-hg-night");
   }
 
@@ -489,10 +426,10 @@
       b.__hgFlagsKey = null;
       b.__hgOnly = true;
       b.style.cursor = "help";
-      if (b.__hgHint !== only) tapHint(doc, b, only, true);
+      if (b.__hgHint !== only) tapHint(doc, b, only, tipContent([["", only]]));
       return;
     }
-    if (b.__hgOnly && !list.length && b.getAttribute("data-hg-night") === null) { b.__hgOnly = false; b.style.cursor = ""; tapHint(doc, b, "", true); }
+    if (b.__hgOnly && !list.length && b.getAttribute("data-hg-night") === null) { b.__hgOnly = false; b.style.cursor = ""; tapHint(doc, b, ""); }
     if (list.length) b.__hgOnly = false;
     var want = list.map(function (x) { return x[0]; }).join(""), same = want + "|" + (list.length ? merged(list, l) : "");
     if ((b.getAttribute("data-hg-flags") || "") === want && (!want || b.__hgFlagsKey === same)) return;
@@ -512,7 +449,7 @@
       place.appendChild(e);
     }
     b.style.cursor = "help";
-    tapHint(doc, b, merged(list, l), true);
+    tapHint(doc, b, merged(list, l), tipContent(list));
     b.setAttribute("data-hg-flags", want);
   }
 
@@ -586,7 +523,7 @@
       hide(overlay);
       for (var c = 0; c < row.children.length; c++) hide(row.children[c]);
       row.appendChild(own(doc, "span", (is4k ? "4K " : "") + t.short));
-      tapHint(doc, b, t.label + " — " + t.tip, true);
+      tapHint(doc, b, t.label + " — " + t.tip, { title: "🌙 " + t.label.replace(/\s*🌙$/, ""), rows: [t.tip] });
       b.setAttribute("data-hg-night", "");
     }
   }
@@ -627,7 +564,7 @@
       holder.setAttribute(list.length > 1 ? "data-hg-night-pill" : "data-hg-night-moon", "");
       icon.setAttribute("role", "img");
       icon.setAttribute("aria-label", tips);
-      tapHint(doc, holder, tips);
+      tapHint(doc, holder, tips, tipContent(list));
       holder.setAttribute("data-hg-night-icons", want);
       holder.setAttribute("data-hg-night", "title");
     }
@@ -678,7 +615,7 @@
     if (doc.getElementById("hg-night-style")) return;
     var s = doc.createElement("style");
     s.id = "hg-night-style";
-    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{background:#4b5563 !important;transition:none !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night-solid]{background-color:rgba(99,102,241,.8) !important;border-color:#818cf8 !important;--tw-ring-color:#818cf8 !important;color:#eef2ff !important}[data-hg-half]{display:inline-block;width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:2px solid #fff;background:linear-gradient(90deg,#fff 50%,transparent 50%);vertical-align:middle}[data-hg-night-own] > [data-hg-half] + *{margin-left:.2rem}[data-hg-spin]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-spin] svg{display:block;width:100%;height:100%;animation:hg-spin .8s steps(8) infinite}@keyframes hg-spin{to{transform:rotate(360deg)}}a[data-hg-part],span[data-hg-part]{background-color:rgba(2,132,199,.8) !important;border-color:#0ea5e9 !important;color:#e0f2fe !important}a[data-hg-part]:hover{background-color:#0284c7 !important}[data-hg-flag-own] > [data-hg-half]{width:.75rem;height:.75rem}[data-hg-flag-own] > [data-hg-spin],[data-hg-flag-own] > [data-hg-search]{width:.85rem;height:.85rem}[data-hg-search]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-search] svg{display:block;width:100%;height:100%}[data-hg-search=\"wait\"] svg{opacity:.8}[data-hg-search=\"live\"] svg{animation:hg-pulse 1.4s ease-in-out infinite}@keyframes hg-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.84)}}[data-hg-night-own] > [data-hg-search] + *,[data-hg-night-own] > * + [data-hg-search]{margin-left:.15rem}@media (prefers-reduced-motion:reduce){[data-hg-spin] svg,[data-hg-search=\"live\"] svg{animation:none}}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}#hg-flag-tip{position:fixed;z-index:10000;max-width:16rem;padding:.4rem .6rem;border-radius:.5rem;background:#111827;color:#f3f4f6;border:1px solid #4b5563;font-size:.75rem;line-height:1.1rem;white-space:pre-line;box-shadow:0 4px 12px rgba(0,0,0,.4)}";
+    s.textContent = "[data-hg-night-hide]{display:none !important}[data-hg-night-grey]{background:#4b5563 !important;transition:none !important}[data-hg-night-moon]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:1.625rem !important;height:1.625rem !important;padding:0 !important}[data-hg-night-moon] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;text-align:center}[data-hg-night-pill]{display:flex !important;align-items:center;justify-content:center;box-sizing:border-box;width:auto !important;height:1.625rem !important;padding:0 .3rem !important}[data-hg-night-pill] > [data-hg-night-own]{display:block;font-size:.95rem;line-height:1;letter-spacing:.1rem;white-space:nowrap}[data-hg-night-solid]{background-color:rgba(99,102,241,.8) !important;border-color:#818cf8 !important;--tw-ring-color:#818cf8 !important;color:#eef2ff !important}[data-hg-half]{display:inline-block;width:14px;height:14px;box-sizing:border-box;border-radius:50%;border:2px solid #fff;background:linear-gradient(90deg,#fff 50%,transparent 50%);vertical-align:middle}[data-hg-night-own] > [data-hg-half] + *{margin-left:.2rem}[data-hg-spin]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-spin] svg{display:block;width:100%;height:100%;animation:hg-spin .8s steps(8) infinite}@keyframes hg-spin{to{transform:rotate(360deg)}}a[data-hg-part],span[data-hg-part]{background-color:rgba(2,132,199,.8) !important;border-color:#0ea5e9 !important;color:#e0f2fe !important}a[data-hg-part]:hover{background-color:#0284c7 !important}[data-hg-flag-own] > [data-hg-half]{width:.75rem;height:.75rem}[data-hg-flag-own] > [data-hg-spin],[data-hg-flag-own] > [data-hg-search]{width:.85rem;height:.85rem}[data-hg-search]{display:inline-block;width:1rem;height:1rem;vertical-align:middle;line-height:0}[data-hg-search] svg{display:block;width:100%;height:100%}[data-hg-search=\"wait\"] svg{opacity:.8}[data-hg-search=\"live\"] svg{animation:hg-pulse 1.4s ease-in-out infinite}@keyframes hg-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.84)}}[data-hg-night-own] > [data-hg-search] + *,[data-hg-night-own] > * + [data-hg-search]{margin-left:.15rem}@media (prefers-reduced-motion:reduce){[data-hg-spin] svg,[data-hg-search=\"live\"] svg{animation:none}}[data-hg-night][data-hg-night-icons]{pointer-events:auto;cursor:help}";
     (doc.head || doc.documentElement).appendChild(s);
   }
 
@@ -742,20 +679,20 @@
     };
   }
 
-  // for other scripts (my-request.js): a title's icons with their hints, and the tap hint
+  // for other scripts (my-request.js): a title's icons with their hints and hint box content
   function icons(key) {
     if (typeof document === "undefined") return [];
     return flagList(flags(key, requestSets(state.requests, Date.now()), state.media[key]), lang(document));
   }
 
-  var api = { spinner: function () { return spinner(document); }, lang: function () { return lang(document); }, icons: icons, hintText: function (list) { return merged(list, lang(document)); }, hint: function (el, text) { tapHint(document, el, text); }, requestSets: requestSets, flags: flags, waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
+  var api = { spinner: function () { return spinner(document); }, lang: function () { return lang(document); }, icons: icons, hintText: function (list) { return merged(list, lang(document)); }, tipContent: tipContent, requestSets: requestSets, flags: flags, waitingSet: waitingSet, isWaiting: isWaiting, allWaiting: allWaiting, remember: remember, badgeKey: badgeKey, blockItems: blockItems, apply: apply, refresh: refresh, release: release, state: state };
   if (typeof window === "undefined") return;
   window.hgNightLabel = api;
   try {
     hookXHR(window.XMLHttpRequest);
     if (!window.MutationObserver || !document.body) return;
     schedule();
-    // runs before the next paint: a popup Seerr just added is patched at once (no flash), the rest is debounced
+    // runs before the next paint: a download block Seerr just added is patched at once (no flash), the rest is debounced
     new MutationObserver(function (records) {
       var due = false, blocks = false;
       for (var i = 0; i < records.length; i++) {
@@ -763,7 +700,6 @@
         for (var n = 0; n < r.addedNodes.length; n++) {
           var a = r.addedNodes[n];
           if (a.nodeType !== 1) continue;
-          if (a.parentNode === document.body) popAside(document, a);
           if (state.waitingAt && a.querySelector && (a.matches(BAR) || a.querySelector(BAR))) blocks = true;
         }
         if (!due && !(t.closest && t.closest("[data-hg-night],[data-hg-flags]"))) due = true;
