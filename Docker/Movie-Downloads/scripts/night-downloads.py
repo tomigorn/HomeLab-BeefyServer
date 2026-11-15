@@ -4,7 +4,8 @@ Low tariff (22:00-06:00 and all Sunday): every night movie resumes (the clients'
 Outside the low tariff: night items still downloading are paused unless their ETA is under GRACE_MIN; they resume at the next low tariff where they stopped. Any time: the night items of titles tagged download-now resume and are never paused.
 Download now whose search found nothing (searched, nothing queued, no search running, no file): the download-now tag is removed again, so a later grab downloads at night.
 Low pool space (under MIN_FREE_GIB free): every downloading torrent is stopped and restarted after recovery (qBittorrent has no own low-space pause).
-Writes ~/.local/state/movie-downloads/night-downloads.json ({"pending": n, "stalled": {hash: since}, "disk_held": [hash]}), which fastpi reads to decide its 22:05 wake.
+Seedless override: a torrent of a title tagged override (a rejected release downloaded anyway from Seerr's manual page) with no seeds seen for SEEDLESS_H never counts as pending, so it never wakes beefy; it still runs whenever beefy is awake in the low tariff (e.g. the 03:58 window).
+Writes ~/.local/state/movie-downloads/night-downloads.json ({"pending": n, "stalled": {hash: since}, "disk_held": [hash], "seeded": {hash: last seen with seeds}}), which fastpi reads to decide its 22:05 wake.
 Writes the download ids waiting for the night (outside the low tariff) to /srv/appdata/indexer-bar/night-waiting.json for Seerr's night label (../Seerr/README.md "Night label"; env ND_PUBLIC, empty = off), and beside it request-state.json: the open Seerr requests that are "Can wait" and those not released yet (Seerr ids only).
 request-state.json also carries the live state of each open request (running search, just requested, waiting for approval, queue state, imported), so every requested title has a badge, "sizes": every request's size on disk by Seerr request id, and "media": every Radarr/Sonarr title's size by movie|tv/<tmdb id> (2-min run only, the 15 s run keeps them; ../Seerr/README.md "Request sizes").
 Run by systemd/night-downloads.timer (every 2 min while awake, and at boot). --request-state (systemd/request-state.timer, every 15 s): rewrites only request-state.json, and only while a search runs or a request is from the last minutes.
@@ -28,6 +29,8 @@ NIGHT_QBIT = {"radarr-night", "sonarr-night"}
 NIGHT_SAB = {"movies-night", "tv-night"}
 NIGHT_TV = {"sonarr-night", "tv-night"}
 TAG = "download-now"
+OVERRIDE = "override"
+SEEDLESS_H = 24
 PAUSED_QBIT = {"pausedDL", "stoppedDL"}
 RUNNING_QBIT = {"downloading", "stalledDL", "metaDL", "forcedMetaDL", "forcedDL", "queuedDL", "checkingDL", "allocating"}
 STALLED_QBIT = {"stalledDL", "metaDL", "forcedMetaDL"}
@@ -74,20 +77,29 @@ class Item:
     name: str
     key: tuple
     act: str = ""
+    seedless: bool = False
 
 
 def low_tariff(dt):
     return dt.weekday() == 6 or dt.hour >= 22 or dt.hour < 6
 
 
-def urgent_ids(tags, queue):
-    ids = {t["id"] for t in tags if t.get("label") == TAG}
+def urgent_ids(tags, queue, label=TAG):
+    ids = {t["id"] for t in tags if t.get("label") == label}
     out = set()
     for rec in queue.get("records") or []:
         item = rec.get("movie") or rec.get("series") or {}
         if ids & set(item.get("tags") or []) and rec.get("downloadId"):
             out.add(rec["downloadId"].lower())
     return out
+
+
+def seedless_ids(override, torrents, seen, ts):
+    """Override torrents without seeds (swarm or connected) or download speed seen in the last SEEDLESS_H; seen is updated in place."""
+    for t in torrents:
+        if (t.get("num_seeds") or 0) > 0 or (t.get("num_complete") or 0) > 0 or (t.get("dlspeed") or 0) > 0:
+            seen[t["hash"]] = ts
+    return {t["hash"].lower() for t in torrents if t["hash"].lower() in override and ts - seen.get(t["hash"], float("-inf")) > SEEDLESS_H * 3600}
 
 
 def title_ids(app, queue):
@@ -147,15 +159,20 @@ def tv_order(items, titles, positions):
     return sorted(items, key=lambda it: (first[group(it)], str(group(it)), pos(it), it.key))
 
 
+def _count(p, it):
+    if not it.seedless:
+        p.pending += 1
+
+
 def _hold(p, it):
     (p.pause_hashes if it.qbit else p.pause_nzos).append(it.id)
     it.act = "pause"
-    p.pending += 1
+    _count(p, it)
 
 
 def _day(p, it, eta):
     if it.paused:
-        p.pending += 1
+        _count(p, it)
         it.act = "wait"
     else:
         e = eta(it)
@@ -172,8 +189,8 @@ def _resume(p, it):
     it.act = "resume"
 
 
-def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0, positions=None):
-    low, p, titles, stalled, positions = low_tariff(now), Plan(), titles or {}, stalled or {}, positions or {}
+def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0, positions=None, seedless=None):
+    low, p, titles, stalled, positions, seedless = low_tariff(now), Plan(), titles or {}, stalled or {}, positions or {}, seedless or set()
     ts = now.timestamp()
     items = []
     for t in torrents:
@@ -186,7 +203,7 @@ def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0, positi
             continue
         if t["state"] in STALLED_QBIT:
             p.stalled[t["hash"]] = stalled.get(t["hash"], ts)
-        items.append(Item(t["hash"], True, t, paused, t["category"] in NIGHT_TV, t.get("name") or "", (t.get("added_on") or 0, 0)))
+        items.append(Item(t["hash"], True, t, paused, t["category"] in NIGHT_TV, t.get("name") or "", (t.get("added_on") or 0, 0), seedless=t["hash"].lower() in seedless))
     for s in slots:
         if s.get("cat") not in NIGHT_SAB:
             continue
@@ -215,7 +232,7 @@ def plan(now, torrents, slots, urgent, titles=None, stalled=None, kbps=0, positi
             it.act = "stalled"
         elif taken:
             if it.paused:
-                p.pending += 1
+                _count(p, it)
                 it.act = "wait"
             else:
                 _hold(p, it)
@@ -718,11 +735,13 @@ def disk_hold(p, torrents, free, held):
 
 
 def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr=None, free=None):
-    rc, urgent, titles, positions, searching, commands, qstates, queues = 0, set(), {}, {}, {}, {}, {}, {}
+    rc, urgent, override, titles, positions, searching, commands, qstates, queues = 0, set(), set(), {}, {}, {}, {}, {}, {}
     for app, api in apps.items():
         try:
             queue = queues[app] = api("/queue?page=1&pageSize=1000&includeMovie=true&includeSeries=true")
-            urgent |= urgent_ids(api("/tag"), queue)
+            tags = api("/tag")
+            urgent |= urgent_ids(tags, queue)
+            override |= urgent_ids(tags, queue, OVERRIDE)
             titles |= title_ids(app, queue)
             positions |= episode_positions(queue)
             qstates |= queue_states(app, queue)
@@ -743,10 +762,12 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr
     state_path = pathlib.Path(state_path)
     try:
         old = json.loads(state_path.read_text())
-        stalled, held = old.get("stalled") or {}, old.get("disk_held") or []
+        stalled, held, seen = old.get("stalled") or {}, old.get("disk_held") or [], old.get("seeded") or {}
     except (OSError, ValueError, AttributeError):
-        stalled, held = {}, []
-    p = plan(now, torrents, slots, urgent, titles, stalled, kbps, positions)
+        stalled, held, seen = {}, [], {}
+    seedless = seedless_ids(override, torrents, seen, now.timestamp())
+    seen = {h: v for h, v in seen.items() if h in {t["hash"] for t in torrents}}
+    p = plan(now, torrents, slots, urgent, titles, stalled, kbps, positions, seedless)
     held = disk_hold(p, torrents, free, held)
     if held:
         print(f"low disk space: {len(held)} torrent(s) held until {MIN_FREE_GIB + RESUME_MARGIN_GIB} GiB are free")
@@ -756,7 +777,7 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr
         print(f"{verb('resume')}: {names.get(i)}")
     for i in p.pause_hashes + p.pause_nzos:
         print(f"{verb('pause')}: {names.get(i)}")
-    print(f"low tariff: {low_tariff(now)}, waiting for the night: {p.pending}")
+    print(f"low tariff: {low_tariff(now)}, waiting for the night: {p.pending}" + (f", seedless overrides not counted: {len(seedless)}" if seedless else ""))
     if dry_run:
         for n, it in enumerate(p.tv_order, 1):
             pos = positions.get(it.id.lower()) or name_position(it.name)
@@ -782,7 +803,7 @@ def run(now, qbit, sab, apps, state_path, dry_run=False, public_path=None, seerr
         rc = 1
     state_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = state_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps({"pending": p.pending, "low_tariff": low_tariff(now), "updated": now.isoformat(timespec="seconds"), "stalled": p.stalled, "disk_held": held}) + "\n")
+    tmp.write_text(json.dumps({"pending": p.pending, "low_tariff": low_tariff(now), "updated": now.isoformat(timespec="seconds"), "stalled": p.stalled, "disk_held": held, "seeded": seen}) + "\n")
     tmp.replace(state_path)
     queued = set(titles.values())
     try:

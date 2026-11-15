@@ -90,7 +90,7 @@ if want radarr sonarr recyclarr; then
   check md.forced-sync '^timer=active result=success$' "timer=$(systemctl is-active forced-sync.timer) result=$(systemctl show -p Result --value forced-sync.service)"
   check md.original-audio-units '^path=active,success import=success,0,cap_fowner sweep=success,cap_fowner same$' "$(v() { systemctl show -p "$2" --value "$1"; }; i=original-audio-import; echo "path=$(systemctl is-active $i.path),$(v $i.path Result) import=$(v $i.service Result),$(v $i.service StartLimitIntervalUSec),$(v $i.service AmbientCapabilities) sweep=$(v original-audio.service Result),$(v original-audio.service AmbientCapabilities) $(for u in original-audio.service $i.service $i.path; do cmp -s "$MD_DIR/systemd/$u" "/etc/systemd/system/$u" || echo "$u"; done | xargs | sed -e 's/^$/same/;t' -e 's/^/differs: /')")"
   check md.seerr-sync '^path=active units=same job=jellyfin-full-scan$' "$(echo "path=$(systemctl is-active seerr-sync.path) units=$(for u in seerr-sync.path seerr-sync.service; do cmp -s "$MD_DIR/systemd/$u" "/etc/systemd/system/$u" && echo same || echo differ; done | sort -u | xargs) job=$(curl -s -m 8 -H "X-Api-Key: $(tr -d '[:space:]' < "$MD_DIR/../Seerr/secrets/api-key")" http://127.0.0.1:5055/api/v1/settings/jobs | jq -r '.[] | select(.id == "jellyfin-full-scan") | .id')")"
-  check md.night-downloads '^low tariff: (True|False), waiting for the night: [0-9]+$' "$(python3 "$MD_DIR/scripts/night-downloads.py" --dry-run 2>&1 | grep '^low tariff')"
+  check md.night-downloads '^low tariff: (True|False), waiting for the night: [0-9]+(, seedless overrides not counted: [0-9]+)?$' "$(python3 "$MD_DIR/scripts/night-downloads.py" --dry-run 2>&1 | grep '^low tariff')"
 fi
 if want recyclarr; then
   check md.recyclarr-config '^15 4 \* \* \* ok$' "$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' movie-recyclarr | sed -n 's/^CRON_SCHEDULE=//p') $(docker exec movie-recyclarr sh -c 'test -r /config/recyclarr.yml && test -d /config/custom-formats && test -r /config/secrets.yml && echo ok' 2>&1)"
@@ -123,6 +123,7 @@ if want qbittorrent; then
   # Owner 2026-11-09: beefy never seeds; stop at completion (ratio 0, 0 min, action stop), upload 1 KiB/s also in alt mode
   check md.qbit-tun0-no-seeding '^tun0 0 0 0 1024 1024$' "$(md_qb /app/preferences | jq -r '"\(.current_network_interface) \(.max_ratio) \(.max_seeding_time) \(.max_ratio_act) \(.up_limit) \(.alt_up_limit)"' 2>&1)"
   check md.qbit-queueing '^true [1-9][0-9]*$' "$(md_qb /app/preferences | jq -r '"\(.queueing_enabled) \(.max_active_downloads)"' 2>&1)"
+  check md.night-seedless '^ok$' "$(jq -e 'has("seeded")' "$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)/.local/state/movie-downloads/night-downloads.json" >/dev/null 2>&1 && echo ok || echo 'no seeded in the state')"
   check md.qbit-disk-hold '^5758 ok$' "$(grep -oP '(?<="ND_MIN_FREE_GIB", ")[0-9]+' "$MD_DIR/scripts/night-downloads.py") $(jq -e 'has("disk_held")' "$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)/.local/state/movie-downloads/night-downloads.json" >/dev/null 2>&1 && echo ok || echo 'no disk_held in the state')"
   qbit_logout
 fi

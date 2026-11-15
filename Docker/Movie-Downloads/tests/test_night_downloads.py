@@ -257,6 +257,41 @@ class Rule(unittest.TestCase):
         self.assertEqual(p.top_hashes, [])
 
 
+class Seedless(unittest.TestCase):
+    """A rejected release downloaded anyway (title tag override) with no seeders never wakes or holds beefy; it still runs while beefy is awake at night."""
+
+    def test_seedless_override_does_not_count_for_the_wake(self):
+        p = nd.plan(MON_DAY, [T_NIGHT, T_NIGHT_V4], [], set(), seedless={"aaa"})
+        self.assertEqual(p.pending, 1)
+        self.assertIn("aaa", p.waiting)
+
+    def test_seedless_override_still_runs_at_night(self):
+        p = nd.plan(MON_2205, [T_NIGHT], [], set(), seedless={"aaa"})
+        self.assertEqual(p.hashes, ["AAA"])
+
+    def test_seedless_override_is_paused_at_0600_without_counting(self):
+        p = nd.plan(TUE_0602, [tor("t", 1, "stalledDL", cat="radarr-night")], [], set(), seedless={"t"})
+        self.assertEqual((p.pause_hashes, p.pending), (["t"], 0))
+
+    def test_seedless_override_episode_waiting_at_night_does_not_count(self):
+        p = nd.plan(MON_2205, [tor("a", 1), tor("b", 2)], [], set(), seedless={"b"})
+        self.assertEqual((p.hashes, p.pending), (["a"], 0))
+
+    def test_download_ids_of_titles_tagged_override(self):
+        tags = [{"id": 70, "label": "download-now"}, {"id": 71, "label": "override"}]
+        queue = {"records": [{"downloadId": "AAA", "movie": {"tags": [71]}}, {"downloadId": "XYZ", "movie": {"tags": [70]}}]}
+        self.assertEqual(nd.urgent_ids(tags, queue, nd.OVERRIDE), {"aaa"})
+
+    def test_seedless_means_no_seeds_seen_for_a_day(self):
+        ts = MON_DAY.timestamp()
+        torrents = [dict(tor("AAA", 1), num_seeds=0, num_complete=0, dlspeed=0), dict(tor("bbb", 2), num_seeds=0, num_complete=3, dlspeed=0),
+                    dict(tor("ccc", 3), num_seeds=0, num_complete=0, dlspeed=0), dict(tor("ddd", 4), num_seeds=0, num_complete=0, dlspeed=0)]
+        seen = {"ccc": ts - 2 * 3600, "ddd": ts - 25 * 3600}
+        out = nd.seedless_ids({"aaa", "bbb", "ccc", "ddd", "sabnzbd_nzo_1"}, torrents, seen, ts)
+        self.assertEqual(out, {"aaa", "ddd"})
+        self.assertEqual(seen["bbb"], ts)
+
+
 class Arr(unittest.TestCase):
     def test_positions_are_the_first_episode_of_each_download(self):
         queue = {"records": [
@@ -785,8 +820,9 @@ class Revert(unittest.TestCase):
 
 
 class Fake:
-    def __init__(self, torrents=(), slots=(), fail=(), kbps="1000"):
+    def __init__(self, torrents=(), slots=(), fail=(), kbps="1000", rqueue=()):
         self.torrents, self.slots, self.fail, self.kbps, self.calls = list(torrents), list(slots), set(fail), kbps, []
+        self.rqueue = list(rqueue)
 
     def qbit(self, path, data=None):
         self.calls.append(("qbit", path, data))
@@ -812,8 +848,8 @@ class Fake:
             if app in self.fail:
                 raise nd.ApiError(f"{app} down")
             if path == "/tag":
-                return [{"id": 70, "label": "download-now"}]
-            return {"totalRecords": 1, "records": [{"downloadId": "bbb", "seriesId": 4, "series": {"tags": [70]}}]} if app == "sonarr" else {"records": []}
+                return [{"id": 70, "label": "download-now"}, {"id": 71, "label": "override"}]
+            return {"totalRecords": 1, "records": [{"downloadId": "bbb", "seriesId": 4, "series": {"tags": [70]}}]} if app == "sonarr" else {"records": self.rqueue}
         return call
 
     def actions(self):
@@ -873,6 +909,14 @@ class Run(unittest.TestCase):
         self.assertEqual(self.go(f, TUE_0602), 0)
         self.assertEqual(f.actions(), [("qbit", "/torrents/stop", {"hashes": "t"}), ("sab", {"mode": "queue", "name": "pause", "value": "SABnzbd_nzo_1"})])
         self.assertEqual(json.loads(self.state.read_text())["pending"], 2)
+
+    def test_seedless_override_is_not_pending_and_seeds_are_remembered(self):
+        seedless = dict(tor("AAA", 100, cat="radarr-night"), num_seeds=0, num_complete=0, dlspeed=0)
+        seeded = dict(tor("ggg", 110, cat="radarr-night"), num_seeds=0, num_complete=2, dlspeed=0)
+        f = Fake([seedless, seeded], rqueue=[{"downloadId": "AAA", "movieId": 21, "movie": {"tags": [71]}}, {"downloadId": "ggg", "movieId": 22, "movie": {"tags": [71]}}])
+        self.assertEqual(self.go(f, MON_DAY), 0)
+        s = json.loads(self.state.read_text())
+        self.assertEqual((s["pending"], s["seeded"]), (1, {"ggg": MON_DAY.timestamp()}))
 
     def test_stall_clock_persists_in_the_state_file(self):
         f = Fake([tor("old", 100, "stalledDL"), tor("new", 200)])
