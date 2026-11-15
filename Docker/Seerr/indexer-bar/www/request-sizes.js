@@ -1,4 +1,4 @@
-// Request sizes (README "Request sizes"): a "Size" row after Status in a title page's facts panel, a "Size" line under Profile on every Requests row (bytes on disk from request-state.json "sizes", by Seerr request id, with GB/h and Remux / very big warnings), the episode count beside a series' season badges, and our own "Largest / Smallest first" control beside Seerr's sort. Sorting moves rows with CSS order only (no DOM moves) and turns 100 rows per page on, so every request is sorted. Missing or unmatched data = Seerr unchanged.
+// Request sizes (README "Request sizes"): a "Size" row after Status in a title page's facts panel, a "Size" line under Profile on every Requests row (bytes on disk from request-state.json "sizes", by Seerr request id, with GB/h and Remux / very big warnings), the episode count beside a series' season badges, and our own "Largest / Smallest first" control beside Seerr's sort. While it is on, Seerr's own list call gets hg_size=<mode>, which seerr-proxy answers from the download-now backend: every request sorted by size, one page in Seerr's format (Seerr's page size untouched); rows are also ordered with CSS order only (no DOM moves). Missing or unmatched data = Seerr unchanged.
 (function () {
   "use strict";
   var DATA_URL = "/_indexer-bar/request-state.json";
@@ -12,15 +12,15 @@
   var KEEP_LISTS = 12;
   var MODE_KEY = "hg-size-sort";
   var PREV_KEY = "hg-size-sort-page-size";
+  var SEERR_KEY = "hg-size-sort-seerr";
   var ALL_ROWS = "100";
   var TEXT = {
-    en: { size: "Size", season: "Season", specials: "Specials", of: "{a} of {b} episodes", episodes: ["{a} episode", "{a} episodes"], avg: "⌀ {a}/ep", remux: "⚠️ Remux", big: "⚠️ very big", remuxHint: "The untouched disc copy, far bigger than a normal release", bigTitle: "⚠️ Very big", bigHint: "Over {a} GB per hour of running time", here: "This one:", queued: "in queue", problem: "problem", off: "Off", modes: { desc: "Largest total", asc: "Smallest total", "file-desc": "Largest per file", "file-asc": "Smallest per file", "hour-desc": "Largest per hour", "hour-asc": "Smallest per hour" }, aria: "Sort by size", page: "Sorted within this page ({a} of {b})", locale: "en-GB" },
-    de: { size: "Grösse", season: "Staffel", specials: "Specials", of: "{a} von {b} Episoden", episodes: ["{a} Episode", "{a} Episoden"], avg: "⌀ {a}/Ep.", remux: "⚠️ Remux", big: "⚠️ sehr gross", remuxHint: "Unveränderte Kopie der Disc, viel grösser als ein normales Release", bigTitle: "⚠️ Sehr gross", bigHint: "Über {a} GB pro Stunde Laufzeit", here: "Hier:", queued: "in der Warteschlange", problem: "Problem", off: "Aus", modes: { desc: "Grösste gesamt", asc: "Kleinste gesamt", "file-desc": "Grösste pro Datei", "file-asc": "Kleinste pro Datei", "hour-desc": "Grösste pro Stunde", "hour-asc": "Kleinste pro Stunde" }, aria: "Nach Grösse sortieren", page: "Innerhalb dieser Seite sortiert ({a} von {b})", locale: "de-CH" },
+    en: { size: "Size", season: "Season", specials: "Specials", of: "{a} of {b} episodes", episodes: ["{a} episode", "{a} episodes"], avg: "⌀ {a}/ep", remux: "⚠️ Remux", big: "⚠️ very big", remuxHint: "The untouched disc copy, far bigger than a normal release", bigTitle: "⚠️ Very big", bigHint: "Over {a} GB per hour of running time", here: "This one:", queued: "in queue", problem: "problem", off: "Off", modes: { desc: "Largest total", asc: "Smallest total", "file-desc": "Largest per file", "file-asc": "Smallest per file", "hour-desc": "Largest per hour", "hour-asc": "Smallest per hour" }, aria: "Sort by size", locale: "en-GB" },
+    de: { size: "Grösse", season: "Staffel", specials: "Specials", of: "{a} von {b} Episoden", episodes: ["{a} Episode", "{a} Episoden"], avg: "⌀ {a}/Ep.", remux: "⚠️ Remux", big: "⚠️ sehr gross", remuxHint: "Unveränderte Kopie der Disc, viel grösser als ein normales Release", bigTitle: "⚠️ Sehr gross", bigHint: "Über {a} GB pro Stunde Laufzeit", here: "Hier:", queued: "in der Warteschlange", problem: "Problem", off: "Aus", modes: { desc: "Grösste gesamt", asc: "Kleinste gesamt", "file-desc": "Grösste pro Datei", "file-asc": "Kleinste pro Datei", "hour-desc": "Grösste pro Stunde", "hour-asc": "Kleinste pro Stunde" }, aria: "Nach Grösse sortieren", locale: "de-CH" },
   };
-  var RESTORE_WAIT = 2000;
   // GB per hour of running time above which a file is "very big" (owner's limits)
   var BIG = { movie: 30, episode: 20 };
-  var state = { sizes: null, at: 0, loading: null, lists: [], mode: "", fetched: {}, restore: null, media: null, queue: null, requested: {} };
+  var state = { sizes: null, at: 0, loading: null, lists: [], mode: "", fetched: {}, media: null, queue: null, requested: {}, kicking: false, kicked: false };
 
   function store(key, value) {
     try {
@@ -328,39 +328,49 @@
     sel.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  // every request on one page while sorting by size (Seerr's own page size, 100 = its largest)
-  function showAll(list, current) {
-    if (!current || current.total <= list.rows.length || Number(list.pageSize.value) >= Number(ALL_ROWS)) return;
-    store(PREV_KEY, list.pageSize.value);
-    setSelect(list.pageSize, ALL_ROWS);
-  }
-
+  // an older version showed 100 rows per page while sorting: that page size goes back once
   function restorePageSize(doc) {
     var prev = stored(PREV_KEY), sel = doc.getElementById("pageSize");
+    if (!prev || !sel) return;
     store(PREV_KEY, "");
-    if (prev && sel && sel.value === ALL_ROWS && prev !== ALL_ROWS) setSelect(sel, prev);
+    if (sel.value === ALL_ROWS && prev !== ALL_ROWS) setSelect(sel, prev);
   }
 
-  // after a Seerr sort: Seerr first loads its new list (a page size change in the same moment gets lost), then the old page size
-  function restoreLater(doc) {
-    if (state.restore) clearTimeout(state.restore);
-    state.restore = setTimeout(function () { state.restore = null; restorePageSize(doc); }, RESTORE_WAIT);
+  function seerrDir() {
+    try { return JSON.parse(stored("rl-filter-settings") || "{}").currentSortDirection || ""; } catch (e) { return ""; }
   }
 
-  function listLoaded() {
-    if (!state.restore) return;
-    clearTimeout(state.restore);
-    state.restore = setTimeout(function () { state.restore = null; restorePageSize(document); }, 0);
+  // Seerr loads its list again only when one of its own controls changes: its sort (on), its direction (another order), both back (off)
+  function kick(doc, from, to) {
+    var sort = doc.getElementById("sort"), dir = sort && sort.parentElement && sort.parentElement.querySelector("button");
+    if (!sort) return;
+    state.kicking = true;
+    try {
+      if (!from && to) {
+        if (!stored(SEERR_KEY)) store(SEERR_KEY, JSON.stringify({ sort: sort.value, dir: seerrDir() }));
+        setSelect(sort, sort.value === "added" ? "modified" : "added");
+      } else if (to) {
+        if (dir) dir.click();
+      } else {
+        var saved = {};
+        try { saved = JSON.parse(stored(SEERR_KEY) || "{}"); } catch (e) { saved = {}; }
+        store(SEERR_KEY, "");
+        // direction first: after a sort change Seerr shows its spinner until the new list is in, without the button
+        var turn = !!(saved.dir && dir && seerrDir() && seerrDir() !== saved.dir), resort = !!(saved.sort && sort.value !== saved.sort);
+        if (turn) dir.click();
+        if (resort) setSelect(sort, saved.sort);
+        if (!turn && !resort) setSelect(sort, sort.value === "added" ? "modified" : "added");
+      }
+    } finally { state.kicking = false; }
   }
 
   function setMode(doc, mode, byUser) {
     if (mode === state.mode) return;
+    var from = state.mode;
     state.mode = mode;
     store(MODE_KEY, mode);
-    var list = findList(doc);
-    if (!mode && byUser) restorePageSize(doc);
-    else if (!mode) restoreLater(doc);
-    else if (byUser && list) showAll(list, match(list.rows));
+    if (byUser) { state.kicked = true; kick(doc, from, mode); }
+    else if (!mode) store(SEERR_KEY, "");
     run();
   }
 
@@ -397,11 +407,13 @@
   function apply(doc) {
     var list = findList(doc);
     if (!list) return;
-    var l = lang(doc), select = control(doc, list, l);
+    var l = lang(doc);
+    control(doc, list, l);
     if (!state.at && !state.loading) load(false);
     list.rows.forEach(factsColumn);
     var current = match(list.rows);
     if (!current && list.rows.length) refetch();
+    if (current && state.mode && !state.kicked && !/[?&]hg_size=/.test(current.url)) { state.kicked = true; kick(doc, state.mode, state.mode); }
     if (!current || !state.sizes) {
       unsort(list);
       if (!state.sizes) dropLines(list.rows);
@@ -416,8 +428,6 @@
       return sortValue(entry, state.mode);
     });
     if (state.mode) sortRows(list, values); else unsort(list);
-    var hint = state.mode && current.total > list.rows.length ? fill(TEXT[l].page, list.rows.length, current.total) : "";
-    if (select.__hgHint !== hint) { select.__hgHint = hint; tip(select, hint || null, { tap: false }); }
   }
 
   // the shown rows with their Seerr request ids (request-origin.js), [] while the list is not matched
@@ -487,8 +497,10 @@
     var open = XHR.prototype.open, send = XHR.prototype.send;
     XHR.prototype.__hgSizes = true;
     XHR.prototype.open = function (method, url) {
-      this.__hgSizesUrl = String(method).toUpperCase() === "GET" && (LIST.test(String(url)) || TITLE_API.test(String(url))) ? String(url) : null;
-      return open.apply(this, arguments);
+      var args = Array.prototype.slice.call(arguments), get = String(method).toUpperCase() === "GET";
+      if (get && state.mode && !this.__hgSkip && LIST.test(String(url)) && !/[?&]hg_size=/.test(String(url))) args[1] = String(url) + "&hg_size=" + encodeURIComponent(state.mode);
+      this.__hgSizesUrl = get && (LIST.test(String(args[1])) || TITLE_API.test(String(args[1]))) ? String(args[1]) : null;
+      return open.apply(this, args);
     };
     XHR.prototype.send = function () {
       var self = this;
@@ -504,7 +516,6 @@
               return;
             }
             remember(self.__hgSizesUrl, json);
-            listLoaded();
             load(false);
             run();
           } catch (e) { /* not JSON */ }
@@ -522,12 +533,13 @@
     state.mode = MODES.indexOf(stored(MODE_KEY)) >= 0 ? stored(MODE_KEY) : "";
     if (REQUEST_PAGE.test(window.location.pathname) || TITLE_PAGE.test(window.location.pathname)) load(false);
     // a Seerr sort or direction chosen again: Seerr's order back
-    document.addEventListener("change", function (e) { if (e.target && e.target.id === "sort") setMode(document, "", false); });
+    document.addEventListener("change", function (e) { if (!state.kicking && e.target && e.target.id === "sort") setMode(document, "", false); });
     document.addEventListener("click", function (e) {
       var b = e.target && e.target.closest && e.target.closest("button"), sort = document.getElementById("sort");
-      if (b && sort && b.parentElement && sort.parentElement && sort.parentElement.contains(b)) setMode(document, "", false);
+      if (!state.kicking && b && sort && b.parentElement && sort.parentElement && sort.parentElement.contains(b)) setMode(document, "", false);
     });
     if (!window.MutationObserver || !document.body) return;
+    restorePageSize(document);
     run();
     // runs before the next paint: a row Seerr just rendered gets its line at once
     new MutationObserver(function (records) {

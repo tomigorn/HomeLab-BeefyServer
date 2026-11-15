@@ -7,6 +7,8 @@ const hint = (w, el) => w.hgTip.text(w.hgTip.get(el));
 const SIZES = { 62: { size: 45327147274 }, 63: { size: 41234770435 }, 54: { size: 22865343090, files: 5, of: 6 }, 57: { queued: 5378662671 } };
 const STATE = { canWait: [], sizes: SIZES, updated: new Date().toISOString() };
 const LIST_URL = "/api/v1/request?take=10&skip=0&filter=all&mediaType=all&sort=added&sortDirection=desc";
+const MODIFIED_URL = LIST_URL.replace("sort=added", "sort=modified");
+const MODES = ["desc", "asc", "file-desc", "file-asc", "hour-desc", "hour-asc"];
 // Seerr's /request answer: id, type, tmdb id (the rows below in the same order)
 const REQS = [[57, "movie", 1480613], [62, "movie", 120], [54, "tv", 213375], [41, "tv", 224377], [63, "movie", 121]];
 const listJson = (reqs, total = reqs.length) => ({ pageInfo: { pages: Math.ceil(total / 10), pageSize: 10, results: total, page: 1 }, results: reqs.map(([id, type, tmdb]) => ({ id, type, media: { tmdbId: tmdb } })) });
@@ -66,6 +68,7 @@ const seerrList = (w, url = LIST_URL) => { const x = new w.XMLHttpRequest(); x.o
 async function requests({ rows = REQS, list = listJson(REQS), state = STATE, path = "/requests", storage = {}, before } = {}) {
   const calls = [];
   const routes = { "/_indexer-bar/request-state.json": state, [LIST_URL]: list };
+  for (const url of [LIST_URL, MODIFIED_URL]) for (const m of MODES) routes[`${url}&hg_size=${m}`] = list;
   const w = load("request-sizes.js", page(rows.map((r) => (typeof r === "string" ? r : item(r))).join("")), (win) => {
     fakeXHR(routes, calls)(win);
     for (const [k, v] of Object.entries(storage)) win.localStorage.setItem(k, v);
@@ -164,33 +167,95 @@ test("picking a Seerr sort or its direction brings Seerr's order back", async ()
   }
 });
 
-test("sorting with more requests than shown switches Seerr to 100 per page, off restores the page size", async () => {
-  const w = await requests({ list: listJson(REQS, 44) });
+// what our script made Seerr do: its sort select, direction button and page size
+function seerrControls(w) {
   const seen = [];
-  w.document.getElementById("pageSize").addEventListener("change", (e) => seen.push(e.target.value));
+  w.document.getElementById("sort").addEventListener("change", (e) => seen.push("sort " + e.target.value));
+  w.document.getElementById("dir").addEventListener("click", () => seen.push("dir"));
+  w.document.getElementById("pageSize").addEventListener("change", (e) => seen.push("pageSize " + e.target.value));
+  return seen;
+}
+
+test("turning the size sort on makes Seerr ask again (its sort flipped, page size kept) and that call returns every request sorted by size", async () => {
+  const w = await requests({ list: listJson(REQS, 44) });
+  const seen = seerrControls(w);
   choose(w, "desc");
   await settle();
-  assert.deepEqual(seen, ["100"]);
-  assert.equal(hint(w, w.document.querySelector("[data-hg-size-sort] select")), "Sorted within this page (5 of 44)");
-  choose(w, "");
+  assert.deepEqual(seen, ["sort modified"]);
+  assert.equal(w.document.querySelector("[data-hg-size-sort] select").value, "desc");
+  seerrList(w, MODIFIED_URL);
   await settle();
-  assert.deepEqual(seen, ["100", "10"]);
+  assert.equal(w.calls.at(-1), MODIFIED_URL + "&hg_size=desc");
+  assert.deepEqual(shownOrder(w), ["Title 62", "Title 63", "Title 54", "Title 57", "Title 41"]);
 });
 
-test("a Seerr sort while sorting by size: the page size goes back once Seerr has loaded its new list", async () => {
-  const w = await requests({ list: listJson(REQS, 44) });
-  const seen = [];
-  w.document.getElementById("pageSize").addEventListener("change", (e) => seen.push(e.target.value));
+test("another size order asks again through Seerr's direction button; off turns the direction back first (Seerr hides it while loading), then its sort, and its plain list follows", async () => {
+  const w = await requests();
+  const seen = seerrControls(w);
+  w.localStorage.setItem("rl-filter-settings", JSON.stringify({ currentSort: "added", currentSortDirection: "desc", currentPageSize: 10 }));
   choose(w, "desc");
   await settle();
-  const s = w.document.getElementById("sort");
-  s.value = "modified";
-  s.dispatchEvent(new w.Event("change", { bubbles: true }));
+  w.localStorage.setItem("rl-filter-settings", JSON.stringify({ currentSort: "modified", currentSortDirection: "desc", currentPageSize: 10 }));
+  choose(w, "hour-desc");
   await settle();
-  assert.deepEqual(seen, ["100"]);
+  assert.deepEqual(seen, ["sort modified", "dir"]);
+  w.localStorage.setItem("rl-filter-settings", JSON.stringify({ currentSort: "modified", currentSortDirection: "asc", currentPageSize: 10 }));
+  seerrList(w, MODIFIED_URL);
+  await settle();
+  assert.equal(w.calls.at(-1), MODIFIED_URL + "&hg_size=hour-desc");
+  choose(w, "");
+  await settle();
+  assert.deepEqual(seen, ["sort modified", "dir", "dir", "sort added"]);
+  assert.equal(w.document.querySelector("[data-hg-size-sort] select").value, "");
+  assert.equal(w.localStorage.getItem("hg-size-sort-seerr"), null);
   seerrList(w);
   await settle();
-  assert.deepEqual(seen, ["100", "10"]);
+  assert.equal(w.calls.at(-1), LIST_URL);
+});
+
+test("a Seerr sort picked while sorting by size: Seerr's plain list, nothing restored on top", async () => {
+  const w = await requests();
+  choose(w, "desc");
+  await settle();
+  const seen = seerrControls(w);
+  const s = w.document.getElementById("sort");
+  s.value = "added";
+  s.dispatchEvent(new w.Event("change", { bubbles: true }));
+  await settle();
+  assert.deepEqual(seen, ["sort added"]);
+  assert.equal(w.localStorage.getItem("hg-size-sort-seerr"), null);
+  seerrList(w);
+  await settle();
+  assert.equal(w.calls.at(-1), LIST_URL);
+});
+
+test("never more rows per page: a page size of 100 left by the older version goes back once", async () => {
+  const w = await requests({ list: listJson(REQS, 44), storage: { "hg-size-sort-page-size": "25" }, before: (win) => { win.document.getElementById("pageSize").value = "100"; } });
+  assert.equal(w.document.getElementById("pageSize").value, "25");
+  assert.equal(w.localStorage.getItem("hg-size-sort-page-size"), null);
+  const seen = seerrControls(w);
+  choose(w, "desc");
+  await settle();
+  assert.ok(!seen.some((x) => x.startsWith("pageSize")), seen.join());
+});
+
+test("a list Seerr loaded before the script ran while sorting by size: Seerr is asked again once", async () => {
+  const calls = [];
+  const clicks = [];
+  const w = load("request-sizes.js", page(REQS.map((r) => item(r)).join("")), (win) => {
+    fakeXHR({ "/_indexer-bar/request-state.json": STATE, [LIST_URL]: listJson(REQS) }, calls)(win);
+    win.localStorage.setItem("hg-size-sort", "desc");
+    win.document.getElementById("dir").addEventListener("click", () => clicks.push("dir"));
+    win.performance.getEntriesByType = (t) => (t === "resource" ? [{ name: "https://requests.example.com" + LIST_URL }] : []);
+    const X = win.XMLHttpRequest;
+    win.XMLHttpRequest = class extends X { open(m, url) { super.open(m, url.replace("https://requests.example.com", "")); } };
+  }, "https://requests.example.com/requests");
+  open.push(w);
+  await settle();
+  w.document.body.appendChild(w.document.createElement("div"));
+  await settle();
+  assert.deepEqual(clicks, ["dir"]);
+  assert.equal(w.document.querySelector("[data-hg-size-sort] select").value, "desc");
 });
 
 test("the chosen order stays after a reload", async () => {

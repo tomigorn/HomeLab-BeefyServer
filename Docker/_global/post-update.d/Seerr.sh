@@ -60,6 +60,8 @@ if want seerr-proxy; then
   check seerr.request-sizes-data '^object [1-9]' "$(seerr_data /_indexer-bar/request-state.json | jq -r '"\(.sizes|type) \(.sizes|length)"' 2>&1)"
   check seerr.media-sizes-data '^object [1-9]' "$(seerr_data /_indexer-bar/request-state.json | jq -r '"\(.media|type) \(.media|length)"' 2>&1)"
   check seerr.request-sizes-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-sizes.js | grep -c 'data-hg-size-sort' 2>&1)"
+  # GB sort: Seerr's list call with hg_size goes to the download-now backend (one sorted page, Seerr's page size untouched)
+  check seerr.size-sort-backend '^401 3 [1-9][0-9]* largest [1-9]$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' 'http://127.0.0.1:5055/api/v1/request?take=3&skip=0&filter=all&mediaType=all&hg_size=desc') $(seerr_data '/api/v1/request?take=3&skip=0&filter=all&mediaType=all&sort=added&sortDirection=desc&hg_size=desc' | jq -r --slurpfile st /srv/appdata/indexer-bar/request-state.json '"\(.results|length) \(.pageInfo.results) \(if (.results[0].id|tostring) as $i | ($st[0].sizes[$i].size // 0) >= ([$st[0].sizes[] | .size // 0] | max) then "largest" else "not-largest" end)"' 2>&1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-sizes.js | grep -c 'hg_size=' 2>&1)"
   check seerr.title-size-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-sizes.js | grep -c 'data-hg-size-fact' 2>&1)"
   check seerr.status-badge-markup '^[1-9]' "$(docker exec seerr sh -c 'grep -l "M5.25 12a.75.75 0 0 1 .75-.75h12" /app/.next/static/chunks/*.js | wc -l' 2>&1)"
 fi

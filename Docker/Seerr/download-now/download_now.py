@@ -2,7 +2,8 @@
 """Download now (README "Download now"): the button on Seerr's title page. Seerr admins / manage-requests on any title, everyone else only on a title with their own (not declined) request; checked against Seerr itself on every call.
 A press tags the title download-now in Radarr/Sonarr, moves its downloads out of the night categories (qBittorrent radarr-night/sonarr-night, SABnzbd movies-night/tv-night) into the normal ones and resumes the paused ones; nothing grabbed yet = a search, which grabs through the tagged normal clients.
 GET /_download-now/api?type=movie|tv&tmdb=<id>: what a press would do (no change), with the title's search (queued/started, searches ahead, last search time). POST /_download-now/api {"type","tmdbId"}: do it. The API keys stay here, the browser only sees the state.
-GET /_download-now/origins: where each request came from (README "Request origin", origins.json of Jellyfin's popular backend); viewers of all requests get all, everyone else only their own."""
+GET /_download-now/origins: where each request came from (README "Request origin", origins.json of Jellyfin's popular backend); viewers of all requests get all, everyone else only their own.
+GET /_download-now/by-size: the Requests page's GB sort, one sorted page of the caller's requests in Seerr's own format (by_size.py)."""
 import http.client
 import http.server
 import json
@@ -249,6 +250,9 @@ def handle(method, path, headers, body, deps):
     if url.path == "/_download-now/request":
         import my_request
         return my_request.handle(sys.modules[__name__], method, path, headers, body, deps)
+    if url.path == "/_download-now/by-size":
+        import by_size
+        return by_size.handle(sys.modules[__name__], method, path, headers, body, deps)
     if url.path.startswith("/_download-now/manual/"):
         import manual
         return manual.handle(sys.modules[__name__], method, path, headers, body, deps)
