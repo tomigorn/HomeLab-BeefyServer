@@ -103,6 +103,9 @@ assert_eq "rolled back to the old image" "tag seerr-local:current seerr-local:ro
 assert_has "config restored from the backup" "tar -C /d -xzpf" "$(calls 'run --rm --user 0')"
 assert_eq "stopped, started new, stopped, started old" "compose stop seerr;compose up -d --no-deps seerr;compose stop seerr;compose up -d --no-deps seerr;" "$(calls compose)"
 assert_has "alert sent" "rolled back" "$(cat "$T/alerts")"
+run 'echo "  FAIL seerr.example got: x" > "$STATE/check.log"; false' >/dev/null; rc=$?
+assert_has "failed check log kept for after the rollback" "FAIL seerr.example" "$(cat "$T/state/check-failed.log" 2>&1)"
+assert_has "alert names the kept log" "check-failed.log" "$(cat "$T/alerts")"
 
 # a new upstream release (running image built from v0.9.0): built and tested, never deployed by itself
 FAKE_UPSTREAM=v0.9.0 run true; rc=$?

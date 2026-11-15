@@ -201,6 +201,8 @@ if verify "$version"; then
   exit 0
 fi
 
+# the rollback's own verify overwrites check.log
+cp "$STATE/check.log" "$STATE/check-failed.log" 2>/dev/null || true
 compose stop seerr || true
 $DOCKER run --rm --user 0 --network none --entrypoint sh -v "$APPDATA:/d" -v "$BACKUPS:/b:ro" "$REPO:rollback" \
   -c "find /d -mindepth 1 -delete && tar -C /d -xzpf /b/$name" || log "restore failed"
@@ -209,8 +211,8 @@ compose up -d --no-deps seerr || log "compose up failed"
 $DOCKER rmi "$REPO:candidate" "$REPO:$version" >/dev/null 2>&1 || true
 want=$($DOCKER image inspect -f '{{.Config.Env}}' "$REPO:current" 2>/dev/null | sed -n 's/.*COMMIT_TAG=\([^] ]*\).*/\1/p')
 if verify "$want"; then
-  alert "$version failed its checks, rolled back to the previous image and the config backup $name"
+  alert "$version failed its checks (see $STATE/check-failed.log), rolled back to the previous image and the config backup $name"
 else
-  alert "$version failed its checks, rolled back, but the previous image does not verify either: look now (backup $BACKUPS/$name)"
+  alert "$version failed its checks (see $STATE/check-failed.log), rolled back, but the previous image does not verify either: look now (backup $BACKUPS/$name)"
 fi
 exit 1
