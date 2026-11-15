@@ -2,7 +2,7 @@
 Description=Storage retention deletion run in the maintenance window (does nothing until switched on in retention.conf)
 
 [Timer]
-OnCalendar=*-*-* 04:19:00 Europe/Zurich
+OnCalendar=*-*-* 04:31:00 Europe/Zurich
 Persistent=false
 AccuracySec=1min
 

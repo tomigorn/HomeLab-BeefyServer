@@ -1,5 +1,5 @@
 [Unit]
-Description=Storage retention: delete the files of due temporary titles (only when switched on in retention.conf; 04:00-04:40)
+Description=Storage retention: delete the files of due temporary titles (only when switched on in retention.conf; 04:31, media lock held)
 Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
 After=docker.service
 
@@ -14,7 +14,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/buntu/.local/state/movie-downloads /srv/appdata/indexer-bar
+ReadWritePaths=/home/buntu/.local/state/movie-downloads /srv/appdata/indexer-bar /run/lock
 PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
