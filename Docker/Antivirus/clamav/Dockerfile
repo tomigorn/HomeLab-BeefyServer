@@ -2,8 +2,8 @@ FROM alpine:3.24.3@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c
 
 RUN apk add --no-cache clamav-scanner clamav-libs freshclam clamav-daemon clamav-clamdscan
 
-# python3: the clamav-queue worker (hook/clamav-hook.py --worker) runs from this image.
-RUN apk add --no-cache python3
+# python3: the clamav-queue worker (hook/clamav-hook.py --worker) runs from this image; ffmpeg (ffprobe): its parts scan of videos too big for clamd.
+RUN apk add --no-cache python3 ffmpeg
 
 # apk creates clamav as 100/101 (the host's syslog); pin it to a dedicated uid/gid.
 RUN deluser clamav 2>/dev/null; delgroup clamav 2>/dev/null; \

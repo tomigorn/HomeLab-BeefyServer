@@ -8,6 +8,7 @@ if want clamav; then
 fi
 if want clamav-queue; then
   check av.queue-worker '^alive$' "$(docker exec clamav-queue sh -c 'find /tmp/clamav-queue-alive -mmin -15 | grep -q . && echo alive' 2>&1)"
+  check av.parts-scan '^ffprobe version .* /tmp 192(\.0)?M$' "$(echo "$(docker exec clamav-queue ffprobe -version 2>&1 | head -1 | cut -c1-24) $(docker exec clamav-queue df -h /tmp 2>&1 | awk 'NR==2{print $6, $2}')")"
   check av.queue-perms '^65112:1100 2770 [0-9]+:1100 2770 65112:1100 2770 [0-9]+:1100 2770$' "$(stat -c '%u:%g %a' /srv/.disks/ssd-hot/.clamav-queue /srv/.disks/ssd-hot/quarantine /srv/.disks/ssd-hot2/.clamav-queue /srv/.disks/ssd-hot2/quarantine 2>&1 | xargs)"
 fi
 if want clamav clamav-hostscan; then

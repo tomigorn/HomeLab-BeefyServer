@@ -212,6 +212,87 @@ class HookTest(unittest.TestCase):
         self.assertTrue(os.path.exists(p + ".1"))
         self.assertEqual(len(self.results()), 1)
 
+    # Fake ffprobe / ffmpeg (no ffmpeg on the host): a file starting with VIDEO is a video; "ATT:<bytes>" at the end is an attachment, "SUBS:<bytes>" subtitles.
+    def fakes(self):
+        probe = os.path.join(self.t, "ffprobe")
+        mpeg = os.path.join(self.t, "ffmpeg")
+        with open(probe, "w") as f:
+            f.write("""#!%s
+import json, sys
+path = sys.argv[-1].split("file:", 1)[1]
+data = open(path, "rb").read()
+open(%r, "a").write(" ".join(sys.argv[1:]) + "\\n")
+if not data.startswith(b"VIDEO"):
+    sys.exit(1)
+streams = [{"codec_type": "video"}, {"codec_type": "audio"}]
+if b"SUBS:" in data:
+    streams.append({"codec_type": "subtitle"})
+if b"ATT:" in data:
+    streams.append({"codec_type": "attachment"})
+print(json.dumps({"streams": streams, "format": {"duration": "1860"}}))
+""" % (sys.executable, os.path.join(self.t, "calls")))
+        with open(mpeg, "w") as f:
+            f.write("""#!%s
+import sys
+a = sys.argv[1:]
+open(%r, "a").write(" ".join(a) + "\\n")
+src = a[a.index("-i") + 1].split("file:", 1)[1]
+data = open(src, "rb").read()
+for i, x in enumerate(a):
+    if x.startswith("-dump_attachment"):
+        open(a[i + 1], "wb").write(data.split(b"ATT:", 1)[1].split(b"SUBS:")[0])
+if "-map" in a and b"SUBS:" in data:
+    open(a[-1], "wb").write(b"mkv:" + data.split(b"SUBS:", 1)[1])
+""" % (sys.executable, os.path.join(self.t, "calls")))
+        os.chmod(probe, 0o755)
+        os.chmod(mpeg, 0o755)
+        return {"FFPROBE_BIN": probe, "FFMPEG_BIN": mpeg, "PARTS_TMP": os.path.join(self.t, "parts-tmp")}
+
+    def big_video(self, tail=b""):
+        return self.write("movie.mkv", b"VIDEO" + b"x" * 64 + tail)
+
+    def test_too_big_video_is_queued_for_the_parts_scan(self):
+        mkv = self.big_video(b"ATT:font-bytes")
+        f = self.fakes()
+        self.queued(HOOK_MAX_BYTES="10", **f)
+        self.assertEqual([(r["path"], r["verdict"]) for r in self.results()], [(mkv, "queued")])
+        r = self.worker(HOOK_MAX_BYTES="10", **f)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        last = self.results()[-1]
+        self.assertEqual((last["path"], last["verdict"], last["minutes"], last["parts"], last["video"]), (mkv, "parts-clean", 31, 1, True))
+        self.assertEqual(self.clamd.streams, [b"font-bytes"])
+        self.assertTrue(os.path.exists(mkv))
+        self.assertEqual(self.jobs(), [])
+        calls = open(os.path.join(self.t, "calls")).read()
+        self.assertIn("-protocol_whitelist file", calls)
+        self.assertIn("-format_whitelist matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts", calls)
+
+    def test_malware_in_an_attachment_is_malware(self):
+        mkv = self.big_video(b"SUBS:" + EICAR)
+        f = self.fakes()
+        self.queued(HOOK_MAX_BYTES="10", **f)
+        self.worker(HOOK_MAX_BYTES="10", **f)
+        last = self.results()[-1]
+        self.assertEqual((last["path"], last["verdict"], last["signature"]), (mkv, "parts-infected", SIG))
+        self.assertFalse(os.path.exists(mkv))
+        self.assertTrue(os.path.exists(os.path.join(self.quarantine, "movie.mkv")))
+
+    def test_a_file_that_is_no_video_fails_the_parts_scan(self):
+        mkv = self.write("movie.mkv", b"NOTVIDEO" + b"x" * 64)
+        f = self.fakes()
+        self.queued(HOOK_MAX_BYTES="10", **f)
+        self.worker(HOOK_MAX_BYTES="10", **f)
+        last = self.results()[-1]
+        self.assertEqual((last["path"], last["verdict"]), (mkv, "parts-error"))
+        self.assertTrue(os.path.exists(mkv))
+
+    def test_parts_scan_by_hand_for_an_existing_file(self):
+        mkv = self.big_video(b"SUBS:subtitle text")
+        r = self.run_hook("--parts", mkv, **self.fakes())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual((self.results()[-1]["verdict"], self.results()[-1]["parts"]), ("parts-clean", 1))
+        self.assertEqual(self.clamd.streams, [b"mkv:subtitle text"])
+
     def test_clean_job_exits_0_and_keeps_files(self):
         p = self.write("movie.mkv", b"clean video bytes")
         r = self.sab()

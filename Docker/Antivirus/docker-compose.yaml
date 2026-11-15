@@ -81,12 +81,13 @@ services:
       - "65118"   # textfile-writers: clamav-hook.prom
     read_only: true
     tmpfs:
-      - /tmp:size=1m
+      # parts of too-big videos (attachments, subtitles) are cut out here before clamd sees them
+      - /tmp:size=192m
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    mem_limit: 256m
+    mem_limit: 512m
     restart: unless-stopped
     depends_on:
       - clamav
@@ -97,6 +98,7 @@ services:
       - QUARANTINE=/data/quarantine
       - TEXTFILE=/clamav
       - QBIT_API=http://gluetun:8080
+      - PARTS_TMP=/tmp/parts
       - PYTHONUNBUFFERED=1
     # Touched before every file; one file takes at most a few minutes.
     healthcheck:

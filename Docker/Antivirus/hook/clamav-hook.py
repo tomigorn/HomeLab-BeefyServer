@@ -4,6 +4,7 @@
 SABnzbd post-processing script:  clamav-hook.py <final dir> [SAB's other args]
 qBittorrent on torrent finished:  clamav-hook.py --qbit "%I" "%F"
 Background queue worker:          clamav-hook.py --worker [--once]
+Parts scan of one too-big video:  clamav-hook.py --parts <file>   (worker image: ffprobe/ffmpeg)
 exit: 0 clean, queued, failed SAB job or not scanned (clamd unreachable), 1 infected, 2 usage
 """
 import datetime
@@ -14,7 +15,9 @@ import re
 import shutil
 import socket
 import struct
+import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -40,6 +43,14 @@ STALE_TMP = float(os.environ.get("QUEUE_STALE_TMP", "3600"))
 # Touched before every file; the container healthcheck reads its age.
 HEARTBEAT = os.environ.get("HEARTBEAT", "/tmp/clamav-queue-alive")
 RESULTS_MAX_BYTES = int(os.environ.get("RESULTS_MAX_BYTES", str(5 * 1024 * 1024)))
+# Videos over clamd's limit: the parts around the video/audio bitstreams (attachments, subtitles, chapters, tags) are cut out and scanned instead.
+FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
+FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
+PARTS_TMP = os.environ.get("PARTS_TMP", "/tmp")
+PARTS_MAX_BYTES = int(os.environ.get("PARTS_MAX_BYTES", str(512 * 1024 * 1024)))
+PARTS_TIMEOUT = int(os.environ.get("PARTS_TIMEOUT", "300"))
+PROBE_FORMATS = "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts"
+VIDEO_EXT = {"mkv", "mp4", "m4v", "avi", "mov", "wmv", "ts", "m2ts", "webm"}
 CHUNK = 1 << 20
 
 MEDIA_EXT = {
@@ -146,7 +157,7 @@ def append_line(path, line):
         os.close(fd)
 
 
-def record(path, verdict, mode, sig=None, size=None):
+def record(path, verdict, mode, sig=None, size=None, **extra):
     """One JSON line per file and verdict (clean, infected, queued, skipped, error) in TEXTFILE/clamav-results.jsonl, the path as the apps see it; Seerr's Manual interaction page reads it. Never stops a scan."""
     out = os.path.join(TEXTFILE, "clamav-results.jsonl")
     try:
@@ -161,10 +172,75 @@ def record(path, verdict, mode, sig=None, size=None):
         except FileNotFoundError:
             pass
         line = {"at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "path": path, "size": size,
-                "verdict": verdict, "signature": sig, "mode": mode}
+                "verdict": verdict, "signature": sig, "mode": mode, **extra}
         append_line(out, json.dumps(line) + "\n")
     except OSError as e:
         print("results log not written (%s): %s %s" % (e, verdict, path))
+
+
+def is_video(path, name=None):
+    name = os.path.basename(name or path)
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext not in VIDEO_EXT:
+        return False
+    try:
+        with open(path, "rb") as f:
+            head = f.read(8)
+    except OSError:
+        return False
+    return not head.startswith(RISKY_MAGIC)
+
+
+def parts_scan(path, name=None):
+    """A video too big for clamd: (verdict, signature, details). It must open as a real video container (whitelisted demuxers, local file only, no executable/archive magic);
+    its attachments are dumped one by one and its subtitles, attachments, chapters and tags copied into one small file; those are streamed to clamd. The video/audio bitstreams are not scanned."""
+    if not is_video(path, name):
+        return "parts-error", None, {"why": "not a video file"}
+    src = "file:" + path
+    guard = ["-protocol_whitelist", "file", "-format_whitelist", PROBE_FORMATS]
+    try:
+        r = subprocess.run([FFPROBE_BIN, "-v", "error", *guard, "-print_format", "json", "-show_format", "-show_streams", src],
+                           capture_output=True, timeout=60, check=False)
+        info = json.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        return "parts-error", None, {"why": "ffprobe: %s" % type(e).__name__}
+    streams = [x for x in (info or {}).get("streams") or [] if isinstance(x, dict)]
+    if not any(x.get("codec_type") == "video" for x in streams):
+        return "parts-error", None, {"why": "no video stream"}
+    try:
+        minutes = round(float((info.get("format") or {}).get("duration")) / 60)
+    except (TypeError, ValueError):
+        minutes = None
+    attachments = sum(1 for x in streams if x.get("codec_type") == "attachment")
+    extras = any(x.get("codec_type") in ("subtitle", "attachment", "data") for x in streams)
+    parts = []
+    try:
+        os.makedirs(PARTS_TMP, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=PARTS_TMP) as tmp:
+            for k in range(attachments):
+                out = os.path.join(tmp, "att%d" % k)
+                subprocess.run([FFMPEG_BIN, "-v", "error", "-y", *guard, "-dump_attachment:t:%d" % k, out, "-i", src, "-t", "0", "-f", "null", "-"],
+                               capture_output=True, timeout=PARTS_TIMEOUT, check=False)
+                if os.path.isfile(out):
+                    parts.append(out)
+            if extras:
+                out = os.path.join(tmp, "parts.mkv")
+                subprocess.run([FFMPEG_BIN, "-v", "error", "-y", *guard, "-i", src, "-map", "0:s?", "-map", "0:t?", "-map", "0:d?",
+                                "-map_chapters", "0", "-map_metadata", "0", "-c", "copy", "-f", "matroska", out],
+                               capture_output=True, timeout=PARTS_TIMEOUT, check=False)
+                if os.path.isfile(out):
+                    parts.append(out)
+            if attachments and len([x for x in parts if os.path.basename(x).startswith("att")]) < attachments:
+                return "parts-error", None, {"why": "attachments not extracted", "minutes": minutes, "video": True}
+            for x in parts:
+                if os.path.getsize(x) > PARTS_MAX_BYTES:
+                    return "parts-error", None, {"why": "a part is too big", "minutes": minutes, "video": True}
+                sig = instream(x)
+                if sig:
+                    return "parts-infected", sig, {"minutes": minutes, "video": True, "parts": len(parts)}
+    except (ScanError, OSError, subprocess.SubprocessError) as e:
+        return "parts-error", None, {"why": type(e).__name__, "minutes": minutes, "video": True}
+    return "parts-clean", None, {"minutes": minutes, "video": True, "parts": len(parts)}
 
 
 def quarantine(path, sig, where=None, mode="hook", title=""):
@@ -279,7 +355,7 @@ def metrics(mode, values, infected):
         print("metrics not written: %s" % e)
 
 
-def enqueue(files, title, torrent_hash):
+def enqueue(files, title, torrent_hash, parts=()):
     """Hardlink files into a new queue job; return the files that could not be queued."""
     if not files or not os.path.isdir(QUEUE):
         return files
@@ -296,7 +372,7 @@ def enqueue(files, title, torrent_hash):
         link = "%04d" % i
         try:
             os.link(p, os.path.join(tmp, link))
-            entries.append({"link": link, "path": p})
+            entries.append({"link": link, "path": p, **({"parts": True} if p in parts else {})})
             record(p, "queued", "hook")
         except OSError as e:
             print("not queued (%s): %s" % (e, p))
@@ -313,6 +389,14 @@ def enqueue(files, title, torrent_hash):
 def main(argv):
     if argv[:1] == ["--worker"]:
         return worker("--once" in argv[1:])
+    if argv[:1] == ["--parts"] and len(argv) == 2:
+        verdict, sig, extra = parts_scan(argv[1])
+        record(argv[1], verdict, "parts", sig, **extra)
+        print("ClamAV parts scan: %s: %s%s" % (argv[1], verdict, " (%s)" % sig if sig else ""))
+        if sig:
+            quarantine(argv[1], sig, mode="parts", title=os.path.basename(argv[1]))
+            return 1
+        return 0
     torrent_hash = None
     if argv[:1] == ["--qbit"]:
         if len(argv) < 3:
@@ -331,10 +415,14 @@ def main(argv):
 
     scanned = errors = skipped = 0
     hits = []
-    media, sync = [], []
+    media, sync, big = [], [], []
     for p in files_under(path):
         try:
             if os.path.getsize(p) > MAX_BYTES:
+                if is_video(p) and os.path.isdir(QUEUE):
+                    big.append(p)
+                    media.append(p)
+                    continue
                 skipped += 1
                 record(p, "skipped", "hook")
                 continue
@@ -343,7 +431,11 @@ def main(argv):
             print("ERROR: %s" % e)
             continue
         (media if is_media(p) else sync).append(p)
-    left = enqueue(media, title, torrent_hash)
+    left = enqueue(media, title, torrent_hash, parts=set(big))
+    for p in [x for x in left if x in big]:
+        left.remove(p)
+        skipped += 1
+        record(p, "skipped", "hook")
     queued = len(media) - len(left)
     sync += left
 
@@ -460,6 +552,7 @@ def process_job(jobdir):
     except (OSError, ValueError):
         job = {"title": os.path.basename(jobdir), "hash": None, "files": []}
     paths = {e.get("link"): e.get("path") for e in job.get("files", [])}
+    parts = {e.get("link") for e in job.get("files", []) if e.get("parts")}
     scanned = errors = hits = 0
     for n in sorted(os.listdir(jobdir)):
         link = os.path.join(jobdir, n)
@@ -467,6 +560,22 @@ def process_job(jobdir):
             continue
         orig = paths.get(n) or link
         alive()
+        if n in parts:
+            verdict, sig, extra = parts_scan(link, orig)
+            record(orig, verdict, "queue", sig, os.path.getsize(link) if os.path.exists(link) else None, **extra)
+            scanned += 1
+            if sig:
+                hits += 1
+                try:
+                    errors += handle_hit(link, orig, sig, job)
+                except OSError as e:
+                    print("ERROR: INFECTED %s: %s (%s) not quarantined: %s, retried in 30 s" % (job.get("title"), orig, sig, e))
+                    return False
+            else:
+                if verdict == "parts-error":
+                    print("ClamAV queue: %s: parts scan not possible (%s)" % (orig, extra.get("why")))
+                os.unlink(link)
+            continue
         try:
             sig = instream(link)
         except Retry as e:
