@@ -122,7 +122,8 @@ if want qbittorrent; then
   check md.qbit-integrity-autorun '^true /clamav-hook/download-integrity\.py --qbit "%I" "%F" true ok$' "$(md_qb /app/preferences | jq -r '"\(.autorun_enabled) \(.autorun_program) \(.recheck_completed_torrents)"' 2>&1) $(docker exec movie-qbittorrent sh -c 'test -x /clamav-hook/download-integrity.py && test -x /clamav-hook/clamav-hook.py && echo ok' 2>&1)"
   # Owner 2026-11-09: beefy never seeds; stop at completion (ratio 0, 0 min, action stop), upload 1 KiB/s also in alt mode
   check md.qbit-tun0-no-seeding '^tun0 0 0 0 1024 1024$' "$(md_qb /app/preferences | jq -r '"\(.current_network_interface) \(.max_ratio) \(.max_seeding_time) \(.max_ratio_act) \(.up_limit) \(.alt_up_limit)"' 2>&1)"
-  check md.qbit-queueing '^true [1-9][0-9]*$' "$(md_qb /app/preferences | jq -r '"\(.queueing_enabled) \(.max_active_downloads)"' 2>&1)"
+  # Owner 2026-11-15: a stalled (e.g. seedless download-anyway) torrent does not take one of the download slots
+  check md.qbit-queueing '^true [1-9][0-9]* true$' "$(md_qb /app/preferences | jq -r '"\(.queueing_enabled) \(.max_active_downloads) \(.dont_count_slow_torrents)"' 2>&1)"
   check md.night-seedless '^ok$' "$(jq -e 'has("seeded")' "$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)/.local/state/movie-downloads/night-downloads.json" >/dev/null 2>&1 && echo ok || echo 'no seeded in the state')"
   check md.qbit-disk-hold '^5758 ok$' "$(grep -oP '(?<="ND_MIN_FREE_GIB", ")[0-9]+' "$MD_DIR/scripts/night-downloads.py") $(jq -e 'has("disk_held")' "$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)/.local/state/movie-downloads/night-downloads.json" >/dev/null 2>&1 && echo ok || echo 'no disk_held in the state')"
   qbit_logout
