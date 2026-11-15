@@ -425,12 +425,26 @@ Auto-fixes, only while a stutter episode (incident within 2 min) runs with someo
 | `downloads_slow` | qBittorrent alternative speed on, alt download 2 MiB/s, alt upload = normal upload (seeding unchanged); SABnzbd limit 2M | saved values back |
 | `background_low` | `CPUWeight=10 IOWeight=10` (runtime) for running subtitle-translate, clamav, mover, original-audio, promoter units and their containers | saved weights back |
 
-Files in `~/.local/state/jellyfin-playback/`: `incidents.jsonl` (incidents with context + one summary per playback, 0600, 5 MB × 3), `state.json` (counters), `autofix.json` (what is applied), `playback.prom` (metrics, pulled by fastpi).
+Conversion report (2026-11-15): every playback (one session + item pair; gaps under 5 min and seeks stay one playback) is recorded in `plays.jsonl` (0600, 90 days, no IPs) with the worst method seen, from the same `/Sessions` poll (no extra API call):
+
+| Method | Rule |
+|---|---|
+| `direct` | PlayMethod DirectPlay |
+| `remux` | DirectStream, or Transcode with video and audio direct (a Transcode without TranscodingInfo counts as remux) |
+| `audio` | Transcode with video direct, audio converted |
+| `video` | Transcode with video not direct (worst; `video` > `audio` > `remux` > `direct`) |
+
+`hdr_to_sdr` = `yes` when the method is `video`, the source `VideoRangeType` (item MediaStreams) is not SDR/unknown, and the output is SDR: output codec h264 (Jellyfin has no HDR h264 output) or `VideoRangeTypeNotSupported` in the reasons; sticky for the playback. Reasons = `TranscodeReasons`, raw names, all seen during the playback.
+
+Metrics in `playback.prom`: `jellyfin_playback_plays_24h{method}` (all four always present) and `jellyfin_playback_converted_info{user,client,device,title,method,reasons,hdr_to_sdr,started}` = 1 for audio/video playbacks started in the last 24 h (newest 20). An open playback is saved in `plays-open.json` so a service restart does not split it.
+
+Files in `~/.local/state/jellyfin-playback/`: `incidents.jsonl` (incidents with context + one summary per playback, 0600, 5 MB × 3), `state.json` (counters), `autofix.json` (what is applied), `plays.jsonl` + `plays-open.json` (playbacks), `playback.prom` (metrics, pulled by fastpi).
 
 ```bash
 systemctl status playback-watch                      # status
 journalctl -u playback-watch -n 50                   # incidents and auto-fix log (no users/titles)
 ssh beefy playback-watch report --since 24h         # incident table (s/m/h/d), also from fastpi
+ssh beefy playback-watch report --plays --since 7d  # playbacks with method and reasons, conversions first
 ~/Projects/Docker/Jellyfin/playback-watch/install.sh # install / update
 sudo systemctl disable --now playback-watch          # rollback: stopping reverts every auto-fix
 cd ~/Projects/Docker/Jellyfin/playback-watch && python3 -m unittest -q   # tests
