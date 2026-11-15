@@ -1221,13 +1221,14 @@ class Virus(unittest.TestCase):
         self.w.titles["/series/54"] = {"id": 54, "title": "Company Retreat", "runtime": 30}
         self.w.scanned(self.path, "parts-clean", minutes=31, parts=2, video=True)
         v = self.files()
-        self.assertEqual((v["state"], v["minutes"]), ("parts-clean", 31))
+        self.assertEqual((v["state"], v["minutes"], v["runtimeFits"], v["expected"]), ("parts-clean", 31, True, 30))
         self.assertEqual(self.imp()[0], 200)
 
     def test_parts_clean_with_a_wrong_running_time_is_for_admins(self):
         self.w.titles["/series/54"] = {"id": 54, "title": "Company Retreat", "runtime": 30}
         self.w.scanned(self.path, "parts-clean", minutes=60, parts=1, video=True)
-        self.files()
+        v = self.files()
+        self.assertEqual((v["runtimeFits"], v["expected"]), (False, 30))
         self.assertEqual(self.imp(), (403, {"error": "virus scan pending"}))
         self.w.me = ADMIN
         self.files()
@@ -1235,8 +1236,22 @@ class Virus(unittest.TestCase):
 
     def test_parts_without_a_known_running_time_are_for_admins(self):
         self.w.scanned(self.path, "parts-clean", minutes=31, parts=1, video=True)
-        self.files()
+        v = self.files()
+        self.assertEqual((v["runtimeFits"], v["expected"]), (False, None))
         self.assertEqual(self.imp(), (403, {"error": "virus scan pending"}))
+
+    def test_a_kept_file_list_carries_the_same_running_time_result_the_gate_uses(self):
+        self.w.titles["/series/54"] = {"id": 54, "title": "Company Retreat", "runtime": 30}
+        self.w.scanned(self.path, "clean")
+        self.assertNotIn("runtimeFits", self.files())
+        self.w.scanned(self.path, "parts-clean", minutes=60, parts=1, video=True)
+        v = get(self.w, f"files?id={self.pid}")[1]["files"][0]["virus"]
+        self.assertEqual((v["state"], v["runtimeFits"], v["expected"]), ("parts-clean", False, 30))
+        self.assertEqual(self.imp(), (403, {"error": "virus scan pending"}))
+        self.w.scanned(self.path, "parts-clean", minutes=29, parts=1, video=True)
+        v = get(self.w, f"files?id={self.pid}")[1]["files"][0]["virus"]
+        self.assertEqual((v["runtimeFits"], v["expected"]), (True, 30))
+        self.assertEqual(self.imp()[0], 200)
 
     def test_malware_in_the_parts_is_malware(self):
         self.w.scanned(self.path, "parts-infected", "Win.Test.EICAR_HDB-1")

@@ -339,6 +339,17 @@ def runtime_fits(minutes, expected):
     return bool(minutes and expected) and abs(minutes - expected) / expected <= RULES["runtime_warn"] + 1e-9
 
 
+def with_runtime(scan, expected):
+    """A parts-clean verdict with the running-time result the import gate decides on, so the page shows the same."""
+    if scan.get("state") != "parts-clean":
+        return scan
+    return dict(scan, runtimeFits=runtime_fits(scan.get("minutes"), expected), expected=expected if is_int(expected) else None)
+
+
+def import_safe(scan):
+    return scan["state"] == "clean" or scan.get("runtimeFits") is True
+
+
 def virus(deps, path):
     """clean / infected (with signature) / pending (queued for the background scan) / unknown (never scanned, too big, error)."""
     log = scan_log(deps)
@@ -900,7 +911,8 @@ def episode_guess(name, by_number):
 def rescanned(deps, data):
     """A kept file list with today's virus scan state (it changes while the list is open)."""
     pub = dict(data["public"])
-    pub["files"] = [dict(f, virus=virus(deps, data["props"][f["n"]]["path"])) for f in pub["files"]]
+    expected = data.get("expected") or []
+    pub["files"] = [dict(f, virus=with_runtime(virus(deps, data["props"][f["n"]]["path"]), expected[f["n"]] if f["n"] < len(expected) else None)) for f in pub["files"]]
     return pub
 
 
@@ -946,11 +958,11 @@ def files(dn, deps, me, p, q):
                     "rejections": [brief(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
                     "reasons": [reason_code(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
                     "media": media_of(deps, x["path"]) if n < PROBE_MAX and time.monotonic() - probing < PROBE_BUDGET else None,
-                    "virus": virus(deps, x["path"]),
                     "episodeIds": guess, "probable": bool(guess) if i["kind"] == "tv" else n == biggest})
         qid = ((x.get("quality") or {}).get("quality") or {}).get("id")
         ctx = check_context(title, plist, i["kind"], qid, runtime.get(guess[0]) if len(guess) == 1 else None)
         out[-1]["checks"] = checks(out[-1]["media"], ctx)
+        out[-1]["virus"] = with_runtime(virus(deps, x["path"]), ctx["expected"])
         expected.append(ctx["expected"])
     public = {"kind": i["kind"], "files": out, "episodes": [{"id": e["id"], "label": f"S{e.get('seasonNumber') or 0:02d}E{e.get('episodeNumber') or 0:02d}", "title": str(e.get("title") or "")[:80]} for e in episodes]}
     data = {"props": props, "episodes": {e["id"]: bool(e.get("hasFile")) for e in episodes}, "public": public, "expected": expected}
@@ -1367,7 +1379,7 @@ def do_import(deps, me, admin, p, req):
             raise Refused(400, "bad request")
         seen.add(n)
         x = o["props"][n]
-        scan = virus(deps, x["path"])
+        scan = with_runtime(virus(deps, x["path"]), (o.get("expected") or [])[n] if n < len(o.get("expected") or []) else None)
         if scan["state"] == "infected":
             print(f"manual: user {me.get('id')} import of {p['key']} refused, malware ({scan['signature']})", flush=True)
             raise Refused(403, "malware")
@@ -1379,7 +1391,7 @@ def do_import(deps, me, admin, p, req):
             raise Refused(403, "flagged")
         if vt == "flagged":
             print(f"manual: admin {me.get('id')} imports {p['key']} flagged by {scan['vt'].get('malicious')} VirusTotal scanners", flush=True)
-        safe = scan["state"] == "clean" or scan["state"] == "parts-clean" and runtime_fits(scan.get("minutes"), (o.get("expected") or [])[n] if n < len(o.get("expected") or []) else None)
+        safe = import_safe(scan)
         if not safe and not admin:
             raise Refused(403, "virus scan pending")
         if not safe:

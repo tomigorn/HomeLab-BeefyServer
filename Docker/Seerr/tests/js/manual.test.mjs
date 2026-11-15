@@ -692,6 +692,17 @@ test("virus block per file: one overall verdict first, then ClamAV and VirusTota
     [{ state: "parts-clean", minutes: 34, vt: { state: "unknown" } }, "clean",
       "✅ No virus found|ClamAV: clean (large file: attachments and subtitles scanned, genuine video)|VirusTotal: no reports — this exact file isn't known there yet, normal for new downloads, not a warning",
       "✅ Kein Virus gefunden|ClamAV: sauber (grosse Datei: Anhänge und Untertitel geprüft, echtes Video)|VirusTotal: keine Meldungen — diese genaue Datei ist dort noch nicht bekannt, normal bei neuen Downloads, keine Warnung"],
+    [{ state: "parts-clean", minutes: 34, runtimeFits: true, expected: 34 }, "clean",
+      "✅ No virus found|ClamAV: clean (large file: attachments and subtitles scanned, genuine video)", "✅ Kein Virus gefunden|ClamAV: sauber (grosse Datei: Anhänge und Untertitel geprüft, echtes Video)"],
+    [{ state: "parts-clean", minutes: 50, runtimeFits: false, expected: 34, vt: { state: "unknown" } }, "runtime",
+      "⚠️ Running time doesn't match — admins only|ClamAV: large file: attachments and subtitles clean, genuine video, but running time 50 min vs expected 34 min|VirusTotal: no reports — this exact file isn't known there yet, normal for new downloads, not a warning",
+      "⚠️ Laufzeit passt nicht — nur Admins|ClamAV: grosse Datei: Anhänge und Untertitel sauber, echtes Video, aber Laufzeit 50 Min., erwartet 34 Min.|VirusTotal: keine Meldungen — diese genaue Datei ist dort noch nicht bekannt, normal bei neuen Downloads, keine Warnung"],
+    [{ state: "parts-clean", minutes: 34, runtimeFits: false, expected: null }, "runtime",
+      "⚠️ Running time doesn't match — admins only|ClamAV: large file: attachments and subtitles clean, genuine video, but running time 34 min, expected unknown",
+      "⚠️ Laufzeit passt nicht — nur Admins|ClamAV: grosse Datei: Anhänge und Untertitel sauber, echtes Video, aber Laufzeit 34 Min., erwartet unbekannt"],
+    [{ state: "parts-clean", minutes: null, runtimeFits: false, expected: 34 }, "runtime",
+      "⚠️ Running time doesn't match — admins only|ClamAV: large file: attachments and subtitles clean, genuine video, but running time unknown vs expected 34 min",
+      "⚠️ Laufzeit passt nicht — nur Admins|ClamAV: grosse Datei: Anhänge und Untertitel sauber, echtes Video, aber Laufzeit unbekannt, erwartet 34 Min."],
     [{ state: "clean", vt: { state: "clean", malicious: 0, engines: 70 } }, "clean",
       "✅ No virus found|ClamAV: clean|VirusTotal: known file, no scanner flags it", "✅ Kein Virus gefunden|ClamAV: sauber|VirusTotal: bekannte Datei, kein Scanner meldet sie"],
     [{ state: "clean" }, "clean", "✅ No virus found|ClamAV: clean", "✅ Kein Virus gefunden|ClamAV: sauber"],
@@ -719,5 +730,17 @@ test("virus block per file: one overall verdict first, then ClamAV and VirusTota
       assert.equal($("[data-list] [data-virus]").getAttribute("data-verdict"), verdict);
       assert.equal($("[data-list] [data-virus]").firstElementChild.hasAttribute("data-virus-verdict"), true);
     }
+  }
+});
+
+test("running time off on a large file: the hint box explains why only admins can import, both languages", async () => {
+  const virus = { state: "parts-clean", minutes: 50, parts: 1, runtimeFits: false, expected: 34 };
+  const files = { token: "t", kind: "tv", files: [{ n: 0, name: E09 + ".mkv", size: 2.48e9, episodeIds: [2045], probable: true, rejections: [], virus }], episodes: [{ id: 2045, label: "S01E09", title: "" }] };
+  for (const [body, want] of [[PAGE, /⚠️ Large file.*ClamAV scans at most 2 GiB.*Attachments and subtitles:.*scanned clean.*Video:.*genuine video stream \(50 min\).*Running time:.*50 min, expected 34 min.*more than 25 % off.*only an admin can import it/s],
+    [PAGE.replace(">Series<", ">Serien<"), /⚠️ Grosse Datei.*ClamAV prüft höchstens 2 GiB.*Anhänge und Untertitel:.*sauber.*Video:.*echter Videostrom \(50 Min\.\).*Laufzeit:.*50 Min\., erwartet 34 Min\..*mehr als 25 % daneben.*nur ein Admin importieren/s]]) {
+    const { $, w } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [e09()], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files } }, undefined, body);
+    $('[data-act="files"]').click();
+    await settle();
+    assert.match(w.hgTip.text(w.hgTip.get($('[data-list] [data-virus-src="clamav"]'))), want);
   }
 });

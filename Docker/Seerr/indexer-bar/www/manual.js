@@ -54,7 +54,7 @@
     ".hg-m-filename { font-size: .8rem; color: #d1d5db; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }" +
     ".hg-m-media, .hg-m-virus { font-size: .85rem; color: #d1d5db; }" +
     ".hg-m-virus-malware { color: #fca5a5; font-weight: 600; }" +
-    ".hg-m-virus-flagged, .hg-m-virus-partial { color: #fde68a; font-weight: 600; }" +
+    ".hg-m-virus-flagged, .hg-m-virus-partial, .hg-m-virus-runtime { color: #fde68a; font-weight: 600; }" +
     ".hg-m-virus-clean { font-weight: 600; }" +
     ".hg-m-virus-src { margin: 0; padding-left: 1.5rem; font-size: .8rem; color: #9ca3af; }" +
     ".hg-m-checks { list-style: none; margin: .3rem 0 0; padding: 0; font-size: .85rem; }" +
@@ -116,7 +116,9 @@
       bigHead: "Large file",
       bigWhy: "ClamAV scans at most 2 GiB, so the video stream itself is not scanned.", bigParts: "Attachments and subtitles:", bigClean: "scanned clean", bigVideo: "Video:", bigGenuine: "genuine video stream",
       partsError: function (why) { return "parts scan not possible" + (why ? " (" + why + ")" : "") + ": admins only"; },
-      verdict: { clean: "✅ No virus found", malware: "❌ Malware — import blocked", flagged: "⚠️ Flagged — admins only", partial: "⚠️ Not fully scannable — admins only", checking: "⏳ Still being checked" },
+      verdict: { clean: "✅ No virus found", malware: "❌ Malware — import blocked", flagged: "⚠️ Flagged — admins only", partial: "⚠️ Not fully scannable — admins only", runtime: "⚠️ Running time doesn't match — admins only", checking: "⏳ Still being checked" },
+      clamRun: function (m, e) { return "ClamAV: large file: attachments and subtitles clean, genuine video, but running time " + (m ? m + " min" : "unknown") + (e ? " vs expected " + e + " min" : ", expected unknown"); },
+      bigRun: "Running time:", runWhy: function (m, e) { return (m ? m + " min" : "unknown") + ", expected " + (e ? e + " min" : "unknown") + (m && e ? " — more than 25 % off" : "") + ", so only an admin can import it"; },
       clam: { clean: "ClamAV: clean", "parts-clean": "ClamAV: clean (large file: attachments and subtitles scanned, genuine video)", pending: "ClamAV: scan queued, usually a few minutes",
         infected: "ClamAV: malware found", unknown: "ClamAV: not scanned yet", "parts-error": "ClamAV: too big for the full scan, parts scan not possible" },
       vt: {
@@ -209,7 +211,9 @@
       bigHead: "Grosse Datei",
       bigWhy: "ClamAV prüft höchstens 2 GiB, darum wird der Videostrom selbst nicht gescannt.", bigParts: "Anhänge und Untertitel:", bigClean: "sauber", bigVideo: "Video:", bigGenuine: "echter Videostrom",
       partsError: function (why) { return "Teil-Scan nicht möglich" + (why ? " (" + why + ")" : "") + ": nur Admins"; },
-      verdict: { clean: "✅ Kein Virus gefunden", malware: "❌ Schadsoftware — Import gesperrt", flagged: "⚠️ Gemeldet — nur Admins", partial: "⚠️ Nicht vollständig prüfbar — nur Admins", checking: "⏳ Wird noch geprüft" },
+      verdict: { clean: "✅ Kein Virus gefunden", malware: "❌ Schadsoftware — Import gesperrt", flagged: "⚠️ Gemeldet — nur Admins", partial: "⚠️ Nicht vollständig prüfbar — nur Admins", runtime: "⚠️ Laufzeit passt nicht — nur Admins", checking: "⏳ Wird noch geprüft" },
+      clamRun: function (m, e) { return "ClamAV: grosse Datei: Anhänge und Untertitel sauber, echtes Video, aber Laufzeit " + (m ? m + " Min." : "unbekannt") + ", erwartet " + (e ? e + " Min." : "unbekannt"); },
+      bigRun: "Laufzeit:", runWhy: function (m, e) { return (m ? m + " Min." : "unbekannt") + ", erwartet " + (e ? e + " Min." : "unbekannt") + (m && e ? " — mehr als 25 % daneben" : "") + ", darum kann nur ein Admin importieren"; },
       clam: { clean: "ClamAV: sauber", "parts-clean": "ClamAV: sauber (grosse Datei: Anhänge und Untertitel geprüft, echtes Video)", pending: "ClamAV: Scan in der Warteschlange, meist ein paar Minuten",
         infected: "ClamAV: Schadsoftware gefunden", unknown: "ClamAV: noch nicht geprüft", "parts-error": "ClamAV: zu gross für den vollen Scan, Teil-Scan nicht möglich" },
       vt: {
@@ -361,6 +365,7 @@
     if (v.state === "infected" || vs === "malware") return "malware";
     if (vs === "flagged") return "flagged";
     if (v.state === "parts-error") return "partial";
+    if (v.state === "parts-clean" && v.runtimeFits === false) return "runtime";
     if (v.state === "clean" || v.state === "parts-clean") return "clean";
     return "checking";
   }
@@ -375,10 +380,13 @@
     if (state === "infected" && v.signature) clam += " (" + String(v.signature) + ")";
     if (state === "clean" && v.at) clam += " (" + when(t, v.at) + ")";
     if (state === "parts-error" && v.why) clam += " (" + String(v.why) + ")";
+    var m = Number(v.minutes) || 0, e = Number(v.expected) || 0;
+    if (verdict === "runtime") clam = t.clamRun(m, e);
     var c = el(doc, "p", { "class": "hg-m-virus-src", "data-virus-src": "clamav", "data-clam": state }, clam);
     if (state === "parts-clean" || state === "parts-error") {
-      var ok = state === "parts-clean";
-      tip(c, { title: ok ? "✅ " + t.bigHead : "⚪ " + t.tooBig, rows: [t.bigWhy].concat(ok ? [[t.bigParts, t.bigClean], [t.bigVideo, t.bigGenuine + (v.minutes ? " (" + v.minutes + " " + t.min + ")" : "")]] : [t.partsError(v.why ? String(v.why) : null)]) });
+      var ok = state === "parts-clean", off = verdict === "runtime";
+      tip(c, { title: off ? "⚠️ " + t.bigHead : ok ? "✅ " + t.bigHead : "⚪ " + t.tooBig, rows: [t.bigWhy].concat(ok ? [[t.bigParts, t.bigClean], [t.bigVideo, t.bigGenuine + (v.minutes ? " (" + v.minutes + " " + t.min + ")" : "")]] : [t.partsError(v.why ? String(v.why) : null)])
+        .concat(off ? [[t.bigRun, t.runWhy(m, e)]] : []) });
     }
     block.appendChild(c);
     var x = v.vt && typeof v.vt === "object" && t.vt[v.vt.state] ? v.vt : null;
