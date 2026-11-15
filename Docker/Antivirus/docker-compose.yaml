@@ -99,6 +99,7 @@ services:
       - TEXTFILE=/clamav
       - QBIT_API=http://gluetun:8080
       - PARTS_TMP=/tmp/parts
+      - VT_API_KEY_FILE=/run/secrets/vt_api_key   # VirusTotal fingerprint check: SHA-256 lookups only, never an upload (README "VirusTotal fingerprint check")
       - PYTHONUNBUFFERED=1
     # Touched before every file; one file takes at most a few minutes.
     healthcheck:
@@ -114,6 +115,7 @@ services:
         bind:
           create_host_path: false
       - ./hook:/clamav-hook:ro
+      - ./secrets/vt_api_key:/run/secrets/vt_api_key:ro   # 65112, 0400, gitignored
       - /etc/localtime:/etc/localtime:ro   # local time in index.txt, as the hook writes it
       - type: bind
         source: /var/lib/clamav-scan/textfile
@@ -194,7 +196,7 @@ services:
 # =========================================================
 # Networks ================================================
 # =========================================================
-# clamd (internal, defined in Movie-Downloads): only clamav, clamav-queue and gluetun (SABnzbd/qBittorrent hook) reach clamav:3310 (S-8). movie-downloads: the queue worker's qBittorrent API access. Start Movie-Downloads first.
+# clamd (internal, defined in Movie-Downloads): only clamav, clamav-queue and gluetun (SABnzbd/qBittorrent hook) reach clamav:3310 (S-8). movie-downloads: the queue worker's qBittorrent API access and its egress for the VirusTotal hash lookups. Start Movie-Downloads first.
 networks:
   movie-downloads:
     external: true

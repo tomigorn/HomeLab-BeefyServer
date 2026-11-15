@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # Runs hook/clamav-hook.py against a fake clamd (INSTREAM) and a fake qBittorrent API.
 # Usage: python3 tests/test_hook.py   (host, or inside movie-sabnzbd / movie-qbittorrent)
+import hashlib
 import http.server
+import importlib.util
 import json
 import os
 import socket
@@ -96,6 +98,20 @@ class FakeQbitHandler(http.server.BaseHTTPRequestHandler):
 def serve(server):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
+
+
+def load_hook(**env):
+    """The hook as a module in this process (its settings are read from the environment at import)."""
+    old = dict(os.environ)
+    os.environ.update(env)
+    try:
+        spec = importlib.util.spec_from_file_location("clamav_hook_%d" % len(env), HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        os.environ.clear()
+        os.environ.update(old)
+    return mod
 
 
 def free_port():
@@ -763,6 +779,88 @@ if "-map" in a and b"SUBS:" in data:
         self.worker()
         self.assertEqual(self.jobs(), [])
         self.assertEqual(self.clamd.streams, [b"clean video"])
+
+    # SHA-256 fingerprints for the VirusTotal lookup (hook/virustotal.py)
+
+    def vt_lines(self):
+        p = os.path.join(self.textfile, "virustotal-results.jsonl")
+        if not os.path.exists(p):
+            return []
+        with open(p) as f:
+            return [json.loads(l) for l in f if l.strip()]
+
+    def test_synchronous_scan_logs_the_fingerprint_and_queues_the_lookup(self):
+        exe = self.write("setup.exe", b"clean bytes")
+        self.sab()
+        self.assertEqual(self.results()[-1]["sha256"], hashlib.sha256(b"clean bytes").hexdigest())
+        self.assertEqual([(x["path"], x["sha256"], x["vt"], x["size"]) for x in self.vt_lines()], [(exe, hashlib.sha256(b"clean bytes").hexdigest(), "queued", 11)])
+
+    def test_infected_file_is_not_looked_up(self):
+        self.write("setup.exe", EICAR)
+        self.sab()
+        self.assertEqual(self.vt_lines(), [])
+
+    def test_queued_media_gets_its_fingerprint_from_the_worker(self):
+        mkv = self.write("movie.mkv", b"clean video")
+        self.queued()
+        self.assertEqual(self.vt_lines(), [])
+        self.worker()
+        sha = hashlib.sha256(b"clean video").hexdigest()
+        self.assertEqual(self.results()[-1]["sha256"], sha)
+        self.assertEqual([(x["path"], x["sha256"]) for x in self.vt_lines()], [(mkv, sha)])
+
+    def test_too_big_video_is_hashed_after_the_parts_scan(self):
+        mkv = self.big_video(b"SUBS:subtitle text")
+        f = self.fakes()
+        self.queued(HOOK_MAX_BYTES="10", **f)
+        self.worker(HOOK_MAX_BYTES="10", **f)
+        with open(mkv, "rb") as fh:
+            sha = hashlib.sha256(fh.read()).hexdigest()
+        self.assertEqual((self.results()[-1]["verdict"], self.results()[-1]["sha256"]), ("parts-clean", sha))
+        self.assertEqual([(x["path"], x["sha256"]) for x in self.vt_lines()], [(mkv, sha)])
+
+    def test_file_too_big_for_clamd_is_still_hashed(self):
+        big = self.write("disc.iso", b"x" * 64)
+        self.sab(HOOK_MAX_BYTES="10")
+        sha = hashlib.sha256(b"x" * 64).hexdigest()
+        self.assertEqual((self.results()[-1]["verdict"], self.results()[-1]["sha256"]), ("skipped", sha))
+        self.assertEqual([(x["path"], x["sha256"]) for x in self.vt_lines()], [(big, sha)])
+
+    def test_fingerprint_by_hand_queues_the_lookup(self):
+        mkv = self.write("movie.mkv", b"old download")
+        r = self.run_hook("--vt", mkv)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual([(x["path"], x["sha256"]) for x in self.vt_lines()], [(mkv, hashlib.sha256(b"old download").hexdigest())])
+        self.assertEqual(self.clamd.streams, [])
+
+    def test_worker_reads_each_file_once(self):
+        mkv = self.write("movie.mkv", b"clean video" * 1000)
+        self.queued()
+        hook = load_hook(CLAMD_HOST="127.0.0.1", CLAMD_PORT=str(self.clamd.server_address[1]), CLAMD_WAIT="0", PATH_MAP="",
+                         QUARANTINE=self.quarantine, TEXTFILE=self.textfile, QUEUE=self.queue, WALK_ROOT=self.data, HEARTBEAT=os.path.join(self.t, "alive"))
+        opened = []
+        real = open
+
+        def counting(path, mode="r", *a, **k):
+            if "b" in mode and "r" in mode:
+                opened.append(os.path.basename(str(path)))
+            return real(path, mode, *a, **k)
+
+        hook.open = counting
+        hook.worker(True)
+        self.assertEqual(opened, ["0001"])
+        self.assertEqual(self.vt_lines()[0]["sha256"], hashlib.sha256(b"clean video" * 1000).hexdigest())
+
+    def test_virustotal_counts_join_the_hook_metrics(self):
+        self.write("movie.mkv", EICAR)
+        self.queued()
+        self.worker()
+        hook = load_hook(TEXTFILE=self.textfile, HOST="beefy")
+        hook.vt_metrics({"malware": 1, "unknown": 4, "error": 2, "lookups_today": 7})
+        hook.vt_metrics({"malware": 2, "unknown": 4, "lookups_today": 8})
+        got = {n: self.metric(n, "virustotal") for n in ("virustotal_malware", "virustotal_flagged", "virustotal_unknown", "virustotal_errors", "virustotal_lookups_today", "clamav_infected_total")}
+        self.assertEqual(got, {"virustotal_malware": "2", "virustotal_flagged": "0", "virustotal_unknown": "4", "virustotal_errors": "0", "virustotal_lookups_today": "8", "clamav_infected_total": None})
+        self.assertEqual(self.metric("clamav_infected_total", "queue"), "1")
 
     def test_hook_and_worker_metrics_live_side_by_side(self):
         self.write("movie.mkv", EICAR)

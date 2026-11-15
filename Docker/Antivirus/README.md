@@ -77,7 +77,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | Queue missing or link fails | scanned synchronously |
 
 - Too big for clamd (over 2 GiB, videos only: `mkv mp4 m4v avi mov wmv ts m2ts webm`, no executable/archive magic): queued with `parts`; the worker opens the file with ffprobe (`-protocol_whitelist file`, `-format_whitelist matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts`; it must have a video stream), dumps each attachment (fonts, files) and copies subtitles, attachments, data streams, chapters and tags into one small Matroska file under `/tmp/parts`, and streams those to clamd. Verdict `parts-clean` (with `minutes`, `parts`), `parts-infected` (quarantined like any hit), `parts-error` (`why`; e.g. no video stream). **Not covered:** the video and audio bitstreams themselves; MP4 boxes other than its subtitle/data tracks. Seerr's Manual interaction lets everyone import a `parts-clean` file whose running time fits (±25 %), else only admins. Videos over the limit without a queue: `skipped` as before. One file by hand: `sudo docker exec clamav-queue python3 /clamav-hook/clamav-hook.py --parts <path>`.
-- Results log: `/var/lib/clamav-scan/textfile/clamav-results.jsonl` (`/clamav` in the clients, `TEXTFILE` in the worker), one JSON line per file and verdict: `at`, `path` (as the apps see it), `size`, `verdict` (`clean`, `infected`, `queued`, `skipped` = over 2 GiB, `error`), `signature`, `mode` (`hook`/`queue`); over 5 MiB it moves to `.1` (`RESULTS_MAX_BYTES`). Seerr's Manual interaction reads it read-only (malware never imported, unscanned files only by admins); a write failure never stops a scan.
+- Results log: `/var/lib/clamav-scan/textfile/clamav-results.jsonl` (`/clamav` in the clients, `TEXTFILE` in the worker), one JSON line per file and verdict: `at`, `path` (as the apps see it), `size`, `verdict` (`clean`, `infected`, `queued`, `skipped` = over 2 GiB, `error`), `signature`, `mode` (`hook`/`queue`), `sha256` when the file was read whole ([VirusTotal fingerprint check](#virustotal-fingerprint-check)); over 5 MiB it moves to `.1` (`RESULTS_MAX_BYTES`). Seerr's Manual interaction reads it read-only (malware never imported, unscanned files only by admins); a write failure never stops a scan.
 - Hit (synchronous): file moved to `/data/quarantine` (name clash: `.001` suffix, as clamscan does), line in `index.txt`, exit 1. SABnzbd marks the job failed, so Radarr/Sonarr never import it and handle it as a failed download. qBittorrent: the torrent is stopped and tagged `infected`.
 - clamd unreachable (it waits 2 min, e.g. right after boot): exit 0, job goes through, `clamav_scan_errors{mode="hook"}` > 0; the nightly scan covers the files.
 - qBittorrent ignores the exit code and Radarr may import a small torrent before a synchronous scan ends; the nightly scan sees the hardlinked library file (new ctime) and quarantines it.
@@ -101,6 +101,41 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 - A hit makes Sonarr/Radarr see a missing file; they do not re-grab on their own.
 - The hit search walks the union and may spin up the cold HDD; only on a hit.
 - `scan.sh restore` puts the file back to the library path; other removed links (seeding copy) are not restored.
+
+## VirusTotal fingerprint check
+
+Owner-approved 2026-11-15: every downloaded file the hook or the queue scans is looked up on VirusTotal **by its SHA-256 only**. The file is never uploaded (`hook/virustotal.py` only knows `GET /api/v3/files/<sha256>`; `tests/test_virustotal.py` checks there is no upload path).
+
+| | |
+|---|---|
+| Hash | taken from the bytes streamed to clamd (one read); files over 2 GiB (parts scan, `skipped`) are read once more for it. Infected files are not looked up. Field `sha256` in `clamav-results.jsonl` |
+| Queue + cache | `/var/lib/clamav-scan/textfile/virustotal-results.jsonl` (`/clamav` in the containers), one JSON line per file and state: `at`, `path`, `size`, `sha256`, `hashed` (when hashed), `vt`, for verdicts `malicious`, `suspicious`, `engines`, `checked`, for errors `why`; last line per path wins; over 5 MiB it moves to `.1`. A hash with a verdict is never looked up again |
+| Lookups | thread in `clamav-queue` (egress via `movie-downloads`), oldest first, every 15 s; free API: 4 a minute, 500 a UTC day, kept in `.virustotal-limits.json` across restarts. A failed lookup (`error`) is retried after 15 min; a 429 pauses 1 min. Never blocks or fails a scan |
+| Key | `secrets/vt_api_key` (gitignored, 65112 0400), read-only at `/run/secrets/vt_api_key` (`VT_API_KEY_FILE`), sent only in the `x-apikey` header; never in argv, env or logs. Missing: hashes stay `queued` |
+| Metrics | `clamav-hook.prom`, `mode="virustotal"`: `virustotal_malware`, `_flagged`, `_clean`, `_unknown`, `_queued`, `_errors` (files by last state), `_lookups_today` |
+
+| `vt` | Means | Seerr Manual interaction |
+|---|---|---|
+| `malware` | ≥ 3 engines say malicious | ❌ known malware (n of N scanners): never imported, admins included |
+| `flagged` | 1–2 engines | ⚠️ flagged by n scanners: only admins may import (owner's call: 1–2 hits are often false alarms) |
+| `clean` | known, 0 engines | ✅ known file, clean |
+| `unknown` | 404, nobody submitted it (normal for fresh videos) | ⚪ no effect |
+| `error` | lookup failed or quota, retried | ⚪ not checked yet, no effect |
+| `queued` | hashed, waiting | ⏳ fingerprint check queued |
+
+```sh
+sudo docker exec clamav-queue python3 /clamav-hook/clamav-hook.py --vt /data/<path>...   # hash older files by hand, the worker looks them up
+sudo docker logs clamav-queue 2>&1 | grep VirusTotal
+```
+
+Replace the key (VirusTotal → profile → API key), from a file, never on the command line:
+
+```sh
+sudo install -o 65112 -g 65112 -m 0400 /path/to/new-key-file ~/Projects/Docker/Antivirus/secrets/vt_api_key
+sudo docker restart clamav-queue
+```
+
+First setup: the key is the fastpi one (`HomeLab-FastPi` `Docker/antivirus/secrets/vt_api_key`), copied over ssh stdin; `secrets/` is `buntu` 0700.
 
 ## Quarantine and restore
 
@@ -126,6 +161,7 @@ beefy has no node-exporter: fastpi pulls both files (and `clamav-hits.tsv`, `ind
 ```sh
 Docker/Antivirus/tests/test_scan.sh
 python3 Docker/Antivirus/tests/test_hook.py
+python3 Docker/Antivirus/tests/test_virustotal.py   # fake clock and API, no network
 python3 Docker/Antivirus/tests/test_integrity.py   # download-integrity.py, Movie-Downloads README "Download integrity"
 sudo docker run --rm --entrypoint sh -v "$PWD/Docker/Antivirus:/src:ro" clamav-local:latest /src/tests/test_scan.sh   # busybox
 ```

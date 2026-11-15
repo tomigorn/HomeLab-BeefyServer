@@ -5,10 +5,12 @@ SABnzbd post-processing script:  clamav-hook.py <final dir> [SAB's other args]
 qBittorrent on torrent finished:  clamav-hook.py --qbit "%I" "%F"
 Background queue worker:          clamav-hook.py --worker [--once]
 Parts scan of one too-big video:  clamav-hook.py --parts <file>   (worker image: ffprobe/ffmpeg)
+VirusTotal fingerprint by hand:   clamav-hook.py --vt <file>...   (hash only, looked up by the worker)
 exit: 0 clean, queued, failed SAB job or not scanned (clamd unreachable), 1 infected, 2 usage
 """
 import datetime
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -18,10 +20,12 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from qbit_session import Qbit  # noqa: E402
+import virustotal  # noqa: E402
 
 CLAMD_HOST = os.environ.get("CLAMD_HOST", "clamav")
 CLAMD_PORT = int(os.environ.get("CLAMD_PORT", "3310"))
@@ -52,6 +56,7 @@ PARTS_TIMEOUT = int(os.environ.get("PARTS_TIMEOUT", "300"))
 PROBE_FORMATS = "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts"
 VIDEO_EXT = {"mkv", "mp4", "m4v", "avi", "mov", "wmv", "ts", "m2ts", "webm"}
 CHUNK = 1 << 20
+VT_KEY_FILE = os.environ.get("VT_API_KEY_FILE", "/run/secrets/vt_api_key")
 
 MEDIA_EXT = {
     "mkv", "mp4", "m4v", "avi", "mov", "wmv", "ts", "m2ts", "webm",
@@ -85,12 +90,50 @@ def connect():
             time.sleep(5)
 
 
-def instream(path):
-    """Return None when clean, the signature when infected; raise ScanError otherwise."""
+class Fingerprint:
+    """SHA-256 of the bytes streamed to clamd, so the file is read only once."""
+
+    def __init__(self):
+        self.h = hashlib.sha256()
+        self.n = 0
+
+    def update(self, chunk):
+        self.h.update(chunk)
+        self.n += len(chunk)
+
+    def of(self, size):
+        return self.h.hexdigest() if size is not None and self.n == size else None
+
+
+def sha256_file(path):
+    fp = Fingerprint()
+    try:
+        with open(path, "rb") as f:
+            while chunk := f.read(CHUNK):
+                fp.update(chunk)
+    except OSError as e:
+        print("not hashed (%s): %s" % (e, path))
+        return None
+    return fp.h.hexdigest()
+
+
+def fingerprint(path, sha, size):
+    if sha:
+        virustotal.queue(TEXTFILE, path, sha, size, max_bytes=RESULTS_MAX_BYTES)
+
+
+def hashed(sha):
+    return {"sha256": sha} if sha else {}
+
+
+def instream(path, fp=None):
+    """Return None when clean, the signature when infected; raise ScanError otherwise. fp collects the SHA-256 on the way."""
     with connect() as s, open(path, "rb") as f:
         try:
             s.sendall(b"zINSTREAM\0")
             while chunk := f.read(CHUNK):
+                if fp:
+                    fp.update(chunk)
                 s.sendall(struct.pack("!I", len(chunk)) + chunk)
             s.sendall(struct.pack("!I", 0))
         except OSError:
@@ -313,12 +356,19 @@ METRICS = (
     ("clamav_last_run_timestamp_seconds", "gauge"),
     ("clamav_queue_jobs", "gauge"),
     ("clamav_scan_errors", "gauge"),
+    ("virustotal_malware", "gauge"),
+    ("virustotal_flagged", "gauge"),
+    ("virustotal_clean", "gauge"),
+    ("virustotal_unknown", "gauge"),
+    ("virustotal_queued", "gauge"),
+    ("virustotal_errors", "gauge"),
+    ("virustotal_lookups_today", "gauge"),
 )
 SAMPLE = re.compile(r'^(\w+)\{host="[^"]*",mode="([^"]*)"\} (\S+)$')
 
 
 def write_metrics(mode, values, infected):
-    """Replace this mode's samples in clamav-hook.prom; the hook (mode hook) and the worker (mode queue) share the file."""
+    """Replace this mode's samples in clamav-hook.prom; the hook (mode hook), the worker (mode queue) and its VirusTotal lookups (mode virustotal, infected None) share the file."""
     prom = os.path.join(TEXTFILE, "clamav-hook.prom")
     with open(os.path.join(TEXTFILE, ".clamav-hook.lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -331,11 +381,14 @@ def write_metrics(mode, values, infected):
                         samples.setdefault(m.group(1), {})[m.group(2)] = int(float(m.group(3)))
         except OSError:
             pass
-        total = samples.get("clamav_infected_total", {}).get(mode, 0) + infected
+        if infected is None:
+            own = dict(values)
+        else:
+            total = samples.get("clamav_infected_total", {}).get(mode, 0) + infected
+            own = dict(values, clamav_infected_last_run=infected, clamav_infected_total=total,
+                       clamav_last_run_timestamp_seconds=int(time.time()))
         for name, _ in METRICS:
             samples.get(name, {}).pop(mode, None)
-        own = dict(values, clamav_infected_last_run=infected, clamav_infected_total=total,
-                   clamav_last_run_timestamp_seconds=int(time.time()))
         for name, value in own.items():
             samples.setdefault(name, {})[mode] = value
         tmp = prom + ".tmp"
@@ -353,6 +406,11 @@ def metrics(mode, values, infected):
         write_metrics(mode, values, infected)
     except OSError as e:
         print("metrics not written: %s" % e)
+
+
+def vt_metrics(counts):
+    metrics("virustotal", {"virustotal_" + ("errors" if k == "error" else k): counts.get(k, 0)
+                           for k in ("malware", "flagged", "clean", "unknown", "queued", "error", "lookups_today")}, None)
 
 
 def enqueue(files, title, torrent_hash, parts=()):
@@ -397,6 +455,13 @@ def main(argv):
             quarantine(argv[1], sig, mode="parts", title=os.path.basename(argv[1]))
             return 1
         return 0
+    if argv[:1] == ["--vt"] and len(argv) > 1:
+        for p in argv[1:]:
+            size = os.path.getsize(p) if os.path.isfile(p) else None
+            sha = sha256_file(p) if size is not None else None
+            fingerprint(p, sha, size)
+            print("VirusTotal fingerprint %s: %s" % ("queued" if sha else "not possible", p))
+        return 0
     torrent_hash = None
     if argv[:1] == ["--qbit"]:
         if len(argv) < 3:
@@ -424,7 +489,9 @@ def main(argv):
                     media.append(p)
                     continue
                 skipped += 1
-                record(p, "skipped", "hook")
+                size, sha = os.path.getsize(p), sha256_file(p)
+                record(p, "skipped", "hook", size=size, **hashed(sha))
+                fingerprint(p, sha, size)
                 continue
         except OSError as e:
             errors += 1
@@ -435,14 +502,17 @@ def main(argv):
     for p in [x for x in left if x in big]:
         left.remove(p)
         skipped += 1
-        record(p, "skipped", "hook")
+        size, sha = os.path.getsize(p), sha256_file(p)
+        record(p, "skipped", "hook", size=size, **hashed(sha))
+        fingerprint(p, sha, size)
     queued = len(media) - len(left)
     sync += left
 
     for p in sync:
         size = os.path.getsize(p) if os.path.exists(p) else None
+        fp = Fingerprint()
         try:
-            sig = instream(p)
+            sig = instream(p, fp)
             scanned += 1
         except (ScanError, OSError) as e:
             errors += 1
@@ -451,7 +521,9 @@ def main(argv):
             if isinstance(e, Unreachable):
                 break
             continue
-        record(p, "infected" if sig else "clean", "hook", sig or None, size)
+        sha = None if sig else fp.of(size)
+        record(p, "infected" if sig else "clean", "hook", sig or None, size, **hashed(sha))
+        fingerprint(p, sha, size)
         if sig:
             quarantine(p, sig, mode="hook", title=title)
             hits.append((p, sig))
@@ -562,7 +634,10 @@ def process_job(jobdir):
         alive()
         if n in parts:
             verdict, sig, extra = parts_scan(link, orig)
-            record(orig, verdict, "queue", sig, os.path.getsize(link) if os.path.exists(link) else None, **extra)
+            size = os.path.getsize(link) if os.path.exists(link) else None
+            sha = None if sig or size is None else sha256_file(link)
+            record(orig, verdict, "queue", sig, size, **extra, **hashed(sha))
+            fingerprint(orig, sha, size)
             scanned += 1
             if sig:
                 hits += 1
@@ -576,8 +651,9 @@ def process_job(jobdir):
                     print("ClamAV queue: %s: parts scan not possible (%s)" % (orig, extra.get("why")))
                 os.unlink(link)
             continue
+        fp = Fingerprint()
         try:
-            sig = instream(link)
+            sig = instream(link, fp)
         except Retry as e:
             TRIES[link] = TRIES.get(link, 0) + 1
             if isinstance(e, Unreachable) or TRIES[link] < 3:
@@ -593,7 +669,10 @@ def process_job(jobdir):
             os.unlink(link)
             continue
         scanned += 1
-        record(orig, "infected" if sig else "clean", "queue", sig or None, os.path.getsize(link) if os.path.exists(link) else None)
+        size = os.path.getsize(link) if os.path.exists(link) else None
+        sha = None if sig else fp.of(size)
+        record(orig, "infected" if sig else "clean", "queue", sig or None, size, **hashed(sha))
+        fingerprint(orig, sha, size)
         if sig:
             hits += 1
             try:
@@ -627,6 +706,9 @@ def alive():
 
 def worker(once):
     print("ClamAV queue worker on %s, clamd %s:%d" % (QUEUE, CLAMD_HOST, CLAMD_PORT), flush=True)
+    if not once:
+        vt = virustotal.Checker(TEXTFILE, VT_KEY_FILE, on_metrics=vt_metrics)
+        threading.Thread(target=vt.run, name="virustotal", daemon=True).start()
     while True:
         alive()
         jobs = pending_jobs()
