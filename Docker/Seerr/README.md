@@ -63,7 +63,7 @@ Owner decision 2026-11-01: we build and run our own image from the newest stable
 | | |
 |---|---|
 | Image | `seerr-local:current` (`pull_policy: never`), also tagged `seerr-local:<release>-oidc<pr sha7>`; previous one `seerr-local:rollback`. Labels `holy-grail.seerr.{tree,upstream,pr}` |
-| Now | `v3.5.1-oidc2e52312` (2026-11-02), 246 upstream tests green; Next.js 16.4.3; Trivy critical 12 → 0, high 141 → 114 |
+| Now | `v3.5.1-oidc2e52312` (2026-11-02, rebuilt 2026-11-15 with patch 20), upstream tests green; Next.js 16.4.3; Trivy critical 12 → 0, high 141 → 114 |
 | Script | `scripts/seerr-rebuild.sh [--force] [--no-deploy] [--deploy-release]`, unit `systemd/seerr-rebuild.service` (buntu + docker group, state and clone in `/var/lib/seerr-rebuild`) |
 | Timer | `seerr-rebuild.timer` Tue 04:27 (maintenance window waits for it) |
 | Tests | `bash tests/test_seerr_rebuild.sh` (fake upstream git + fake docker) |
@@ -72,7 +72,7 @@ What a run does:
 
 1. Newest stable tag (GitHub `releases/latest`) and the PR head; clone/fetch in `/var/lib/seerr-rebuild/work`. Only the PR commit in `image/pr-reviewed` is built: a moved head is reported once (Telegram) and the reviewed commit stays until you check the diff and put the new sha into that file (an unmerged third-party branch never reaches production by itself). File missing: nothing built.
 2. Applies the PR's own diff (`merge-base(develop, PR)..PR`, without `docs/`) onto the tag with `git apply --3way`. A committed `image/resolutions/<tag>-<pr sha12>.patch` replaces that diff for exactly that pair (a hand-made conflict resolution, reproducible).
-3. Applies `image/patches/*.patch` (our in-image changes; only the Next.js bootstrap below, everything else of ours lives outside the image, see `../CUSTOMIZATIONS.md`).
+3. Applies `image/patches/*.patch` (our in-image changes: the Next.js bootstrap and the request cards below, everything else of ours lives outside the image, see `../CUSTOMIZATIONS.md`).
 4. Merges `image/dependency-overrides.json` into `package.json` (`pnpm.overrides`, `scripts`) and refreshes the lockfile in the Dockerfile's node image. Overrides use `pkg@<x` selectors, so they stop mattering once upstream has caught up.
 5. Same source tree as the running image (label): stop. Otherwise upstream build stage, `pnpm typecheck && pnpm test`, final image `seerr-local:candidate` (an already tested candidate of the same tree is reused).
 6. **New upstream release** (tag ≠ label `holy-grail.seerr.upstream` of the running image): not deployed, it may migrate the DB one way. Telegram once, the candidate stays. Deploy it yourself (backup, verify, rollback as below):
@@ -103,6 +103,8 @@ sudo systemctl start seerr-rebuild.service
 ```
 
 Next.js 16.4.3 (override; 16.2.6 had 5 critical CVEs). Under Turbopack it inlines a per-page bootstrap `<script>` (chunk list of `/_app` + the page, so a CSP hash would differ per page and per build), which our CSP (`script-src 'self'`, fastpi Traefik) blocks. `image/patches/10-turbopack-bootstrap-out-of-line.patch` (`_document.tsx`) puts that data into `<script type="application/json" id="__HG_TURBOPACK_BOOTSTRAP__">` and runs it from the static `/hg-turbopack-bootstrap.js`: the CSP stays unchanged. Checks `seerr.no-inline-script` (0) and `seerr.turbopack-bootstrap` roll a build back where Next changes this. (`next build --webpack` breaks title pages: SVG imports.)
+
+Request cards (Requests page, Recent Requests, profile): upstream re-fetched every card's `/api/v1/request/<id>` and its title on mount and on every tab focus, plus every 15 s while downloading (one open tab: 11,093 calls overnight, 100 per focus at 100 rows, each through the SSO check). `image/patches/20-request-cards-no-self-polling.patch` (`src/utils/requestCardSwr.ts` + test, `RequestList/RequestItem`, `RequestCard`): a card shows the list's answer, fetches on its own only while a download runs (every 60 s, until its own answer shows the download done), the newer of list and own answer wins; titles are fetched once. Approve / decline / retry / edit still refresh the card. Check `seerr.request-cards-no-poll`.
 
 Changing `image/` (overrides, patches): `--no-deploy` first, then a logged-in browser run (title page, request dialog) before deploying; the checks cannot render pages behind a session.
 

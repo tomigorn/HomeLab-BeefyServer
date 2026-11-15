@@ -20,6 +20,8 @@ if want seerr; then
   check seerr.rebuild-timer '^enabled$' "$(systemctl is-enabled seerr-rebuild.timer 2>&1)"
   check seerr.no-inline-script '^0$' "$(p=$(curl -s -m 8 http://127.0.0.1:5055/login); if grep -qi '<html' <<<"$p"; then grep -o '<script[^>]*>' <<<"$p" | grep -v -c -E 'src=|type="application/json"'; else echo unreadable; fi)"
   check seerr.turbopack-bootstrap '^1 200 1$' "$(echo "$(curl -s -m 8 http://127.0.0.1:5055/login | grep -c 'id="__HG_TURBOPACK_BOOTSTRAP__" type="application/json"') $(curl -s -m 8 -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/hg-turbopack-bootstrap.js) $(curl -s -m 8 http://127.0.0.1:5055/hg-turbopack-bootstrap.js | grep -c __HG_TURBOPACK_BOOTSTRAP__)")"
+  # image/patches/20-request-cards-no-self-polling.patch: request cards no longer re-fetch on mount / tab focus, poll 60 s only while downloading
+  check seerr.request-cards-no-poll '^[1-9][0-9]* src$' "$(docker exec seerr sh -c 'grep -l "revalidateOnMount:!1,revalidateOnFocus:!1,revalidateIfStale:!1,refreshInterval:" /app/.next/static/chunks/*.js | wc -l; test -f /app/src/utils/requestCardSwr.ts && echo src' 2>&1 | xargs)"
   check seerr.login-public '^\[false,false,false,"holy-grail"\]$' "$(seerr_api /settings/public | jq -c '[.localLogin,.mediaServerLogin,.newPlexLogin,(.openIdProviders[]?.slug)]' 2>&1)"
   check seerr.login-settings '^\[true,false,false,true,"holy-grail"\]$' "$(jq -c '[.main.oidcLogin,.main.localLogin,.main.mediaServerLogin,.network.trustProxy,.oidc.providers[0].slug]' "$SEERR_DIR/settings.json" 2>&1)"
   check seerr.main '^\["https://requests.holy-grail.ch",24736\]$' "$(jq -c '[.main.applicationUrl,.main.defaultPermissions]' "$SEERR_DIR/settings.json" 2>&1)"

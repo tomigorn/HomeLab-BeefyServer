@@ -1,0 +1,216 @@
+diff --git a/src/components/RequestCard/index.tsx b/src/components/RequestCard/index.tsx
+index 0f2341f..a79e6cc 100644
+--- a/src/components/RequestCard/index.tsx
++++ b/src/components/RequestCard/index.tsx
+@@ -10,10 +10,12 @@ import useToasts from '@app/hooks/useToasts';
+ import { Permission, useUser } from '@app/hooks/useUser';
+ import globalMessages from '@app/i18n/globalMessages';
+ import defineMessages from '@app/utils/defineMessages';
++import { getRequestDownloadStatus } from '@app/utils/refreshIntervalHelper';
+ import {
+-  getRequestDownloadStatus,
+-  refreshIntervalHelper,
+-} from '@app/utils/refreshIntervalHelper';
++  freshestRequest,
++  requestCardSwr,
++  titleCardSwr,
++} from '@app/utils/requestCardSwr';
+ import { withProperties } from '@app/utils/typeHelpers';
+ import {
+   ArrowPathIcon,
+@@ -235,25 +237,18 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
+       : `/api/v1/tv/${request.media.tmdbId}`;
+ 
+   const { data: title, error } = useSWR<MovieDetails | TvDetails>(
+-    inView ? `${url}` : null
++    inView ? `${url}` : null,
++    titleCardSwr
+   );
+   const {
+-    data: requestData,
++    data: ownRequestData,
+     error: requestError,
+     mutate: revalidate,
+   } = useSWR<NonFunctionProperties<MediaRequest>>(
+     `/api/v1/request/${request.id}`,
+-    {
+-      fallbackData: request,
+-      refreshInterval: refreshIntervalHelper(
+-        {
+-          downloadStatus: request.media.downloadStatus,
+-          downloadStatus4k: request.media.downloadStatus4k,
+-        },
+-        15000
+-      ),
+-    }
++    requestCardSwr(request)
+   );
++  const requestData = freshestRequest(ownRequestData, request);
+ 
+   const { mediaUrl: plexUrl, mediaUrl4k: plexUrl4k } = useDeepLinks({
+     mediaUrl: requestData?.media?.mediaUrl,
+diff --git a/src/components/RequestList/RequestItem/index.tsx b/src/components/RequestList/RequestItem/index.tsx
+index 29a11ac..9738bb0 100644
+--- a/src/components/RequestList/RequestItem/index.tsx
++++ b/src/components/RequestList/RequestItem/index.tsx
+@@ -10,10 +10,12 @@ import useToasts from '@app/hooks/useToasts';
+ import { Permission, useUser } from '@app/hooks/useUser';
+ import globalMessages from '@app/i18n/globalMessages';
+ import defineMessages from '@app/utils/defineMessages';
++import { getRequestDownloadStatus } from '@app/utils/refreshIntervalHelper';
+ import {
+-  getRequestDownloadStatus,
+-  refreshIntervalHelper,
+-} from '@app/utils/refreshIntervalHelper';
++  freshestRequest,
++  requestCardSwr,
++  titleCardSwr,
++} from '@app/utils/requestCardSwr';
+ import {
+   ArrowPathIcon,
+   CheckIcon,
+@@ -309,20 +311,13 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
+       ? `/api/v1/movie/${request.media.tmdbId}`
+       : `/api/v1/tv/${request.media.tmdbId}`;
+   const { data: title, error } = useSWR<MovieDetails | TvDetails>(
+-    inView ? url : null
++    inView ? url : null,
++    titleCardSwr
+   );
+-  const { data: requestData, mutate: revalidate } = useSWR<
++  const { data: ownRequestData, mutate: revalidate } = useSWR<
+     NonFunctionProperties<MediaRequest>
+-  >(`/api/v1/request/${request.id}`, {
+-    fallbackData: request,
+-    refreshInterval: refreshIntervalHelper(
+-      {
+-        downloadStatus: request.media.downloadStatus,
+-        downloadStatus4k: request.media.downloadStatus4k,
+-      },
+-      15000
+-    ),
+-  });
++  >(`/api/v1/request/${request.id}`, requestCardSwr(request));
++  const requestData = freshestRequest(ownRequestData, request);
+ 
+   const [isRetrying, setRetrying] = useState(false);
+   const [updatingType, setUpdatingType] = useState<
+diff --git a/src/utils/requestCardSwr.test.ts b/src/utils/requestCardSwr.test.ts
+new file mode 100644
+index 0000000..a778cc2
+--- /dev/null
++++ b/src/utils/requestCardSwr.test.ts
+@@ -0,0 +1,63 @@
++import assert from 'node:assert/strict';
++import { describe, it } from 'node:test';
++import {
++  freshestRequest,
++  REQUEST_CARD_POLL,
++  requestCardSwr,
++  titleCardSwr,
++} from './requestCardSwr';
++
++const downloading = [{ downloadId: 'd1' }];
++const req = (updatedAt: string, mediaUpdatedAt: string, dl: unknown[] = []) => ({
++  id: 1,
++  updatedAt,
++  media: { updatedAt: mediaUpdatedAt, downloadStatus: dl, downloadStatus4k: [] as unknown[] },
++});
++
++describe('requestCardSwr', () => {
++  it('never fetches on mount or focus, the list answer is shown', () => {
++    const listed = req('2026-11-15T10:00:00Z', '2026-11-15T10:00:00Z');
++    const opts = requestCardSwr(listed);
++    assert.equal(opts.revalidateOnMount, false);
++    assert.equal(opts.revalidateOnFocus, false);
++    assert.equal(opts.revalidateIfStale, false);
++    assert.equal(opts.fallbackData, listed);
++  });
++
++  it('polls once a minute only while something downloads', () => {
++    assert.equal(REQUEST_CARD_POLL, 60000);
++    const idle = requestCardSwr(req('2026-11-15T10:00:00Z', '2026-11-15T10:00:00Z'));
++    assert.equal(idle.refreshInterval(undefined), 0);
++    const busy = requestCardSwr(req('2026-11-15T10:00:00Z', '2026-11-15T10:00:00Z', downloading));
++    assert.equal(busy.refreshInterval(undefined), 60000);
++    const fourK = req('2026-11-15T10:00:00Z', '2026-11-15T10:00:00Z');
++    fourK.media.downloadStatus4k = downloading;
++    assert.equal(requestCardSwr(fourK).refreshInterval(undefined), 60000);
++  });
++
++  it('keeps polling on its own answer until that shows the download done', () => {
++    const listed = req('2026-11-15T10:00:00Z', '2026-11-15T10:00:00Z', downloading);
++    const opts = requestCardSwr(listed);
++    assert.equal(opts.refreshInterval(req('2026-11-15T10:00:00Z', '2026-11-15T10:00:00Z', downloading)), 60000);
++    assert.equal(opts.refreshInterval(req('2026-11-15T10:00:00Z', '2026-11-15T10:05:00Z')), 0);
++  });
++
++  it('a newer list answer wins over an older own answer, equal age keeps the own one', () => {
++    const own = req('2026-11-15T10:00:00Z', '2026-11-15T10:00:00Z', downloading);
++    const newerRequest = req('2026-11-15T10:01:00Z', '2026-11-15T10:00:00Z');
++    const newerMedia = req('2026-11-15T10:00:00Z', '2026-11-15T10:02:00Z');
++    const same = req('2026-11-15T10:00:00Z', '2026-11-15T10:00:00Z');
++    assert.equal(freshestRequest(own, newerRequest), newerRequest);
++    assert.equal(freshestRequest(own, newerMedia), newerMedia);
++    assert.equal(freshestRequest(own, same), own);
++    assert.equal(freshestRequest(undefined, same), same);
++    assert.equal(requestCardSwr(newerMedia).refreshInterval(own), 0);
++  });
++
++  it('a card fetches its title once, not again on focus', () => {
++    assert.deepEqual(titleCardSwr, {
++      revalidateOnFocus: false,
++      revalidateIfStale: false,
++    });
++  });
++});
+diff --git a/src/utils/requestCardSwr.ts b/src/utils/requestCardSwr.ts
+new file mode 100644
+index 0000000..65d3d93
+--- /dev/null
++++ b/src/utils/requestCardSwr.ts
+@@ -0,0 +1,44 @@
++// Request cards show the list's answer and fetch on their own only while a download runs (every card re-fetched its request and title on each tab focus).
++type Stamp = Date | string | undefined;
++
++interface CardRequest {
++  updatedAt?: Stamp;
++  media?: {
++    updatedAt?: Stamp;
++    downloadStatus?: unknown[];
++    downloadStatus4k?: unknown[];
++  } | null;
++}
++
++export const REQUEST_CARD_POLL = 60000;
++
++const time = (s: Stamp) => {
++  const t = s ? new Date(s).getTime() : 0;
++  return Number.isFinite(t) ? t : 0;
++};
++
++const stamp = (r: CardRequest) =>
++  Math.max(time(r.updatedAt), time(r.media?.updatedAt));
++
++export const freshestRequest = <T extends CardRequest>(
++  own: T | undefined,
++  listed: T
++): T => (own && stamp(own) >= stamp(listed) ? own : listed);
++
++const downloading = (r: CardRequest) =>
++  (r.media?.downloadStatus ?? []).length > 0 ||
++  (r.media?.downloadStatus4k ?? []).length > 0;
++
++export const requestCardSwr = <T extends CardRequest>(listed: T) => ({
++  fallbackData: listed,
++  revalidateOnMount: false,
++  revalidateOnFocus: false,
++  revalidateIfStale: false,
++  refreshInterval: (latest?: T) =>
++    downloading(freshestRequest(latest, listed)) ? REQUEST_CARD_POLL : 0,
++});
++
++export const titleCardSwr = {
++  revalidateOnFocus: false,
++  revalidateIfStale: false,
++};
