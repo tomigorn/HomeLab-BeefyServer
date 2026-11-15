@@ -43,7 +43,7 @@ verify() {
   $DOCKER exec movie-flaresolverr curl -sf -m 90 -X POST http://127.0.0.1:8191/v1 -H 'Content-Type: application/json' -d '{"cmd":"request.get","url":"https://example.com/","maxTimeout":60000}' | grep -q '"status": "ok"' || { log "request failed"; return 1; }
   k=$(sed -n 's:.*<ApiKey>\(.*\)</ApiKey>.*:\1:p' /srv/appdata/prowlarr/config.xml)
   port=$(sed -n 's/^PROWLARR_PORT=//p' "$MD/.env"); port=${port:-9696}
-  pr() { curl -sf -m 150 -H "X-Api-Key: $k" -H 'Content-Type: application/json' "$@"; }
+  pr() { curl -sf -m 150 -H @<(printf 'X-Api-Key: %s\n' "$k") -H 'Content-Type: application/json' "$@"; }
   proxy=$(pr "http://127.0.0.1:$port/api/v1/indexerproxy" | jq -c 'first(.[] | select(.implementation == "FlareSolverr"))')
   pr -X POST -d "$proxy" "http://127.0.0.1:$port/api/v1/indexerproxy/test" >/dev/null || { log "Prowlarr proxy test failed"; return 1; }
   for id in $(pr "http://127.0.0.1:$port/api/v1/indexer" | jq -r '.[] | select(.enable and (.name | test("^(1337x|EZTV)$"))) | .id'); do
