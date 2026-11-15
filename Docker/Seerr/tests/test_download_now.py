@@ -385,7 +385,7 @@ class Handler(unittest.TestCase):
             return seerr(path, auth)
         w.seerr = unknown
         w.arr = lambda app: (lambda path, method="GET", body=None: [] if path.startswith("/movie?") else {"records": []} if path.startswith("/queue") else [{"id": TAG, "label": "download-now"}])
-        self.assertEqual(get(w, "type=movie&tmdb=999999999"), (200, {"state": "not-found", "app": "radarr", "released": [], "tagged": False, "moved": 0, "now": False, "search": None}))
+        self.assertEqual(get(w, "type=movie&tmdb=999999999"), (200, {"state": "not-found", "app": "radarr", "released": [], "tagged": False, "moved": 0, "now": False, "search": None, "lowTariff": False, "seedless": False, "override": False}))
 
     def test_falls_back_to_lookup_without_seerr_service_id(self):
         w = FakeWorld(media={"mediaInfo": {"externalServiceId": None}}, queue=[rec("abc")], torrents=[tor("abc")])
@@ -436,6 +436,168 @@ class Handler(unittest.TestCase):
 
     def test_unknown_path_is_404(self):
         self.assertEqual(dn.handle("GET", "/_download-now/other", {}, b"", FakeWorld().deps())[0], 404)
+
+
+MONDAY_DAY = __import__("time").mktime((2026, 11, 16, 14, 0, 0, 0, 0, -1))
+SUNDAY_EVENING = __import__("time").mktime((2026, 11, 15, 19, 20, 0, 0, 0, -1))
+OVERRIDE_TAG = 70
+
+
+def stalled(h, cat="radarr-night", seeds=0, swarm=0, speed=0, state="stalledDL"):
+    return {"hash": h, "category": cat, "state": state, "progress": 0.0, "num_seeds": seeds, "num_complete": swarm, "dlspeed": speed}
+
+
+class NightWorld(FakeWorld):
+    """FakeWorld with night-downloads' files (night-waiting.json, night-downloads.json) and the override tag."""
+
+    def __init__(self, now, low=None, seeded=None, **kw):
+        super().__init__(**kw)
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.now = now
+        d = pathlib.Path(self.tmp.name)
+        self.waiting, self.state = d / "night-waiting.json", d / "night-downloads.json"
+        stamp = __import__("datetime").datetime.fromtimestamp(now - 60).astimezone().isoformat(timespec="seconds")
+        if low is not None:
+            self.waiting.write_text(json.dumps({"waiting": [], "low_tariff": low, "updated": stamp}))
+        if seeded is not None:
+            self.state.write_text(json.dumps({"pending": 0, "low_tariff": bool(low), "updated": stamp[:19], "seeded": seeded}))
+
+    def arr(self, app):
+        call = super().arr(app)
+        def wrapped(path, method="GET", body=None):
+            if path == "/tag":
+                return call(path, method, body) + [{"id": OVERRIDE_TAG, "label": "override"}]
+            return call(path, method, body)
+        return wrapped
+
+    def deps(self):
+        d = super().deps()
+        d.night_waiting, d.night_downloads = self.waiting, self.state
+        return d
+
+
+def night_get(world, query="type=movie&tmdb=673"):
+    old = dn.CLOCK
+    dn.CLOCK = lambda: world.now
+    dn.NIGHT_CACHE.clear()
+    try:
+        return get(world, query)
+    finally:
+        dn.CLOCK = old
+
+
+class NobodySharing(unittest.TestCase):
+    def test_a_stalled_torrent_without_seeds_is_nobody_sharing(self):
+        self.assertTrue(dn.no_seeders(stalled("abc"), False, None, MONDAY_DAY))
+        self.assertTrue(dn.no_seeders(stalled("abc", state="metaDL"), False, None, MONDAY_DAY))
+
+    def test_seeds_in_the_swarm_or_a_speed_mean_someone_shares(self):
+        self.assertFalse(dn.no_seeders(stalled("abc", seeds=1), False, None, MONDAY_DAY))
+        self.assertFalse(dn.no_seeders(stalled("abc", swarm=3), False, None, MONDAY_DAY))
+        self.assertFalse(dn.no_seeders(stalled("abc", speed=500, state="downloading"), False, None, MONDAY_DAY))
+
+    def test_a_finished_or_queued_torrent_is_not_nobody_sharing(self):
+        self.assertFalse(dn.no_seeders(stalled("abc") | {"progress": 1.0}, False, None, MONDAY_DAY))
+        self.assertFalse(dn.no_seeders(stalled("abc", state="queuedDL"), False, None, MONDAY_DAY))
+
+    def test_a_paused_override_torrent_follows_night_downloads_seed_history(self):
+        paused = stalled("abc", state="stoppedDL")
+        self.assertTrue(dn.no_seeders(paused, True, {}, MONDAY_DAY))
+        self.assertTrue(dn.no_seeders(paused, True, {"abc": MONDAY_DAY - 25 * 3600}, MONDAY_DAY))
+        self.assertFalse(dn.no_seeders(paused, True, {"abc": MONDAY_DAY - 3600}, MONDAY_DAY))
+
+    def test_a_paused_torrent_without_override_or_history_is_unknown_not_nobody_sharing(self):
+        paused = stalled("abc", state="stoppedDL")
+        self.assertFalse(dn.no_seeders(paused, False, {}, MONDAY_DAY))
+        self.assertFalse(dn.no_seeders(paused, True, None, MONDAY_DAY))
+
+    def test_a_title_is_nobody_sharing_only_when_every_download_is(self):
+        tors = [stalled("abc"), stalled("def", seeds=2)]
+        self.assertTrue(dn.seedless(["abc"], tors, False, None, MONDAY_DAY))
+        self.assertFalse(dn.seedless(["abc", "def"], tors, False, None, MONDAY_DAY))
+        self.assertFalse(dn.seedless(["abc", "sabnzbd_nzo_1"], tors, False, None, MONDAY_DAY), "usenet is never nobody sharing")
+        self.assertFalse(dn.seedless([], tors, False, None, MONDAY_DAY))
+
+
+class Tariff(unittest.TestCase):
+    def test_night_waiting_json_decides(self):
+        w = NightWorld(MONDAY_DAY, low=True)
+        self.assertTrue(dn.low_tariff(w.deps(), MONDAY_DAY))
+        w = NightWorld(SUNDAY_EVENING, low=False)
+        self.assertFalse(dn.low_tariff(w.deps(), SUNDAY_EVENING))
+
+    def test_without_a_fresh_file_the_clock_rule(self):
+        self.assertFalse(dn.low_tariff(NightWorld(MONDAY_DAY).deps(), MONDAY_DAY))
+        self.assertTrue(dn.low_tariff(NightWorld(SUNDAY_EVENING).deps(), SUNDAY_EVENING))
+        stale = NightWorld(MONDAY_DAY + 3600, low=True)
+        self.assertFalse(dn.low_tariff(stale.deps(), MONDAY_DAY + 3600 + 20 * 60))
+
+
+class NightAnswer(unittest.TestCase):
+    def test_low_tariff_with_a_night_category_download_says_so(self):
+        w = NightWorld(SUNDAY_EVENING, low=True, seeded={}, queue=[rec("abc")], torrents=[stalled("abc", seeds=4, state="downloading", speed=900)])
+        status, out = night_get(w)
+        self.assertEqual((status, out["state"], out["lowTariff"], out["seedless"]), (200, "started", True, False))
+
+    def test_daytime_waiting_download_is_unchanged(self):
+        w = NightWorld(MONDAY_DAY, low=False, seeded={"abc": MONDAY_DAY - 3600}, queue=[rec("abc")], torrents=[tor("abc")])
+        status, out = night_get(w)
+        self.assertEqual((out["state"], out["lowTariff"], out["seedless"]), ("started", False, False))
+
+    def test_stalled_seedless_override_at_night(self):
+        w = NightWorld(SUNDAY_EVENING, low=True, seeded={}, title=movie(tags=(63, OVERRIDE_TAG)), queue=[rec("abc")], torrents=[stalled("abc")])
+        status, out = night_get(w)
+        self.assertEqual((out["lowTariff"], out["seedless"], out["override"]), (True, True, True))
+
+    def test_paused_seedless_override_at_daytime(self):
+        w = NightWorld(MONDAY_DAY, low=False, seeded={}, title=movie(tags=(63, OVERRIDE_TAG)), queue=[rec("abc")], torrents=[stalled("abc", state="stoppedDL")])
+        status, out = night_get(w)
+        self.assertEqual((out["state"], out["lowTariff"], out["seedless"], out["override"]), ("started", False, True, True))
+
+    def test_stalled_without_override_is_nobody_sharing_without_the_nightly_check(self):
+        w = NightWorld(MONDAY_DAY, low=False, seeded={}, queue=[rec("abc")], torrents=[stalled("abc", cat="radarr")])
+        status, out = night_get(w)
+        self.assertEqual((out["state"], out["seedless"], out["override"]), ("downloading", True, False))
+
+    def test_usenet_is_never_seedless(self):
+        w = NightWorld(MONDAY_DAY, low=False, seeded={}, queue=[rec("SABnzbd_nzo_1")], slots=[job("SABnzbd_nzo_1")])
+        self.assertFalse(night_get(w)[1]["seedless"])
+
+
+class NightEndpoint(unittest.TestCase):
+    def call(self, w, headers=None):
+        old = dn.CLOCK
+        dn.CLOCK = lambda: w.now
+        dn.NIGHT_CACHE.clear()
+        try:
+            return dn.handle("GET", "/_download-now/night", {"Cookie": "connect.sid=s%3Aabc"} if headers is None else headers, b"", w.deps())
+        finally:
+            dn.CLOCK = old
+
+    def test_every_signed_in_user_gets_the_tariff_and_the_seedless_titles(self):
+        queue = [rec("abc") | {"movie": {"tmdbId": 673, "tags": [63, OVERRIDE_TAG]}}, rec("def", 44) | {"movie": {"tmdbId": 674, "tags": []}}]
+        w = NightWorld(SUNDAY_EVENING, low=True, seeded={}, perms=32, queue=queue, torrents=[stalled("abc"), stalled("def", seeds=3, speed=100, state="downloading")])
+        status, out = self.call(w)
+        self.assertEqual(status, 200)
+        self.assertEqual(out, {"lowTariff": True, "seedless": {"movie/673": {"override": True, "ids": ["abc"]}}})
+
+    def test_series_key_is_the_series_tmdb_id(self):
+        queue = [{"seriesId": 17, "downloadId": "ABC", "series": {"tmdbId": 1399, "tags": []}}]
+        w = NightWorld(MONDAY_DAY, low=False, seeded={}, queue=queue, torrents=[stalled("abc", cat="sonarr")])
+        self.assertIn("tv/1399", self.call(w)[1]["seedless"])
+
+    def test_no_session_no_data(self):
+        w = NightWorld(MONDAY_DAY, low=False)
+        self.assertEqual(self.call(w, {})[0], 403)
+        self.assertEqual(self.call(NightWorld(MONDAY_DAY, low=False, perms=None))[0], 403)
+
+    def test_download_clients_down_is_502(self):
+        w = NightWorld(MONDAY_DAY, low=False)
+        def broken(path, data=None):
+            raise dn.ApiError("qbit down")
+        w.qbit = broken
+        self.assertEqual(self.call(w)[0], 502)
 
 
 class Origins(unittest.TestCase):

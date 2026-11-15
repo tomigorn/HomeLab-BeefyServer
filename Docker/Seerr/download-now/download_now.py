@@ -2,6 +2,7 @@
 """Download now (README "Download now"): the button on Seerr's title page. Seerr admins / manage-requests on any title, everyone else only on a title with their own (not declined) request; checked against Seerr itself on every call.
 A press tags the title download-now in Radarr/Sonarr, moves its downloads out of the night categories (qBittorrent radarr-night/sonarr-night, SABnzbd movies-night/tv-night) into the normal ones and resumes the paused ones; nothing grabbed yet = a search, which grabs through the tagged normal clients.
 GET /_download-now/api?type=movie|tv&tmdb=<id>: what a press would do (no change), with the title's search (queued/started, searches ahead, last search time). POST /_download-now/api {"type","tmdbId"}: do it. The API keys stay here, the browser only sees the state.
+GET /_download-now/night: the low tariff and the titles nobody shares (night_state), for night-label.js; every signed-in user.
 GET /_download-now/origins: where each request came from (README "Request origin", origins.json of Jellyfin's popular backend); viewers of all requests get all, everyone else only their own.
 GET /_download-now/by-size: the Requests page's GB sort, one sorted page of the caller's requests in Seerr's own format (by_size.py)."""
 import http.client
@@ -13,6 +14,7 @@ import re
 import sys
 import threading
 import time
+import datetime
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -22,6 +24,15 @@ TAG = "download-now"
 NIGHT_QBIT = {"radarr-night": "radarr", "sonarr-night": "sonarr"}
 NIGHT_SAB = {"movies-night": "movies", "tv-night": "tv"}
 PAUSED_QBIT = {"pausedDL", "stoppedDL"}
+STALLED_QBIT = {"stalledDL", "metaDL", "forcedMetaDL"}
+OVERRIDE = "override"
+# same as Movie-Downloads' night-downloads.py: a paused override torrent without seeds seen for this long counts as seedless
+SEEDLESS_H = 24
+NIGHT_FILE_AGE = 10 * 60
+NIGHT_TTL = 30
+NIGHT_CACHE = {}
+NIGHT_LOCK = threading.Lock()
+CLOCK = time.time
 MAY = 2 | 16  # Seerr ADMIN | MANAGE_REQUESTS
 VIEW_ALL = 2 | 16 | 16384  # ADMIN | MANAGE_REQUESTS | REQUEST_VIEW
 DECLINED = 3
@@ -55,6 +66,8 @@ class Deps:
     scout_dir: object = None
     scout_requests: object = None
     collections_file: object = None
+    night_waiting: object = None
+    night_downloads: object = None
 
 
 def redact(text):
@@ -157,20 +170,109 @@ def find_title(kind, arr, media, tmdb):
     return found[0] if found else None
 
 
+def read_fresh(path, now):
+    """A night-downloads file written in the last NIGHT_FILE_AGE, else None."""
+    try:
+        data = json.loads(pathlib.Path(path).read_text())
+        age = now - datetime.datetime.fromisoformat(data["updated"]).timestamp()
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+    return data if isinstance(data, dict) and -60 <= age <= NIGHT_FILE_AGE else None
+
+
+def low_tariff(deps, now):
+    data = read_fresh(deps.night_waiting, now) if deps.night_waiting else None
+    if data and isinstance(data.get("low_tariff"), bool):
+        return data["low_tariff"]
+    t = datetime.datetime.fromtimestamp(now)
+    return t.weekday() == 6 or t.hour >= 22 or t.hour < 6
+
+
+def seed_history(deps, now):
+    data = read_fresh(deps.night_downloads, now) if deps.night_downloads else None
+    seen = data.get("seeded") if data else None
+    return {str(k).lower(): v for k, v in seen.items() if isinstance(v, (int, float))} if isinstance(seen, dict) else None
+
+
+def no_seeders(t, override, seen, now):
+    """Nobody shares this torrent: running without seeds or speed; paused (no live numbers) only an override torrent night-downloads saw no seeds for in SEEDLESS_H."""
+    if (t.get("progress") or 0) >= 1 or (t.get("num_seeds") or 0) > 0 or (t.get("num_complete") or 0) > 0 or (t.get("dlspeed") or 0) > 0:
+        return False
+    if t.get("state") in STALLED_QBIT:
+        return True
+    if t.get("state") in PAUSED_QBIT and override and seen is not None:
+        return now - seen.get(str(t.get("hash")).lower(), float("-inf")) > SEEDLESS_H * 3600
+    return False
+
+
+def seedless(ids, torrents, override, seen, now):
+    by = {str(t.get("hash")).lower(): t for t in torrents if isinstance(t, dict)}
+    return bool(ids) and all(i in by and no_seeders(by[i], override, seen, now) for i in ids)
+
+
+def night_state(deps):
+    """{lowTariff, seedless: {movie|tv/<tmdb>: {override, ids}}} from Radarr/Sonarr's queues and qBittorrent, cached NIGHT_TTL."""
+    now = CLOCK()
+    with NIGHT_LOCK:
+        hit = NIGHT_CACHE.get("night")
+        if hit and now - hit[0] < NIGHT_TTL:
+            return hit[1]
+        titles = {}
+        for app, kind, inc in (("radarr", "movie", "includeMovie=true"), ("sonarr", "series", "includeSeries=true")):
+            arr = deps.arr(app)
+            tag = next((t["id"] for t in arr("/tag") if t.get("label") == OVERRIDE), None)
+            for r in arr(f"/queue?page=1&pageSize=1000&{inc}").get("records") or []:
+                item = r.get("movie") or r.get("series") if isinstance(r, dict) else None
+                if not isinstance(item, dict) or not item.get("tmdbId") or not r.get("downloadId"):
+                    continue
+                key = f"{'movie' if r.get('movie') else 'tv'}/{item['tmdbId']}"
+                t = titles.setdefault(key, {"override": tag is not None and tag in (item.get("tags") or []), "ids": []})
+                if r["downloadId"].lower() not in t["ids"]:
+                    t["ids"].append(r["downloadId"].lower())
+        torrents, seen = deps.qbit("/torrents/info"), seed_history(deps, now)
+        out = {"lowTariff": low_tariff(deps, now),
+               "seedless": {k: v for k, v in titles.items() if seedless(v["ids"], torrents, v["override"], seen, now)}}
+        NIGHT_CACHE["night"] = (now, out)
+        return out
+
+
+def night(headers, deps):
+    auth = auth_of(headers)
+    try:
+        me = deps.seerr("/auth/me", auth) if auth else None
+    except ApiError:
+        me = None
+    uid = me.get("id") if isinstance(me, dict) else None
+    if not isinstance(uid, int) or isinstance(uid, bool):
+        return 403, {"error": "forbidden"}
+    try:
+        return 200, night_state(deps)
+    except Exception as e:
+        print(f"night: {type(e).__name__} {redact(e)}", file=sys.stderr, flush=True)
+        return 502, {"error": "download clients not reachable"}
+
+
 def assess(kind, tmdb, media, deps):
     app = APP[kind]
     arr = deps.arr(app)
     title = find_title(kind, arr, media, tmdb)
     if not title:
         return None, {"state": "not-found", "app": app, "released": []}
-    tag_id = next((t["id"] for t in arr("/tag") if t.get("label") == TAG), None)
+    tags = arr("/tag")
+    tag_id = next((t["id"] for t in tags if t.get("label") == TAG), None)
     if tag_id is None:
         raise ApiError(f"{app}: no {TAG} tag")
     queue = arr("/queue?page=1&pageSize=1000")
     torrents = deps.qbit("/torrents/info")
     slots = deps.sab({"mode": "queue", "limit": "1000"})["queue"]["slots"]
-    p = plan(kind, title, tag_id, queue.get("records") or [], torrents, slots)
-    p.update(app=app, title_id=title["id"], tag_id=tag_id, last_search=read_search(kind, title, arr))
+    records = queue.get("records") or []
+    p = plan(kind, title, tag_id, records, torrents, slots)
+    now = CLOCK()
+    key = "movieId" if kind == "movie" else "seriesId"
+    ids = sorted({r["downloadId"].lower() for r in records if r.get(key) == title["id"] and r.get("downloadId")})
+    override = next((t["id"] for t in tags if t.get("label") == OVERRIDE), None) in (title.get("tags") or [])
+    p.update(app=app, title_id=title["id"], tag_id=tag_id, last_search=read_search(kind, title, arr), low_tariff=low_tariff(deps, now),
+             seedless=seedless(ids, torrents, override, seed_history(deps, now), now), override=override)
     return title, p
 
 
@@ -202,7 +304,8 @@ def sab_ok(r, what):
 
 def public(p):
     return {"state": p["state"], "app": p.get("app"), "released": p.get("released", []), "tagged": bool(p.get("add_tag")),
-            "moved": len(p.get("qbit", [])) + len(p.get("sab", [])), "now": bool(p.get("now")), "search": p.get("last_search")}
+            "moved": len(p.get("qbit", [])) + len(p.get("sab", [])), "now": bool(p.get("now")), "search": p.get("last_search"),
+            "lowTariff": bool(p.get("low_tariff")), "seedless": bool(p.get("seedless")), "override": bool(p.get("override"))}
 
 
 def auth_of(headers):
@@ -248,6 +351,8 @@ def handle(method, path, headers, body, deps):
         return 200, {"ok": True}
     if url.path == "/_download-now/origins" and method == "GET":
         return origins(headers, deps)
+    if url.path == "/_download-now/night" and method == "GET":
+        return night(headers, deps)
     if url.path == "/_download-now/request":
         import my_request
         return my_request.handle(sys.modules[__name__], method, path, headers, body, deps)
@@ -395,6 +500,8 @@ def deps_from_env(env):
         scout_dir=env.get("DN_SCOUT_DIR") or None,
         scout_requests=env.get("DN_SCOUT_REQUESTS") or None,
         collections_file=env.get("DN_COLLECTIONS") or None,
+        night_waiting=env.get("DN_NIGHT_WAITING") or (str(pathlib.Path(env["DN_REQUEST_STATE"]).with_name("night-waiting.json")) if env.get("DN_REQUEST_STATE") else None),
+        night_downloads=env.get("DN_NIGHT_DOWNLOADS") or (str(pathlib.Path(env["DN_SCOUT_DIR"], "night-downloads.json")) if env.get("DN_SCOUT_DIR") else None),
         seerr_admin=seerr_admin_client(env.get("DN_SEERR", "http://seerr:5055"), secret("seerr.apikey")) if pathlib.Path(env.get("DN_SECRETS", "/run/secrets/download-now"), "seerr.apikey").is_file() else None,
     )
 
