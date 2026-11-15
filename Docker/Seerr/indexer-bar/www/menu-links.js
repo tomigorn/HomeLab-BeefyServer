@@ -8,7 +8,7 @@
   var LINKS = [
     { id: "audiobooks", label: "Audiobooks", de: "Hörbücher", href: "https://books.holy-grail.ch/", icon: BOOK, bar: 5 },
     { id: "manual", label: "Manual interaction", de: "Manuell beheben", href: "/manual", route: true, icon: WRENCH, bar: 6, count: true },
-    { id: "collections", label: "Collections", de: "Sammlungen", href: "/collections", route: true, icon: STACK, bar: 6 }
+    { id: "collections", label: "Collections", de: "Sammlungen", href: "/collections", route: true, icon: STACK, bar: 7 }
   ];
   var COUNT_URL = "/_download-now/manual/count";
   var count = null, asked = 0;

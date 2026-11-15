@@ -42,7 +42,7 @@ test("phone, bar of 4 without a more button (regular user): 5th item in the bar"
   assert.equal(inBar[0].previousElementSibling.getAttribute("href"), "/discover/tv");
   assert.equal(inBar[0].getAttribute("aria-label"), "Audiobooks");
   assert.ok(inBar[0].querySelector("path"));
-  assert.equal(inBar[0].parentElement.querySelectorAll("a").length, 6);
+  assert.equal(inBar[0].parentElement.querySelectorAll("a").length, 7);
 });
 
 test("phone, bar already full (5 links, no more button): not added", () => {
@@ -148,7 +148,7 @@ test("phone, bar of 4 without a more button: Audiobooks 5th, Manual 6th; a full 
   const bar4 = MOBILE.replace(/<button[^]*?<\/button>/, "").replace('<a href="/" class="relative flex flex-col', '<a href="/discover/movies" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a><a href="/requests" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a><a href="/" class="relative flex flex-col');
   let w = load("menu-links.js", bar4);
   const bar = w.document.querySelector(".flex.h-full");
-  assert.deepEqual([...bar.querySelectorAll("a")].map((a) => a.getAttribute("data-hg-link")).slice(-2), ["audiobooks", "manual"]);
+  assert.deepEqual([...bar.querySelectorAll("a")].map((a) => a.getAttribute("data-hg-link")).slice(-3), ["audiobooks", "manual", "collections"]);
   const five = MOBILE.replace(/<button[^]*?<\/button>/, "").replace('<a href="/" class="relative flex flex-col', ['/a', '/b', '/c'].map((h) => `<a href="${h}" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a>`).join("") + '<a href="/" class="relative flex flex-col');
   w = load("menu-links.js", five);
   assert.deepEqual(manual(w).filter((a) => a.classList.contains("flex-col")).length, 1);
@@ -260,15 +260,16 @@ test("Collections: after Manual interaction, opens /collections inside Seerr, Sa
   assert.equal(coll(w)[0].textContent.trim(), "Sammlungen");
 });
 
-test("phone bar: Collections only while there is room (at most 6 with it), else only in the drawer", () => {
+test("phone bar: Collections as the 7th icon (regular users have no More list), not beyond 7", () => {
   const bar3 = MOBILE.replace(/<button[^]*?<\/button>/, "").replace('<a href="/" class="relative flex flex-col', '<a href="/requests" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a><a href="/" class="relative flex flex-col');
   let w = load("menu-links.js", bar3);
   const bar = w.document.querySelector(".flex.h-full");
   assert.deepEqual([...bar.querySelectorAll("a")].map((a) => a.getAttribute("data-hg-link")).slice(-3), ["audiobooks", "manual", "collections"]);
   const bar4 = MOBILE.replace(/<button[^]*?<\/button>/, "").replace('<a href="/" class="relative flex flex-col', '<a href="/discover/movies" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a><a href="/requests" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a><a href="/" class="relative flex flex-col');
   w = load("menu-links.js", bar4);
-  assert.equal(coll(w).filter((a) => a.classList.contains("flex-col")).length, 0);
-  assert.equal(coll(w).length, 1);
+  const b4 = w.document.querySelector(".flex.h-full");
+  assert.equal(b4.querySelectorAll("a").length, 7);
+  assert.equal(coll(w).filter((a) => a.classList.contains("flex-col")).length, 1);
 });
 
 test("menu-links.css hides Seerr's 404 on a fresh /collections load until our page is in, shown anyway after 3 s", () => {
