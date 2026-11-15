@@ -1148,3 +1148,86 @@ test("a failed refresh is not retried on every DOM change (no refetch loop)", as
   assert.equal(calls, first, `refetched ${calls - first} times after a failure`);
   win.close();
 });
+
+// Resource timing as the browser reports it: the plugin's section list and section answers, with a controllable clock.
+function timedHome(meta) {
+  const dom = new JSDOM('<html lang="en"><body><div class="homeSectionsContainer"></div></body></html>', { url: "https://jf.example.com/web/" });
+  const win = dom.window;
+  const now = Date.now();
+  es.writeCache(win.localStorage, "u1", {
+    lang: "en",
+    base: { at: now, enabled: ["NextUp", "HiddenGems"], names: { NextUp: "Next Up", HiddenGems: "Hidden Gems" }, modes: {} },
+    recent: { at: now, rows: { RecentlyWatchedMovies: [], RecentlyWatchedSeries: [] } },
+    discover: { at: now, nets: es.netsKey(undefined), rows: { [STU]: [], [NET]: [], [MGEN]: [], [SGEN]: [] } }
+  });
+  let clock = 0;
+  let notify = null;
+  const queued = [];
+  Object.defineProperty(win.performance, "now", { value: () => clock, configurable: true });
+  win.PerformanceObserver = class {
+    constructor(cb) { notify = cb; }
+    observe() {}
+    takeRecords() { return queued.splice(0); }
+  };
+  win.HssPageMeta = meta || { Page: 1 };
+  win.ApiClient = { getCurrentUserId: () => "u1", getScaledImageUrl: fakeApi.getScaledImageUrl, getUrl: (p, q) => p + "?" + new URLSearchParams(q), getJSON: () => new Promise(() => {}) };
+  es.start(win);
+  const entry = (path, start, bytes) => ({ name: "https://jf.example.com" + path, startTime: start, decodedBodySize: bytes });
+  return {
+    win,
+    c: win.document.querySelector(".homeSectionsContainer"),
+    at(ms) { clock = ms; },
+    list(start) { notify({ getEntries: () => [entry("/HomeScreen/Sections?UserId=u1&Page=1", start, 5000)] }); },
+    answer(id, start, bytes) { notify({ getEntries: () => [entry("/HomeScreen/Section/" + id + "?UserId=u1", start, bytes)] }); },
+    // An answer the browser has finished but not yet handed to the observer.
+    queue(id, start, bytes) { queued.push(entry("/HomeScreen/Section/" + id + "?UserId=u1", start, bytes)); }
+  };
+}
+
+const EMPTY_ANSWER = 48;
+const FULL_ANSWER = 22000;
+
+test("fixed slots: a section the plugin already answered empty shows its hint at once, even when the first draw comes long after the answer", async () => {
+  const h = timedHome();
+  try {
+    h.list(1000);
+    h.answer("HiddenGems", 1100, EMPTY_ANSWER);
+    h.at(2600);
+    h.c.innerHTML = section("NextUp", 3, 1) + section("HiddenGems", 8, 0, true);
+    await new Promise((r) => setTimeout(r, 50));
+    const gems = h.c.querySelector('[data-hss-placeholder="HiddenGems"]');
+    assert.equal(gems.hasAttribute("data-hss-loading"), false, "no 4 s skeleton for a row that is already known to be empty");
+    assert.equal(gems.querySelector("[data-hss-hint]").style.display, "");
+  } finally {
+    h.win.close();
+  }
+});
+
+test("fixed slots: an answer the observer has not delivered yet still counts", async () => {
+  const h = timedHome();
+  try {
+    h.list(1000);
+    h.queue("HiddenGems", 1100, EMPTY_ANSWER);
+    h.at(2600);
+    h.c.innerHTML = section("NextUp", 3, 1) + section("HiddenGems", 8, 0, true);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(h.c.querySelector('[data-hss-placeholder="HiddenGems"]').hasAttribute("data-hss-loading"), false);
+  } finally {
+    h.win.close();
+  }
+});
+
+test("fixed slots: an answer from an earlier home load does not count for this one", async () => {
+  const h = timedHome();
+  try {
+    h.answer("HiddenGems", 1100, EMPTY_ANSWER);
+    h.list(5000);
+    h.at(5200);
+    h.c.innerHTML = section("NextUp", 3, 1) + section("HiddenGems", 8, 0, true);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(h.c.querySelector('[data-hss-placeholder="HiddenGems"][data-hss-loading]'));
+  } finally {
+    h.win.close();
+  }
+});
+

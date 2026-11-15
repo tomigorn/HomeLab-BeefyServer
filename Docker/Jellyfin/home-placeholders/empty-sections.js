@@ -1019,23 +1019,34 @@
       return live;
     }
 
-    // When each plugin section answered (resource timing, nothing patched); a slot whose answer is missing stays a skeleton, at most SLOT_WAIT_MS.
+    // When each plugin section answered and how big the answer was (resource timing, nothing patched); a slot whose answer is missing stays a skeleton, at most SLOT_WAIT_MS.
+    // listAt: start of the plugin's section list request of the latest home load; answers before it belong to an earlier load.
     var answered = {};
+    var listAt = null;
     var seen = typeof win.WeakMap === "function" ? new win.WeakMap() : null;
+    var timing = null;
+
+    function takeEntries(entries) {
+      var hit = false;
+      for (var i = 0; i < entries.length; i++) {
+        var name = entries[i].name || "";
+        var m = /\/HomeScreen\/Section\/([A-Za-z0-9]+)/.exec(name);
+        if (m) {
+          answered[m[1]] = { at: entries[i].startTime, bytes: entries[i].decodedBodySize || 0 };
+          hit = true;
+        } else if (/\/HomeScreen\/Sections\?/.test(name) && (listAt === null || entries[i].startTime > listAt)) {
+          listAt = entries[i].startTime;
+        }
+      }
+      return hit;
+    }
+
     if (win.PerformanceObserver) {
       try {
-        new win.PerformanceObserver(function (list) {
-          var entries = list.getEntries();
-          var hit = false;
-          for (var i = 0; i < entries.length; i++) {
-            var m = /\/HomeScreen\/Section\/([A-Za-z0-9]+)/.exec(entries[i].name);
-            if (m) {
-              answered[m[1]] = entries[i].startTime;
-              hit = true;
-            }
-          }
-          if (hit) soon();
-        }).observe({ type: "resource", buffered: true });
+        timing = new win.PerformanceObserver(function (list) {
+          if (takeEntries(list.getEntries())) soon();
+        });
+        timing.observe({ type: "resource", buffered: true });
       } catch (e) {}
     }
 
@@ -1047,16 +1058,23 @@
     }
 
     function loadingFor(container, st) {
+      if (timing && timing.takeRecords) {
+        try {
+          takeEntries(timing.takeRecords());
+        } catch (e) {}
+      }
       var since = firstSeen(container);
       var now = win.performance && win.performance.now ? win.performance.now() : Date.now();
       var listed = endPaging(win.HssPageMeta, container);
+      var from = listAt !== null ? listAt : since - SLOT_SLACK_MS;
       return function (id) {
         if (RECENT_ROWS.indexOf(id) !== -1) return !st.recent;
         if (extraRows(win).some(function (r) { return r.id === id; })) return now - since <= SLOT_WAIT_MS;
         if (DISCOVER_ROWS.indexOf(id) !== -1) return !st.discover;
         if (listed && !realOf(container, id).length) return false;
         if (now - since > SLOT_WAIT_MS) return false;
-        return !(answered[id] >= since - SLOT_SLACK_MS);
+        var a = answered[id];
+        return !a || !(a.at >= from);
       };
     }
 
