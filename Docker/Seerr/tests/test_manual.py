@@ -579,6 +579,12 @@ class Import(unittest.TestCase):
         get(self.w, f"files?id={self.pid}")
         self.assertEqual(post(self.w, {"id": self.pid, "action": "import", "files": [{"n": 1, "episodeIds": [502]}]})[0], 200)
 
+    def test_a_sample_needs_an_admin(self):
+        self.w.proposals[1]["rejections"] = [{"reason": "Unable to determine if file is a sample"}]
+        get(self.w, f"files?id={self.pid}")
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "import", "files": [{"n": 1, "episodeIds": [502]}]})[0], 403)
+        self.assertEqual(self.w.writes, [])
+
     def test_an_episode_with_a_file_needs_an_admin(self):
         self.w.episodes = [dict(EPISODES[0], hasFile=True), EPISODES[1]]
         get(self.w, f"files?id={self.pid}")
@@ -726,6 +732,26 @@ class Removed(unittest.TestCase):
         self.assertEqual(out["problem"]["resolved"]["how"], "delete")
 
 
+    def test_a_delete_that_fails_halfway_records_what_went(self):
+        w = World(rs=state(removed=["movie/10248"]), requests=[request(11, "movie", 10248, ext=21), request(12, "movie", 10248, uid=5, name="joe", ext=21)])
+        w.me = ADMIN
+        reset()
+        pid = one(w, "removed")["id"]
+        plain = w.admin
+
+        def flaky(path, method="GET", body=None):
+            if method == "DELETE" and path == "/request/12":
+                raise dn.ApiError("seerr: 500")
+            return plain(path, method, body)
+        w.admin = flaky
+        self.assertEqual(post(w, {"id": pid, "action": "delete", "confirm": "delete"})[0], 502)
+        last = json.loads(w.store.read_text())["problems"][pid]["actions"][-1]
+        self.assertEqual((last["action"], last["user"]), ("delete", "janedoe"))
+        self.assertIn("11", last["result"])
+        self.assertIn("12", last["result"])
+        self.assertEqual(w.admin_calls, [("DELETE", "/request/11", None)])
+
+
 class Backend(unittest.TestCase):
     def setUp(self):
         reset()
@@ -757,6 +783,15 @@ class Backend(unittest.TestCase):
         w.arr = broken
         self.assertEqual(post(w, {"id": pid, "action": "readd"})[0], 502)
         self.assertEqual(post(w, {"id": pid, "action": "readd"})[0], 429)
+
+    def test_offers_are_stored_under_their_lock(self):
+        done = threading.Event()
+        with manual.OFFERS_LOCK:
+            t = threading.Thread(target=lambda: (manual.keep("aaaaaaaaaaaa", "lookup", USER, []), done.set()))
+            t.start()
+            self.assertFalse(done.wait(0.2))
+        t.join(2)
+        self.assertTrue(done.is_set())
 
     def test_env_wires_the_state_files(self):
         d = dn.Deps(seerr=None, arr=None, qbit=None, sab=None)

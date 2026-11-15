@@ -23,6 +23,7 @@ MEM = {}
 STORE_LOCK = threading.Lock()
 SEARCH_LOCK = threading.Lock()
 THROTTLE_LOCK = threading.Lock()
+OFFERS_LOCK = threading.Lock()
 SLOTS = threading.BoundedSemaphore(4)
 DAY = 86400
 KEEP_DAYS = 180
@@ -107,6 +108,12 @@ def older_profile(name, profiles):
         return next((n for n in names if n and n.startswith("Anime") and OLDER in n), None)
     want = DEFAULT_OLDER + (" - English original" if name.endswith(" - English original") else "")
     return want if want in names else None
+
+
+def hard_rejection(reason):
+    """A rejection only an admin may override: anything but "could not tell which title/episode", and always a sample."""
+    reason = str(reason)
+    return "sample" in reason.lower() or not UNMATCHED.search(reason)
 
 
 def person(u):
@@ -358,14 +365,16 @@ def throttle(key, gap, mark=True):
 def keep(pid, kind, me, data):
     """A list shown to one user, picked from by index: stored per user with a token the POST must send back."""
     token, now = secrets.token_hex(8), NOW()
-    for k in [k for k, o in OFFERS.items() if now - o[0] > OFFER_TTL]:
-        OFFERS.pop(k, None)
-    OFFERS[(pid, kind, me.get("id"))] = (now, token, data)
+    with OFFERS_LOCK:
+        for k in [k for k, o in OFFERS.items() if now - o[0] > OFFER_TTL]:
+            del OFFERS[k]
+        OFFERS[(pid, kind, me.get("id"))] = (now, token, data)
     return token
 
 
 def offer(pid, kind, me, req):
-    o = OFFERS.get((pid, kind, me.get("id")))
+    with OFFERS_LOCK:
+        o = OFFERS.get((pid, kind, me.get("id")))
     if not o or NOW() - o[0] > OFFER_TTL or not isinstance(req.get("token"), str) or not secrets.compare_digest(o[1], req["token"]):
         return None
     return o[2]
@@ -566,7 +575,7 @@ def do_import(deps, me, admin, p, req):
             raise Refused(400, "bad request")
         seen.add(n)
         x = o["props"][n]
-        hard = [str(rj.get("reason") if isinstance(rj, dict) else rj) for rj in x.get("rejections") or [] if not UNMATCHED.search(str(rj.get("reason") if isinstance(rj, dict) else rj))]
+        hard = [str(rj.get("reason") if isinstance(rj, dict) else rj) for rj in x.get("rejections") or [] if hard_rejection(rj.get("reason") if isinstance(rj, dict) else rj)]
         entry = {"path": x["path"], "quality": x.get("quality"), "languages": x.get("languages") or [], "releaseGroup": x.get("releaseGroup"),
                  "downloadId": x.get("downloadId") or i["downloadId"], "indexerFlags": x.get("indexerFlags") or 0}
         if i["kind"] == "movie":
@@ -646,8 +655,14 @@ def do_delete(deps, me, admin, p, req):
     ids = [r.get("id") for r in p["_"].get("requests") or [] if is_int(r.get("id"))]
     if not ids or not deps.seerr_admin:
         raise Refused(400, "bad request")
+    done = []
     for rid in ids:
-        deps.seerr_admin(f"/request/{rid}", "DELETE")
+        try:
+            deps.seerr_admin(f"/request/{rid}", "DELETE")
+        except Exception:
+            record(deps, p["id"], me, "delete", f"deleted Seerr request(s) {', '.join(map(str, done)) or 'none'}, request {rid} failed", False)
+            raise
+        done.append(rid)
     return f"{len(ids)} Seerr request(s) deleted, title data and files kept"
 
 
