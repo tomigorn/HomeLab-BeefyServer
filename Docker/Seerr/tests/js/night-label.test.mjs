@@ -1086,3 +1086,79 @@ test("Partially Available pill without Seerr's title data: only what is known (�
   const pill = w.document.querySelector('a[href$="?manage=1"]');
   assert.equal(flagTip(pill), "Partly available");
 });
+
+// one source for every badge: the backend's /_download-now/night (low tariff, titles nobody shares) and night-waiting.json
+const NIGHT_URL = "/_download-now/night";
+const NOBODY = "Nobody is sharing this file right now — it starts as soon as someone does";
+const NIGHTLY = "; checked every night for a better version";
+const lowWaiting = (waiting = []) => ({ waiting, low_tariff: true, updated: new Date().toISOString() });
+const nightPage = (body, path, rs, nightState, waiting = fresh([])) => night(body, fakeXHR({ ...RS_ROUTES, [RS_URL]: rs, ...(nightState && { [NIGHT_URL]: nightState }) }, { value: waiting }), path);
+
+test("low tariff: a found download of a Can wait title is not 'Waiting for the night'; at daytime it is", async () => {
+  const rs = live({ canWait: ["movie/700"], queue: { "movie/700": { state: "paused" } } });
+  const w = nightPage(header(plainBadge("movie/700")), "/movie/700", rs, { lowTariff: true, seedless: {} }, lowWaiting());
+  await settle();
+  const b = w.document.querySelector(".media-status a");
+  assert.equal(b.querySelector("[data-hg-flag-own]"), null);
+  assert.doesNotMatch(flagTip(b) || "", /night/i);
+  const day = nightPage(header(plainBadge("movie/700")), "/movie/700", rs, { lowTariff: false, seedless: {} });
+  await settle();
+  assert.equal(visibleText(day, day.document.querySelector(".media-status a")), "Requested|🌙");
+});
+
+test("low tariff from night-waiting.json alone when the backend is not there", async () => {
+  const rs = live({ canWait: ["movie/700"], queue: { "movie/700": { state: "paused" } } });
+  const w = nightPage(header(plainBadge("movie/700")), "/movie/700", rs, null, lowWaiting());
+  await settle();
+  assert.equal(w.document.querySelector(".media-status a [data-hg-flag-own]"), null);
+});
+
+test("a Can wait title with nothing grabbed keeps its 🌙 in the low tariff (what it finds after 06:00 waits again)", async () => {
+  const w = nightPage(header(plainBadge("movie/700")), "/movie/700", live({ canWait: ["movie/700"] }), { lowTariff: true, seedless: {} }, lowWaiting());
+  await settle();
+  assert.equal(visibleText(w, w.document.querySelector(".media-status a")), "Requested|🌙");
+});
+
+test("nobody sharing, at night: the title pill with Seerr's spinner and the request card say so, not 'Downloading now'", async () => {
+  const rs = live({ canWait: ["movie/550"], queue: { "movie/550": { state: "downloading" } } });
+  const w = nightPage(header(badge("movie/550", "Processing", "")) + requestCard("movie/550", "Fight"), "/movie/550", rs, { lowTariff: true, seedless: { "movie/550": { override: true, ids: ["sabnzbd_nzo_run"] } } }, lowWaiting());
+  await settle();
+  for (const b of w.document.querySelectorAll('a[href$="?manage=1"]')) {
+    assert.equal(b.querySelector("[data-hg-flag-own]").textContent, "⏳");
+    assert.equal(flagTip(b), NOBODY + NIGHTLY);
+  }
+});
+
+test("nobody sharing, at daytime: no '🌙 Tonight' for the paused torrent, ⏳ instead", async () => {
+  const rs = live({ canWait: ["tv/76479"], queue: { "tv/76479": { state: "paused" } } });
+  const w = nightPage(header(badge("tv/76479")), "/tv/76479", rs, { lowTariff: false, seedless: { "tv/76479": { override: false, ids: [BOYS_ID] } } }, WAITING);
+  await settle();
+  const b = w.document.querySelector(".media-status a");
+  assert.doesNotMatch(visibleText(w, b), /Tonight/);
+  assert.equal(b.querySelector("[data-hg-flag-own]").textContent, "⏳");
+  assert.equal(flagTip(b), NOBODY);
+});
+
+test("nobody sharing on a Discover card: ⏳ instead of the spinner; German", async () => {
+  const rs = { value: live({ queue: { "movie/701": { state: "downloading" } } }) };
+  const routes = { ...RS_ROUTES, "/api/v1/discover/movies": { results: [listed(701)] }, [NIGHT_URL]: { lowTariff: false, seedless: { "movie/701": { override: true, ids: ["x"] } } } };
+  Object.defineProperty(routes, RS_URL, { get: () => rs.value, enumerable: true });
+  const w = night(clockCard("/l701.jpg"), fakeXHR(routes, { value: fresh([]) }), "/discover/movies");
+  const x = new w.XMLHttpRequest();
+  x.open("GET", "/api/v1/discover/movies");
+  x.send();
+  await settle();
+  const card = cardOf(w);
+  assert.equal(badgeIcons(card), "⏳");
+  assert.ok(!card.querySelector("[data-hg-spin]"));
+  assert.equal(card.querySelector("[data-hg-night]").getAttribute("data-hg-hint"), NOBODY + NIGHTLY);
+  const de = nightPage(header(badge("movie/550", "Verarbeiten", "")), "/movie/550", live({ queue: { "movie/550": { state: "downloading" } } }), { lowTariff: false, seedless: { "movie/550": { override: false, ids: ["x"] } } });
+  await settle();
+  assert.equal(flagTip(de.document.querySelector(".media-status a")), "Gerade teilt niemand diese Datei — sie startet, sobald jemand sie teilt");
+});
+
+test("a download with seeders at daytime is unchanged: 🌙 Tonight while it waits", async () => {
+  const w = nightPage(header(badge("tv/76479")), "/tv/76479", live({ canWait: ["tv/76479"] }), { lowTariff: false, seedless: {} }, WAITING);
+  await settle();
+  assert.equal(visibleText(w, w.document.querySelector(".media-status a")), "🌙 Tonight");
+});

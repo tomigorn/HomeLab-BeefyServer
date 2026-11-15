@@ -1,8 +1,9 @@
-// "Waiting for the night" label (README "Night label"): a download paused by the "Can wait" night queue shows the night label instead of Seerr's "Processing" at 0 %; a "Can wait" request not downloading gets a 🌙, a title not released yet a 📅, a running search a pulsing 🔍, a request without a search yet 🔎, waiting for approval ⏳, a download or import problem ⚠️. All lists come from night-downloads.py; missing, stale or unexpected = Seerr unchanged.
+// "Waiting for the night" label (README "Night label"): a download paused by the "Can wait" night queue shows the night label instead of Seerr's "Processing" at 0 %; a "Can wait" request not downloading gets a 🌙, a title not released yet a 📅, a running search a pulsing 🔍, a request without a search yet 🔎, waiting for approval ⏳, a download or import problem ⚠️, a torrent nobody shares ⏳. Lists from night-downloads.py and the backend's /_download-now/night (low tariff, nobody sharing); missing, stale or unexpected = Seerr unchanged.
 (function () {
   "use strict";
   var WAITING_URL = "/_indexer-bar/night-waiting.json";
   var REQUESTS_URL = "/_indexer-bar/request-state.json";
+  var NIGHT_URL = "/_download-now/night";
   var MAX_AGE = 10 * 60 * 1000;
   var TTL = 60 * 1000;
   var TEXT = {
@@ -18,8 +19,8 @@
     de: { spin: "Lädt gerade herunter", avail: "In Jellyfin verfügbar", part: "Teilweise verfügbar" },
   };
   var LIVE = {
-    en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", wrongFilm: "Wrong film downloaded (release from {ry}, film is {y}), being replaced", needsImport: "Needs a manual import (release title: '{r}')", importHead: "Needs a manual import", release: "Release:", todo: "What to do:", todoText: "open Manual interaction", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", removed: "Removed from Radarr/Sonarr — nothing searches for it; request it again or delete the request", locale: "en-GB" },
-    de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", wrongFilm: "Falscher Film heruntergeladen (Release von {ry}, Film ist von {y}), wird ersetzt", needsImport: "Muss manuell importiert werden (Release-Titel: '{r}')", importHead: "Muss manuell importiert werden", release: "Release:", todo: "Was tun:", todoText: "«Manuell beheben» öffnen", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", removed: "Aus Radarr/Sonarr entfernt — nichts sucht danach; neu anfragen oder die Anfrage löschen", locale: "de-CH" },
+    en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", wrongFilm: "Wrong film downloaded (release from {ry}, film is {y}), being replaced", needsImport: "Needs a manual import (release title: '{r}')", importHead: "Needs a manual import", release: "Release:", todo: "What to do:", todoText: "open Manual interaction", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", removed: "Removed from Radarr/Sonarr — nothing searches for it; request it again or delete the request", nobody: "Nobody is sharing this file right now — it starts as soon as someone does", nobodyNightly: "; checked every night for a better version", locale: "en-GB" },
+    de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", wrongFilm: "Falscher Film heruntergeladen (Release von {ry}, Film ist von {y}), wird ersetzt", needsImport: "Muss manuell importiert werden (Release-Titel: '{r}')", importHead: "Muss manuell importiert werden", release: "Release:", todo: "Was tun:", todoText: "«Manuell beheben» öffnen", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", removed: "Aus Radarr/Sonarr entfernt — nichts sucht danach; neu anfragen oder die Anfrage löschen", nobody: "Gerade teilt niemand diese Datei — sie startet, sobald jemand sie teilt", nobodyNightly: "; jede Nacht wird nach einer besseren Version gesucht", locale: "de-CH" },
   };
   var PARTLY = {
     en: { all: "Everything you requested is in Jellyfin", some: "Not everything you requested is in Jellyfin yet", have: "In Jellyfin:", missing: "Episodes missing:", one: "Season", many: "Seasons", notOne: "{s} was not requested", notMany: "{s} were not requested", dl: "Downloading {e}", more: "(and {n} more)" },
@@ -45,7 +46,7 @@
   var BAR = "div.relative.h-6.overflow-hidden.rounded-full.bg-gray-700";
 
   var RELEASED_FOR = 10 * 60 * 1000;
-  var state = { waiting: null, requests: null, waitingAt: 0, waitingLoading: null, media: {}, posters: {}, loading: {}, released: {}, requested: {}, poll: 15 * 1000 };
+  var state = { waiting: null, requests: null, night: null, waitingAt: 0, waitingLoading: null, media: {}, posters: {}, loading: {}, released: {}, requested: {}, poll: 15 * 1000 };
 
   function waitingSet(data, now) {
     if (!data || !Array.isArray(data.waiting)) return null;
@@ -54,7 +55,7 @@
     var s = {};
     for (var i = 0; i < data.waiting.length; i++) {
       var id = String(data.waiting[i]).toLowerCase();
-      if (!(state.released[id] > now)) s[id] = true;
+      if (!(state.released[id] > now) && !nobodyIds()[id]) s[id] = true;
     }
     return s;
   }
@@ -65,6 +66,25 @@
     var obj = function (v) { return v && typeof v === "object" && !Array.isArray(v) ? v : {}; };
     var set = function (v) { var o = {}; (Array.isArray(v) ? v : []).forEach(function (k) { o[String(k)] = true; }); return o; };
     return { canWait: set(data.canWait), unreleased: data.unreleased, noRelease: obj(data.noRelease), searching: obj(data.searching), fresh: obj(data.fresh), pending: set(data.pending), queue: obj(data.queue), imported: set(data.imported), soFar: set(data.soFar), removed: set(data.removed), updated: Date.parse(data.updated) };
+  }
+
+  // the backend's titles nobody shares (qBittorrent, night-downloads' seed history): key → {override, ids}
+  function nobodyFor(key) {
+    var n = state.night && state.night.seedless;
+    return n && typeof n === "object" && Object.prototype.hasOwnProperty.call(n, key) && n[key] && typeof n[key] === "object" ? n[key] : null;
+  }
+
+  function nobodyIds() {
+    var out = {}, n = state.night && state.night.seedless;
+    if (n && typeof n === "object") for (var k in n) if (n[k] && Array.isArray(n[k].ids)) n[k].ids.forEach(function (id) { out[String(id).toLowerCase()] = true; });
+    return out;
+  }
+
+  // low tariff: the backend's answer, else night-waiting.json's (both from night-downloads.py)
+  function lowTariff() {
+    if (state.night && typeof state.night.lowTariff === "boolean") return state.night.lowTariff;
+    var w = state.waiting;
+    return !!(w && w.low_tariff === true && Date.now() - Date.parse(w.updated) <= MAX_AGE);
   }
 
   function busy(m) {
@@ -86,11 +106,13 @@
     var fresh = null, at = state.requested[key];
     if (!search && !done && has.call(rs.fresh, key)) fresh = { at: rs.fresh[key] };
     else if (!search && !done && at && now - Date.parse(at) < FRESH && !(rs.updated >= Date.parse(at)) && !busy(m)) fresh = { at: at };
-    var moon = rs.canWait[key] === true && !busy(m) && !done && !loading && q.state !== "problem";
+    var nobody = !done && nobodyFor(key);
+    // 🌙 = still waits for the night: not while nobody shares it, not for a found download in the low tariff
+    var moon = rs.canWait[key] === true && !busy(m) && !done && !loading && q.state !== "problem" && !nobody && !(q.state === "paused" && lowTariff());
     var compass = has.call(rs.noRelease, key) && !busy(m) && !done;
     var cal = has.call(rs.unreleased, key) && !done;
     return { moon: moon, compass: compass, cal: cal, date: cal ? rs.unreleased[key] : null, search: search, fresh: fresh, pending: !done && rs.pending[key] === true,
-      problem: q.state === "problem" ? q : null, importing: q.state === "importing", downloading: q.state === "downloading", imported: !done && rs.imported[key] === true, soFar: !done && rs.soFar[key] === true };
+      problem: q.state === "problem" ? q : null, importing: q.state === "importing", downloading: q.state === "downloading" && !nobody, nobody: nobody || null, imported: !done && rs.imported[key] === true, soFar: !done && rs.soFar[key] === true };
   }
 
   function clock(iso, l) {
@@ -116,6 +138,7 @@
       out.push(p.code === "needs-import" && p.release ? ["⚠️", problemText(p, L), { title: "⚠️ " + L.importHead, rows: [[L.release, ""], { mono: String(p.release) }, [L.todo, L.todoText]] }] : ["⚠️", problemText(p, L)]);
     }
     if (f.pending) out.push(["⏳", L.pending]);
+    if (f.nobody) out.push(["⏳", L.nobody + (f.nobody.override ? L.nobodyNightly : "")]);
     if (f.search) {
       var t = clock(f.search.started, l);
       out.push([SEARCH, f.search.status === "queued" ? L.queued.replace("{n}", String(+f.search.ahead || 0)) : t ? L.started.replace("{t}", t) : L.started.replace(/ \([^)]*\{t\}\)/, "")]);
@@ -192,7 +215,7 @@
 
   // what a Partially Available pill means: the missing part's state, else what the requested seasons say
   function partList(f, l, m, is4k) {
-    var out = flagList(f, l, true, true, partDownload(f, m, l, is4k));
+    var out = flagList(f, l, true, true, f.nobody ? null : partDownload(f, m, l, is4k));
     var seasons = !out.length && partSeasons(m, l, is4k);
     return seasons ? [seasons] : out;
   }
@@ -363,7 +386,8 @@
       if (before && typeof before === "object") for (var k in before) if (!(after && after[k]) && state.media[k]) state.media[k].at = 0;
       state.requests = d;
     }, function () { state.requests = null; });
-    state.waitingLoading = Promise.all([requests, getJSON(WAITING_URL).then(function (d) { state.waiting = d; }, function () { state.waiting = null; })]).then(function () {
+    var nightState = getJSON(NIGHT_URL).then(function (d) { state.night = d && typeof d === "object" ? d : null; }, function () { state.night = null; });
+    state.waitingLoading = Promise.all([requests, nightState, getJSON(WAITING_URL).then(function (d) { state.waiting = d; }, function () { state.waiting = null; })]).then(function () {
       state.waitingAt = Date.now();
       state.waitingLoading = null;
     });
@@ -551,7 +575,7 @@
       if (part) badge.setAttribute("data-hg-part", ""); else badge.removeAttribute("data-hg-part");
       if (badge.getAttribute("data-hg-night") !== null) f.moon = false;
       // Seerr's own spinner / progress bar is there (its popup tells the download): only ⚠️ of ours
-      if (badge.querySelector("svg animateTransform") || badge.querySelector(":scope > div.absolute.left-0.top-0.z-10")) f = { moon: false, compass: false, cal: false, problem: f.problem };
+      if (badge.querySelector("svg animateTransform") || badge.querySelector(":scope > div.absolute.left-0.top-0.z-10")) f = { moon: false, compass: false, cal: false, problem: f.problem, nobody: f.nobody };
       if (part || (m && m.status === 4)) f.imported = false;
       if (/^(4K\s)?(Available|Verfügbar)$/.test(text)) f = { moon: false, compass: false, cal: false };
       var extra = null, spin = !!(badge.querySelector("svg animateTransform") || badge.querySelector(":scope > div.absolute.left-0.top-0.z-10"));
@@ -599,12 +623,13 @@
       var m = key && state.media[key], f = flags(key, rs, m), l = lang(doc);
       if (m && m.at === 0) loadMedia(key);
       var kind = nativeKind(holder), list = flagList(f, l, kind === "part", true), qs = queueStatus(f, l);
+      if (kind === "spin" && f.nobody) kind = null;
       if (m && allWaiting(m.items, set) && !f.moon) list.unshift(["🌙", TEXT[l].label.replace(/\s*🌙$/, "") + " — " + TEXT[l].tip]);
       var status = kind && (kind !== "spin" || !(m && allWaiting(m.items, set)));
       if (f.soFar) { status = true; kind = kind || "queue"; }
       else if (kind && status) list.unshift(kind === "spin" && f.importing ? [SPIN, LIVE[l].importing] : statusEntry(kind, m, l));
       else if (!kind && qs && !(m && allWaiting(m.items, set))) { list.unshift(qs); status = true; kind = "queue"; }
-      if (!f.soFar && kind === "part" && m && busy(m) && !allWaiting(m.items, set)) list.splice(1, 0, statusEntry("spin", m, l));
+      if (!f.soFar && kind === "part" && m && busy(m) && !f.nobody && !allWaiting(m.items, set)) list.splice(1, 0, statusEntry("spin", m, l));
       var want = list.map(function (x) { return x[0]; }).join("");
       if (!want) { restore(holder); continue; }
       var tips = merged(list, l);
