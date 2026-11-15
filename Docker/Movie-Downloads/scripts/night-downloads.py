@@ -375,7 +375,7 @@ def _series_release(s, eps, seasons, now):
 
 def request_state(now, requests, dn_tags, movies, series, episodes, queued=frozenset(), searching=None, commands=None, queue=None):
     can_wait, unreleased, no_release, searching, commands, queue = set(), {}, {}, searching or {}, commands or {}, queue or {}
-    live, fresh, pending, imported, queue_out, so_far = {}, {}, set(), set(), {}, set()
+    live, fresh, pending, imported, queue_out, so_far, removed = {}, {}, set(), set(), {}, set(), set()
     queued = set(queued) | set(queue)
     for q in requests:
         media, four_k = q.get("media") or {}, bool(q.get("is4k"))
@@ -390,6 +390,10 @@ def request_state(now, requests, dn_tags, movies, series, episodes, queued=froze
             continue
         ext = media.get("externalServiceId4k" if four_k else "externalServiceId")
         title = (series if tv else movies).get(ext) if ext else None
+        if title is None and ext:
+            # Seerr still points to an app entry that is gone (deleted in Radarr/Sonarr): nothing will search for it.
+            removed.add(key)
+            continue
         if title is None:
             now_tag = dn is not None and dn in (q.get("tags") or [])
             later, done, when = False, False, None
@@ -441,8 +445,9 @@ def request_state(now, requests, dn_tags, movies, series, episodes, queued=froze
     for key in set(fresh) & (set(no_release) | set(live)):
         del fresh[key]
     imported -= set(live) | set(fresh) | pending | set(queue_out) | set(unreleased) | set(no_release)
+    removed -= can_wait | set(fresh) | pending | set(live) | imported
     return {"canWait": sorted(can_wait - imported), "unreleased": unreleased, "noRelease": no_release, "searching": live, "fresh": fresh,
-            "pending": sorted(pending), "queue": queue_out, "imported": sorted(imported), "soFar": sorted(so_far)}
+            "pending": sorted(pending), "queue": queue_out, "imported": sorted(imported), "soFar": sorted(so_far), "removed": sorted(removed)}
 
 
 def revert_unfound(apps, queued, searching, dry_run=False, now=None):
@@ -490,8 +495,31 @@ def _queued(records, match):
     return sum(sizes.values())
 
 
-def request_sizes(requests, movies, series, queues):
-    """Seerr request id -> {"size": bytes on disk} (a series: its requested seasons, plus "files"/"of" while episodes are missing), else {"queued": bytes of its downloads in the queue}; unknown, 4K and nothing at all are left out."""
+def _remux(f):
+    return "remux" in (((f or {}).get("quality") or {}).get("quality") or {}).get("name", "").lower()
+
+
+def _extra(title, remux):
+    """"runtime" (minutes per film or episode) and "remux" of a title with files on disk."""
+    return ({"runtime": title["runtime"]} if (title.get("runtime") or 0) > 0 else {}) | ({"remux": True} if remux else {})
+
+
+def remux_seasons(api, series):
+    """Sonarr series id -> season numbers holding a remux file; one /episodefile call per series with files."""
+    out = {}
+    for t in series.values():
+        if not any((x.get("statistics") or {}).get("episodeFileCount") for x in t.get("seasons") or []):
+            continue
+        files = api(f"/episodefile?seriesId={t['id']}")
+        seasons = {f.get("seasonNumber") for f in files if isinstance(f, dict) and _remux(f)} if isinstance(files, list) else set()
+        if seasons:
+            out[t["id"]] = seasons
+    return out
+
+
+def request_sizes(requests, movies, series, queues, remux=None):
+    """Seerr request id -> {"size": bytes on disk} (a movie: plus "runtime", "remux"; a series: its requested seasons with "files", "of", "episodes" per season, "runtime" per episode, "remux"), else {"queued": bytes of its downloads in the queue}; a known series always keeps its episode counts; unknown, 4K and nothing at all are left out. remux: remux_seasons()."""
+    remux = remux or {}
     out = {}
     for q in requests:
         media, tv = q.get("media") or {}, q.get("type") == "tv"
@@ -504,18 +532,24 @@ def request_sizes(requests, movies, series, queues):
         if tv:
             wanted = {x.get("seasonNumber") for x in q.get("seasons") or []}
             stats = [x.get("statistics") or {} for x in title.get("seasons") or [] if not wanted or x.get("seasonNumber") in wanted]
+            chosen = [x for x in title.get("seasons") or [] if not wanted or x.get("seasonNumber") in wanted]
             size = sum(x.get("sizeOnDisk") or 0 for x in stats)
             files, of = sum(x.get("episodeFileCount") or 0 for x in stats), sum(x.get("episodeCount") or 0 for x in stats)
-            entry = {"size": size} | ({"files": files, "of": of} if files < of else {})
+            episodes = {str(x.get("seasonNumber")): (x.get("statistics") or {}).get("episodeCount") for x in chosen if (x.get("statistics") or {}).get("episodeCount")}
+            counts = {"files": files, "of": of, "episodes": episodes} if of else {}
+            entry = {"size": size} | counts | _extra(title, any(x.get("seasonNumber") in remux.get(ext, ()) for x in chosen))
             queued = _queued(records, lambda r: r.get("seriesId") == ext and (not wanted or (r.get("episode") or {}).get("seasonNumber", r.get("seasonNumber")) in wanted))
         else:
+            counts = {}
             size = (title.get("movieFile") or {}).get("size") or title.get("sizeOnDisk") or 0
-            entry = {"size": size}
+            entry = {"size": size} | _extra(title, _remux(title.get("movieFile")))
             queued = _queued(records, lambda r: r.get("movieId") == ext)
         if size:
             out[str(q["id"])] = entry
         elif queued:
-            out[str(q["id"])] = {"queued": queued}
+            out[str(q["id"])] = {"queued": queued} | counts
+        elif counts:
+            out[str(q["id"])] = counts
     return out
 
 
@@ -525,8 +559,9 @@ def _quality(f):
     return f"{res}p {hdr}".strip() if res else ""
 
 
-def media_sizes(movies, series, queues):
-    """Every Radarr/Sonarr title by "movie|tv/<tmdb id>": {"size", "quality"} (movie file), {"size", "files", "of", "seasons"} (series, monitored aired episodes), else {"queued"}; nothing = left out."""
+def media_sizes(movies, series, queues, remux=None):
+    """Every Radarr/Sonarr title by "movie|tv/<tmdb id>": {"size", "quality"} (movie file), {"size", "files", "of", "seasons"} (series, monitored aired episodes), both with "runtime" and "remux" when known, else {"queued"}; nothing = left out. remux: remux_seasons()."""
+    remux = remux or {}
     out = {}
     records = lambda app: (queues.get(app) or {}).get("records") or [] if isinstance(queues.get(app), dict) else []
     for m in movies.values():
@@ -535,7 +570,7 @@ def media_sizes(movies, series, queues):
         f = m.get("movieFile") or {}
         size = f.get("size") or m.get("sizeOnDisk") or 0
         if size:
-            out[f"movie/{m['tmdbId']}"] = {"size": size} | ({"quality": _quality(f)} if _quality(f) else {})
+            out[f"movie/{m['tmdbId']}"] = {"size": size} | ({"quality": _quality(f)} if _quality(f) else {}) | _extra(m, _remux(f))
         else:
             queued = _queued(records("radarr"), lambda r: r.get("movieId") == m["id"])
             if queued:
@@ -550,7 +585,7 @@ def media_sizes(movies, series, queues):
                 seasons[str(x.get("seasonNumber"))] = {"size": st.get("sizeOnDisk") or 0, "files": st.get("episodeFileCount") or 0, "of": st.get("episodeCount") or 0}
         size = sum(v["size"] for v in seasons.values())
         if size:
-            out[f"tv/{t['tmdbId']}"] = {"size": size, "files": sum(v["files"] for v in seasons.values()), "of": sum(v["of"] for v in seasons.values()), "seasons": seasons}
+            out[f"tv/{t['tmdbId']}"] = {"size": size, "files": sum(v["files"] for v in seasons.values()), "of": sum(v["of"] for v in seasons.values()), "seasons": seasons} | _extra(t, bool(remux.get(t["id"])))
         else:
             queued = _queued(records("sonarr"), lambda r: r.get("seriesId") == t["id"])
             if queued:
@@ -591,7 +626,8 @@ def collect_request_state(now, seerr, apps, queued=frozenset(), searching=None, 
     if queues is not None:
         try:
             movies, shows = _all(apps["radarr"], "/movie"), _all(apps["sonarr"], "/series")
-            out["sizes"], out["media"] = request_sizes(every, movies, shows, queues), media_sizes(movies, shows, queues)
+            remux = remux_seasons(apps["sonarr"], shows)
+            out["sizes"], out["media"] = request_sizes(every, movies, shows, queues, remux), media_sizes(movies, shows, queues, remux)
         except (ApiError, KeyError, TypeError) as e:
             print(f"request sizes not read, the last ones kept: {e}", file=sys.stderr)
     return out

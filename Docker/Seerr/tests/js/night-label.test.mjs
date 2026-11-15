@@ -590,6 +590,19 @@ test("waiting for approval ⏳, problem ⚠️ with the Radarr message, Seerr co
   assert.equal(flagTip(cat), "Problem — Seerr could not hand the request to Radarr/Sonarr");
 });
 
+test("a title removed from Radarr/Sonarr: ⚠️ removed, no moon, compass or 'not searched yet', also in German", async () => {
+  const state = live({ canWait: ["movie/701"], fresh: { "movie/701": null }, removed: ["movie/702"] });
+  const w = rsPage(header(badge("movie/700")) + requestCard("movie/702", "Gone").replace(badge("movie/702"), plainBadge("movie/702", "Deleted")) + requestCard("movie/701", "Cat"), "/movie/700", state);
+  await settle();
+  const [, gone, cat] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  assert.equal(visibleText(w, gone), "Deleted|⚠️");
+  assert.equal(flagTip(gone), "Removed from Radarr/Sonarr — nothing searches for it; request it again or delete the request");
+  assert.ok(!(flagTip(cat) || "").includes("Removed"), "only the removed title says so");
+  const de = rsPage(header(badge("movie/700")) + requestCard("movie/702", "Gone").replace(badge("movie/702"), plainBadge("movie/702", "Gelöscht")), "/movie/700", state);
+  await settle();
+  assert.equal(flagTip(de.document.querySelectorAll('a[href$="?manage=1"]')[1]), "Aus Radarr/Sonarr entfernt — nichts sucht danach; neu anfragen oder die Anfrage löschen");
+});
+
 test("cards: importing keeps the spinner with 'Importing…', a download Seerr does not show yet spins, a file already there is ✅", async () => {
   const rs = { value: live({ queue: { "movie/700": { state: "importing" }, "movie/701": { state: "downloading" } }, imported: ["movie/702"] }) };
   const w = discover(clockCard("/l700.jpg") + clockCard("/l701.jpg") + clockCard("/l702.jpg"), [listed(700), listed(701), listed(702)], rs);

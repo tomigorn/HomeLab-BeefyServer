@@ -18,8 +18,8 @@
     de: { spin: "Lädt gerade herunter", avail: "In Jellyfin verfügbar", part: "Teilweise verfügbar" },
   };
   var LIVE = {
-    en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", wrongFilm: "Wrong film downloaded (release from {ry}, film is {y}), being replaced", needsImport: "Needs a manual import (release title: '{r}')", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", locale: "en-GB" },
-    de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", wrongFilm: "Falscher Film heruntergeladen (Release von {ry}, Film ist von {y}), wird ersetzt", needsImport: "Muss manuell importiert werden (Release-Titel: '{r}')", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", locale: "de-CH" },
+    en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", wrongFilm: "Wrong film downloaded (release from {ry}, film is {y}), being replaced", needsImport: "Needs a manual import (release title: '{r}')", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", removed: "Removed from Radarr/Sonarr — nothing searches for it; request it again or delete the request", locale: "en-GB" },
+    de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", wrongFilm: "Falscher Film heruntergeladen (Release von {ry}, Film ist von {y}), wird ersetzt", needsImport: "Muss manuell importiert werden (Release-Titel: '{r}')", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", removed: "Aus Radarr/Sonarr entfernt — nichts sucht danach; neu anfragen oder die Anfrage löschen", locale: "de-CH" },
   };
   var TITLE = {
     en: { requested: "Requested — approved, waiting for the search", processing: "Processing — handed to Radarr/Sonarr", declined: "Declined — an admin refused the request", unknown: "Unknown — Seerr has no state for it", deleted: "Deleted — removed from Jellyfin" },
@@ -60,7 +60,7 @@
     if (!(now - Date.parse(data.updated) <= MAX_AGE)) return null;
     var obj = function (v) { return v && typeof v === "object" && !Array.isArray(v) ? v : {}; };
     var set = function (v) { var o = {}; (Array.isArray(v) ? v : []).forEach(function (k) { o[String(k)] = true; }); return o; };
-    return { canWait: set(data.canWait), unreleased: data.unreleased, noRelease: obj(data.noRelease), searching: obj(data.searching), fresh: obj(data.fresh), pending: set(data.pending), queue: obj(data.queue), imported: set(data.imported), soFar: set(data.soFar), updated: Date.parse(data.updated) };
+    return { canWait: set(data.canWait), unreleased: data.unreleased, noRelease: obj(data.noRelease), searching: obj(data.searching), fresh: obj(data.fresh), pending: set(data.pending), queue: obj(data.queue), imported: set(data.imported), soFar: set(data.soFar), removed: set(data.removed), updated: Date.parse(data.updated) };
   }
 
   function busy(m) {
@@ -74,6 +74,8 @@
   function flags(key, rs, m) {
     if (!rs || !key) return { moon: false, compass: false, cal: false, date: null };
     var has = Object.prototype.hasOwnProperty, done = !!(m && m.status === 5), now = Date.now();
+    // the title is gone from Radarr/Sonarr: nothing searches, so no waiting icons
+    if (rs.removed && rs.removed[key] === true && !done) return { moon: false, compass: false, cal: false, date: null, removed: true };
     var q = !done && has.call(rs.queue, key) && rs.queue[key] && typeof rs.queue[key] === "object" ? rs.queue[key] : {};
     var loading = q.state === "downloading" || q.state === "importing";
     var search = !done && has.call(rs.searching, key) && rs.searching[key] && typeof rs.searching[key] === "object" ? rs.searching[key] : null;
@@ -103,6 +105,7 @@
 
   function liveList(f, l) {
     var L = LIVE[l], out = [];
+    if (f.removed) out.push(["⚠️", L.removed]);
     if (f.problem) out.push(["⚠️", problemText(f.problem, L)]);
     if (f.pending) out.push(["⏳", L.pending]);
     if (f.search) {
@@ -515,7 +518,7 @@
 
   function listed(rs, key) {
     var has = Object.prototype.hasOwnProperty;
-    return rs.canWait[key] || rs.pending[key] || rs.imported[key] || has.call(rs.unreleased, key) || has.call(rs.noRelease, key) || has.call(rs.searching, key) || has.call(rs.fresh, key) || has.call(rs.queue, key);
+    return rs.canWait[key] || rs.pending[key] || rs.imported[key] || has.call(rs.unreleased, key) || has.call(rs.noRelease, key) || has.call(rs.searching, key) || has.call(rs.fresh, key) || has.call(rs.queue, key) || !!(rs.removed && rs.removed[key]);
   }
 
   // Seerr's "Partially Available" on a series complete so far reads "Available so far" (Seerr's text back when that ends)

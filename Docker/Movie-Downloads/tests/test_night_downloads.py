@@ -301,7 +301,7 @@ def ep(season, number, air=None, has_file=False):
 DN = {"radarr": 64, "sonarr": 61}
 
 
-NEW_KEYS = ("searching", "fresh", "pending", "queue", "imported", "soFar")
+NEW_KEYS = ("searching", "fresh", "pending", "queue", "imported", "soFar", "removed")
 
 
 def rstate(requests, movies=(), series=(), episodes=None, now=MON_DAY, queued=(), searching=None, commands=None, queue=None, full=False):
@@ -397,17 +397,17 @@ class RequestState(unittest.TestCase):
                 return {"/movie/54": movie(54), "/series/19": {"id": 19, "tags": [], "status": "upcoming"}, "/episode?seriesId=19": [ep(1, 1)]}[path]
             return call
         out = nd.collect_request_state(MON_DAY, seerr, {"radarr": arr("radarr"), "sonarr": arr("sonarr")})
-        self.assertEqual(out, {"canWait": ["movie/100", "tv/300"], "unreleased": {"tv/300": None}, "noRelease": {}, "searching": {}, "fresh": {"movie/100": None}, "pending": [], "queue": {}, "imported": [], "soFar": []})
+        self.assertEqual(out, {"canWait": ["movie/100", "tv/300"], "unreleased": {"tv/300": None}, "noRelease": {}, "searching": {}, "fresh": {"movie/100": None}, "pending": [], "queue": {}, "imported": [], "soFar": [], "removed": []})
         self.assertNotIn(("radarr", "/movie/7"), calls)
         self.assertEqual(calls[0], ("seerr", "/request?take=1000&skip=0&filter=all&sort=added"))
 
-    def test_collect_title_gone_from_radarr_counts_as_not_added(self):
+    def test_collect_title_gone_from_radarr_is_removed(self):
         def arr(path):
             if path == "/tag":
                 return []
             raise nd.NotFound(path)
         out = nd.collect_request_state(MON_DAY, lambda p: {"results": [req("movie", 100, 54)]}, {"radarr": arr, "sonarr": arr})
-        self.assertEqual(out["canWait"], ["movie/100"])
+        self.assertEqual((out["canWait"], out["removed"]), ([], ["movie/100"]))
 
 
 def sreq(rid, type_, tmdb, ext, seasons=(), is4k=False, mstatus=5, status=2):
@@ -429,11 +429,41 @@ class Sizes(unittest.TestCase):
 
     def test_series_sums_only_the_requested_seasons(self):
         out = nd.request_sizes([sreq(31, "tv", 84773, 11, seasons=[1])], {}, {11: SHOW}, {})
-        self.assertEqual(out, {"31": {"size": 82003416606}})
+        self.assertEqual(out, {"31": {"size": 82003416606, "files": 8, "of": 8, "episodes": {"1": 8}}})
 
     def test_series_with_missing_episodes_counts_them(self):
         out = nd.request_sizes([sreq(31, "tv", 84773, 11, seasons=[1, 2, 3])], {}, {11: SHOW}, {})
-        self.assertEqual(out, {"31": {"size": 122003416606, "files": 13, "of": 16}})
+        self.assertEqual(out, {"31": {"size": 122003416606, "files": 13, "of": 16, "episodes": {"1": 8, "2": 8}}})
+
+    def test_movie_runtime_and_remux(self):
+        remux = FELLOWSHIP | {"runtime": 178, "movieFile": {"size": 45327147274, "quality": {"quality": {"name": "Remux-2160p"}}}}
+        plain = {"id": 60, "hasFile": True, "runtime": 98, "movieFile": {"size": 7190407839, "quality": {"quality": {"name": "Bluray-1080p"}}}}
+        out = nd.request_sizes([sreq(62, "movie", 120, 59), sreq(63, "movie", 121, 60)], {59: remux, 60: plain}, {}, {})
+        self.assertEqual(out, {"62": {"size": 45327147274, "runtime": 178, "remux": True}, "63": {"size": 7190407839, "runtime": 98}})
+
+    def test_series_runtime_per_episode_and_remux_of_the_requested_seasons(self):
+        show = SHOW | {"runtime": 24}
+        reqs = [sreq(31, "tv", 84773, 11, seasons=[1]), sreq(32, "tv", 84773, 11, seasons=[1, 2])]
+        out = nd.request_sizes(reqs, {}, {11: show}, {}, remux={11: {2}})
+        self.assertEqual(out["31"], {"size": 82003416606, "files": 8, "of": 8, "episodes": {"1": 8}, "runtime": 24})
+        self.assertEqual(out["32"], {"size": 122003416606, "files": 13, "of": 16, "episodes": {"1": 8, "2": 8}, "runtime": 24, "remux": True})
+
+    def test_series_with_nothing_on_disk_still_counts_its_episodes(self):
+        out = nd.request_sizes([sreq(33, "tv", 1, 4, seasons=[1, 2], mstatus=3)], {}, {4: {"id": 4, "runtime": 45, "seasons": [season(1, 0, 10, 0), season(2, 0, 12, 0)]}}, {"sonarr": {"records": []}})
+        self.assertEqual(out, {"33": {"files": 0, "of": 22, "episodes": {"1": 10, "2": 12}}})
+
+    def test_remux_seasons_reads_episode_files_only_of_series_with_files(self):
+        calls = []
+        files = {11: [{"seasonNumber": 1, "quality": {"quality": {"name": "Bluray-1080p"}}}, {"seasonNumber": 2, "quality": {"quality": {"name": "Bluray-2160p Remux"}}},
+                      {"seasonNumber": 2, "quality": {"quality": {"name": "Bluray-1080p REMUX"}}}],
+                 12: [{"seasonNumber": 1, "quality": {"quality": {"name": "WEBDL-1080p"}}}]}
+        def api(path):
+            calls.append(path)
+            return files[int(path.split("=")[1])]
+        empty = {"id": 13, "seasons": [season(1, 0, 8, 0)]}
+        out = nd.remux_seasons(api, {11: SHOW, 12: {"id": 12, "seasons": [season(1, 3, 3, 9)]}, 13: empty})
+        self.assertEqual(out, {11: {2}})
+        self.assertEqual(calls, ["/episodefile?seriesId=11", "/episodefile?seriesId=12"])
 
     def test_not_downloaded_yet_shows_the_queued_size_once_per_download(self):
         queues = {"radarr": {"records": [{"movieId": 54, "downloadId": "A", "size": 5378662671}, {"movieId": 7, "downloadId": "B", "size": 9}]},
@@ -443,7 +473,7 @@ class Sizes(unittest.TestCase):
                                          {"seriesId": 4, "seasonNumber": 3, "downloadId": "R", "size": 7}]}}
         out = nd.request_sizes([sreq(57, "movie", 1480613, 54, mstatus=3), sreq(54, "tv", 213375, 4, seasons=[1, 2], mstatus=3)],
                                {54: {"id": 54, "hasFile": False, "sizeOnDisk": 0}}, {4: {"id": 4, "seasons": [season(1, 0, 8, 0), season(2, 0, 8, 0)]}}, queues)
-        self.assertEqual(out, {"57": {"queued": 5378662671}, "54": {"queued": 52587107587}})
+        self.assertEqual(out, {"57": {"queued": 5378662671}, "54": {"queued": 52587107587, "files": 0, "of": 16, "episodes": {"1": 8, "2": 8}}})
 
     def test_unknown_title_4k_and_nothing_on_disk_or_queued_are_left_out(self):
         out = nd.request_sizes([sreq(1, "movie", 1, None), sreq(2, "movie", 2, 99), sreq(3, "movie", 3, 59, is4k=True), sreq(4, "movie", 4, 54, mstatus=3)],
@@ -457,27 +487,31 @@ class Sizes(unittest.TestCase):
         def arr(app):
             def call(path):
                 calls.append((app, path))
-                return {"/tag": [], "/movie": [FELLOWSHIP], "/series": [SHOW]}[path]
+                return {"/tag": [], "/movie": [FELLOWSHIP], "/series": [SHOW | {"tmdbId": 84773}, {"id": 12, "seasons": [season(1, 0, 4, 0)]}],
+                        "/episodefile?seriesId=11": [{"seasonNumber": 1, "quality": {"quality": {"name": "Bluray-1080p Remux"}}}]}[path]
             return call
         apps = {"radarr": arr("radarr"), "sonarr": arr("sonarr")}
         out = nd.collect_request_state(MON_DAY, seerr, apps, queues={"radarr": {"records": []}, "sonarr": {"records": []}})
-        self.assertEqual(out["sizes"], {"62": {"size": 45327147274}, "31": {"size": 82003416606}})
+        self.assertEqual(out["sizes"], {"62": {"size": 45327147274}, "31": {"size": 82003416606, "files": 8, "of": 8, "episodes": {"1": 8}, "remux": True}})
+        self.assertEqual(out["media"]["tv/84773"]["remux"], True)
+        calls.clear()
         self.assertNotIn("sizes", nd.collect_request_state(MON_DAY, seerr, apps))
-        self.assertEqual(calls.count(("radarr", "/movie")), 1)
+        self.assertNotIn(("sonarr", "/episodefile?seriesId=11"), calls)
+        self.assertEqual(calls.count(("radarr", "/movie")), 0)
 
     def test_media_sizes_for_every_title_by_tmdb_id(self):
-        fellowship = FELLOWSHIP | {"tmdbId": 120, "movieFile": {"size": 45327147274, "quality": {"quality": {"resolution": 2160}}, "mediaInfo": {"videoDynamicRangeType": "HDR10"}}}
+        fellowship = FELLOWSHIP | {"tmdbId": 120, "runtime": 178, "movieFile": {"size": 45327147274, "quality": {"quality": {"resolution": 2160, "name": "Remux-2160p"}}, "mediaInfo": {"videoDynamicRangeType": "HDR10"}}}
         plain = {"id": 3, "tmdbId": 7972, "hasFile": True, "movieFile": {"size": 7190407839, "quality": {"quality": {"resolution": 1080}}, "mediaInfo": {"videoDynamicRangeType": ""}}}
         waiting = {"id": 54, "tmdbId": 1480613, "hasFile": False, "sizeOnDisk": 0}
         nothing = {"id": 55, "tmdbId": 1, "hasFile": False, "sizeOnDisk": 0}
-        show = SHOW | {"tmdbId": 84773}
+        show = SHOW | {"tmdbId": 84773, "runtime": 24}
         queues = {"radarr": {"records": [{"movieId": 54, "downloadId": "A", "size": 5378662671}]}, "sonarr": {"records": []}}
-        out = nd.media_sizes({59: fellowship, 3: plain, 54: waiting, 55: nothing}, {11: show, 12: {"id": 12, "tmdbId": 9, "seasons": [season(1, 0, 4, 0)]}}, queues)
+        out = nd.media_sizes({59: fellowship, 3: plain, 54: waiting, 55: nothing}, {11: show, 12: {"id": 12, "tmdbId": 9, "seasons": [season(1, 0, 4, 0)]}}, queues, remux={11: {2}})
         self.assertEqual(out, {
-            "movie/120": {"size": 45327147274, "quality": "2160p HDR10"},
+            "movie/120": {"size": 45327147274, "quality": "2160p HDR10", "runtime": 178, "remux": True},
             "movie/7972": {"size": 7190407839, "quality": "1080p"},
             "movie/1480613": {"queued": 5378662671},
-            "tv/84773": {"size": 122003416606, "files": 13, "of": 16, "seasons": {"1": {"size": 82003416606, "files": 8, "of": 8}, "2": {"size": 40000000000, "files": 5, "of": 8}}},
+            "tv/84773": {"size": 122003416606, "files": 13, "of": 16, "seasons": {"1": {"size": 82003416606, "files": 8, "of": 8}, "2": {"size": 40000000000, "files": 5, "of": 8}}, "runtime": 24, "remux": True},
         })
 
     def test_collect_adds_the_media_sizes_beside_the_request_sizes(self):
@@ -522,6 +556,20 @@ class SearchFeedback(unittest.TestCase):
         cmds = {"radarr": {nd.ALL: {"status": "started", "started": "2026-10-28T04:17:00Z"}}}
         out = rstate([req("movie", 1, 1), req("movie", 2, 2), req("movie", 3, 3)], [movie(1), movie(2, available=False), movie(3)], now=NOW_UTC, searching={"radarr": nd.ALL}, commands=cmds, queue={("radarr", 3): {"state": "downloading"}}, full=True)
         self.assertEqual(out["searching"], {"movie/1": {"status": "started", "started": "2026-10-28T04:17:00Z"}})
+
+    def test_a_title_removed_from_the_app_is_removed_not_waiting_for_the_night(self):
+        # Seerr still points to the app's entry (externalServiceId) but the app no longer has it: nothing will search for it.
+        out = rstate([req("tv", 312697, 32, created="2026-11-08T16:56:00.000Z"), req("movie", 5, 55)], [movie(55)], full=True)
+        self.assertEqual(out["removed"], ["tv/312697"])
+        self.assertNotIn("tv/312697", out["canWait"])
+        self.assertNotIn("tv/312697", out["fresh"])
+        self.assertNotIn("tv/312697", out["noRelease"])
+        self.assertIn("movie/5", out["fresh"])
+
+    def test_a_title_not_yet_in_the_app_is_still_fresh(self):
+        out = rstate([req("movie", 2, None, created="2026-10-28T12:24:55.000Z")], now=NOW_UTC, full=True)
+        self.assertEqual(out["removed"], [])
+        self.assertIn("movie/2", out["fresh"])
 
     def test_just_requested_without_a_search_yet_is_fresh_with_its_request_time(self):
         rs = [req("movie", 1, 1, created="2026-10-28T12:24:50.000Z"), req("movie", 2, None, created="2026-10-28T12:24:55.000Z"), req("movie", 3, 3, created="2026-10-28T12:00:00.000Z"), req("movie", 4, 4, status=1, created="2026-10-28T12:24:00.000Z")]
