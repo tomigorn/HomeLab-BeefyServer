@@ -2099,5 +2099,250 @@ class ImportedByHand(unittest.TestCase):
                                     ("sonarr", "DELETE", "/queue/2?removeFromClient=true&blocklist=false&skipRedownload=true", None)])
 
 
+
+TIGER = "The.Tiger.2025.2160p.AMZN.WEB-DL.DUAL.DDP5.1.Atmos.HDR.H.265-FLUX"
+LOWER = "The.Tank.2025.German.DL.1080p.WEB.H264-GRP"
+NOT_UPGRADE = "Not an upgrade for existing movie file. Existing quality: WEBDL-2160p. New Quality WEBDL-1080p."
+REPLACE_RELEASES = [
+    {"guid": "https://indexer.example.com/details/aaa", "indexerId": 4, "title": TIGER, "size": 20_000_000_000, "quality": {"quality": {"name": "WEBDL-2160p"}}, "customFormatScore": 900,
+     "rejected": True, "rejections": ["Existing file on disk is of equal or higher preference: WEBDL-2160p"], "indexer": "NZBgeek", "protocol": "usenet", "mappedMovieId": 43},
+    {"guid": "https://indexer.example.com/details/bbb", "indexerId": 4, "title": LOWER, "size": 6_000_000_000, "quality": {"quality": {"name": "WEBDL-1080p"}}, "customFormatScore": 500,
+     "rejected": True, "rejections": ["Existing file on disk is of equal or higher preference: WEBDL-2160p"], "indexer": "NZBgeek", "protocol": "usenet", "mappedMovieId": 43},
+    {"guid": "https://indexer.example.com/details/ccc", "indexerId": 4, "title": "The.Tank.2025.TELESYNC.x264-BAD", "size": 1_000_000_000, "quality": {"quality": {"name": "TELESYNC"}},
+     "customFormatScore": -500, "rejected": True, "rejections": ["Custom Formats score of -500 is below the minimum of 0", "Existing file on disk is of equal or higher preference: WEBDL-2160p"],
+     "indexer": "NZBgeek", "protocol": "usenet", "mappedMovieId": 43}]
+NEW_FILE = "/data/usenet/complete/movies/The.Tank.2025.German.DL.1080p/the.tank.mkv"
+
+
+def tank_done(me=USER):
+    """The Tank: an import problem solved, its file from a known grab (history: grabbed + imported with the file's id)."""
+    w = tank_world(TIGER)
+    pid = one(w, "import")["id"]
+    w.titles["/movie/43"] = dict(TANK, hasFile=True, runtime=95, qualityProfileId=7, movieFile={"id": 159, "quality": {"quality": {"id": 19, "name": "WEBDL-2160p"}}})
+    w.seerr_media["/movie/1252037"] = {"id": 1252037, "title": "The Tank", "mediaInfo": {"externalServiceId": 43}}
+    w.history = [{"id": 451, "eventType": "downloadFolderImported", "date": iso(T - 3600), "downloadId": "DL1", "sourceTitle": TIGER, "data": {"fileId": "159"}},
+                 {"id": 400, "eventType": "grabbed", "date": iso(T - 7200), "downloadId": "DL1", "sourceTitle": TIGER, "data": {"indexer": "NZBgeek (Prowlarr)", "guid": "https://indexer.example.com/details/aaa"}}]
+    w.queues["radarr"] = []
+    manual.CACHE.clear()
+    problems(w)
+    w.me = me
+    w.releases = [dict(x) for x in REPLACE_RELEASES]
+    return w, pid
+
+
+def done_rec(w, pid):
+    return next(r for r in problems(w)["done"] if r["id"] == pid)
+
+
+def open_rec(w, pid):
+    return next(r for r in problems(w)["open"] if r["id"] == pid)
+
+
+def stored(w, pid):
+    return json.loads(w.store.read_text())["problems"][pid]
+
+
+class ReleaseActions(unittest.TestCase):
+    """Done entries whose file came from a known release: pick another release (replaces it the way Radarr/Sonarr upgrade) or block it (markAsFailed of its grab)."""
+
+    def setUp(self):
+        reset()
+
+    def later(self, w, s):
+        manual.NOW = lambda: T + s
+        os.utime(w.rs_file, (T + s, T + s))
+        manual.CACHE.clear()
+        manual.THROTTLE.clear()
+
+    def pick(self, w, pid, title=LOWER, **extra):
+        out = get(w, f"releases?id={pid}")[1]
+        n = next(x["n"] for x in out["releases"] if x["title"] == title)
+        return post(w, dict({"id": pid, "action": "replace", "release": n, "token": out["token"]}, **extra))
+
+    def reject(self, w, pid, **extra):
+        return post(w, dict({"id": pid, "action": "reject", "confirm": "reject", "ref": done_rec(w, pid)["current"]["ref"]}, **extra))
+
+    def test_done_entry_with_a_known_release_offers_both_actions_to_every_user(self):
+        w, pid = tank_done(me=OTHER)
+        r = done_rec(w, pid)
+        self.assertEqual(r["offers"], ["reject", "replace"])
+        self.assertEqual((r["current"]["release"], r["current"]["quality"]), (TIGER, "WEBDL-2160p"))
+        self.assertFalse({"grabId", "downloadId", "fileIds"} & set(r["current"]))
+        self.assertNotIn("indexer.example.com", json.dumps(problems(w)))
+
+    def test_no_known_release_no_actions(self):
+        w, pid = tank_done()
+        w.history = [h for h in w.history if h["eventType"] != "grabbed"]
+        self.later(w, 2 * 3600)
+        self.assertEqual(done_rec(w, pid)["offers"], [])
+        self.assertEqual(post(w, {"id": pid, "action": "reject", "confirm": "reject", "ref": "x"})[0], 404)
+        reset()
+        w, pid = tank_done()
+        w.titles["/movie/43"]["movieFile"]["id"] = 170
+        self.later(w, 2 * 3600)
+        self.assertEqual(done_rec(w, pid)["offers"], [])
+        self.assertEqual(w.writes, [])
+
+    def test_release_list_marks_the_current_release_and_picks_what_only_the_current_file_rejects(self):
+        w, pid = tank_done()
+        status, out = get(w, f"releases?id={pid}")
+        self.assertEqual(status, 200, out)
+        self.assertIn(("radarr", "/release?movieId=43"), w.gets)
+        rows = {x["title"]: x for x in out["releases"]}
+        self.assertTrue(rows[TIGER]["current"] and rows[TIGER]["rejected"])
+        self.assertFalse(rows[LOWER]["rejected"])
+        self.assertTrue(rows["The.Tank.2025.TELESYNC.x264-BAD"]["rejected"])
+        self.assertFalse(out["override"])
+        self.assertNotIn("details/bbb", json.dumps(out))
+
+    def test_pick_grabs_the_release_and_moves_the_entry_back_to_open_as_replacing(self):
+        w, pid = tank_done(me=OTHER)
+        status, out = self.pick(w, pid)
+        self.assertEqual(status, 200, out)
+        self.assertEqual(w.writes, [("radarr", "POST", "/release", {"guid": "https://indexer.example.com/details/bbb", "indexerId": 4})])
+        rec = open_rec(w, pid)
+        self.assertEqual((rec["replace"]["mode"], rec["replace"]["release"], rec["replace"]["from"], rec["replace"]["user"]), ("replace", LOWER, TIGER, "joe"))
+        self.assertEqual(rec["offers"], [])
+        self.assertEqual((rec["actions"][-1]["user"], rec["actions"][-1]["action"]), ("joe", "replace"))
+        self.assertEqual(problems(w)["done"], [])
+
+    def test_the_current_and_rejected_releases_need_more_than_a_pick(self):
+        w, pid = tank_done()
+        self.assertEqual(self.pick(w, pid, title=TIGER)[0], 400)
+        manual.THROTTLE.clear()
+        self.assertEqual(self.pick(w, pid, title="The.Tank.2025.TELESYNC.x264-BAD"), (403, {"error": "too early"}))
+        self.assertEqual(w.writes, [])
+        self.later(w, 8 * DAY)
+        self.assertTrue(get(w, f"releases?id={pid}&refresh=1")[1]["override"])
+        self.assertEqual(self.pick(w, pid, title="The.Tank.2025.TELESYNC.x264-BAD")[0], 200)
+
+    def test_pick_needs_the_callers_own_list_of_this_title_and_the_origin(self):
+        w, pid = tank_done()
+        out = get(w, f"releases?id={pid}")[1]
+        self.assertEqual(out["releases"][0]["title"], LOWER)
+        self.assertEqual(post(w, {"id": pid, "action": "replace", "release": 0, "token": out["token"]}, {"Origin": "https://evil.example.com"})[0], 403)
+        self.assertEqual(post(w, {"id": pid, "action": "replace", "release": 0, "token": "nope"})[0], 400)
+        manual.THROTTLE.clear()
+        w.me = OTHER
+        self.assertEqual(post(w, {"id": pid, "action": "replace", "release": 0, "token": out["token"]})[0], 400)
+        manual.THROTTLE.clear()
+        w.me = USER
+        manual.OFFERS[(pid, "releases", USER["id"])][2]["arrId"] = 99
+        self.assertEqual(post(w, {"id": pid, "action": "replace", "release": 0, "token": out["token"]})[0], 400)
+        self.assertEqual(w.writes, [])
+
+    def replacing(self, verdict="queued"):
+        w, pid = tank_done()
+        self.pick(w, pid)
+        w.queues["radarr"] = [dict(qrec(32, kind="movie", dl="DLN", title=LOWER, year=2025, tid=43, tmdb=1252037, msgs=(NOT_UPGRADE,)), movie=TANK)]
+        w.proposals = [{"path": NEW_FILE, "relativePath": "the.tank.mkv", "size": 1, "quality": {"quality": {"id": 3, "name": "WEBDL-1080p"}}, "languages": [{"id": 4, "name": "German"}],
+                        "episodes": [], "rejections": [{"reason": NOT_UPGRADE}], "downloadId": "DLN", "movieId": 43}]
+        w.scanned(NEW_FILE, verdict=verdict)
+        w.writes.clear()
+        self.later(w, 600)
+        return w, pid
+
+    def test_a_not_better_pick_waits_for_the_virus_scan_and_never_shows_as_an_import_problem(self):
+        w, pid = self.replacing("queued")
+        out = problems(w)
+        self.assertEqual([r["id"] for r in out["open"]], [pid])
+        self.assertEqual(w.writes, [])
+
+    def test_a_clean_not_better_pick_is_imported_over_the_old_file_never_deleted_first(self):
+        w, pid = self.replacing("clean")
+        problems(w)
+        self.assertEqual(len(w.writes), 1)
+        app, method, path, body = w.writes[0]
+        self.assertEqual((app, method, path, body["name"], body["importMode"]), ("radarr", "POST", "/command", "ManualImport", "auto"))
+        self.assertEqual([(f["path"], f["movieId"], f["downloadId"]) for f in body["files"]], [(NEW_FILE, 43, "DLN")])
+        self.later(w, 700)
+        problems(w)
+        self.assertEqual(len(w.writes), 1)
+        self.assertFalse(any("/moviefile" in x[2] or "/episodefile" in x[2] for x in w.writes))
+        self.assertIsNone(stored(w, pid)["resolved"])
+
+    def test_replacing_ends_when_the_picked_release_is_imported(self):
+        w, pid = self.replacing("clean")
+        problems(w)
+        w.queues["radarr"] = []
+        w.titles["/movie/43"]["movieFile"] = {"id": 170, "quality": {"quality": {"id": 3, "name": "WEBDL-1080p"}}}
+        w.history = [{"id": 471, "eventType": "downloadFolderImported", "date": iso(T + 900), "downloadId": "DLN", "sourceTitle": LOWER, "data": {"fileId": "170"}},
+                     {"id": 460, "eventType": "grabbed", "date": iso(T + 5), "downloadId": "DLN", "sourceTitle": LOWER, "data": {}}] + w.history
+        self.later(w, 1200)
+        r = done_rec(w, pid)
+        self.assertEqual(r["resolved"]["how"], "replaced")
+        self.assertEqual(r["actions"][-1]["action"], "replaced")
+        self.assertEqual(r["current"]["release"], LOWER)
+        self.assertEqual(stored(w, pid)["replace"]["state"], "done")
+
+    def test_a_pick_imported_between_two_scans_still_counts(self):
+        w, pid = tank_done()
+        self.pick(w, pid)
+        w.titles["/movie/43"]["movieFile"] = {"id": 170, "quality": {"quality": {"id": 3, "name": "WEBDL-1080p"}}}
+        w.history = [{"id": 471, "eventType": "downloadFolderImported", "date": iso(T + 900), "downloadId": "DLN", "sourceTitle": LOWER, "data": {"fileId": "170"}},
+                     {"id": 460, "eventType": "grabbed", "date": iso(T + 5), "downloadId": "DLN", "sourceTitle": LOWER, "data": {}}] + w.history
+        self.later(w, 3600)
+        self.assertEqual(done_rec(w, pid)["resolved"]["how"], "replaced")
+
+    def test_malware_in_the_pick_is_never_imported_the_old_file_stays(self):
+        w, pid = self.replacing("infected")
+        problems(w)
+        self.assertEqual(w.writes, [])
+        self.assertEqual(stored(w, pid)["resolved"]["how"], "replace-failed")
+        self.later(w, 700)
+        self.assertEqual([r["type"] for r in problems(w)["open"]], ["import"])
+
+    def test_block_marks_its_grab_failed_keeps_the_file_and_searches(self):
+        w, pid = tank_done(me=OTHER)
+        status, out = self.reject(w, pid)
+        self.assertEqual(status, 200, out)
+        self.assertEqual(w.writes, [("radarr", "POST", "/history/failed/400", None), ("radarr", "POST", "/command", {"name": "MoviesSearch", "movieIds": [43]})])
+        rec = open_rec(w, pid)
+        self.assertEqual((rec["replace"]["mode"], rec["replace"]["keep"], rec["replace"]["from"]), ("reject", True, TIGER))
+        self.assertEqual((rec["actions"][-1]["user"], rec["actions"][-1]["action"]), ("joe", "reject"))
+
+    def test_block_may_delete_the_current_file_when_asked(self):
+        w, pid = tank_done()
+        self.assertEqual(self.reject(w, pid, keep=False)[0], 200)
+        self.assertEqual(w.writes, [("radarr", "POST", "/history/failed/400", None), ("radarr", "DELETE", "/moviefile/159", None),
+                                    ("radarr", "POST", "/command", {"name": "MoviesSearch", "movieIds": [43]})])
+        self.assertFalse(open_rec(w, pid)["replace"]["keep"])
+
+    def test_block_needs_the_confirmation_the_release_seen_and_not_twice_in_a_row(self):
+        w, pid = tank_done()
+        self.assertEqual(post(w, {"id": pid, "action": "reject", "ref": done_rec(w, pid)["current"]["ref"]})[0], 400)
+        self.assertEqual(post(w, {"id": pid, "action": "reject", "confirm": "reject", "ref": "0123456789ab"}), (409, {"error": "release changed"}))
+        self.assertEqual(w.writes, [])
+        manual.THROTTLE.clear()
+        self.assertEqual(self.reject(w, pid)[0], 200)
+        self.assertEqual(post(w, {"id": pid, "action": "replace", "release": 0})[0], 404)
+
+    def test_blocked_entry_is_done_again_when_another_release_is_imported(self):
+        w, pid = tank_done()
+        self.reject(w, pid)
+        self.later(w, 600)
+        self.assertEqual(open_rec(w, pid)["replace"]["state"], "searching")
+        w.history = [{"id": 480, "eventType": "downloadFolderImported", "date": iso(T + 900), "downloadId": "DL9", "sourceTitle": "Other", "data": {"fileId": "171"}}] + w.history
+        self.later(w, 1200)
+        problems(w)
+        self.assertEqual(stored(w, pid)["resolved"]["how"], "replaced")
+
+    def test_series_block_fails_the_grab_of_its_episodes_and_searches_them(self):
+        w = World(squeue=[qrec(1, dl="DL9", ep=2045, tid=40, tmdb=319013, title="Show.S01E09.1080p-Full3R")], requests=[request(13, "tv", 312697, ext=40, seasons=(1,))])
+        pid = one(w, "import")["id"]
+        w.seerr_media["/tv/312697"] = {"id": 312697, "name": "Company Retreat", "mediaInfo": {"externalServiceId": 40}}
+        w.titles["/series/40"] = {"id": 40, "title": "Company Retreat", "tmdbId": 319013}
+        w.episodes = [{"id": 2045, "seasonNumber": 1, "episodeNumber": 9, "hasFile": True, "episodeFileId": 1166}, {"id": 2046, "seasonNumber": 1, "episodeNumber": 10, "hasFile": True, "episodeFileId": 1161}]
+        w.history = [{"id": 3310, "eventType": "downloadFolderImported", "date": iso(T - 60), "episodeId": 2045, "downloadId": "DL9", "sourceTitle": "Show.S01E09.1080p-Full3R", "data": {"fileId": "1166"}},
+                     {"id": 3241, "eventType": "grabbed", "date": iso(T - 3600), "episodeId": 2045, "downloadId": "DL9", "sourceTitle": "Show.S01E09.1080p-Full3R", "data": {}}]
+        w.queues["sonarr"] = []
+        manual.CACHE.clear()
+        r = done_rec(w, pid)
+        self.assertEqual((r["offers"], r["current"]["season"]), (["reject", "replace"], 1))
+        self.assertEqual(post(w, {"id": pid, "action": "reject", "confirm": "reject", "ref": r["current"]["ref"], "keep": False})[0], 200)
+        self.assertEqual(w.writes, [("sonarr", "POST", "/history/failed/3241", None), ("sonarr", "DELETE", "/episodefile/1166", None),
+                                    ("sonarr", "POST", "/command", {"name": "EpisodeSearch", "episodeIds": [2045]})])
+
+
 if __name__ == "__main__":
     unittest.main()

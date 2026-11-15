@@ -857,3 +857,115 @@ test("no other names: no line", async () => {
   assert.equal($("[data-aka]"), null);
   assert.equal($("[data-name-match]"), null);
 });
+
+const TIGER = "The.Tiger.2025.2160p.AMZN.WEB-DL.DUAL.DDP5.1.Atmos.HDR.H.265-FLUX";
+const tankDone = (over) => problem(Object.assign({ id: "eeeeeeeeeeee", key: "movie/1252037", title: "The Tank", year: 2025, type: "import", offers: ["reject", "replace"],
+  resolved: { at: "2026-11-15T22:21:54Z", how: "imported" }, current: { ref: "0a1b2c3d4e5f", release: TIGER, quality: "WEBDL-2160p", at: "2026-11-15T22:28:08Z", season: null },
+  details: { release: TIGER } }, over));
+const REPLACE_LIST = { state: "done", token: "t-rep", override: false, releases: [
+  { n: 0, title: "The.Tank.2025.German.DL.1080p.WEB.H264-GRP", size: 6e9, quality: "WEBDL-1080p", score: 500, rejected: false, current: false, rejections: ["Existing file on disk is of equal or higher preference: WEBDL-2160p"], indexer: "NZBgeek", protocol: "usenet" },
+  { n: 1, title: TIGER, size: 2e10, quality: "WEBDL-2160p", score: 900, rejected: true, current: true, rejections: ["Existing file on disk is of equal or higher preference: WEBDL-2160p"], indexer: "NZBgeek", protocol: "usenet" }] };
+const DE = PAGE.replace(">Series<", ">Serien<");
+
+async function doneTab(done, routes = {}, body = PAGE) {
+  const pg = await page(Object.assign({ "/_download-now/manual/problems": { status: 200, body: { open: [], done, admin: false } },
+    "/_download-now/manual/action": { status: 200, body: { ok: true, result: "ok" } } }, routes), undefined, body);
+  pg.$('[data-tab="done"]').click();
+  await settle();
+  return pg;
+}
+
+test("done with a known release: the current release, Pick another release and Block this release for every user, EN and DE", async () => {
+  for (const [body, cur, pick, block] of [[PAGE, "Current release:", "Pick another release", "Block this release"], [DE, "Aktuelles Release:", "Anderes Release wählen", "Dieses Release sperren"]]) {
+    const { $ } = await doneTab([tankDone()], {}, body);
+    assert.match($("[data-current]").textContent, new RegExp(cur + ".*FLUX"));
+    assert.equal($('[data-problem="eeeeeeeeeeee"] [data-act="replace"]').textContent, pick);
+    assert.equal($('[data-problem="eeeeeeeeeeee"] [data-act="reject"]').textContent, block);
+  }
+});
+
+test("done without a known release: no current release line, no release actions", async () => {
+  const { $ } = await doneTab([tankDone({ offers: [], current: null })]);
+  assert.equal($("[data-current]"), null);
+  assert.equal($('[data-act="replace"]'), null);
+  assert.equal($('[data-act="reject"]'), null);
+});
+
+test("Pick another release: the same release list, the current one marked and not pickable, a confirm tap replaces it", async () => {
+  for (const [body, again, warn, mark] of [[PAGE, "Tap again to replace it", /current file stays until the new one is imported/, /current release/],
+    [DE, "Nochmals tippen zum Ersetzen", /aktuelle Datei bleibt, bis das neue importiert ist/, /aktuelles Release/]]) {
+    const { $, $$, calls } = await doneTab([tankDone({ current: { ref: "0a1b2c3d4e5f", release: TIGER, quality: "WEBDL-2160p", season: 1 }, key: "tv/312697" })],
+      { "/_download-now/manual/releases": { status: 200, body: REPLACE_LIST } }, body);
+    $('[data-act="replace"]').click();
+    await settle();
+    assert.ok(calls.some((c) => c.url === "/_download-now/manual/releases?id=eeeeeeeeeeee&season=1"));
+    const radios = $$('input[name="release-eeeeeeeeeeee"]');
+    assert.equal(radios.length, 2);
+    assert.equal(radios[1].disabled, true);
+    assert.match($$("[data-release]")[1].querySelector("[data-current-release]").textContent, mark);
+    radios[0].checked = true;
+    const go = $('[data-act="grab"]');
+    go.click();
+    await settle();
+    assert.equal(posts(calls).length, 0);
+    assert.equal(go.textContent, again);
+    assert.match($("[data-warning]").textContent, warn);
+    go.click();
+    await settle();
+    assert.deepEqual(posts(calls)[0].body, { id: "eeeeeeeeeeee", action: "replace", release: 0, token: "t-rep" });
+  }
+});
+
+test("Pick another release after a week: Download anyway replaces too", async () => {
+  const list = Object.assign({}, REPLACE_LIST, { override: true, releases: [Object.assign({}, REPLACE_LIST.releases[0], { rejected: true, rejections: ["Custom Formats score of -5 is below the minimum of 0"] }), REPLACE_LIST.releases[1]] });
+  const { $, calls } = await doneTab([tankDone()], { "/_download-now/manual/releases": { status: 200, body: list } });
+  $('[data-act="replace"]').click();
+  await settle();
+  const rows = [...$("[data-list]").querySelectorAll("[data-release]")];
+  assert.equal(rows[1].querySelector('[data-act="override"]'), null);
+  rows[0].querySelector('[data-act="override"]').click();
+  await settle();
+  assert.deepEqual(posts(calls)[0].body, { id: "eeeeeeeeeeee", action: "replace", release: 0, token: "t-rep" });
+});
+
+test("Block this release: a confirm tap with Keep the current file (on by default), EN and DE", async () => {
+  for (const [body, again, keep] of [[PAGE, "Tap again to block it", "Keep the current file until a replacement arrives"], [DE, "Nochmals tippen zum Sperren", "Aktuelle Datei behalten, bis ein Ersatz da ist"]]) {
+    for (const off of [false, true]) {
+      const { $, calls } = await doneTab([tankDone()], {}, body);
+      const b = $('[data-act="reject"]');
+      b.click();
+      await settle();
+      assert.equal(posts(calls).length, 0);
+      assert.equal(b.textContent, again);
+      const box = $("input[data-keep]");
+      assert.equal(box.checked, true);
+      assert.match(box.parentNode.textContent, new RegExp(keep));
+      if (off) box.checked = false;
+      b.click();
+      await settle();
+      assert.deepEqual(posts(calls)[0].body, { id: "eeeeeeeeeeee", action: "reject", confirm: "reject", ref: "0a1b2c3d4e5f", keep: !off });
+    }
+  }
+});
+
+test("open again while replacing: what happens instead of the problem, no buttons, EN and DE", async () => {
+  const picked = tankDone({ resolved: null, offers: [], replace: { mode: "replace", release: "The.Tank.2025.German.DL.1080p.WEB.H264-GRP", from: TIGER, user: "joe", state: "downloading" } });
+  const blocked = tankDone({ id: "ffffffffffff", key: "movie/9", resolved: null, offers: [], replace: { mode: "reject", from: TIGER, user: "jane", keep: true, state: "searching" } });
+  for (const [body, a, b, line] of [[PAGE, "Replacing release", "Blocked, searching again", /picked by joe/], [DE, "Release wird ersetzt", "Gesperrt, wird neu gesucht", /gewählt von joe/]]) {
+    const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [picked, blocked], done: [], admin: false } } }, undefined, body);
+    assert.equal($('[data-problem="eeeeeeeeeeee"] [data-type]').textContent, a);
+    assert.equal($('[data-problem="ffffffffffff"] [data-type]').textContent, b);
+    assert.match($('[data-problem="eeeeeeeeeeee"] [data-replace]').textContent, line);
+    assert.equal($("[data-act]"), null);
+  }
+});
+
+test("done after a replacement: in words, EN and DE", async () => {
+  const replaced = tankDone({ resolved: { at: "2026-11-16T03:00:00Z", how: "replaced" }, actions: [{ at: "2026-11-15T23:00:00Z", user: "joe", action: "replace", result: "grabbed x" }, { at: "2026-11-16T03:00:00Z", user: null, action: "replaced", result: "x imported" }] });
+  const failed = tankDone({ id: "ffffffffffff", key: "movie/9", resolved: { at: "2026-11-16T03:00:00Z", how: "replace-failed" }, offers: [] });
+  for (const [body, a, b] of [[PAGE, "Release replaced (picked by joe)", "Replacement failed — the current file stays"], [DE, "Release ersetzt (gewählt von joe)", "Ersetzen fehlgeschlagen — die aktuelle Datei bleibt"]]) {
+    const { $ } = await doneTab([replaced, failed], {}, body);
+    assert.equal($('[data-problem="eeeeeeeeeeee"] [data-resolved]').textContent.split(" · ")[0], a);
+    assert.equal($('[data-problem="ffffffffffff"] [data-resolved]').textContent.split(" · ")[0], b);
+  }
+});

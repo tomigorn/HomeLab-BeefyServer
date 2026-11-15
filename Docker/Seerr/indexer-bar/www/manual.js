@@ -139,7 +139,7 @@
       releaseReasons: { "cf-score": "Its score by our rules is too low (e.g. wrong language, poor source).", "required-terms": "The name lacks a term the profile requires (e.g. the language).",
         quality: "The profile doesn't allow this quality.", existing: "The library already has an equal or better version.", seeders: "Too few seeders.",
         blocklisted: "Blocked earlier (a failed or wrong download).", size: "Too big or too small for the profile.", "wrong-title": "Another title." },
-      errorCodes: { "search queue full": "Too many searches are waiting right now: try again in a few minutes.", "too many searches": "You already have a search waiting: this one can start when it is done.",
+      errorCodes: { "release changed": "The title's file changed meanwhile — reload the page.", "search queue full": "Too many searches are waiting right now: try again in a few minutes.", "too many searches": "You already have a search waiting: this one can start when it is done.",
         malware: "Malware found: this download is never imported.", "virus scan pending": "Wait for the virus scan (usually a few minutes); an admin can import before.",
         flagged: "VirusTotal: some scanners flag this file — only an admin can import it.",
         "rejected file needs an admin": "Sonarr/Radarr rejected this file: only an admin can import it.", "another title needs an admin": "Another title than the requested one: only an admin can link it." },
@@ -167,9 +167,21 @@
       history: "What happened", gone: "Went away by itself", imported: "Imported", found: "Found and downloaded",
       removedBy: function (u) { return "Removed by admin" + (u ? " (" + u + ")" : ""); }, fixedBy: function (u, a) { return "Fixed by " + (u || "someone") + " (" + a + ")"; },
       actions: { readd: "added again", "delete": "deleted", block: "blocked, searched again", profile: "older versions allowed", grab: "release picked", link: "matched", "import": "imported", reopened: "back again",
+        replace: "other release picked", reject: "release blocked, searching again", replaced: "release replaced", "replace-failed": "replacement failed",
         override: "downloaded anyway", "override-downloading": "downloading", "override-finished": "download finished", "override-replacing": "better version found", "override-replaced": "replaced by a version the profile allows" },
       errors: { 429: "Too many tries — wait a moment and try again.", 403: "Not allowed — an admin can do this.", 400: "That does not fit any more — reload the page.", 404: "Already solved — reload the page.", other: "Radarr/Sonarr not reachable — try again later." },
-      ok: "Done: ", working: "Working…", problems: function (n) { return n + " problems"; }
+      ok: "Done: ", working: "Working…", problems: function (n) { return n + " problems"; },
+      current: "Current release: ", currentMark: "current release", replaceBtn: "Pick another release", rejectBtn: "Block this release",
+      replaceHint: "For a release that turned out bad (low quality, wrong language): pick another one from the same list. It downloads, and the current file stays until the new one is imported; Radarr/Sonarr then swap them.",
+      replaceAgain: "Tap again to replace it", replaceWarn: "Replaces the current release: the new one is downloaded, the current file stays until the new one is imported.",
+      rejectHint: "Blocks the current release in Radarr/Sonarr (it is never downloaded again) and searches for another one.",
+      rejectWarn: "Blocks the current release in Radarr/Sonarr and searches for another one. With the current file kept, only a better version replaces it; pick one by hand with “Pick another release”.",
+      keep: "Keep the current file until a replacement arrives",
+      replacingType: "Replacing release", rejectingType: "Blocked, searching again",
+      replacingLine: function (rel, u) { return "🔄 " + rel + " (picked by " + (u || "someone") + ") — the current file stays until it is imported"; },
+      rejectingLine: function (rel, u, keep) { return "🚫 " + rel + " blocked by " + (u || "someone") + ", searching for another release — " + (keep ? "the current file stays until a replacement arrives" : "the current file was deleted"); },
+      replacedBy: function (u) { return "Release replaced (picked by " + (u || "someone") + ")"; }, replacedAfterBlock: function (u) { return "Another release replaced the blocked one (blocked by " + (u || "someone") + ")"; },
+      replaceFailed: "Replacement failed — the current file stays"
     },
     de: {
       locale: "de-CH", title: "Manuell beheben", intro: "Downloads, die Hilfe brauchen. Alle können helfen, auch bei Anfragen von anderen.", back: "← Zurück zu Seerr",
@@ -237,7 +249,7 @@
       releaseReasons: { "cf-score": "Nach unseren Regeln zu tiefe Punktzahl (z. B. falsche Sprache, schlechte Quelle).", "required-terms": "Dem Namen fehlt ein Begriff, den das Profil verlangt (z. B. die Sprache).",
         quality: "Das Profil erlaubt diese Qualität nicht.", existing: "Die Bibliothek hat schon eine gleich gute oder bessere Version.", seeders: "Zu wenige Seeder.",
         blocklisted: "Früher gesperrt (fehlgeschlagener oder falscher Download).", size: "Zu gross oder zu klein für das Profil.", "wrong-title": "Ein anderer Titel." },
-      errorCodes: { "search queue full": "Gerade warten zu viele Suchen: in ein paar Minuten nochmals versuchen.", "too many searches": "Du hast schon eine Suche in der Warteschlange: diese kann starten, wenn sie fertig ist.",
+      errorCodes: { "release changed": "Die Datei des Titels hat sich inzwischen geändert — Seite neu laden.", "search queue full": "Gerade warten zu viele Suchen: in ein paar Minuten nochmals versuchen.", "too many searches": "Du hast schon eine Suche in der Warteschlange: diese kann starten, wenn sie fertig ist.",
         malware: "Schadsoftware gefunden: dieser Download wird nie importiert.", "virus scan pending": "Auf den Virenscan warten (meist ein paar Minuten); ein Admin kann vorher importieren.",
         flagged: "VirusTotal: einige Scanner melden diese Datei — nur ein Admin kann sie importieren.",
         "rejected file needs an admin": "Sonarr/Radarr hat diese Datei abgelehnt: nur ein Admin kann sie importieren.", "another title needs an admin": "Ein anderer Titel als der angefragte: nur ein Admin kann ihn zuordnen." },
@@ -265,9 +277,21 @@
       history: "Verlauf", gone: "Hat sich von selbst erledigt", imported: "Importiert", found: "Gefunden und heruntergeladen",
       removedBy: function (u) { return "Von Admin entfernt" + (u ? " (" + u + ")" : ""); }, fixedBy: function (u, a) { return "Behoben von " + (u || "jemandem") + " (" + a + ")"; },
       actions: { readd: "wieder hinzugefügt", "delete": "gelöscht", block: "gesperrt, neu gesucht", profile: "ältere Versionen erlaubt", grab: "Release gewählt", link: "zugeordnet", "import": "importiert", reopened: "wieder da",
+        replace: "anderes Release gewählt", reject: "Release gesperrt, neu gesucht", replaced: "Release ersetzt", "replace-failed": "Ersetzen fehlgeschlagen",
         override: "trotzdem heruntergeladen", "override-downloading": "lädt herunter", "override-finished": "Download fertig", "override-replacing": "bessere Version gefunden", "override-replaced": "ersetzt durch eine vom Profil erlaubte Version" },
       errors: { 429: "Zu viele Versuche — kurz warten und nochmals versuchen.", 403: "Nicht erlaubt — das kann ein Admin.", 400: "Das passt nicht mehr — Seite neu laden.", 404: "Schon gelöst — Seite neu laden.", other: "Radarr/Sonarr nicht erreichbar — später nochmals versuchen." },
-      ok: "Erledigt: ", working: "Läuft…", problems: function (n) { return n + " Probleme"; }
+      ok: "Erledigt: ", working: "Läuft…", problems: function (n) { return n + " Probleme"; },
+      current: "Aktuelles Release: ", currentMark: "aktuelles Release", replaceBtn: "Anderes Release wählen", rejectBtn: "Dieses Release sperren",
+      replaceHint: "Für ein Release, das sich als schlecht herausstellt (tiefe Qualität, falsche Sprache): ein anderes aus derselben Liste wählen. Es wird heruntergeladen, die aktuelle Datei bleibt, bis das neue importiert ist; dann tauschen Radarr/Sonarr sie aus.",
+      replaceAgain: "Nochmals tippen zum Ersetzen", replaceWarn: "Ersetzt das aktuelle Release: das neue wird heruntergeladen, die aktuelle Datei bleibt, bis das neue importiert ist.",
+      rejectHint: "Sperrt das aktuelle Release in Radarr/Sonarr (es wird nie mehr heruntergeladen) und sucht ein anderes.",
+      rejectWarn: "Sperrt das aktuelle Release in Radarr/Sonarr und sucht ein anderes. Bleibt die aktuelle Datei, ersetzt sie nur eine bessere Version; eine bestimmte mit «Anderes Release wählen» von Hand wählen.",
+      keep: "Aktuelle Datei behalten, bis ein Ersatz da ist",
+      replacingType: "Release wird ersetzt", rejectingType: "Gesperrt, wird neu gesucht",
+      replacingLine: function (rel, u) { return "🔄 " + rel + " (gewählt von " + (u || "jemandem") + ") — die aktuelle Datei bleibt, bis es importiert ist"; },
+      rejectingLine: function (rel, u, keep) { return "🚫 " + rel + " gesperrt von " + (u || "jemandem") + ", sucht ein anderes Release — " + (keep ? "die aktuelle Datei bleibt, bis ein Ersatz da ist" : "die aktuelle Datei wurde gelöscht"); },
+      replacedBy: function (u) { return "Release ersetzt (gewählt von " + (u || "jemandem") + ")"; }, replacedAfterBlock: function (u) { return "Ein anderes Release ersetzte das gesperrte (gesperrt von " + (u || "jemandem") + ")"; },
+      replaceFailed: "Ersetzen fehlgeschlagen — die aktuelle Datei bleibt"
     }
   };
 
@@ -520,13 +544,19 @@
 
   App.prototype.item = function (p, open) {
     var t = this.t, d = this.doc, x = p.details || {};
+    var rp = open && p.replace && typeof p.replace === "object" ? p.replace : null;
     var c = el(d, "div", { "class": "hg-m-item", "data-problem": p.id });
-    c.appendChild(el(d, "p", { "class": "hg-m-type", "data-type": true }, t.types[p.type] || String(p.type)));
+    c.appendChild(el(d, "p", { "class": "hg-m-type", "data-type": true }, rp ? (rp.mode === "reject" ? t.rejectingType : t.replacingType) : t.types[p.type] || String(p.type)));
     var code = x.reason && t.reasons[x.reason] ? x.reason : TYPE_REASON[p.type] || "unknown";
-    var what = this.section(t.whatsWrong, { "data-what": true });
-    what.appendChild(el(d, "p", null, t.reasons[code]));
-    if (code === "unknown" && x.message) what.appendChild(el(d, "p", { "class": "hg-m-quote" }, String(x.message)));
-    c.appendChild(what);
+    if (rp) {
+      c.appendChild(el(d, "p", { "class": "hg-m-media", "data-replace": true }, rp.mode === "reject" ? t.rejectingLine(String(rp.from || ""), rp.user ? String(rp.user) : null, rp.keep !== false)
+        : t.replacingLine(String(rp.release || ""), rp.user ? String(rp.user) : null)));
+    } else {
+      var what = this.section(t.whatsWrong, { "data-what": true });
+      what.appendChild(el(d, "p", null, t.reasons[code]));
+      if (code === "unknown" && x.message) what.appendChild(el(d, "p", { "class": "hg-m-quote" }, String(x.message)));
+      c.appendChild(what);
+    }
     c.appendChild(this.details(p));
     if (x.release) {
       var dl = this.section(t.download, { "data-download": true });
@@ -537,7 +567,7 @@
       c.appendChild(dl);
     }
     if (x.message && code !== "unknown") c.appendChild(el(d, "details", { "class": "hg-m-raw", "data-raw": true }, el(d, "summary", null, t.raw), el(d, "p", null, String(x.message))));
-    if (open) {
+    if (open && !rp) {
       var todo = this.section(t.whatToDo, { "data-todo": true });
       todo.appendChild(el(d, "p", { "class": "hg-m-hint" }, t.hints[p.type] || ""));
       c.appendChild(todo);
@@ -545,12 +575,25 @@
       this.actions(p, acts);
       c.appendChild(acts);
       c.appendChild(el(d, "p", { "class": "hg-m-msg", "data-msg": true, role: "status" }));
-    } else {
+    } else if (!open) {
       var res = p.resolved || {};
       var by = (p.actions || []).filter(function (a) { return a.action === res.how; }).pop() || {};
+      var pick = (p.actions || []).filter(function (a) { return a.action === "replace" || a.action === "reject"; }).pop() || {};
       var how = res.how === "gone" || res.how === "imported" || res.how === "found" ? t[res.how] : res.how === "delete" ? t.removedBy(by.user ? String(by.user) : null)
-        : res.how === "override" ? t.overriddenBy(by.user ? String(by.user) : null) : res.how === "block" ? t.blockedBy(by.user ? String(by.user) : null) : t.fixedBy(by.user ? String(by.user) : null, t.actions[res.how] || String(res.how));
+        : res.how === "override" ? t.overriddenBy(by.user ? String(by.user) : null) : res.how === "block" ? t.blockedBy(by.user ? String(by.user) : null)
+        : res.how === "replaced" ? (pick.action === "reject" ? t.replacedAfterBlock : t.replacedBy)(pick.user ? String(pick.user) : null) : res.how === "replace-failed" ? t.replaceFailed
+        : t.fixedBy(by.user ? String(by.user) : null, t.actions[res.how] || String(res.how));
       c.appendChild(el(d, "p", { "class": "hg-m-resolved", "data-resolved": true }, how + " · " + when(t, res.at)));
+      if (p.current && typeof p.current === "object" && p.current.release) {
+        c.appendChild(el(d, "p", { "class": "hg-m-file", "data-current": true }, el(d, "span", { "class": "hg-m-label" }, t.current), breakable(d, "hg-m-filename", p.current.release),
+          p.current.quality ? el(d, "span", { "class": "hg-m-facts" }, String(p.current.quality)) : null));
+      }
+      if (offers(p, "replace") || offers(p, "reject")) {
+        var again = el(d, "div", { "class": "hg-m-actions" });
+        this.releaseActions(p, again);
+        c.appendChild(again);
+        c.appendChild(el(d, "p", { "class": "hg-m-msg", "data-msg": true, role: "status" }));
+      }
       if (blocks(p)) {
         var later = el(d, "div", { "class": "hg-m-actions" });
         later.appendChild(this.blockButton(p, later));
@@ -638,7 +681,37 @@
     });
   };
 
-  function blocks(p) { return Array.isArray(p.offers) && p.offers.indexOf("block") >= 0; }
+  function offers(p, a) { return Array.isArray(p.offers) && p.offers.indexOf(a) >= 0; }
+  function blocks(p) { return offers(p, "block"); }
+  function replacing(p) { return !!p.resolved && offers(p, "replace"); }
+
+  // a Done entry whose file came from a known release: pick another one from the same list, or block it (confirm tap, keep the current file by default)
+  App.prototype.releaseActions = function (p, box) {
+    var self = this, t = this.t, d = this.doc;
+    var card = function () { return box.parentNode; };
+    if (offers(p, "replace")) {
+      var season = p.current && p.current.season != null ? String(p.current.season) : null;
+      var rl = this.button("replace", t.replaceBtn);
+      tip(rl, { title: t.replaceBtn, rows: [t.replaceHint] });
+      this.toggle(rl, t.replaceBtn, t.hideReleases, box, function () { return self.releases(card(), p, season); });
+      box.appendChild(rl);
+    }
+    if (offers(p, "reject")) {
+      var rj = this.button("reject", t.rejectBtn), armed = false, keep = null;
+      tip(rj, { title: t.rejectBtn, rows: [t.rejectHint] });
+      rj.addEventListener("click", function () {
+        if (armed) return self.act(card(), p, { action: "reject", confirm: "reject", ref: p.current.ref, keep: keep.checked });
+        armed = true;
+        rj.textContent = t.blockAgain;
+        rj.classList.add("hg-m-armed");
+        keep = el(d, "input", { type: "checkbox", "data-keep": true });
+        keep.checked = true;
+        box.appendChild(el(d, "div", { "class": "hg-m-warning", "data-warning": true, role: "alert" }, el(d, "p", null, t.rejectWarn), el(d, "label", null, keep, " " + t.keep)));
+      });
+      box.appendChild(rj);
+    }
+    box.appendChild(el(d, "div", { "data-list": true }));
+  };
 
   App.prototype.blockButton = function (p, box, cls) {
     var self = this, t = this.t, bl = this.button("block", t.block, cls);
@@ -728,6 +801,7 @@
         l.appendChild(none);
         return true;
       }
+      var replace = replacing(p);
       var row = function (x) {
         var radio = el(d, "input", { type: "radio", name: "release-" + p.id, value: String(x.n), disabled: !!x.rejected });
         var facts = [x.quality, gb(x.size), x.gbh ? x.gbh + " GB/h" : null, (x.languages || []).join(", "), x.protocol === "torrent" && x.seeders != null ? x.seeders + " " + t.seeders : null, x.score != null ? t.score + " " + x.score : null, x.indexer].filter(Boolean).map(String).join(" · ");
@@ -740,11 +814,12 @@
           if (x.private) extra.appendChild(d.createTextNode(" · " + t.account));
         }
         var anyway = null;
-        if (x.rejected && r.body.override) {
+        if (x.rejected && r.body.override && !x.current) {
           anyway = self.button("override", t.override);
-          anyway.addEventListener("click", function () { self.act(card, p, { action: "override", release: x.n, token: r.body.token }); });
+          anyway.addEventListener("click", function () { self.act(card, p, { action: replace ? "replace" : "override", release: x.n, token: r.body.token }); });
         }
-        return el(d, "li", { "data-release": true, "class": x.rejected && !anyway ? "hg-m-rejected" : null }, el(d, "label", null, radio, breakable(d, "hg-m-name", x.title), el(d, "span", { "class": "hg-m-facts" }, facts), why), extra, scoutBlock(x), anyway);
+        var mark = x.current ? el(d, "span", { "class": "hg-m-probable", "data-current-release": true }, t.currentMark) : null;
+        return el(d, "li", { "data-release": true, "class": x.rejected && !anyway ? "hg-m-rejected" : null }, el(d, "label", null, radio, breakable(d, "hg-m-name", x.title), mark, el(d, "span", { "class": "hg-m-facts" }, facts), why), extra, scoutBlock(x), anyway);
       };
       // what the NFO / description scout read, or the button to have it read now (beefy-side, within the scouts' limits)
       var scoutBlock = function (x) {
@@ -797,11 +872,13 @@
       if (rel.some(function (x) { return x.scout && x.scout.state === "pending"; })) self.watchScouts(card, p, season, (watch || 0));
       if (!ok.length) return true;
       var go = self.button("grab", t.grab, "hg-m-primary");
-      go.addEventListener("click", function () {
+      var send = function () {
         var c = l.querySelector('input[name="release-' + p.id + '"]:checked');
         if (!c) return self.say(card, t.pickOne, true);
-        self.act(card, p, { action: "grab", release: Number(c.value), token: r.body.token });
-      });
+        self.act(card, p, { action: replace ? "replace" : "grab", release: Number(c.value), token: r.body.token });
+      };
+      if (replace) self.twice(go, t.replaceAgain, t.replaceWarn, l, send);
+      else go.addEventListener("click", send);
       l.appendChild(go);
       return true;
     });

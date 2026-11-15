@@ -111,6 +111,15 @@ YEAR_SLACK = 2
 EPISODE = (re.compile(r"[Ss](\d{1,2})[ ._-]?[Ee](\d{1,3})(?:[ ._-]?[Ee-](\d{1,3}))?"), re.compile(r"(?<![\dx])(\d{1,2})x(\d{2,3})(?!\d)"))
 NAMES = {"radarr": "Radarr", "sonarr": "Sonarr"}
 # rejections a manual pick fixes (the arr could not tell which title or episode it is); any other one needs an admin
+# a Done entry's current file from a known release (history: grabbed, then imported as this very file): checked at most hourly, a few per scan
+CURRENT_TTL = 3600
+CURRENT_MAX = 10
+PUBLIC_CURRENT = ("ref", "release", "quality", "at", "season")
+PUBLIC_REPLACE = ("mode", "release", "from", "user", "at", "state", "keep", "lastResult")
+REPLACE_ACTIVE = {"grabbed", "downloading", "importing", "searching"}
+REIMPORT_GAP = 1800
+# Radarr/Sonarr hold back the import of a release that is not better than the file in the library; a release picked by hand to replace it is imported over it
+NOT_BETTER = re.compile(r"not an? .*upgrade|existing (movie |episode )?file", re.I)
 UNMATCHED = re.compile(r"unable to (parse|determine|identify|find)|not found|unknown (series|movie|episode)|matched to (series|movie) by id|no (series|movie|episode)s? (found|matched)", re.I)
 
 
@@ -566,8 +575,9 @@ def imported_by_hand(dn, arr, kind, recs, tid, since):
         return False
 
 
-def scan(dn, deps, known, started=None):
-    """Every open problem now: (problems by id, complete, files still to probe, problems imported by hand). Incomplete (a source unreadable) = nothing may be called gone."""
+def scan(dn, deps, known, started=None, own=frozenset()):
+    """Every open problem now: (problems by id, complete, files still to probe, problems imported by hand). Incomplete (a source unreadable) = nothing may be called gone.
+    own: downloads of a release picked to replace a file; their held-back import is handled by the replacement, not shown as a problem."""
     now, complete, found, arrs, profiles, pending, imported = NOW(), True, {}, {}, {}, [], {}
     started = started or {}
     rs = read_state(deps.request_state_file, now) if deps.request_state_file else None
@@ -682,6 +692,8 @@ def scan(dn, deps, known, started=None):
             if key not in by_key:
                 key = seerr_key.get((app, "id", tid)) or seerr_key.get((app, "tvdb", t.get("tvdbId"))) or key
             ptype, more = queue_kind(recs, t.get("year"), kind)
+            if ptype != "failed" and ((app, str(dl).lower()) in own or (app, tid, str(recs[0].get("title") or "").lower()) in own):
+                continue
             pid = pid_of(ptype, key, dl)
             if imported_by_hand(dn, arr(app), kind, recs, tid, epoch(started.get(pid) or recs[0].get("added"))):
                 for qid in [r.get("id") for r in recs if is_int(r.get("id"))]:
@@ -799,7 +811,7 @@ def merge(records, found, complete, now, imported=()):
             r["resolved"] = None
             r.setdefault("actions", []).append({"at": ts(now), "user": None, "userId": None, "action": "reopened", "result": None})
     for pid, r in list(records.items()):
-        if complete and r.get("resolved") is None and pid not in found:
+        if complete and r.get("resolved") is None and pid not in found and not replacing(r):
             r["resolved"] = {"at": ts(now), "how": GONE.get(r.get("type"), "gone")}
         res = r.get("resolved")
         if res and now - (epoch(res.get("at")) or now) > KEEP_DAYS * DAY and not open_override(r):
@@ -809,6 +821,232 @@ def merge(records, found, complete, now, imported=()):
 def open_override(r):
     o = r.get("override") if isinstance(r, dict) else None
     return isinstance(o, dict) and o.get("state") not in ("replaced", "blocked")
+
+
+def replacing(r):
+    o = r.get("replace") if isinstance(r, dict) else None
+    return isinstance(o, dict) and o.get("state") in REPLACE_ACTIVE
+
+
+def release_offers(r):
+    """A Done entry whose current file came from a known release: it may be replaced by another release or blocked."""
+    return (isinstance(r, dict) and bool(r.get("resolved")) and r["resolved"].get("how") != "delete" and isinstance(r.get("current"), dict)
+            and not open_override(r) and not replacing(r))
+
+
+def replacement_downloads(records):
+    """The downloads (and, before their id is known, the release names) of every active pick."""
+    own = set()
+    for r in records.values():
+        o = r.get("replace") if replacing(r) else None
+        if o and o.get("mode") == "replace":
+            own |= {(o.get("app"), d) for d in o.get("downloadIds") or []}
+            own.add((o.get("app"), o.get("arrId"), str(o.get("release") or "").lower()))
+    return frozenset(own)
+
+
+def arr_title(dn, deps, r):
+    """A record's Radarr/Sonarr title: (app, kind, title) or None; Seerr's own link first (its TMDB id may differ from the arr's)."""
+    key = str(r.get("key") or "")
+    kind, _, rest = key.partition("/")
+    if kind in dn.APP and rest.isdigit():
+        app, path = dn.APP[kind], "/movie" if kind == "movie" else "/series"
+        arr = deps.arr(app)
+        media = deps.seerr_admin(f"/{kind}/{rest}") if deps.seerr_admin else None
+        media = media if isinstance(media, dict) else {}
+        ext = (media.get("mediaInfo") or {}).get("externalServiceId")
+        if is_int(ext) and ext > 0:
+            t = arr(f"{path}/{ext}")
+            if isinstance(t, dict) and is_int(t.get("id")):
+                return app, kind, t
+        t = dn.find_title(kind, arr, media, int(rest))
+        return (app, kind, t) if isinstance(t, dict) and is_int(t.get("id")) else None
+    app, _, aid = key.partition(":")
+    if app in NAMES and aid.isdigit():
+        kind = "movie" if app == "radarr" else "tv"
+        t = deps.arr(app)(f"/{'movie' if kind == 'movie' else 'series'}/{int(aid)}")
+        return (app, kind, t) if isinstance(t, dict) and is_int(t.get("id")) else None
+    return None
+
+
+def title_history(arr, kind, arr_id):
+    got = arr(f"/history/movie?movieId={int(arr_id)}" if kind == "movie" else f"/history/series?seriesId={int(arr_id)}")
+    got = got.get("records") if isinstance(got, dict) else got
+    return sorted((h for h in got or [] if isinstance(h, dict)), key=lambda h: h.get("date") or "", reverse=True)
+
+
+def current_release(dn, deps, r):
+    """Where the title's current file came from: the grab whose download was imported as that very file (film: the movie file, series: every episode file of that download); None when unknown."""
+    found = arr_title(dn, deps, r)
+    if not found:
+        return None
+    app, kind, t = found
+    arr = deps.arr(app)
+    hist = title_history(arr, kind, t["id"])
+    imports = [h for h in hist if h.get("eventType") in IMPORT_EVENTS and h.get("downloadId")]
+    if kind == "movie":
+        mf = t.get("movieFile") if t.get("hasFile") else None
+        if not isinstance(mf, dict) or not is_int(mf.get("id")):
+            return None
+        imp = next((h for h in imports if str((h.get("data") or {}).get("fileId")) == str(mf["id"])), None)
+        if imp is None:
+            return None
+        dl, episodes, files, season, quality = imp["downloadId"], [], [mf["id"]], None, ((mf.get("quality") or {}).get("quality") or {}).get("name")
+    else:
+        eps = arr(f"/episode?seriesId={int(t['id'])}")
+        by_ep = {e["id"]: e for e in eps if isinstance(e, dict) and is_int(e.get("id"))} if isinstance(eps, list) else {}
+        parts = str(r.get("ident") or "").split("|")
+        dl = parts[2] if len(parts) == 3 and parts[1] == app else None
+        if not dl:
+            seasons = set((r.get("details") or {}).get("seasons") or [])
+            dl = next((h["downloadId"] for h in imports if (by_ep.get(h.get("episodeId")) or {}).get("hasFile")
+                       and (not seasons or by_ep[h["episodeId"]].get("seasonNumber") in seasons)), None)
+        mine = {}
+        for h in imports:
+            if str(h["downloadId"]).lower() == str(dl).lower() and h.get("episodeId") not in mine:
+                mine[h.get("episodeId")] = h
+        if not mine or not all((by_ep.get(e) or {}).get("hasFile") and str(by_ep[e].get("episodeFileId")) == str((h.get("data") or {}).get("fileId")) for e, h in mine.items()):
+            return None
+        imp = next(iter(mine.values()))
+        dl, episodes = imp["downloadId"], sorted(mine)
+        files = sorted({by_ep[e]["episodeFileId"] for e in episodes})
+        season = min(by_ep[e].get("seasonNumber") or 0 for e in episodes)
+        quality = ((imp.get("quality") or {}).get("quality") or {}).get("name")
+    grab = next((h for h in hist if h.get("eventType") == "grabbed" and str(h.get("downloadId") or "").lower() == str(dl).lower() and is_int(h.get("id"))), None)
+    if grab is None:
+        return None
+    ref = hashlib.sha1(f"{app}|{t['id']}|{dl}|{files}".encode()).hexdigest()[:12]
+    return {"ref": ref, "release": str(grab.get("sourceTitle") or "")[:200], "quality": quality, "at": imp.get("date"), "season": season,
+            "app": app, "kind": kind, "arrId": t["id"], "downloadId": dl, "grabId": grab["id"], "fileIds": files, "episodeIds": episodes, "runtime": t.get("runtime")}
+
+
+def releases_known(dn, deps, records, now):
+    """Which Done entries' files came from a known release (offers: pick another, block it); rechecked at most hourly, CURRENT_MAX per scan."""
+    n = 0
+    for pid, r in records.items():
+        if not isinstance(r, dict) or not r.get("resolved") or r["resolved"].get("how") == "delete" or open_override(r) or replacing(r):
+            continue
+        if now - (epoch(r.get("currentChecked")) or 0) < CURRENT_TTL:
+            continue
+        if n >= CURRENT_MAX:
+            break
+        n += 1
+        try:
+            r["current"] = current_release(dn, deps, r)
+        except Exception as e:
+            print(f"manual: current release of {r.get('key')} unknown: {type(e).__name__} {dn.redact(e)}", flush=True)
+        r["currentChecked"] = ts(now)
+
+
+def import_entry(x, kind, arr_id, dl, episode_ids=None):
+    entry = {"path": x["path"], "quality": x.get("quality"), "languages": x.get("languages") or [], "releaseGroup": x.get("releaseGroup"),
+             "downloadId": x.get("downloadId") or dl, "indexerFlags": x.get("indexerFlags") or 0}
+    if kind == "movie":
+        entry["movieId"] = arr_id
+    else:
+        entry.update(seriesId=arr_id, episodeIds=episode_ids, releaseType=x.get("releaseType") or "singleEpisode")
+    return entry
+
+
+def force_import(deps, arr, o, blocked, now):
+    """A picked release held back only for not being better than the library's file: imported over it (the arr's own upgrade replaces the old file), only once the virus gates pass."""
+    msgs = [str(m) for q in blocked for sm in q.get("statusMessages") or [] for m in sm.get("messages") or [] if m]
+    if not msgs or not all(NOT_BETTER.search(m) for m in msgs):
+        return "failed", "held back for another reason (" + brief(msgs[0] if msgs else "unknown") + "), see the Open tab; the current file stays"
+    if now - (epoch(o.get("importAt")) or 0) < REIMPORT_GAP:
+        return "importing", o.get("lastResult") or "import started"
+    dl = str(blocked[0]["downloadId"])
+    got = arr(f"/manualimport?downloadId={urllib.parse.quote(dl, safe='')}&filterExistingFiles=true")
+    props = [x for x in got if isinstance(x, dict) and x.get("path") and str(x.get("downloadId") or "").lower() == dl.lower()] if isinstance(got, list) else []
+    files = []
+    for x in props:
+        name = os.path.basename(str(x["path"])).lower()
+        if not name.endswith(VIDEO) or "sample" in name:
+            continue
+        if not all(NOT_BETTER.search(str(rj.get("reason") if isinstance(rj, dict) else rj)) for rj in x.get("rejections") or []):
+            return "failed", "a file was rejected for another reason, see the Open tab; the current file stays"
+        eps = [e["id"] for e in x.get("episodes") or [] if isinstance(e, dict) and is_int(e.get("id"))]
+        if o["kind"] == "tv" and not eps:
+            return "failed", "Sonarr could not tell an episode, see the Open tab; the current file stays"
+        files.append((x, eps))
+    if o["kind"] == "movie" and files:
+        files = [max(files, key=lambda f: f[0].get("size") or 0)]
+    if not files:
+        return "failed", "no video file to import; the current file stays"
+    for x, eps in files:
+        expected = (x.get("episodes") or [{}])[0].get("runtime") if eps else None
+        scan = with_runtime(virus(deps, x["path"]), expected or o.get("runtime"))
+        vt = (scan.get("vt") or {}).get("state")
+        if scan["state"] == "infected" or vt == "malware":
+            return "failed", "malware found, not imported; the current file stays"
+        if vt == "flagged" or not import_safe(scan) and scan["state"] not in ("pending", "unknown"):
+            return "failed", "the virus scan needs an admin, see the Open tab; the current file stays"
+        if not import_safe(scan):
+            return "importing", "waiting for the virus scan"
+    arr("/command", "POST", {"name": "ManualImport", "files": [import_entry(x, o["kind"], o["arrId"], dl, eps) for x, eps in files], "importMode": "auto"})
+    o["importAt"] = ts(now)
+    return "importing", "import started, it replaces the current file"
+
+
+def step_replacement(deps, arr, o, queue, now):
+    """One look at a pick or a block: (state, result)."""
+    since = epoch(o.get("at")) or 0
+    hist = [h for h in title_history(arr, o["kind"], o["arrId"]) if (epoch(h.get("date")) or 0) > since]
+    imports = [h for h in hist if h.get("eventType") in IMPORT_EVENTS]
+    if o.get("mode") == "reject":
+        old = str(o.get("downloadId") or "").lower()
+        if any(str(h.get("downloadId") or "").lower() != old and (o["kind"] == "movie" or h.get("episodeId") in (o.get("episodeIds") or [])) for h in imports):
+            return "done", "another release was imported"
+        return o.get("state"), "searching"
+    field = "movieId" if o["kind"] == "movie" else "seriesId"
+    release = str(o.get("release") or "").lower()
+    ids = set(o.get("downloadIds") or []) | {str(h["downloadId"]).lower() for h in hist if h.get("eventType") == "grabbed" and h.get("downloadId") and str(h.get("sourceTitle") or "").lower() == release}
+    own = [q for q in queue if isinstance(q, dict) and q.get(field) == o["arrId"] and q.get("downloadId")
+           and (str(q["downloadId"]).lower() in ids or str(q.get("title") or "").lower() == release)]
+    ids |= {str(q["downloadId"]).lower() for q in own}
+    o["downloadIds"] = sorted(ids)
+    if ids and any(str(h.get("downloadId") or "").lower() in ids for h in imports):
+        for q in own:
+            if is_int(q.get("id")):
+                try:
+                    arr(f"/queue/{q['id']}?{STALE_QUEUE}", "DELETE")
+                except Exception:
+                    pass
+        return "done", f"{o.get('release')} imported, it replaced {o.get('from')}"
+    if any(q.get("status") == "failed" or q.get("trackedDownloadState") in FAILED_STATES for q in own):
+        return "failed", "the download failed; the current file stays"
+    blocked = [q for q in own if q.get("trackedDownloadState") in ("importBlocked", "importFailed")]
+    if blocked:
+        return force_import(deps, arr, o, blocked, now)
+    if own:
+        return "downloading", "downloading"
+    if now - since > OVERRIDE_SETTLE:
+        return "failed", "the download went away without an import; the current file stays"
+    return o.get("state"), o.get("lastResult")
+
+
+def track_replacements(dn, deps, records, now):
+    """Every active pick or block: done when its (or, after a block, another) release was imported; a failed pick leaves the old file and returns to Done."""
+    for pid, r in records.items():
+        if not replacing(r):
+            continue
+        o = r["replace"]
+        queue = CACHE.get(("queue", o.get("app")))
+        if queue is None:
+            continue
+        try:
+            state, result = step_replacement(deps, deps.arr(o["app"]), o, queue, now)
+        except Exception as e:
+            print(f"manual replace {pid}: {type(e).__name__} {dn.redact(e)}", flush=True)
+            continue
+        o.update(state=state, lastResult=result, lastCheck=ts(now))
+        if state in ("done", "failed"):
+            how = "replaced" if state == "done" else "replace-failed"
+            r["resolved"] = {"at": ts(now), "how": how}
+            r.setdefault("actions", []).append({"at": ts(now), "user": None, "userId": None, "action": how, "result": result})
+            r.pop("current", None)
+            r.pop("currentChecked", None)
+            print(f"manual replace {pid} ({r.get('title')}): {result}", flush=True)
 
 
 def blockable_override(r):
@@ -878,10 +1116,12 @@ def refresh(dn, deps, force=False):
             print(f"manual: problem list unreadable, not saving until fixed: {e}", flush=True)
             records, readable = {}, False
         found, complete, pending, imported = scan(dn, deps, {r.get("key"): (r.get("title"), r.get("year")) for r in records.values() if isinstance(r, dict)},
-                                                  {pid: r.get("firstSeen") for pid, r in records.items() if isinstance(r, dict)})
+                                                  {pid: r.get("firstSeen") for pid, r in records.items() if isinstance(r, dict)}, replacement_downloads(records))
         if readable:
             merge(records, found, complete, now, imported)
             track(deps, records, now)
+            track_replacements(dn, deps, records, now)
+            releases_known(dn, deps, records, now)
             save(deps, records)
         CACHE["scan"] = (now, found)
     # ffprobe outside the lock (it may take seconds per file); the next scan shows what it found
@@ -896,7 +1136,7 @@ def refresh(dn, deps, force=False):
     return found
 
 
-def record(deps, pid, me, action, result, resolve, override=None):
+def record(deps, pid, me, action, result, resolve, override=None, replace=None):
     now = NOW()
     with STORE_LOCK:
         try:
@@ -912,6 +1152,10 @@ def record(deps, pid, me, action, result, resolve, override=None):
             r["resolved"] = {"at": ts(now), "how": action}
         if override:
             r["override"] = override
+        if replace:
+            r.update(replace=replace, resolved=None)
+            r.pop("current", None)
+            r.pop("currentChecked", None)
         save(deps, records)
     return r
 
@@ -1068,7 +1312,7 @@ def releases(dn, deps, me, p, q):
 
 
 def release_list(dn, deps, me, p, q):
-    if p["type"] != "no-release" or not p["_"].get("arrId"):
+    if p["type"] not in ("no-release", "replace") or not p["_"].get("arrId"):
         raise Refused(400, "bad request")
     i = p["_"]
     season = None
@@ -1101,7 +1345,7 @@ def release_list(dn, deps, me, p, q):
         SEQ[0] += 1
         path = f"/release?movieId={i['arrId']}" if i["kind"] == "movie" else f"/release?seriesId={i['arrId']}" + (f"&seasonNumber={season}" if season is not None else "")
         job = SEARCHES[p["id"]] = {"pid": p["id"], "seq": SEQ[0], "state": "queued", "season": season, "path": path, "app": i["app"], "deps": deps,
-                                   "kind": i["kind"], "arrId": i["arrId"], "runtime": i.get("runtime"),
+                                   "kind": i["kind"], "arrId": i["arrId"], "runtime": i.get("runtime"), "current": i.get("current"),
                                    "user": me.get("id"), "title": p.get("title"), "queued": NOW()}
     KICK(deps)
     with QUEUE_LOCK:
@@ -1310,18 +1554,25 @@ def release_data(got, job):
     dropped = len(every) - len(items)
     if dropped:
         print(f"manual release search {job.get('title')}: {len(items)} matched, {dropped} of other or unknown titles dropped", flush=True)
-    items.sort(key=lambda x: (bool(x.get("rejected")), -(x.get("customFormatScore") or 0), -(x.get("seeders") or 0)))
+    current = job.get("current")
+    for x in items:
+        # replacing a file: the current release is never picked again, a rejection caused only by the current file does not count
+        x["_current"] = bool(current) and str(x.get("title") or "") == current
+        soft = bool(current) and all(SELF_CAUSED.search(str(r.get("reason") if isinstance(r, dict) else r)) for r in x.get("rejections") or [])
+        x["_rejected"] = x["_current"] or bool(x.get("rejected")) and not soft
+    items.sort(key=lambda x: (x["_rejected"], -(x.get("customFormatScore") or 0), -(x.get("seeders") or 0)))
     items = items[:100]
     public = [{"n": n, "title": str(x.get("title") or "")[:200], "size": x.get("size") or 0, "quality": ((x.get("quality") or {}).get("quality") or {}).get("name"),
                "languages": [str(lang.get("name")) for lang in x.get("languages") or [] if isinstance(lang, dict) and lang.get("name")],
-               "seeders": x.get("seeders"), "leechers": x.get("leechers"), "score": x.get("customFormatScore"), "rejected": bool(x.get("rejected")),
+               "seeders": x.get("seeders"), "leechers": x.get("leechers"), "score": x.get("customFormatScore"), "rejected": x["_rejected"], "current": x["_current"],
                "rejections": [brief(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
                "reasons": [release_reason(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
                "gbh": round((x.get("size") or 0) / 1e9 / (job["runtime"] / 60), 1) if job.get("kind") == "movie" and job.get("runtime") and x.get("size") else None,
                "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "age": x.get("age"),
                "link": safe_link(x.get("infoUrl")), "private": private_indexer(x)} for n, x in enumerate(items)]
-    return {"season": season, "at": NOW(), "public": public, "dropped": dropped, "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": bool(x.get("rejected")), "title": str(x.get("title") or "")[:200],
-                                                                             "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "infoUrl": x.get("infoUrl"), "seeders": x.get("seeders")} for x in items]}
+    return {"season": season, "at": NOW(), "public": public, "dropped": dropped, "app": job.get("app"), "arrId": job.get("arrId"),
+            "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": x["_rejected"], "current": x["_current"], "title": str(x.get("title") or "")[:200],
+                       "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "infoUrl": x.get("infoUrl"), "seeders": x.get("seeders")} for x in items]}
 
 
 def expire():
@@ -1483,17 +1734,14 @@ def do_import(deps, me, admin, p, req):
         if not safe:
             print(f"manual: admin {me.get('id')} imports {p['key']} with virus scan {scan['state']}", flush=True)
         hard = [str(rj.get("reason") if isinstance(rj, dict) else rj) for rj in x.get("rejections") or [] if hard_rejection(rj.get("reason") if isinstance(rj, dict) else rj)]
-        entry = {"path": x["path"], "quality": x.get("quality"), "languages": x.get("languages") or [], "releaseGroup": x.get("releaseGroup"),
-                 "downloadId": x.get("downloadId") or i["downloadId"], "indexerFlags": x.get("indexerFlags") or 0}
-        if i["kind"] == "movie":
-            entry["movieId"] = i["arrId"]
-        else:
+        eps = None
+        if i["kind"] != "movie":
             eps = f.get("episodeIds")
             if not isinstance(eps, list) or not 0 < len(eps) <= 50 or not all(is_int(e) and e in o["episodes"] for e in eps):
                 raise Refused(400, "bad request")
             if any(o["episodes"][e] for e in eps):
                 hard.append("episode already has a file")
-            entry.update(seriesId=i["arrId"], episodeIds=eps, releaseType=x.get("releaseType") or "singleEpisode")
+        entry = import_entry(x, i["kind"], i["arrId"], i["downloadId"], eps)
         if hard and not admin:
             raise Refused(403, "rejected file needs an admin")
         if hard:
@@ -1717,6 +1965,70 @@ def block_override(deps, me, pid):
     return {"ok": True, "result": result, "problem": rec}
 
 
+def override_from(r):
+    """When Download anyway opens for a Done entry: the nothing-found clock of the record, else OVERRIDE_DAYS after it was first seen."""
+    return (r.get("details") or {}).get("overrideFrom") or ts((epoch(r.get("firstSeen")) or NOW()) + OVERRIDE_DAYS * DAY)
+
+
+def replace_problem(deps, pid):
+    """A Done entry with a known current release, shaped as a problem for the release list."""
+    with STORE_LOCK:
+        try:
+            r = load(deps).get(pid)
+        except StoreUnreadable:
+            r = None
+    if not release_offers(r):
+        raise Refused(404, "no such problem")
+    c = r["current"]
+    return {"id": pid, "type": "replace", "key": r.get("key"), "title": r.get("title"), "details": {"overrideFrom": override_from(r)},
+            "_": {"kind": c["kind"], "app": c["app"], "arrId": c["arrId"], "seasons": [c["season"]] if c.get("season") is not None else [], "runtime": c.get("runtime"), "current": c["release"]}}
+
+
+def release_action(dn, deps, me, req):
+    """Pick another release for a Done entry (grabbed, imported over the current file) or block its release (markAsFailed of its grab: blocklisted, searched again)."""
+    pid, action = req.get("id"), req.get("action")
+    p = replace_problem(deps, pid)
+    if action == "reject" and req.get("confirm") != "reject":
+        raise Refused(400, "confirm")
+    o, n = None, req.get("release")
+    if action == "replace":
+        o = offer(pid, "releases", me, req)
+        if o is None or not is_int(n) or not 0 <= n < len(o["items"]) or o["items"][n].get("current"):
+            raise Refused(400, "bad request")
+    if not throttle(("act", pid), ACTION_GAP):
+        raise Refused(429, "slow down")
+    with STORE_LOCK:
+        r = load(deps).get(pid)
+    cur = current_release(dn, deps, r)
+    if cur is None or cur["ref"] != r["current"]["ref"] or action == "reject" and req.get("ref") != cur["ref"]:
+        raise Refused(409, "release changed")
+    arr = deps.arr(cur["app"])
+    base = {"at": ts(NOW()), "user": person(me), "userId": me.get("id"), "app": cur["app"], "kind": cur["kind"], "arrId": cur["arrId"], "from": cur["release"],
+            "downloadId": cur["downloadId"], "episodeIds": cur["episodeIds"], "season": cur["season"], "runtime": cur.get("runtime"), "downloadIds": [], "lastResult": None}
+    if action == "replace":
+        if o.get("app") != cur["app"] or o.get("arrId") != cur["arrId"]:
+            raise Refused(400, "bad request")
+        x = o["items"][n]
+        if x["rejected"] and not may_override(p):
+            raise Refused(403, "too early")
+        arr("/release", "POST", {"guid": x["guid"], "indexerId": x["indexerId"]})
+        state = dict(base, mode="replace", release=x["title"], state="grabbed")
+        result = f"grabbed {x['title']}, it replaces {cur['release']} once imported"
+    else:
+        keep = req.get("keep") is not False
+        arr(f"/history/failed/{int(cur['grabId'])}", "POST")
+        if not keep:
+            for fid in cur["fileIds"]:
+                arr(f"/{'moviefile' if cur['kind'] == 'movie' else 'episodefile'}/{int(fid)}", "DELETE")
+        search(arr, {"kind": cur["kind"], "arrId": cur["arrId"]}, cur["episodeIds"] or None)
+        state = dict(base, mode="reject", keep=keep, release=None, state="searching")
+        result = f"{cur['release']} blocked{'' if keep else ', current file deleted'}, searching again"
+    print(f"manual: user {me.get('id')} {action} {r.get('key')} ({r.get('title')}): {result}", flush=True)
+    rec = record(deps, pid, me, action, result, False, replace=state)
+    CACHE.pop("scan", None)
+    return {"ok": True, "result": result, "problem": rec}
+
+
 def act(dn, deps, me, req):
     action = req.get("action")
     try:
@@ -1724,6 +2036,8 @@ def act(dn, deps, me, req):
     except Refused as e:
         if e.status == 404 and action == "block":
             return block_override(deps, me, req["id"])
+        if e.status == 404 and action in ("replace", "reject"):
+            return release_action(dn, deps, me, req)
         raise
     admin = dn.allowed(me)
     if action == "describe" and p["type"] == "no-release":
@@ -1747,20 +2061,40 @@ def act(dn, deps, me, req):
 
 
 def offered(r, admin):
-    """What the page may offer on a record: its type's actions while open (delete for admins), a block on a running download-anyway download."""
+    """What the page may offer on a record: its type's actions while open (delete for admins), a block on a running download-anyway download,
+    on a Done entry with a known current release: pick another release or block it."""
     if r.get("resolved") is None:
-        return sorted(a for a in ACTIONS.get(r.get("type"), ()) if admin or a != "delete")
-    return ["block"] if blockable_override(r) else []
+        return [] if replacing(r) else sorted(a for a in ACTIONS.get(r.get("type"), ()) if admin or a != "delete")
+    if blockable_override(r):
+        return ["block"]
+    return ["reject", "replace"] if release_offers(r) else []
+
+
+def public_record(r, admin):
+    out = dict(r, offers=offered(r, admin))
+    out.pop("currentChecked", None)
+    if isinstance(r.get("current"), dict):
+        out["current"] = {k: r["current"].get(k) for k in PUBLIC_CURRENT}
+    if isinstance(r.get("replace"), dict):
+        out["replace"] = {k: r["replace"].get(k) for k in PUBLIC_REPLACE if k in r["replace"]}
+    return out
 
 
 def view(deps, admin):
     with STORE_LOCK:
         try:
-            records = [dict(r, offers=offered(r, admin)) for r in load(deps).values() if isinstance(r, dict)]
+            records = [public_record(r, admin) for r in load(deps).values() if isinstance(r, dict)]
         except StoreUnreadable:
             records = []
     open_ = sorted((r for r in records if r.get("resolved") is None), key=lambda r: r.get("firstSeen") or "")
     done = sorted((r for r in records if r.get("resolved")), key=lambda r: r["resolved"].get("at") or "", reverse=True)[:200]
+    seen = set()
+    for r in done:
+        # several entries of one release (e.g. an import problem, then nothing found): only the latest offers its actions
+        ref = (r.get("current") or {}).get("ref")
+        if ref in seen:
+            r["offers"] = [a for a in r["offers"] if a not in ("reject", "replace")]
+        seen.add(ref)
     return {"open": open_, "done": done, "admin": admin, "updated": ts(CACHE.get("scan", (NOW(),))[0])}
 
 
@@ -1815,7 +2149,12 @@ def work(dn, deps, me, method, sub, url, req):
             refresh(dn, deps)
             with STORE_LOCK:
                 return 200, {"problems": list(load(deps).values())}
-        p = problem(dn, deps, (q.get("id") or [""])[0])
+        try:
+            p = problem(dn, deps, (q.get("id") or [""])[0])
+        except Refused as e:
+            if e.status != 404 or sub != "releases":
+                raise
+            p = replace_problem(deps, q["id"][0])
         if flooding(me):
             raise Refused(429, "slow down")
         if sub == "lookup":
