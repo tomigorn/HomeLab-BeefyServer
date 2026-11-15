@@ -4,8 +4,8 @@ One codebase for the bar above Seerr (beefy) and AudioBookRequest (fastpi).
 
 | | Where |
 |---|---|
-| canonical | HomeLab-BeefyServer `Docker/Seerr/indexer-bar/www/bar.js`, `bar.css`, this file |
-| vendored copy (identical) | HomeLab-FastPi `Docker/Audiobook-Requests/books-proxy/www/bar/bar.{js,css}`, `abr-bar/indexer-bar-schema.md` |
+| canonical | HomeLab-BeefyServer `Docker/Seerr/indexer-bar/www/bar-early.js`, `bar.js`, `bar.css`, this file |
+| vendored copy (identical) | HomeLab-FastPi `Docker/Audiobook-Requests/books-proxy/www/bar/bar-early.js`, `bar.{js,css}`, `abr-bar/indexer-bar-schema.md` |
 | sync | fastpi `Docker/Audiobook-Requests/scripts/sync-bar.sh` (copy), `--check` (hash compare, post-update check `books.bar-shared`) |
 
 Rule: change the bar only here (beefy), run both test suites, then `sync-bar.sh` on fastpi. App wording lives in each collector, never in `bar.js`.
@@ -20,9 +20,11 @@ Rule: change the bar only here (beefy), run both test suites, then `sync-bar.sh`
 | `data-ib-lang-hook` | no | `hgNightLabel` (global with `lang()`) | – |
 | `data-ib-lang-probe`, `data-ib-lang-de` | no | `a[href="/discover/tv"]`, `Serien` | – |
 
+`bar-early.js`: its own `<script>` tag first in `<head>`, without `defer`, with the same `data-ib-no-bar`; sets `ib-on` (and `ib-mini` when collapsed) on `<html>` before the first paint, `bar.css` then shows an empty dark strip until `bar.js` draws the bar.
+
 Language: hook, else probe text contains `data-ib-lang-de`, else browser language (`de*` = German).
 
-Auth: the bar exists only after a 200 from `data-ib-data`; 401, 403 or a redirect (fetch with `redirect: "manual"`) hides it and retries every 4 s; never on `data-ib-no-bar` paths. The data paths need an app session (proxy `auth_request`).
+Auth: the bar exists only after a 200 from `data-ib-data`; 401, 403 or a redirect (fetch with `redirect: "manual"`) hides it (and the strip `bar-early.js` reserved) and retries every 4 s; while the first answer is pending the strip stays; never on `data-ib-no-bar` paths. The data paths need an app session (proxy `auth_request`).
 
 ## usage.json
 

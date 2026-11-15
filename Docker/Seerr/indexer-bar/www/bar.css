@@ -2,6 +2,8 @@
 :root { --ib-h: 28px; }
 html.ib-mini { --ib-h: 18px; }
 html.ib-on body { padding-top: var(--ib-h) !important; }
+/* the bar's place from the first paint (bar-early.js) until bar.js draws it */
+html.ib-on body::before { content: ""; position: fixed; top: 0; left: 0; right: 0; z-index: 59; height: var(--ib-h); box-sizing: border-box; background: #111827; border-bottom: 1px solid #374151; pointer-events: none; }
 html.ib-on #__next .fixed.top-0,
 html.ib-on #__next .fixed.inset-0,
 html.ib-on #__next .fixed.inset-y-0,
