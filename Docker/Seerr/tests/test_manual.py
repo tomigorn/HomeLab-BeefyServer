@@ -74,7 +74,9 @@ class World:
         self.lookups = {"radarr": [], "sonarr": []}
         self.releases, self.proposals, self.episodes = [], [], []
         self.seerr_media = {}
+        self.profiles = {"radarr": R_PROFILES, "sonarr": S_PROFILES}
         self.request_calls, self.slow, self.odd_queue, self.token = 0, 0, False, None
+        self.clamav = pathlib.Path(self.tmp.name, "clamav-results.jsonl")
 
     def seerr(self, path, auth):
         if path == "/auth/me":
@@ -112,7 +114,7 @@ class World:
             if path.startswith("/queue"):
                 return None if self.odd_queue else {"records": self.queues[app]}
             if path == "/qualityprofile":
-                return R_PROFILES if app == "radarr" else S_PROFILES
+                return self.profiles[app]
             if path == "/rootfolder":
                 return [{"path": "/data/media/movies" if app == "radarr" else "/data/media/tv"}]
             if "/lookup" in path:
@@ -132,7 +134,11 @@ class World:
 
     def deps(self):
         return dn.Deps(seerr=self.seerr, arr=self.arr, qbit=None, sab=None, origins={ORIGIN}, seerr_admin=self.admin,
-                       manual_file=str(self.store), request_state_file=str(self.rs_file))
+                       manual_file=str(self.store), request_state_file=str(self.rs_file), clamav_results=str(self.clamav))
+
+    def scanned(self, path, verdict="clean", sig=None, at="2026-11-15T02:00:00Z"):
+        with open(self.clamav, "a") as f:
+            f.write(json.dumps({"at": at, "path": path, "size": 1, "verdict": verdict, "signature": sig, "mode": "queue"}) + "\n")
 
 
 def reset():
@@ -140,6 +146,9 @@ def reset():
     manual.CACHE.clear()
     manual.OFFERS.clear()
     manual.THROTTLE.clear()
+    manual.FLOOD.clear()
+    manual.SEARCHES.clear()
+    manual.KICK = manual.drain
 
 
 def get(w, path, me=None):
@@ -245,10 +254,10 @@ class Scan(unittest.TestCase):
             p = one(w, "import")
             self.assertEqual((p["key"], p["requesters"]), ("tv/312697", ["joe"]))
 
-    def test_open_count_counts_titles(self):
+    def test_open_count_counts_problems_not_titles(self):
         w = World(squeue=[qrec(1, dl="A", ep=501), qrec(2, dl="B", ep=502)])
         self.assertEqual(len(problems(w)["open"]), 2)
-        self.assertEqual(get(w, "count"), (200, {"open": 1}))
+        self.assertEqual(get(w, "count"), (200, {"open": 2}))
 
     def test_failed_download_is_a_problem(self):
         w = World(rqueue=[qrec(1, kind="movie", tds="failed", status="failed", tid=43, tmdb=673, msgs=("Download failed",))])
@@ -544,6 +553,8 @@ class Import(unittest.TestCase):
              "releaseGroup": "GRP", "episodes": [], "rejections": [{"reason": "matched to series by ID"}], "downloadId": "DL1", "indexerFlags": 0, "releaseType": "singleEpisode"},
             {"path": "/data/torrents/sonarr/CR/Company.Retreat.1x02.mkv", "relativePath": "Company.Retreat.1x02.mkv", "size": 2_000_000_000, "quality": q, "languages": [],
              "releaseGroup": "GRP", "episodes": [{"id": 502, "seasonNumber": 1, "episodeNumber": 2}], "rejections": [], "downloadId": "DL1", "indexerFlags": 0, "releaseType": "singleEpisode"}]
+        for x in self.w.proposals:
+            self.w.scanned(x["path"])
         self.pid = one(self.w, "import")["id"]
 
     def test_files_show_names_and_the_probable_episode_never_paths(self):
@@ -641,6 +652,7 @@ class Import(unittest.TestCase):
         w = World(rqueue=[qrec(1, kind="movie", tid=43, tmdb=673, year=2024, title="Some.Film.2024.1080p-GRP", msgs=("matched to movie by ID",))])
         w.proposals = [{"path": "/data/torrents/radarr/a/small.mkv", "relativePath": "a/small.mkv", "size": 10, "quality": {}, "languages": [], "movie": None, "rejections": [], "downloadId": "DL1"},
                        {"path": "/data/torrents/radarr/a/film.mkv", "relativePath": "a/film.mkv", "size": 9_000_000_000, "quality": {}, "languages": [], "movie": None, "rejections": [], "downloadId": "DL1"}]
+        w.scanned("/data/torrents/radarr/a/film.mkv")
         pid = one(w, "import")["id"]
         out = get(w, f"files?id={pid}")[1]
         self.assertEqual([(f["name"], f["probable"]) for f in out["files"]], [("small.mkv", False), ("film.mkv", True)])
@@ -668,9 +680,9 @@ class Block(unittest.TestCase):
 
 
 RELEASES = [{"guid": "https://tracker.example.com/dl?apikey=secret&id=1", "indexerId": 3, "title": "The.Ring.Thing.2004.DVDRip", "size": 700_000_000, "quality": {"quality": {"name": "DVD"}},
-             "languages": [{"name": "German"}], "seeders": 4, "leechers": 1, "customFormatScore": 10, "rejected": True, "rejections": ["Quality DVD not wanted in profile"], "indexer": "Tracker", "protocol": "torrent", "age": 100},
+             "languages": [{"name": "German"}], "seeders": 4, "leechers": 1, "customFormatScore": 10, "rejected": True, "rejections": ["Quality DVD not wanted in profile"], "indexer": "Tracker", "protocol": "torrent", "age": 100, "mappedMovieId": 21},
             {"guid": "https://tracker.example.com/dl?apikey=secret&id=2", "indexerId": 3, "title": "The.Ring.Thing.2004.German.720p", "size": 2_000_000_000, "quality": {"quality": {"name": "WEBDL-720p"}},
-             "languages": [{"name": "German"}], "seeders": 9, "customFormatScore": 50, "rejected": False, "rejections": [], "indexer": "Tracker", "protocol": "torrent", "age": 30}]
+             "languages": [{"name": "German"}], "seeders": 9, "customFormatScore": 50, "rejected": False, "rejections": [], "indexer": "Tracker", "protocol": "torrent", "age": 30, "mappedMovieId": 21}]
 
 
 class NoRelease(unittest.TestCase):
@@ -726,6 +738,36 @@ class NoRelease(unittest.TestCase):
         os.utime(self.w.rs_file, (T + 3600, T + 3600))
         manual.CACHE.clear()
         self.assertEqual(post(self.w, {"id": self.pid, "action": "grab", "release": good})[0], 400)
+
+    def test_only_releases_the_arr_matched_to_this_title_are_listed(self):
+        other = dict(RELEASES[1], guid="g3", title="Spider-Man.Brand.New.Day.2026.2160p", mappedMovieId=142, rejected=True, rejections=["Wrong movie"])
+        unknown = dict(RELEASES[1], guid="g4", title="Project.Hail.Mary.2026.1080p", mappedMovieId=None, rejected=True, rejections=["Unknown Movie"])
+        cf = dict(RELEASES[1], guid="g5", title="The.Ring.Thing.2004.PLDUB.DVDRip", rejected=True, customFormatScore=-10000,
+                  rejections=["Custom Formats Language: Not Original have score -49996050 below Movie's profile minimum -10000"])
+        self.w.releases = [other, RELEASES[1], unknown, cf]
+        out = get(self.w, f"releases?id={self.pid}")[1]
+        self.assertEqual([(r["title"], r["rejected"]) for r in out["releases"]], [("The.Ring.Thing.2004.German.720p", False), ("The.Ring.Thing.2004.PLDUB.DVDRip", True)])
+        self.assertEqual(out["dropped"], 2)
+        self.assertEqual(out["releases"][1]["reasons"], ["cf-score"])
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "grab", "release": 0})[0], 200)
+        self.assertEqual(self.w.writes[0][3]["guid"], RELEASES[1]["guid"])
+
+    def test_release_reasons_in_plain_codes(self):
+        for msg, code in {"Quality DVD-R is not wanted in profile": "quality", "Does not contain one of the required terms: x": "required-terms",
+                          "Existing file on disk is of equal or higher preference: WEBDL-2160p v1": "existing", "Not enough seeders: 0. Minimum seeders: 1": "seeders",
+                          "Custom Formats LQ have score -29997750 below Movie's profile minimum -10000": "cf-score", "Release is blocklisted": "blocklisted",
+                          "4.2 GB is larger than maximum allowed 3.9 GB": "size", "Something else": "unknown"}.items():
+            self.assertEqual(manual.release_reason(msg), code, msg)
+
+    def test_series_keeps_only_its_own_season(self):
+        reset()
+        w = World(rs=state(noRelease={"tv/4040": "2026-11-14T04:17:00Z"}), requests=[request(13, "tv", 4040, ext=54, tvdb=9090, seasons=(2,))],
+                  titles={"/series/54": {"id": 54, "title": "Seerr Series", "year": 2019, "tvdbId": 9090, "tmdbId": 4040, "qualityProfileId": 7}})
+        base = dict(RELEASES[1], mappedMovieId=None, mappedSeriesId=54)
+        w.releases = [dict(base, guid="a", title="S02", mappedSeasonNumber=2), dict(base, guid="b", title="S01", mappedSeasonNumber=1), dict(base, guid="c", title="Other", mappedSeriesId=99, mappedSeasonNumber=2)]
+        pid = one(w, "no-release")["id"]
+        out = get(w, f"releases?id={pid}")[1]
+        self.assertEqual(([r["title"] for r in out["releases"]], out["dropped"]), (["S02"], 2))
 
     def test_switch_to_older_versions_profile_and_search(self):
         status, out = post(self.w, {"id": self.pid, "action": "profile"})
@@ -849,6 +891,446 @@ class Backend(unittest.TestCase):
         d = dn.Deps(seerr=None, arr=None, qbit=None, sab=None)
         self.assertIsNone(d.manual_file)
         self.assertEqual(manual.KEEP_DAYS, 180)
+
+FFPROBE_E09 = {"format": {"duration": "1860.4", "size": "1590000000"}, "streams": [
+    {"codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080, "color_transfer": "bt709"},
+    {"codec_type": "audio", "codec_name": "eac3", "channels": 6, "tags": {"language": "por"}},
+    {"codec_type": "audio", "codec_name": "aac", "channels": 2, "tags": {"language": "eng"}},
+    {"codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "por"}},
+    {"codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "eng"}}]}
+FFPROBE_UHD = {"format": {"duration": "9000"}, "streams": [
+    {"codec_type": "video", "codec_name": "hevc", "width": 3840, "height": 1600, "color_transfer": "smpte2084", "side_data_list": [{"side_data_type": "DOVI configuration record"}]},
+    {"codec_type": "audio", "codec_name": "truehd", "channels": 8, "tags": {"language": "eng"}},
+    {"codec_type": "audio", "codec_name": "dts", "profile": "DTS-HD MA", "channels": 6}]}
+
+
+class Reasons(unittest.TestCase):
+    def test_arr_messages_map_to_plain_reasons(self):
+        cases = {
+            BY_ID: "id-match",
+            "Found matching movie via grab history, but release was matched to movie by ID. Manual Import required.": "id-match",
+            "No files found are eligible for import in /data/usenet/complete/tv/x": "no-eligible",
+            "Not an upgrade for existing episode file(s)": "not-upgrade",
+            "Not a Custom Format upgrade for existing movie file(s)": "not-upgrade",
+            "Sample": "sample",
+            "Unable to determine if file is a sample": "sample",
+            "Unable to parse file": "unparsable",
+            "Episode 9 was unexpected considering the folder name": "not-in-release",
+            "Dub only: no original-language audio": "dub-only",
+            "Download failed": "failed",
+            "Something entirely new": "unknown",
+            "": "unknown",
+        }
+        for msg, code in cases.items():
+            self.assertEqual(manual.reason_code(msg), code, msg)
+
+    def test_problems_carry_their_reason(self):
+        reset()
+        w = World(squeue=[qrec(1, ep=501)], rqueue=[qrec(2, kind="movie", tid=43, tmdb=673, title="Some.Film.1987.1080p-GRP", year=2024, msgs=("matched to movie by ID",))],
+                  rs=state(removed=["movie/10248"], noRelease={"movie/10248": "2026-11-14T04:17:00Z"}), requests=[request(11, "movie", 10248, ext=21)])
+        found = {p["type"]: p["details"]["reason"] for p in problems(w)["open"]}
+        self.assertEqual(found, {"import": "id-match", "wrong-film": "wrong-film", "removed": "removed", "no-release": "no-release"})
+        self.assertEqual(one(w, "import")["details"]["message"], BY_ID)
+
+PROFILE = {"id": 10, "name": "4K HDR - WEB-2160p (1080p fallback) - English original", "cutoff": 1003, "items": [
+    {"quality": {"id": 0, "name": "Unknown", "resolution": 0}, "allowed": False},
+    {"id": 1001, "name": "WEB 720p", "allowed": False, "items": [{"quality": {"id": 5, "name": "WEBDL-720p", "resolution": 720}}]},
+    {"quality": {"id": 7, "name": "Bluray-1080p", "resolution": 1080}, "allowed": False},
+    {"id": 1002, "name": "WEB 1080p", "allowed": True, "items": [{"quality": {"id": 3, "name": "WEBDL-1080p", "resolution": 1080}}, {"quality": {"id": 15, "name": "WEBRip-1080p", "resolution": 1080}}]},
+    {"id": 1003, "name": "WEB 2160p", "allowed": True, "items": [{"quality": {"id": 18, "name": "WEBDL-2160p", "resolution": 2160}}]}]}
+SDR_PROFILE = {"id": 8, "name": "WEB-1080p", "cutoff": 1002, "items": PROFILE["items"][:4]}
+
+
+def media(**kw):
+    m = {"resolution": "1080p", "video": "H.264", "hdr": None, "audio": [{"language": "por", "codec": "E-AC3", "channels": "5.1"}], "subtitles": [], "size": 1_600_000_000, "minutes": 31}
+    m.update(kw)
+    return m
+
+
+def ctx(**kw):
+    c = {"kind": "tv", "original": "English", "profile": PROFILE, "quality": 3, "expected": 30}
+    c.update(kw)
+    return c
+
+
+def marks(m, c):
+    return {x["rule"]: x["mark"] for x in manual.checks(m, c)}
+
+
+class Checks(unittest.TestCase):
+    def test_running_time_boundaries(self):
+        for minutes, mark in ((44, "ok"), (36, "ok"), (45, "warn"), (50, "warn"), (51, "bad"), (30, "warn"), (29, "bad"), (40, "ok")):
+            self.assertEqual(marks(media(minutes=minutes), ctx(expected=40))["runtime"], mark, minutes)
+        r = next(x for x in manual.checks(media(minutes=31), ctx(expected=30)) if x["rule"] == "runtime")
+        self.assertEqual((r["minutes"], r["expected"]), (31, 30))
+        self.assertNotIn("runtime", marks(media(minutes=None), ctx()))
+        self.assertNotIn("runtime", marks(media(), ctx(expected=None)))
+
+    def test_original_language_and_english(self):
+        m = marks(media(), ctx())
+        self.assertEqual(m["original"], "bad")
+        self.assertNotIn("english", m)
+        self.assertEqual(m["german"], "none")
+        both = media(audio=[{"language": "por"}, {"language": "eng"}])
+        self.assertEqual((marks(both, ctx(original="Portuguese"))["original"], marks(both, ctx(original="Portuguese"))["english"]), ("ok", "ok"))
+        self.assertEqual(marks(media(), ctx(original="Portuguese"))["english"], "warn")
+        self.assertEqual(marks(media(audio=[{"language": None}]), ctx())["original"], "none")
+        self.assertEqual(marks(media(), ctx(original=None))["original"], "none")
+
+    def test_german_audio_or_subtitles(self):
+        self.assertEqual(marks(media(subtitles=["ger"]), ctx())["german"], "ok")
+        self.assertEqual(marks(media(audio=[{"language": "deu"}]), ctx())["german"], "ok")
+        self.assertEqual(marks(media(audio=[{"language": "gsw"}]), ctx())["german"], "ok")
+
+    def test_quality_against_the_profile(self):
+        self.assertEqual(marks(media(), ctx(quality=18))["quality"], "ok")
+        self.assertEqual(marks(media(), ctx(quality=3))["quality"], "ok")
+        self.assertEqual(marks(media(), ctx(quality=7))["quality"], "bad")
+        self.assertEqual(marks(media(), ctx(quality=None))["quality"], "none")
+        q = next(x for x in manual.checks(media(), ctx(quality=3)) if x["rule"] == "quality")
+        self.assertEqual((q["quality"], q["upgrade"]), ("WEBDL-1080p", "WEB 2160p"))
+        top = next(x for x in manual.checks(media(), ctx(quality=18)) if x["rule"] == "quality")
+        self.assertIsNone(top["upgrade"])
+
+    def test_hdr(self):
+        self.assertEqual(marks(media(), ctx())["hdr"], "ok")
+        sdr = next(x for x in manual.checks(media(), ctx()) if x["rule"] == "hdr")
+        self.assertEqual((sdr["hdr"], sdr["upgrade"]), ("SDR", True))
+        self.assertEqual(marks(media(hdr="HDR10"), ctx())["hdr"], "ok")
+        self.assertEqual(marks(media(hdr="Dolby Vision + HDR10"), ctx())["hdr"], "ok")
+        self.assertEqual(marks(media(hdr="Dolby Vision"), ctx())["hdr"], "bad")
+        self.assertEqual(marks(media(), ctx(profile=SDR_PROFILE))["hdr"], "ok")
+        self.assertFalse(next(x for x in manual.checks(media(), ctx(profile=SDR_PROFILE)) if x["rule"] == "hdr")["upgrade"])
+
+    def test_size_is_informative_warning_only_when_very_big(self):
+        self.assertEqual(marks(media(size=41_000_000_000, minutes=80), ctx(kind="movie", expected=80))["size"], "warn")
+        self.assertEqual(marks(media(size=10_000_000_000, minutes=30), ctx(expected=30))["size"], "none")
+        self.assertEqual(marks(media(size=10_500_000_000, minutes=30), ctx(expected=30))["size"], "warn")
+        s = next(x for x in manual.checks(media(size=1_600_000_000, minutes=30), ctx()) if x["rule"] == "size")
+        self.assertEqual(s["gbh"], 3.2)
+
+    def test_dolby_vision_fallback_is_named(self):
+        dv = lambda cid: {"streams": [{"codec_type": "video", "codec_name": "hevc", "width": 3840, "height": 2160, "color_transfer": "smpte2084",
+                                       "side_data_list": [{"side_data_type": "DOVI configuration record", "dv_bl_signal_compatibility_id": cid}]}]}
+        self.assertEqual(manual.summarise(dv(1), 1)["hdr"], "Dolby Vision + HDR10")
+        self.assertEqual(manual.summarise(dv(0), 1)["hdr"], "Dolby Vision")
+        self.assertEqual(manual.summarise(dv(4), 1)["hdr"], "Dolby Vision + HLG")
+
+    def test_rule_limits_live_in_one_place(self):
+        self.assertEqual((manual.RULES["runtime_ok"], manual.RULES["runtime_warn"], manual.RULES["gb_per_hour_film"], manual.RULES["gb_per_hour_episode"]), (0.10, 0.25, 30, 20))
+
+
+class Media(unittest.TestCase):
+    def setUp(self):
+        reset()
+        manual.PROBE_CACHE.clear()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name, "complete")
+        (self.root / "tv" / "E09").mkdir(parents=True)
+        self.file = self.root / "tv" / "E09" / "Show.S01E09.mkv"
+        self.file.write_bytes(b"x" * 100)
+        (self.root / "tv" / "E09" / "Show.S01E09.sample.mkv").write_bytes(b"x" * 10)
+        self.outside = pathlib.Path(self.tmp.name, "library.mkv")
+        self.outside.write_bytes(b"y")
+        (self.root / "tv" / "escape.mkv").symlink_to(self.outside)
+        self.runs = []
+        self.real_ffprobe = manual.FFPROBE
+        manual.FFPROBE = lambda path: (self.runs.append(path), FFPROBE_E09)[1]
+
+    def tearDown(self):
+        manual.FFPROBE = self.real_ffprobe
+        self.tmp.cleanup()
+
+    def deps(self):
+        return dn.Deps(seerr=None, arr=None, qbit=None, sab=None, download_roots=(str(self.root),))
+
+    def e09_world(self):
+        w = World(squeue=[qrec(1, ep=501)])
+        series = dict(w.queues["sonarr"][0]["series"], originalLanguage={"id": 1, "name": "English"}, runtime=30, qualityProfileId=10)
+        w.queues["sonarr"][0].update(series=series, quality={"quality": {"id": 3, "name": "WEBDL-1080p", "resolution": 1080}})
+        w.titles["/series/54"] = series
+        w.profiles["sonarr"] = S_PROFILES + [PROFILE]
+        return w
+
+    def test_ffprobe_is_summarised(self):
+        self.assertEqual(manual.summarise(FFPROBE_E09, 1590000000), {"resolution": "1080p", "video": "H.264", "hdr": None, "audio": [
+            {"language": "por", "codec": "E-AC3", "channels": "5.1"}, {"language": "eng", "codec": "AAC", "channels": "2.0"}],
+            "subtitles": ["por", "eng"], "size": 1590000000, "minutes": 31})
+        uhd = manual.summarise(FFPROBE_UHD, 5)
+        self.assertEqual((uhd["resolution"], uhd["video"], uhd["hdr"], uhd["audio"][0]["codec"], uhd["audio"][0]["channels"], uhd["audio"][1]), ("2160p", "HEVC", "Dolby Vision", "TrueHD", "7.1", {"language": None, "codec": "DTS-HD MA", "channels": "5.1"}))
+
+    def test_only_files_inside_the_download_folders_are_probed(self):
+        self.assertIsNotNone(manual.media_of(self.deps(), str(self.file)))
+        for bad in (str(self.outside), str(self.root / "tv" / "escape.mkv"), str(self.root / "tv" / "E09" / ".." / ".." / ".." / "library.mkv"), str(self.root / "tv" / "E09")):
+            self.assertIsNone(manual.media_of(self.deps(), bad), bad)
+        self.assertEqual(self.runs, [str(self.file.resolve())])
+        no_roots = dn.Deps(seerr=None, arr=None, qbit=None, sab=None)
+        self.assertIsNone(manual.media_of(no_roots, str(self.file)))
+
+    def test_probes_are_cached_by_path_size_and_time(self):
+        manual.media_of(self.deps(), str(self.file))
+        manual.media_of(self.deps(), str(self.file))
+        self.assertEqual(len(self.runs), 1)
+        self.file.write_bytes(b"x" * 200)
+        manual.media_of(self.deps(), str(self.file))
+        self.assertEqual(len(self.runs), 2)
+
+    def test_the_card_gets_the_biggest_video_of_the_download_not_the_sample(self):
+        w = self.e09_world()
+        w.queues["sonarr"][0]["outputPath"] = str(self.root / "tv" / "E09")
+        deps = w.deps()
+        deps.download_roots = (str(self.root),)
+        status, out = dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)
+        self.assertEqual(out["open"][0]["details"]["media"]["video"], "H.264")
+        self.assertEqual({c["rule"]: c["mark"] for c in out["open"][0]["details"]["checks"]}, {"original": "ok", "german": "none", "quality": "ok", "hdr": "ok", "runtime": "ok", "size": "none"})
+        self.assertEqual(self.runs, [str(self.file.resolve())])
+        self.assertNotIn(self.tmp.name, json.dumps(out))
+
+    def test_file_list_has_each_files_media(self):
+        w = self.e09_world()
+        w.episodes = EPISODES
+        w.proposals = [{"path": str(self.file), "relativePath": "Show.S01E09.mkv", "size": 100, "quality": {}, "languages": [], "episodes": [], "rejections": [], "downloadId": "DL1"}]
+        deps = w.deps()
+        deps.download_roots = (str(self.root),)
+        pid = dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)[1]["open"][0]["id"]
+        out = dn.handle("GET", f"/_download-now/manual/files?id={pid}", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)[1]
+        self.assertEqual(out["files"][0]["media"]["audio"][0]["language"], "por")
+        self.assertEqual({c["rule"]: c["mark"] for c in out["files"][0]["checks"]}["runtime"], "ok")
+        self.assertNotIn(self.tmp.name, json.dumps(out))
+
+    def test_file_rejections_carry_a_reason(self):
+        w = World(squeue=[qrec(1, ep=501)])
+        w.episodes = EPISODES
+        w.proposals = [{"path": "/x/a.mkv", "relativePath": "a.mkv", "size": 1, "quality": {}, "languages": [], "episodes": [], "rejections": [{"reason": "Not an upgrade for existing episode file(s)"}], "downloadId": "DL1"}]
+        pid = one(w, "import")["id"]
+        f = get(w, f"files?id={pid}")[1]["files"][0]
+        self.assertEqual(f["reasons"], ["not-upgrade"])
+
+
+class Virus(unittest.TestCase):
+    def setUp(self):
+        reset()
+        manual.CLAMAV_CACHE.clear()
+        self.w = World(squeue=[qrec(1, ep=501)])
+        self.w.episodes = EPISODES
+        self.path = "/data/usenet/complete/tv/CR/CR.S01E01.mkv"
+        self.w.proposals = [{"path": self.path, "relativePath": "CR.S01E01.mkv", "size": 5, "quality": {}, "languages": [], "episodes": [], "rejections": [], "downloadId": "DL1"}]
+        self.pid = one(self.w, "import")["id"]
+
+    def files(self):
+        manual.OFFERS.clear()
+        manual.THROTTLE.clear()
+        return get(self.w, f"files?id={self.pid}")[1]["files"][0]["virus"]
+
+    def imp(self):
+        manual.THROTTLE.clear()
+        return post(self.w, {"id": self.pid, "action": "import", "files": [{"n": 0, "episodeIds": [501]}]})
+
+    def test_states_from_the_scan_log(self):
+        self.assertEqual(self.files()["state"], "unknown")
+        self.w.scanned(self.path, "queued")
+        self.assertEqual(self.files()["state"], "pending")
+        self.w.scanned(self.path, "clean", at="2026-11-15T02:05:00Z")
+        self.assertEqual(self.files(), {"state": "clean", "at": "2026-11-15T02:05:00Z", "signature": None})
+        self.w.scanned(self.path, "infected", "Win.Test.EICAR_HDB-1")
+        self.assertEqual((self.files()["state"], self.files()["signature"]), ("infected", "Win.Test.EICAR_HDB-1"))
+        self.w.scanned(self.path, "skipped")
+        self.assertEqual(self.files()["state"], "unknown")
+
+    def test_the_rotated_log_counts_too(self):
+        pathlib.Path(str(self.w.clamav) + ".1").write_text(json.dumps({"at": "2026-11-14T01:00:00Z", "path": self.path, "verdict": "clean", "signature": None}) + "\n")
+        self.assertEqual(self.files()["state"], "clean")
+
+    def test_clean_file_imports_for_everyone(self):
+        self.w.scanned(self.path)
+        self.files()
+        self.assertEqual(self.imp()[0], 200)
+
+    def test_malware_is_never_imported_not_even_by_an_admin(self):
+        self.w.scanned(self.path, "infected", "Win.Test.EICAR_HDB-1")
+        for me in (USER, ADMIN):
+            self.w.me = me
+            self.files()
+            status, out = self.imp()
+            self.assertEqual(status, 403)
+            self.assertEqual(out["error"], "malware")
+        self.assertEqual(self.w.writes, [])
+
+    def test_pending_or_unknown_scan_imports_only_for_admins(self):
+        for verdict in (None, "queued", "skipped", "error"):
+            reset()
+            manual.CLAMAV_CACHE.clear()
+            self.w.me = USER
+            if verdict:
+                self.w.scanned(self.path, verdict)
+            one(self.w, "import")
+            self.files()
+            status, out = self.imp()
+            self.assertEqual((status, out.get("error")), (403, "virus scan pending"), verdict)
+        self.w.me = ADMIN
+        self.files()
+        self.assertEqual(self.imp()[0], 200)
+
+    def test_the_card_shows_the_scan_of_the_main_file(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = pathlib.Path(tmp.name, "complete")
+        (root / "CR").mkdir(parents=True)
+        main = root / "CR" / "CR.S01E01.mkv"
+        main.write_bytes(b"x" * 10)
+        self.w.queues["sonarr"][0]["outputPath"] = str(root / "CR")
+        self.w.scanned(str(main.resolve()), "clean")
+        deps = self.w.deps()
+        deps.download_roots = (str(root),)
+        real = manual.FFPROBE
+        manual.FFPROBE = lambda path: None
+        self.addCleanup(setattr, manual, "FFPROBE", real)
+        manual.CACHE.clear()
+        out = dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)[1]
+        self.assertEqual(out["open"][0]["details"]["virus"]["state"], "clean")
+
+
+class SearchQueue(unittest.TestCase):
+    """Release searches run one after another; a second one waits instead of being refused."""
+
+    def setUp(self):
+        reset()
+        self.w = World(rs=state(noRelease={"movie/10248": "2026-11-14T04:17:00Z", "movie/77": "2026-11-14T04:17:00Z", "movie/88": "2026-11-14T04:17:00Z"}),
+                       requests=[request(11, "movie", 10248, ext=21), request(12, "movie", 77, ext=22), request(13, "movie", 88, ext=23)],
+                       titles={"/movie/21": {"id": 21, "title": "The Ring Thing", "year": 2004, "tmdbId": 10248, "qualityProfileId": 13},
+                               "/movie/22": {"id": 22, "title": "Tied Up", "year": 2026, "tmdbId": 77, "qualityProfileId": 7},
+                               "/movie/23": {"id": 23, "title": "Third", "year": 2020, "tmdbId": 88, "qualityProfileId": 7}})
+        self.w.releases = RELEASES
+        self.ids = {p["title"]: p["id"] for p in problems(self.w)["open"]}
+        manual.KICK = lambda deps: None
+        self.addCleanup(setattr, manual, "QUEUE_MAX", manual.QUEUE_MAX)
+        self.addCleanup(setattr, manual, "QUEUE_PER_USER", manual.QUEUE_PER_USER)
+
+    def rel(self, title):
+        return get(self.w, f"releases?id={self.ids[title]}")
+
+    def test_two_problems_back_to_back_both_complete(self):
+        first, second = self.rel("Tied Up"), self.rel("The Ring Thing")
+        self.assertEqual((first[0], first[1]["state"]), (200, "queued"))
+        self.assertEqual((second[0], second[1]["state"], second[1]["waitingFor"], second[1]["ahead"]), (200, "queued", "Tied Up", 1))
+        manual.drain(self.w.deps())
+        for title in ("Tied Up", "The Ring Thing"):
+            status, out = self.rel(title)
+            self.assertEqual((status, out["state"]), (200, "done"), title)
+        self.assertEqual(len(self.rel("The Ring Thing")[1]["releases"]), 2)
+        self.assertEqual(sum(1 for g in self.w.gets if g[1].startswith("/release")), 2)
+
+    def test_asking_again_while_waiting_is_no_second_search(self):
+        self.rel("Tied Up")
+        self.assertEqual(self.rel("Tied Up")[1]["state"], "queued")
+        manual.drain(self.w.deps())
+        self.assertEqual(sum(1 for g in self.w.gets if g[1].startswith("/release")), 1)
+
+    def test_a_full_queue_is_refused_honestly(self):
+        manual.QUEUE_MAX = 1
+        self.rel("Tied Up")
+        self.w.me = OTHER
+        self.assertEqual(self.rel("The Ring Thing"), (429, {"error": "search queue full"}))
+
+    def test_one_user_may_not_fill_the_queue(self):
+        manual.QUEUE_PER_USER = 2
+        self.rel("Tied Up")
+        self.rel("The Ring Thing")
+        self.assertEqual(self.rel("Third"), (429, {"error": "too many searches"}))
+        self.w.me = OTHER
+        self.assertEqual(self.rel("Third")[1]["state"], "queued")
+
+    def test_a_failed_search_says_so_and_can_be_asked_again(self):
+        good = self.w.arr
+
+        def broken(app):
+            def call(path, method="GET", body=None, timeout=None):
+                if path.startswith("/release"):
+                    raise dn.ApiError("radarr: 500")
+                return good(app)(path, method, body)
+            return call
+        self.w.arr = broken
+        self.rel("Tied Up")
+        manual.drain(self.w.deps())
+        self.assertEqual(self.rel("Tied Up"), (502, {"error": "not reachable"}))
+        self.w.arr = good
+        self.assertEqual(self.rel("Tied Up")[1]["state"], "queued")
+
+
+class ClickingThrough(unittest.TestCase):
+    """A user going from one problem to the next never sees an error."""
+
+    def setUp(self):
+        reset()
+
+    def test_lookups_on_different_problems_back_to_back(self):
+        w = World(rs=state(queue={"tv/4040": {"state": "problem", "code": "seerr"}, "tv/5050": {"state": "problem", "code": "seerr"}}),
+                  requests=[request(13, "tv", 4040, status=4, tvdb=9090), request(14, "tv", 5050, status=4, tvdb=9191)])
+        for p in problems(w)["open"]:
+            self.assertEqual(get(w, f"lookup?id={p['id']}")[0], 200)
+
+    def test_file_lists_of_one_problem_for_two_users_back_to_back(self):
+        w = World(squeue=[qrec(1, ep=501)])
+        w.episodes = EPISODES
+        w.proposals = [{"path": "/data/usenet/complete/tv/x/a.S01E01.mkv", "relativePath": "a.S01E01.mkv", "size": 1, "quality": {}, "languages": [], "episodes": [], "rejections": [], "downloadId": "DL1"}]
+        pid = one(w, "import")["id"]
+        self.assertEqual(get(w, f"files?id={pid}")[0], 200)
+        w.me = OTHER
+        self.assertEqual(get(w, f"files?id={pid}")[0], 200)
+        self.assertEqual(sum(1 for g in w.gets if g[1].startswith("/manualimport")), 1)
+
+    def test_flooding_is_refused(self):
+        w = World(rs=state(queue={"tv/4040": {"state": "problem", "code": "seerr"}}), requests=[request(13, "tv", 4040, status=4, tvdb=9090)])
+        pid = one(w, "unmatched")["id"]
+        codes = []
+        for n in range(manual.FLOOD_MAX + 1):
+            manual.NOW = lambda n=n: T + 3 * n / (manual.FLOOD_MAX + 1)
+            manual.THROTTLE.clear()
+            codes.append(get(w, f"lookup?id={pid}")[0])
+        self.assertEqual(codes[-1], 429)
+        self.assertEqual(set(codes[:-1]), {200})
+
+
+class KeyChange(unittest.TestCase):
+    def setUp(self):
+        reset()
+
+    def test_a_changed_key_moves_the_record_instead_of_closing_it(self):
+        w = World(squeue=[qrec(1, ep=501)])
+        first = one(w, "import")
+        self.assertEqual(first["key"], "tv/4040")
+        w.requests = [request(167, "tv", 312697, name="joe", ext=54)]
+        manual.NOW = lambda: T + 600
+        os.utime(w.rs_file, (T + 600, T + 600))
+        manual.CACHE.clear()
+        out = problems(w)
+        self.assertEqual(out["done"], [])
+        (p,) = out["open"]
+        self.assertEqual((p["key"], p["firstSeen"], p["requesters"]), ("tv/312697", first["firstSeen"], ["joe"]))
+
+    def test_a_record_closed_by_an_old_key_change_is_merged_back(self):
+        w = World(squeue=[qrec(1, ep=501)], requests=[request(167, "tv", 312697, name="joe", ext=54)])
+        old = {"id": "0123456789ab", "type": "import", "key": "tv/4040", "title": "Company Retreat", "year": 2026, "requesters": [], "details": {"release": "Company.Retreat.2026.S01.2160p.WEB-DL-GRP"},
+               "firstSeen": "2026-11-15T01:00:00Z", "lastSeen": "2026-11-15T02:00:00Z", "actions": [{"at": "2026-11-15T01:30:00Z", "user": "jane", "userId": 7, "action": "reopened", "result": None}],
+               "resolved": {"at": "2026-11-15T02:30:00Z", "how": "gone"}}
+        w.store.parent.mkdir(parents=True)
+        w.store.write_text(json.dumps({"problems": {old["id"]: old}}))
+        out = problems(w)
+        self.assertEqual(out["done"], [])
+        (p,) = out["open"]
+        self.assertEqual((p["key"], p["firstSeen"], len(p["actions"])), ("tv/312697", "2026-11-15T01:00:00Z", 1))
+        self.assertNotIn("0123456789ab", json.loads(w.store.read_text())["problems"])
+
+    def test_how_a_problem_went_away(self):
+        w = World(squeue=[qrec(1, ep=501)], rs=state(removed=["movie/10248"], noRelease={"movie/77": "2026-11-14T04:17:00Z"}),
+                  requests=[request(11, "movie", 10248, ext=21), request(12, "movie", 77, ext=22)])
+        problems(w)
+        w.queues["sonarr"] = []
+        w.rs_file.write_text(json.dumps(state()))
+        os.utime(w.rs_file, (T, T))
+        manual.CACHE.clear()
+        done = {p["type"]: p["resolved"]["how"] for p in problems(w)["done"]}
+        self.assertEqual(done, {"import": "imported", "no-release": "found", "removed": "gone"})
 
 
 if __name__ == "__main__":

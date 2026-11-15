@@ -11,6 +11,7 @@ import pathlib
 import re
 import secrets
 import shutil
+import subprocess
 import threading
 import time
 import urllib.parse
@@ -35,6 +36,15 @@ OFFER_TTL = 600
 RELEASE_GAP = 120
 LOOKUP_GAP = 2
 FILES_GAP = 10
+# release searches wait in one FIFO (the arr runs them one after another anyway); a user clicking around is never refused, only flooding is
+QUEUE_MAX = 5
+QUEUE_PER_USER = 2
+FLOOD_MAX = 20
+FLOOD_WINDOW = 60
+SEARCHES = {}
+FLOOD = {}
+QUEUE_LOCK = threading.Lock()
+SEQ = [0]
 SEERR_TAKE = 1000
 ACTION_GAP = 20
 GRACE = 1800
@@ -47,6 +57,35 @@ ACTIONS = {"unmatched": {"link"}, "import": {"import"}, "wrong-film": {"block"},
 RESOLVING = {"link", "import", "block", "grab", "readd", "delete"}
 OLDER = "older versions allowed"
 DEFAULT_OLDER = "4K preferred · older versions allowed"
+# Radarr/Sonarr status messages → a reason code the page words in EN/DE (first match wins)
+REASONS = (
+    ("id-match", re.compile(r"matched to (series|movie) by ID", re.I)),
+    ("sample", re.compile(r"\bsample\b", re.I)),
+    ("no-eligible", re.compile(r"no files found are eligible|no video files|not a video|invalid video file", re.I)),
+    ("not-upgrade", re.compile(r"not (a custom format )?an? upgrade|not a custom format upgrade|existing (episode|movie) file", re.I)),
+    ("unparsable", re.compile(r"unable to (parse|determine|identify)|unknown (series|movie|episode)", re.I)),
+    ("not-in-release", re.compile(r"was unexpected|not found in (the )?release|missing from (the )?release|(episode|movie) .*not found", re.I)),
+    ("dub-only", re.compile(r"\bdub|original[- ]language|not original", re.I)),
+    ("failed", re.compile(r"\bfailed\b", re.I)),
+)
+# why Radarr/Sonarr rejected a release (first match), worded on the page
+RELEASE_REASONS = (
+    ("cf-score", re.compile(r"custom formats? .*score .*below", re.I)),
+    ("required-terms", re.compile(r"required terms|must contain|contains one or more terms", re.I)),
+    ("quality", re.compile(r"not wanted in profile|quality .*not (wanted|allowed)", re.I)),
+    ("existing", re.compile(r"existing file", re.I)),
+    ("seeders", re.compile(r"seeders", re.I)),
+    ("blocklisted", re.compile(r"blocklist", re.I)),
+    ("size", re.compile(r"larger than|smaller than|size", re.I)),
+    ("wrong-title", re.compile(r"wrong (movie|series)|unknown (movie|series)|title mismatch", re.I)),
+)
+VIDEO = (".mkv", ".mp4", ".m4v", ".avi", ".ts", ".m2ts", ".mov", ".wmv", ".webm")
+PROBE_CACHE = {}
+PROBE_TIMEOUT = 20
+PROBE_MAX = 20
+PROBE_BUDGET = 60
+CODECS = {"h264": "H.264", "hevc": "HEVC", "av1": "AV1", "mpeg4": "MPEG-4", "mpeg2video": "MPEG-2", "vc1": "VC-1", "vp9": "VP9",
+          "eac3": "E-AC3", "ac3": "AC3", "truehd": "TrueHD", "dts": "DTS", "aac": "AAC", "flac": "FLAC", "opus": "Opus", "mp3": "MP3", "pcm_s16le": "PCM", "pcm_s24le": "PCM"}
 SWISS = "Swiss German"
 ID_MATCHED = re.compile(r"matched to (?:series|movie) by ID")
 YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
@@ -55,6 +94,219 @@ EPISODE = (re.compile(r"[Ss](\d{1,2})[ ._-]?[Ee](\d{1,3})(?:[ ._-]?[Ee-](\d{1,3}
 NAMES = {"radarr": "Radarr", "sonarr": "Sonarr"}
 # rejections a manual pick fixes (the arr could not tell which title or episode it is); any other one needs an admin
 UNMATCHED = re.compile(r"unable to (parse|determine|identify|find)|not found|unknown (series|movie|episode)|matched to (series|movie) by id|no (series|movie|episode)s? (found|matched)", re.I)
+
+
+def release_reason(message):
+    for code, rx in RELEASE_REASONS:
+        if rx.search(str(message or "")):
+            return code
+    return "unknown"
+
+
+def reason_code(message):
+    for code, rx in REASONS:
+        if rx.search(str(message or "")):
+            return code
+    return "unknown"
+
+
+def summarise(data, size):
+    """ffprobe JSON → what the page shows: resolution, codec, HDR, audio (language, codec, channels), subtitle languages, size, minutes."""
+    streams = [x for x in (data or {}).get("streams") or [] if isinstance(x, dict)]
+    v = next((x for x in streams if x.get("codec_type") == "video" and not (x.get("disposition") or {}).get("attached_pic")), {})
+    w, h = v.get("width") or 0, v.get("height") or 0
+    res = next((name for name, wide, tall in (("2160p", 3200, 1800), ("1080p", 1700, 900), ("720p", 1100, 600), ("576p", 9999, 540), ("480p", 9999, 400)) if w >= wide or h >= tall), "SD") if v else None
+    dovi = next((x for x in v.get("side_data_list") or [] if isinstance(x, dict) and ("DOVI" in str(x.get("side_data_type")) or "Dolby Vision" in str(x.get("side_data_type")))), None)
+    if dovi is not None:
+        hdr = "Dolby Vision" + {1: " + HDR10", 6: " + HDR10", 4: " + HLG", 2: " + SDR"}.get(dovi.get("dv_bl_signal_compatibility_id"), "")
+    else:
+        hdr = "HDR10" if v.get("color_transfer") == "smpte2084" else "HLG" if v.get("color_transfer") == "arib-std-b67" else None
+
+    def lang(x):
+        t = (x.get("tags") or {}).get("language")
+        return t if isinstance(t, str) and t not in ("und", "") else None
+
+    def channels(n):
+        return {1: "1.0", 2: "2.0", 6: "5.1", 7: "6.1", 8: "7.1"}.get(n, f"{n} ch" if n else None)
+    audio = [{"language": lang(x), "codec": x.get("profile") if x.get("codec_name") == "dts" and x.get("profile") and x.get("profile") != "DTS" else CODECS.get(x.get("codec_name"), str(x.get("codec_name") or "?").upper()),
+              "channels": channels(x.get("channels"))} for x in streams if x.get("codec_type") == "audio"]
+    try:
+        minutes = round(float((data.get("format") or {}).get("duration")) / 60)
+    except (TypeError, ValueError):
+        minutes = None
+    return {"resolution": res, "video": CODECS.get(v.get("codec_name"), str(v.get("codec_name") or "").upper() or None) if v else None, "hdr": hdr,
+            "audio": audio[:12], "subtitles": [lang(x) or "?" for x in streams if x.get("codec_type") == "subtitle"][:20], "size": size, "minutes": minutes}
+
+
+def run_ffprobe(path):
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", "file:" + path],
+                           capture_output=True, timeout=PROBE_TIMEOUT, check=False)
+        return json.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+FFPROBE = run_ffprobe
+
+
+def inside(deps, path):
+    """The real path when it lies inside a download folder (symlinks resolved first), else None."""
+    roots = [os.path.realpath(x) for x in getattr(deps, "download_roots", None) or ()]
+    if not roots or not isinstance(path, str) or not path:
+        return None
+    real = os.path.realpath(path)
+    return real if any(real.startswith(x.rstrip("/") + "/") for x in roots) else None
+
+
+def media_of(deps, path):
+    real = inside(deps, path)
+    if not real or not os.path.isfile(real):
+        return None
+    st = os.stat(real)
+    key = (real, st.st_size, st.st_mtime_ns)
+    if key not in PROBE_CACHE:
+        if len(PROBE_CACHE) > 300:
+            PROBE_CACHE.clear()
+        data = FFPROBE(real)
+        PROBE_CACHE[key] = summarise(data, st.st_size) if data else None
+    return PROBE_CACHE[key]
+
+
+def biggest_video(deps, path):
+    """The download's main video (largest, no sample) under its output path, two levels deep at most."""
+    real = inside(deps, path)
+    if not real:
+        return None
+    if os.path.isfile(real):
+        return real if real.lower().endswith(VIDEO) else None
+    best, todo = None, [(real, 0)]
+    while todo:
+        d, depth = todo.pop()
+        try:
+            entries = list(os.scandir(d))
+        except OSError:
+            continue
+        for e in entries:
+            if e.is_dir(follow_symlinks=False) and depth < 2:
+                todo.append((e.path, depth + 1))
+            elif e.is_file(follow_symlinks=False) and e.name.lower().endswith(VIDEO) and "sample" not in e.name.lower():
+                size = e.stat(follow_symlinks=False).st_size
+                if best is None or size > best[0]:
+                    best = (size, e.path)
+    return best[1] if best else None
+
+
+# our rules for a file (README "Manual interaction", file checks): running time off by at most runtime_ok = fine, up to runtime_warn = suspicious, more = likely the wrong file; GB per hour above these = "very big" like the Requests page
+RULES = {"runtime_ok": 0.10, "runtime_warn": 0.25, "gb_per_hour_film": 30, "gb_per_hour_episode": 20}
+LANG_CODES = {"english": {"eng", "en"}, "german": {"ger", "deu", "de", "gsw"}, "swiss german": {"gsw"}, "portuguese": {"por", "pt"}, "french": {"fre", "fra", "fr"},
+              "spanish": {"spa", "es"}, "italian": {"ita", "it"}, "japanese": {"jpn", "ja"}, "korean": {"kor", "ko"}, "chinese": {"chi", "zho", "zh"},
+              "mandarin": {"chi", "zho", "cmn", "zh"}, "cantonese": {"yue", "chi", "zho"}, "russian": {"rus", "ru"}, "dutch": {"dut", "nld", "nl"},
+              "swedish": {"swe", "sv"}, "danish": {"dan", "da"}, "norwegian": {"nor", "nob", "nno", "no"}, "finnish": {"fin", "fi"}, "polish": {"pol", "pl"},
+              "turkish": {"tur", "tr"}, "hindi": {"hin", "hi"}, "arabic": {"ara", "ar"}, "thai": {"tha", "th"}, "hebrew": {"heb", "he"}, "czech": {"cze", "ces", "cs"},
+              "hungarian": {"hun", "hu"}, "greek": {"gre", "ell", "el"}, "icelandic": {"ice", "isl", "is"}, "persian": {"per", "fas", "fa"}, "indonesian": {"ind", "id"}}
+GERMAN = LANG_CODES["german"]
+
+
+def ladder(profile):
+    """A Radarr/Sonarr quality profile as quality id → (rank, allowed, item name), plus the cutoff's rank, name and resolution."""
+    out, cut = {}, (None, None, 0)
+    for rank, it in enumerate((profile or {}).get("items") or []):
+        if not isinstance(it, dict):
+            continue
+        quals = [x.get("quality") or {} for x in it.get("items") or []] if it.get("items") else [it.get("quality") or {}]
+        name = it.get("name") or (quals[0].get("name") if quals else None)
+        for q in quals:
+            if is_int(q.get("id")):
+                out[q["id"]] = (rank, bool(it.get("allowed")), q.get("name"))
+        if (it.get("id") if it.get("items") else (it.get("quality") or {}).get("id")) == (profile or {}).get("cutoff"):
+            cut = (rank, name, max([q.get("resolution") or 0 for q in quals] or [0]))
+    return out, cut
+
+
+def checks(m, c):
+    """Every shown property against our rules: ok (✅), warn (⚠️), bad (❌), none (no rule applies / unknown)."""
+    if not isinstance(m, dict):
+        return []
+    out = []
+    langs = {a.get("language") for a in m.get("audio") or [] if isinstance(a, dict) and a.get("language")}
+    original = str(c.get("original") or "").strip()
+    codes = LANG_CODES.get(original.lower())
+    if not codes or not langs:
+        out.append({"rule": "original", "mark": "none", "language": original or None})
+    else:
+        out.append({"rule": "original", "mark": "ok" if langs & codes else "bad", "language": original})
+    if original.lower() != "english":
+        out.append({"rule": "english", "mark": "none" if not langs else "ok" if langs & LANG_CODES["english"] else "warn"})
+    subs = {x for x in m.get("subtitles") or [] if x}
+    out.append({"rule": "german", "mark": "ok" if (langs | subs) & GERMAN else "none"})
+    steps, (cut_rank, cut_name, cut_res) = ladder(c.get("profile"))
+    q = steps.get(c.get("quality"))
+    # what the profile allows is fine (owner 2026-11-15: the 1080p fallback is part of a 4K profile); below its cutoff only a neutral "may upgrade later"
+    if q is None:
+        out.append({"rule": "quality", "mark": "none", "quality": None, "upgrade": None})
+    else:
+        below = cut_rank is not None and q[0] < cut_rank
+        out.append({"rule": "quality", "mark": "ok" if q[1] else "bad", "quality": q[2], "upgrade": cut_name if q[1] and below else None})
+    hdr = m.get("hdr")
+    goal = "HDR" in str((c.get("profile") or {}).get("name") or "") and cut_res >= 2160
+    bad = bool(hdr) and hdr.startswith("Dolby Vision") and not hdr.endswith(("HDR10", "HLG"))
+    out.append({"rule": "hdr", "mark": "bad" if bad else "ok", "hdr": hdr or "SDR", "upgrade": not hdr and goal})
+    minutes, expected = m.get("minutes"), c.get("expected")
+    if minutes and expected:
+        off = abs(minutes - expected) / expected
+        out.append({"rule": "runtime", "mark": "ok" if off <= RULES["runtime_ok"] + 1e-9 else "warn" if off <= RULES["runtime_warn"] + 1e-9 else "bad", "minutes": minutes, "expected": expected})
+    if m.get("size"):
+        gbh = round(m["size"] / 1e9 / (minutes / 60), 1) if minutes else None
+        limit = RULES["gb_per_hour_film"] if c.get("kind") == "movie" else RULES["gb_per_hour_episode"]
+        out.append({"rule": "size", "mark": "warn" if gbh and gbh > limit else "none", "size": m["size"], "gbh": gbh, "limit": limit})
+    return out
+
+
+def check_context(t, profiles, kind, quality, expected):
+    t = t if isinstance(t, dict) else {}
+    profile = next((x for x in profiles or [] if isinstance(x, dict) and x.get("id") == t.get("qualityProfileId")), None)
+    return {"kind": kind, "original": (t.get("originalLanguage") or {}).get("name"), "profile": profile, "quality": quality, "expected": expected or t.get("runtime") or None}
+
+
+CLAMAV_CACHE = {}
+
+
+def scan_log(deps):
+    """ClamAV's per-file verdicts (Antivirus hook, clamav-results.jsonl and its rotated .1): path → last line."""
+    path = getattr(deps, "clamav_results", None)
+    if not path:
+        return {}
+    files = [path + ".1", path]
+    try:
+        key = tuple((os.stat(f).st_mtime_ns, os.stat(f).st_size) if os.path.exists(f) else None for f in files)
+    except OSError:
+        return {}
+    if CLAMAV_CACHE.get("key") == key:
+        return CLAMAV_CACHE["log"]
+    log = {}
+    for f in files:
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    try:
+                        x = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(x, dict) and isinstance(x.get("path"), str):
+                        log[x["path"]] = x
+        except OSError:
+            continue
+    CLAMAV_CACHE.update(key=key, log=log)
+    return log
+
+
+def virus(deps, path):
+    """clean / infected (with signature) / pending (queued for the background scan) / unknown (never scanned, too big, error)."""
+    log = scan_log(deps)
+    x = log.get(path) or (log.get(os.path.realpath(path)) if isinstance(path, str) else None) or {}
+    state = {"clean": "clean", "infected": "infected", "queued": "pending"}.get(x.get("verdict"), "unknown")
+    return {"state": state, "at": x.get("at") if state != "unknown" else None, "signature": str(x.get("signature"))[:120] if state == "infected" and x.get("signature") else None}
 
 
 class StoreUnreadable(Exception):
@@ -197,7 +449,8 @@ def scan(dn, deps, known):
         names = list(dict.fromkeys(person(r["requestedBy"]) for r in rq))
         pid = pid_of(ptype, key, extra)
         internal.setdefault("requests", rq)
-        found[pid] = {"id": pid, "type": ptype, "key": key, "title": title, "year": year, "requesters": names, "details": details, "_": internal}
+        ident = f"{ptype}|{internal['app']}|{internal['downloadId']}" if internal.get("downloadId") else f"{ptype}|{key}"
+        found[pid] = {"id": pid, "type": ptype, "key": key, "ident": ident, "title": title, "year": year, "requesters": names, "details": details, "_": internal}
 
     def base(key):
         kind, _, tmdb = key.partition("/")
@@ -208,10 +461,10 @@ def scan(dn, deps, known):
 
     for key in rs.get("removed") or []:
         if isinstance(key, str) and key.partition("/")[0] in dn.APP:
-            add("removed", key, *title_of(key), {}, **base(key))
+            add("removed", key, *title_of(key), {"reason": "removed"}, **base(key))
     for key, q in (rs.get("queue") or {}).items():
         if isinstance(q, dict) and q.get("code") == "seerr" and key.partition("/")[0] in dn.APP:
-            add("unmatched", key, *title_of(key), {}, **base(key))
+            add("unmatched", key, *title_of(key), {"reason": "unmatched"}, **base(key))
     unreleased = rs.get("unreleased") or {}
     for key, last in (rs.get("noRelease") or {}).items():
         b = base(key) if key.partition("/")[0] in dn.APP else None
@@ -220,7 +473,7 @@ def scan(dn, deps, known):
         if b is None or key in unreleased or not rq or None in created or now - min(created) < NO_RELEASE_DAYS * DAY:
             continue
         title, year = title_of(key)
-        details = {"lastSearch": last, "profile": None, "older": None, "old": False, "seasons": b["seasons"]}
+        details = {"reason": "no-release", "lastSearch": last, "profile": None, "older": None, "old": False, "seasons": b["seasons"]}
         try:
             t = dn.find_title(b["kind"], arr(b["app"]), {"mediaInfo": b["media"]}, b["tmdb"])
             if t:
@@ -228,6 +481,7 @@ def scan(dn, deps, known):
                 name = next((p.get("name") for p in profile_list(b["app"]) if p.get("id") == t.get("qualityProfileId")), None)
                 details.update(profile=name, older=older_profile(name, profile_list(b["app"])))
                 b["arrId"] = t.get("id")
+                b["runtime"] = t.get("runtime")
         except dn.ApiError:
             pass
         details["old"] = bool(year) and int(year) <= time.gmtime(now).tm_year - OLD_YEARS
@@ -254,7 +508,20 @@ def scan(dn, deps, known):
                 key = seerr_key.get((app, "id", tid)) or seerr_key.get((app, "tvdb", t.get("tvdbId"))) or key
             ptype, more = queue_kind(recs, t.get("year"), kind)
             msg = next((m for r in recs for sm in r.get("statusMessages") or [] for m in sm.get("messages") or [] if m), None) or recs[0].get("errorMessage")
-            details = {"release": str(recs[0].get("title") or "")[:200], "message": brief(msg), **more}
+            msgs = [m for r in recs for sm in r.get("statusMessages") or [] for m in sm.get("messages") or [] if m] + [recs[0].get("errorMessage") or ""]
+            code = ptype if ptype in ("wrong-film", "failed") else next((c for c in map(reason_code, msgs) if c != "unknown"), "unknown")
+            details = {"reason": code, "release": str(recs[0].get("title") or "")[:200], "message": brief(msg), **more}
+            main_file = biggest_video(deps, recs[0].get("outputPath"))
+            if main_file:
+                details["virus"] = virus(deps, main_file)
+                details["media"] = media_of(deps, main_file)
+                if details["media"]:
+                    try:
+                        plist = profile_list(app)
+                    except dn.ApiError:
+                        plist = []
+                    quality = ((recs[0].get("quality") or {}).get("quality") or {}).get("id")
+                    details["checks"] = checks(details["media"], check_context(t, plist, kind, quality, (recs[0].get("episode") or {}).get("runtime") if len(recs) == 1 else None))
             eps = sorted({r.get("episodeId") for r in recs if isinstance(r.get("episodeId"), int)})
             if kind == "tv":
                 details["episodes"] = len(recs)
@@ -296,8 +563,37 @@ def save(deps, records):
     os.replace(tmp, path)
 
 
+GONE = {"import": "imported", "no-release": "found"}
+BY_ITSELF = {"gone", "imported", "found"}
+
+
+def same_problem(r, p):
+    """An older record of this problem under another key (the key moved, e.g. to Seerr's TMDB id): same download, or before idents existed, same type and release name."""
+    if r.get("id") == p["id"]:
+        return False
+    if r.get("ident"):
+        return r["ident"] == p.get("ident")
+    release = (r.get("details") or {}).get("release")
+    return r.get("type") == p["type"] and bool(release) and release == (p.get("details") or {}).get("release")
+
+
+def migrate(records, pid, p):
+    """Fold older records of the same problem into pid: first seen and history kept; a resolution caused by the key change is dropped."""
+    for old_id in [k for k, r in records.items() if isinstance(r, dict) and same_problem(r, p)]:
+        old = records.pop(old_id)
+        if old.get("resolved") and old["resolved"].get("how") in BY_ITSELF:
+            old["resolved"] = None
+        target = records.get(pid)
+        if target is None:
+            records[pid] = dict(old, id=pid)
+            continue
+        target["firstSeen"] = min(filter(None, (target.get("firstSeen"), old.get("firstSeen"))), default=None)
+        target["actions"] = sorted((old.get("actions") or []) + (target.get("actions") or []), key=lambda a: a.get("at") or "")
+
+
 def merge(records, found, complete, now):
     for pid, p in found.items():
+        migrate(records, pid, p)
         pub = {k: v for k, v in p.items() if k != "_"}
         r = records.get(pid)
         if r is None:
@@ -305,12 +601,12 @@ def merge(records, found, complete, now):
             continue
         r.update(pub, lastSeen=ts(now))
         res = r.get("resolved")
-        if res and (res.get("how") == "gone" or now - (epoch(res.get("at")) or 0) >= GRACE):
+        if res and (res.get("how") in BY_ITSELF or now - (epoch(res.get("at")) or 0) >= GRACE):
             r["resolved"] = None
             r.setdefault("actions", []).append({"at": ts(now), "user": None, "userId": None, "action": "reopened", "result": None})
     for pid, r in list(records.items()):
         if complete and r.get("resolved") is None and pid not in found:
-            r["resolved"] = {"at": ts(now), "how": "gone"}
+            r["resolved"] = {"at": ts(now), "how": GONE.get(r.get("type"), "gone")}
         res = r.get("resolved")
         if res and now - (epoch(res.get("at")) or now) > KEEP_DAYS * DAY:
             del records[pid]
@@ -411,7 +707,7 @@ def lookup(dn, deps, me, p, q):
     term = (q.get("term") or [p["title"] or ""])[0].strip()
     if not term or len(term) > 100:
         raise Refused(400, "bad request")
-    if not throttle(("lookup", me.get("id")), LOOKUP_GAP):
+    if not throttle(("lookup", me.get("id"), p["id"]), LOOKUP_GAP):
         raise Refused(429, "slow down")
     i = p["_"]
     got = deps.arr(i["app"])(f"/{'movie' if i['kind'] == 'movie' else 'series'}/lookup?term={urllib.parse.quote_plus(term)}")
@@ -440,16 +736,24 @@ def episode_guess(name, by_number):
     return []
 
 
+def rescanned(deps, data):
+    """A kept file list with today's virus scan state (it changes while the list is open)."""
+    pub = dict(data["public"])
+    pub["files"] = [dict(f, virus=virus(deps, data["props"][f["n"]]["path"])) for f in pub["files"]]
+    return pub
+
+
 def files(dn, deps, me, p, q):
     if p["type"] != "import":
         raise Refused(400, "bad request")
     had = mine(p["id"], "files", me)
     if had and not q.get("refresh"):
-        return dict(had[1]["public"], token=had[0])
-    if not throttle(("files", me.get("id")), LOOKUP_GAP, mark=False) or not throttle(("files", p["id"]), FILES_GAP, mark=False):
+        return dict(rescanned(deps, had[1]), token=had[0])
+    recent = CACHE.get(("files", p["id"]))
+    if recent and NOW() - recent[0] < FILES_GAP and not q.get("refresh"):
+        return dict(rescanned(deps, recent[1]), token=keep(p["id"], "files", me, recent[1]))
+    if not throttle(("files", p["id"]), FILES_GAP):
         raise Refused(429, "slow down")
-    throttle(("files", me.get("id")), LOOKUP_GAP)
-    throttle(("files", p["id"]), FILES_GAP)
     i = p["_"]
     arr = deps.arr(i["app"])
     dl = str(i.get("downloadId") or "")
@@ -463,7 +767,13 @@ def files(dn, deps, me, p, q):
         eps = arr(f"/episode?seriesId={i['arrId']}")
         episodes = sorted([e for e in eps if isinstance(e, dict) and is_int(e.get("id"))] if isinstance(eps, list) else [], key=lambda e: ((e.get("seasonNumber") or 0) == 0, e.get("seasonNumber") or 0, e.get("episodeNumber") or 0))
     by_number = {(e.get("seasonNumber"), e.get("episodeNumber")): e["id"] for e in episodes}
-    out = []
+    runtime = {e["id"]: e.get("runtime") for e in episodes}
+    try:
+        title = arr(f"/{'movie' if i['kind'] == 'movie' else 'series'}/{i['arrId']}")
+        plist = arr("/qualityprofile")
+    except Exception:
+        title, plist = None, []
+    out, probing = [], time.monotonic()
     biggest = max(range(len(props)), key=lambda n: props[n].get("size") or 0) if props else None
     for n, x in enumerate(props):
         name = str(x.get("relativePath") or x.get("name") or x["path"]).replace("\\", "/").rsplit("/", 1)[-1]
@@ -473,9 +783,16 @@ def files(dn, deps, me, p, q):
         out.append({"n": n, "name": name, "size": x.get("size") or 0, "quality": ((x.get("quality") or {}).get("quality") or {}).get("name") or (x.get("quality") or {}).get("name"),
                     "languages": [str(lang.get("name")) for lang in x.get("languages") or [] if isinstance(lang, dict) and lang.get("name")],
                     "rejections": [brief(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
+                    "reasons": [reason_code(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
+                    "media": media_of(deps, x["path"]) if n < PROBE_MAX and time.monotonic() - probing < PROBE_BUDGET else None,
+                    "virus": virus(deps, x["path"]),
                     "episodeIds": guess, "probable": bool(guess) if i["kind"] == "tv" else n == biggest})
+        qid = ((x.get("quality") or {}).get("quality") or {}).get("id")
+        out[-1]["checks"] = checks(out[-1]["media"], check_context(title, plist, i["kind"], qid, runtime.get(guess[0]) if len(guess) == 1 else None))
     public = {"kind": i["kind"], "files": out, "episodes": [{"id": e["id"], "label": f"S{e.get('seasonNumber') or 0:02d}E{e.get('episodeNumber') or 0:02d}", "title": str(e.get("title") or "")[:80]} for e in episodes]}
-    token = keep(p["id"], "files", me, {"props": props, "episodes": {e["id"]: bool(e.get("hasFile")) for e in episodes}, "public": public})
+    data = {"props": props, "episodes": {e["id"]: bool(e.get("hasFile")) for e in episodes}, "public": public}
+    CACHE[("files", p["id"])] = (NOW(), data)
+    token = keep(p["id"], "files", me, data)
     return dict(public, token=token)
 
 
@@ -491,31 +808,117 @@ def releases(dn, deps, me, p, q):
             raise Refused(400, "bad request")
     had = mine(p["id"], "releases", me)
     if had and had[1]["season"] == season and not q.get("refresh"):
-        return {"token": had[0], "releases": had[1]["public"], "season": season, "cached": True}
+        return {"state": "done", "token": had[0], "releases": had[1]["public"], "dropped": had[1].get("dropped", 0), "season": season, "cached": True}
     cached = CACHE.get(("releases", p["id"]))
-    if not throttle(("releases", p["id"]), RELEASE_GAP, mark=False):
-        if cached and cached["season"] == season:
-            return {"token": keep(p["id"], "releases", me, cached), "releases": cached["public"], "season": season, "cached": True}
-        raise Refused(429, "slow down")
-    if not SEARCH_LOCK.acquire(blocking=False):
-        raise Refused(429, "busy")
-    try:
-        THROTTLE[("releases", p["id"])] = NOW()
+    if cached and cached["season"] == season and NOW() - cached["at"] < RELEASE_GAP:
+        return {"state": "done", "token": keep(p["id"], "releases", me, cached), "releases": cached["public"], "dropped": cached.get("dropped", 0), "season": season, "cached": True}
+    with QUEUE_LOCK:
+        job = SEARCHES.get(p["id"])
+        if job and job["state"] in ("queued", "running"):
+            if job["season"] != season:
+                raise Refused(429, "slow down")
+            return waiting(job)
+        if job and job["state"] == "failed":
+            del SEARCHES[p["id"]]
+            raise Refused(502, "not reachable")
+        waiting_jobs = [j for j in SEARCHES.values() if j["state"] in ("queued", "running")]
+        if sum(1 for j in waiting_jobs if j["state"] == "queued") >= QUEUE_MAX:
+            raise Refused(429, "search queue full")
+        if sum(1 for j in waiting_jobs if j["user"] == me.get("id")) >= QUEUE_PER_USER:
+            raise Refused(429, "too many searches")
+        SEQ[0] += 1
         path = f"/release?movieId={i['arrId']}" if i["kind"] == "movie" else f"/release?seriesId={i['arrId']}" + (f"&seasonNumber={season}" if season is not None else "")
-        got = deps.arr(i["app"])(path, timeout=RELEASE_TIMEOUT)
-    finally:
-        SEARCH_LOCK.release()
-    items = [x for x in got if isinstance(x, dict) and x.get("guid") and is_int(x.get("indexerId"))] if isinstance(got, list) else []
+        job = SEARCHES[p["id"]] = {"pid": p["id"], "seq": SEQ[0], "state": "queued", "season": season, "path": path, "app": i["app"], "deps": deps,
+                                   "kind": i["kind"], "arrId": i["arrId"], "runtime": i.get("runtime"),
+                                   "user": me.get("id"), "title": p.get("title"), "queued": NOW()}
+    KICK(deps)
+    with QUEUE_LOCK:
+        if job["state"] == "failed":
+            SEARCHES.pop(p["id"], None)
+            raise Refused(502, "not reachable")
+        if job["state"] != "done":
+            return waiting(job)
+    cached = CACHE[("releases", p["id"])]
+    return {"state": "done", "token": keep(p["id"], "releases", me, cached), "releases": cached["public"], "dropped": cached.get("dropped", 0), "season": season, "cached": False}
+
+
+def waiting(job):
+    """Where a search stands: running, or queued behind others (the first of them named)."""
+    ahead = sorted((j for j in SEARCHES.values() if j["state"] in ("queued", "running") and j["seq"] < job["seq"]), key=lambda j: (j["state"] != "running", j["seq"]))
+    return {"state": job["state"], "season": job["season"], "ahead": len(ahead), "waitingFor": ahead[0]["title"] if ahead and job["state"] == "queued" else None}
+
+
+def matched(x, job):
+    """A release Radarr/Sonarr mapped to this very title (and season): indexers that ignore the query return their newest uploads, those are dropped."""
+    if job.get("kind") == "movie":
+        return x.get("mappedMovieId") == job.get("arrId")
+    return x.get("mappedSeriesId") == job.get("arrId") and (job.get("season") is None or x.get("mappedSeasonNumber") == job.get("season"))
+
+
+def release_data(got, job):
+    season = job.get("season")
+    every = [x for x in got if isinstance(x, dict) and x.get("guid") and is_int(x.get("indexerId"))] if isinstance(got, list) else []
+    items = [x for x in every if matched(x, job)]
+    dropped = len(every) - len(items)
+    if dropped:
+        print(f"manual release search {job.get('title')}: {len(items)} matched, {dropped} of other or unknown titles dropped", flush=True)
     items.sort(key=lambda x: (bool(x.get("rejected")), -(x.get("customFormatScore") or 0), -(x.get("seeders") or 0)))
     items = items[:100]
     public = [{"n": n, "title": str(x.get("title") or "")[:200], "size": x.get("size") or 0, "quality": ((x.get("quality") or {}).get("quality") or {}).get("name"),
                "languages": [str(lang.get("name")) for lang in x.get("languages") or [] if isinstance(lang, dict) and lang.get("name")],
                "seeders": x.get("seeders"), "leechers": x.get("leechers"), "score": x.get("customFormatScore"), "rejected": bool(x.get("rejected")),
                "rejections": [brief(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
+               "reasons": [release_reason(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
+               "gbh": round((x.get("size") or 0) / 1e9 / (job["runtime"] / 60), 1) if job.get("kind") == "movie" and job.get("runtime") and x.get("size") else None,
                "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "age": x.get("age")} for n, x in enumerate(items)]
-    data = {"season": season, "public": public, "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": bool(x.get("rejected")), "title": str(x.get("title") or "")[:200]} for x in items]}
-    CACHE[("releases", p["id"])] = data
-    return {"token": keep(p["id"], "releases", me, data), "releases": public, "season": season, "cached": False}
+    return {"season": season, "at": NOW(), "public": public, "dropped": dropped, "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": bool(x.get("rejected")), "title": str(x.get("title") or "")[:200]} for x in items]}
+
+
+def drain(deps=None):
+    """Run the queued release searches one at a time, oldest first; one drainer at a time, a job queued meanwhile is picked up too."""
+    while True:
+        if not SEARCH_LOCK.acquire(blocking=False):
+            return
+        try:
+            while True:
+                with QUEUE_LOCK:
+                    job = min((j for j in SEARCHES.values() if j["state"] == "queued"), key=lambda j: j["seq"], default=None)
+                    if job is None:
+                        break
+                    job["state"] = "running"
+                try:
+                    data = release_data(job["deps"].arr(job["app"])(job["path"], timeout=RELEASE_TIMEOUT), job)
+                    CACHE[("releases", job["pid"])] = data
+                    state = "done"
+                except Exception as e:
+                    print(f"manual release search {job['title']}: {type(e).__name__} {str(e).split('?')[0][:120]}", flush=True)
+                    state = "failed"
+                with QUEUE_LOCK:
+                    job["state"] = state
+                    for k in [k for k, j in SEARCHES.items() if j["state"] == "done" and NOW() - j["queued"] > OFFER_TTL]:
+                        del SEARCHES[k]
+        finally:
+            SEARCH_LOCK.release()
+        with QUEUE_LOCK:
+            if not any(j["state"] == "queued" for j in SEARCHES.values()):
+                return
+
+
+def start_drain(deps):
+    threading.Thread(target=drain, args=(deps,), daemon=True).start()
+
+
+KICK = start_drain
+
+
+def flooding(me):
+    """More than FLOOD_MAX list calls (lookup, files, releases) in FLOOD_WINDOW seconds by one user."""
+    with THROTTLE_LOCK:
+        now = NOW()
+        hits = [t for t in FLOOD.get(me.get("id"), []) if now - t < FLOOD_WINDOW]
+        hits.append(now)
+        FLOOD[me.get("id")] = hits
+        return len(hits) > FLOOD_MAX
 
 
 def search(arr, i, episode_ids=None):
@@ -604,6 +1007,14 @@ def do_import(deps, me, admin, p, req):
             raise Refused(400, "bad request")
         seen.add(n)
         x = o["props"][n]
+        scan = virus(deps, x["path"])
+        if scan["state"] == "infected":
+            print(f"manual: user {me.get('id')} import of {p['key']} refused, malware ({scan['signature']})", flush=True)
+            raise Refused(403, "malware")
+        if scan["state"] != "clean" and not admin:
+            raise Refused(403, "virus scan pending")
+        if scan["state"] != "clean":
+            print(f"manual: admin {me.get('id')} imports {p['key']} with virus scan {scan['state']}", flush=True)
         hard = [str(rj.get("reason") if isinstance(rj, dict) else rj) for rj in x.get("rejections") or [] if hard_rejection(rj.get("reason") if isinstance(rj, dict) else rj)]
         entry = {"path": x["path"], "quality": x.get("quality"), "languages": x.get("languages") or [], "releaseGroup": x.get("releaseGroup"),
                  "downloadId": x.get("downloadId") or i["downloadId"], "indexerFlags": x.get("indexerFlags") or 0}
@@ -782,7 +1193,7 @@ def work(dn, deps, me, method, sub, url, req):
             return 200, view(deps, admin)
         if sub == "count":
             refresh(dn, deps)
-            return 200, {"open": len({r.get("key") for r in view(deps, admin)["open"]})}
+            return 200, {"open": len(view(deps, admin)["open"])}
         if sub == "history":
             if not admin:
                 return 403, {"error": "forbidden"}
@@ -790,6 +1201,8 @@ def work(dn, deps, me, method, sub, url, req):
             with STORE_LOCK:
                 return 200, {"problems": list(load(deps).values())}
         p = problem(dn, deps, (q.get("id") or [""])[0])
+        if flooding(me):
+            raise Refused(429, "slow down")
         if sub == "lookup":
             return 200, lookup(dn, deps, me, p, q)
         if sub == "files":

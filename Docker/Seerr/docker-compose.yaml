@@ -103,7 +103,11 @@ services:
 # lets 172.28.10.205 in without a password. Publishes nothing. Also the Manual interaction backend
 # (README "Manual interaction"): reads request-state.json, keeps its problem list in the state volume.
   download-now:
-    image: python:3.15.2-alpine3.24
+    # python alpine + ffprobe (Manual interaction reads resolution, codecs, audio and subtitle tracks of finished downloads)
+    build:
+      context: ./download-now-image
+      network: host   # bridge builds have no DNS here (DOCKER-USER), as for Antivirus and Subtitle-Translate
+    image: seerr-download-now:local
     container_name: seerr-download-now
     restart: unless-stopped
     user: "65127:65127"
@@ -120,6 +124,8 @@ services:
       - DN_ORIGINS_FILE=/run/origins/origins.json
       - DN_REQUEST_STATE=/run/indexer-bar/request-state.json
       - DN_MANUAL_STATE=/state/manual.json
+      - DN_DOWNLOAD_ROOTS=/data/usenet/complete,/data/torrents
+      - DN_CLAMAV_RESULTS=/run/clamav/clamav-results.jsonl
     volumes:
       - ./download-now:/app:ro
       - ./secrets/download-now:/run/secrets/download-now:ro
@@ -129,6 +135,11 @@ services:
       - ${APPDATA_ROOT}/indexer-bar:/run/indexer-bar:ro
       # Manual interaction problem list (manual.json), the only writable path: 65127:65127 0700
       - ${APPDATA_ROOT}/seerr-download-now:/state
+      # finished downloads only, read-only, at the paths Radarr/Sonarr use (ffprobe of the files of a blocked download); never the library
+      - ${DATA_ROOT}/usenet/complete:/data/usenet/complete:ro
+      - ${DATA_ROOT}/torrents:/data/torrents:ro
+      # ClamAV's per-file verdicts (../Antivirus hook: clamav-results.jsonl): import is refused for malware, admins only before a clean scan
+      - /var/lib/clamav-scan/textfile:/run/clamav:ro
     networks:
       seerr-front: {}
       movie-downloads:
@@ -139,7 +150,7 @@ services:
       interval: 60s
       timeout: 5s
       retries: 3
-    mem_limit: 64m
+    mem_limit: 160m
     pids_limit: 64
     logging:
       driver: "json-file"
