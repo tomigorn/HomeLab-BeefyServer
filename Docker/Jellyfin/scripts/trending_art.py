@@ -580,6 +580,23 @@ def has_band(data):
     return r > 200 and 140 < g < 225 and b < 90 and dark < 210
 
 
+def has_download_pill(data):
+    """True when a poster carries the old top-left "Download" pill (white circle with a dark arrow on a dark pill), at any size the server serves."""
+    try:
+        im = Image.open(io.BytesIO(data)).convert("RGB")
+    except Exception:
+        return False
+    if im.width > im.height:
+        return False
+    im = im.resize((W, H), Image.BILINEAR)
+    cx, cy, r = 68, 64, 27
+    ring = [im.getpixel((round(cx + r * math.cos(a * math.pi / 12)), round(cy + r * math.sin(a * math.pi / 12)))) for a in range(24)]
+    white = sum(1 for p in ring if min(p) > 200)
+    arrow = sum(im.getpixel((cx, cy - 4)))
+    fill = sum(sum(p) for p in im.crop((101, 40, 110, 88)).getdata()) / (9 * 48)
+    return white >= 20 and arrow < 240 and fill < 330
+
+
 def thumb(back, title):
     """16:9 Thumb of a placeholder: its backdrop (the title on a dark gradient without one) with the "Not downloaded yet" band."""
     pic = decode(back)
@@ -609,13 +626,11 @@ def title_poster(title, box=(50, 250, W - 50, 650)):
 
 
 def poster(base, badge, title, marks=(), date=None, placeholder=False):
-    """Placeholder or library poster: state pill top left, red band when not downloadable, marks = [(list key, rank, logo bytes)] stacked on the right, date = release date label bottom left; a placeholder gets the "Not downloaded yet" band at the bottom."""
+    """Placeholder or library poster: Requested / Downloading pill top left (a downloadable title has none, its band says it), red band when not downloadable, marks = [(list key, rank, logo bytes)] stacked on the right, date = release date label bottom left; a placeholder gets the "Not downloaded yet" band at the bottom."""
     marks = list(marks or ())
     pic = decode(base)
     im = cover(pic, (W, H)) if pic is not None else title_poster(title, title_box(badge, len(marks), placeholder))
-    if badge == "found":
-        im = badge_pill(im, "Download", "arrow", (255, 255, 255), (16, 16, 20))
-    elif badge == "requested":
+    if badge == "requested":
         im = badge_pill(im, "Requested", "check", GREEN, WHITE)
     elif badge == "downloading":
         im = badge_pill(im, "Downloading", "arrow", BLUE, WHITE)

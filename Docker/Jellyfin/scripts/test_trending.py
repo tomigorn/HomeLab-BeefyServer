@@ -985,7 +985,7 @@ class BandCheck(Base):
     def test_placeholders_banded_and_real_items_clean(self):
         self.assertEqual(self.run_sync(), 0, self.out)
         self.assertEqual(self.check(), 0, self.out)
-        self.assertRegex(self.out.strip().splitlines()[-1], r"^band ok: placeholders 5/5, thumbs 5/5, real items clean 1/1$")
+        self.assertRegex(self.out.strip().splitlines()[-1], r"^band ok: placeholders 5/5, thumbs 5/5, no Download pill 5/5, real items clean 1/1$")
 
     def test_a_placeholder_without_the_band_fails(self):
         self.assertEqual(self.run_sync(), 0, self.out)
@@ -993,6 +993,15 @@ class BandCheck(Base):
         self.assertEqual(self.check(), 1, self.out)
         self.assertIn("band bad: placeholders 4/5", self.out)
         self.assertIn("Alpha (2026)", self.out)
+
+    def test_a_placeholder_with_the_old_download_pill_fails(self):
+        self.assertEqual(self.run_sync(), 0, self.out)
+        poster = self.folder("Alpha") / "poster.jpg"
+        im = tr.art.Image.open(io.BytesIO(poster.read_bytes())).convert("RGB")
+        poster.write_bytes(tr.art.to_jpeg(tr.art.badge_pill(im, "Download", "arrow", (255, 255, 255), (16, 16, 20))))
+        self.assertEqual(self.check(), 1, self.out)
+        self.assertIn("no Download pill 4/5", self.out)
+        self.assertIn("Download pill: Alpha (2026)", self.out)
 
     def test_a_missing_thumb_fails(self):
         self.assertEqual(self.run_sync(), 0, self.out)

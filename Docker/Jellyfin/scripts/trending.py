@@ -2,7 +2,7 @@
 """Trending sync: fills the hidden libraries "Trending items" (films: movie.nfo, poster.jpg and landscape.jpg with the "Not downloaded yet" band, fanart.jpg, clips as hard links) and "Trending shows" (series: tvshow.nfo, art, clips as Season 00 episodes) with one placeholder folder per listed title not in the library, keeps the 37 collections (BoxSets tagged hss-trending) in step,
 writes the request index for the TV hook (/srv/appdata/jellyfin-popular/trending-index.json) and the JavaScript Injector entry "Trending hidden" (window.HssTrendingHide).
 Inputs: lists.json, coming-list.json, details.json, coming.json, Seerr media (read only), request-state.json. Never prints API keys.
---check-band (read only): a sample of placeholders must serve a Primary and a Thumb with the "Not downloaded yet" band, owned titles a Primary without it.
+--check-band (read only): a sample of placeholders must serve a Primary and a Thumb with the "Not downloaded yet" band and no top-left "Download" pill, owned titles a Primary without the band.
 Exit 0 ok, 1 inputs stale (> 9 days), Jellyfin error (published state kept) or band check failed, 2 usage. Usage: trending.py [--dry-run | --check-band [--sample N]]"""
 import argparse
 import base64
@@ -928,21 +928,29 @@ def check_band(io, paths, log, sample):
     have = owned(io, lib_ids["movie"])
     marked = set((read_json(paths.state).get("real") or {}))
     reals = sorted(have.values(), key=lambda i: (i not in marked, i))[:sample]
-    banded = thumbs = clean = 0
+    banded = thumbs = pill_free = clean = 0
     for i in phs:
         name = folder_of(i["Path"]) or pathlib.PurePosixPath(i["Path"]).name
-        for kind, label in (("Primary", "no band"), ("Thumb", "no banded thumb")):
-            if art.has_band(served(io, i["Id"], kind)):
-                banded, thumbs = (banded + 1, thumbs) if kind == "Primary" else (banded, thumbs + 1)
-            else:
-                log(f"{label}: {name}")
+        primary = served(io, i["Id"], "Primary")
+        if art.has_band(primary):
+            banded += 1
+        else:
+            log(f"no band: {name}")
+        if art.has_band(served(io, i["Id"], "Thumb")):
+            thumbs += 1
+        else:
+            log(f"no banded thumb: {name}")
+        if art.has_download_pill(primary):
+            log(f"Download pill: {name}")
+        elif primary is not None:
+            pill_free += 1
     for i in reals:
         if art.has_band(served(io, i, "Primary")):
             log(f"real item banded: {i}")
         else:
             clean += 1
-    ok = phs and banded == thumbs == len(phs) and clean == len(reals)
-    log(f"band {'ok' if ok else 'bad'}: placeholders {banded}/{len(phs)}, thumbs {thumbs}/{len(phs)}, real items clean {clean}/{len(reals)}")
+    ok = phs and banded == thumbs == pill_free == len(phs) and clean == len(reals)
+    log(f"band {'ok' if ok else 'bad'}: placeholders {banded}/{len(phs)}, thumbs {thumbs}/{len(phs)}, no Download pill {pill_free}/{len(phs)}, real items clean {clean}/{len(reals)}")
     return 0 if ok else 1
 
 
@@ -950,7 +958,7 @@ def main(argv=None, io=None, paths=None, now=None, out=None):
     out = out or sys.stdout
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true", help="print what would change, write nothing")
-    ap.add_argument("--check-band", action="store_true", help="read only: sampled placeholders carry the Not downloaded yet band, owned titles do not")
+    ap.add_argument("--check-band", action="store_true", help="read only: sampled placeholders carry the Not downloaded yet band and no Download pill, owned titles no band")
     ap.add_argument("--sample", type=int, default=6, help="placeholders per library and owned titles checked by --check-band (default 6)")
     try:
         args = ap.parse_args(argv)

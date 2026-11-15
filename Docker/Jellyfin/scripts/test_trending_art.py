@@ -56,7 +56,7 @@ class Art(unittest.TestCase):
 
     def test_badges_are_top_left_pills_clear_of_the_client_corner(self):
         base = Image.new("RGB", (600, 900), (90, 120, 160))
-        for badge in ("found", "requested", "downloading"):
+        for badge in ("requested", "downloading"):
             im = load(ta.poster(img(), badge, "Title")).convert("RGB")
             for x, y in ((590, 10), (480, 60), (590, 120), (300, 450), (590, 890), (10, 890)):
                 d = max(abs(a - c) for a, c in zip(im.getpixel((x, y)), base.getpixel((x, y))))
@@ -134,7 +134,7 @@ class Art(unittest.TestCase):
                     self.assertLess(d, 12, (marks, badge, x, y))
                 for x0, y0, x1, y1 in boxes:
                     self.assertGreater(len(set(rgb_pixels(im.crop((x0, y0, x1, y1))))), 30, (marks, badge))
-                if badge:
+                if badge == "downloading":
                     self.assertLess(sum(im.getpixel((30, 60))), sum(base.getpixel((30, 60))) - 60, badge)
 
     def test_date_pill_bottom_left_clear_of_the_marks_and_the_state_pill(self):
@@ -240,6 +240,38 @@ class Art(unittest.TestCase):
                 top = (0, 0, ta.W, 560)
                 diff = max(max(abs(a - b) for a, b in zip(p, q)) for p, q in zip(rgb_pixels(im.crop(top)), rgb_pixels(plain.crop(top))))
                 self.assertLess(diff, 14, case)
+
+    def test_downloadable_placeholder_has_no_top_pill_the_band_says_it(self):
+        for colour in ((0, 0, 0), (255, 255, 255), (90, 120, 160)):
+            for marks, date in (([], None), ([HOME1], None), ([HOME1, HORROR3], "Wed 4 Nov · S01E05"), ([], "Thu 5 Nov")):
+                case = (colour, len(marks), date)
+                data = ta.poster(img(colour), "found", "Title", marks, date, placeholder=True)
+                self.assertEqual(data, ta.poster(img(colour), None, "Title", marks, date, placeholder=True), case)
+                self.assertFalse(ta.has_download_pill(data), case)
+                self.assertTrue(ta.has_band(data), case)
+                im = load(data).convert("RGB")
+                corner = rgb_pixels(im.crop((0, 0, 300, 130)))
+                self.assertLess(max(max(abs(a - b) for a, b in zip(p, colour)) for p in corner), 12, case)
+                for x0, y0, x1, y1 in ta.mark_boxes([m[1] for m in marks]):
+                    self.assertGreater(len(set(rgb_pixels(im.crop((x0, y0, x1, y1))))), 30, case)
+                if date:
+                    x0, y0, x1, y1 = ta.date_box(date, placeholder=True)
+                    self.assertGreater(len(set(rgb_pixels(im.crop((x0, y0, x1, y1))))), 30, case)
+
+    def test_download_pill_is_recognised_at_any_served_size(self):
+        for colour in ((0, 0, 0), (255, 255, 255), (90, 120, 160)):
+            old = ta.to_jpeg(ta.band(ta.badge_pill(Image.open(io.BytesIO(img(colour))).convert("RGB"), "Download", "arrow", (255, 255, 255), (16, 16, 20))))
+            for size in ((300, 450), (600, 900), (1000, 1500)):
+                for fmt in ("JPEG", "WEBP"):
+                    out = io.BytesIO()
+                    load(old).convert("RGB").resize(size, Image.LANCZOS).save(out, fmt, quality=70)
+                    self.assertTrue(ta.has_download_pill(out.getvalue()), (colour, size, fmt))
+            for badge in ("requested", "downloading", "none", None):
+                self.assertFalse(ta.has_download_pill(ta.poster(img(colour), badge, "Title", [HOME1], "Thu 5 Nov", placeholder=True)), (colour, badge))
+                self.assertFalse(ta.has_download_pill(ta.poster(img(colour), badge, "Title", [HOME1])), (colour, badge))
+            self.assertFalse(ta.has_download_pill(ta.thumb(img(colour, (1280, 720)), "A Title")), colour)
+        self.assertFalse(ta.has_download_pill(b"not an image"))
+        self.assertFalse(ta.has_download_pill(None))
 
     def test_band_says_not_downloaded_yet(self):
         self.assertEqual(ta.BAND_TEXT, "Not downloaded yet")
