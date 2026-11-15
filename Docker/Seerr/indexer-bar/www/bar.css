@@ -65,3 +65,13 @@ html.ib-mini #indexer-bar .ib-dot { width: 6px; height: 6px; }
   #indexer-bar .ib-chips { gap: 10px; }
   #indexer-bar .ib-meter { width: 26px; }
 }
+/* Phones: value cells wrap under their name instead of widening the popup. */
+@media (max-width: 520px) {
+  #indexer-bar .ib-panel { padding: 10px 12px; }
+  #indexer-bar .ib-panel tr { display: flex; flex-wrap: wrap; justify-content: space-between; column-gap: 10px; border-top: 1px solid #374151; padding: 4px 0; }
+  #indexer-bar .ib-panel tr:first-child { border-top: 0; }
+  #indexer-bar .ib-panel td { display: block; border-top: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; }
+  #indexer-bar .ib-panel td:last-child { white-space: normal; margin-left: auto; }
+  #indexer-bar .ib-panel td.ib-rule { flex-basis: 100%; }
+  #indexer-bar .ib-panel .ib-line { flex-wrap: wrap; }
+}

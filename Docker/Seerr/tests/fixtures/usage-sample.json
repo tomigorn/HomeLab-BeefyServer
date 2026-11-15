@@ -1,0 +1,410 @@
+{
+ "ok": true,
+ "generated": "GENERATED",
+ "indexers": [
+  {
+   "name": "Treasure Maps",
+   "protocol": "usenet",
+   "limited": true,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 1151,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 55,
+    "limit": 400,
+    "level": "ok",
+    "resetsAt": "RESET"
+   },
+   "premium": {
+    "lifetime": false,
+    "expires": "2031-11-17",
+    "expired": false
+   }
+  },
+  {
+   "name": "NzbPlanet",
+   "protocol": "usenet",
+   "limited": true,
+   "window": "day",
+   "level": "ok",
+   "searches": {
+    "used": 943,
+    "limit": 20000,
+    "level": "ok",
+    "resetsAt": "RESET"
+   },
+   "downloads": {
+    "used": 0,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "premium": {
+    "lifetime": true,
+    "expires": null,
+    "expired": false
+   }
+  },
+  {
+   "name": "1337x",
+   "protocol": "torrent",
+   "limited": false,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 1753,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 0,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   }
+  },
+  {
+   "name": "1337x (old-rare)",
+   "protocol": "torrent",
+   "limited": false,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 655,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 0,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   }
+  },
+  {
+   "name": "EZTV",
+   "protocol": "torrent",
+   "limited": false,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 123,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 0,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   }
+  },
+  {
+   "name": "EZTV (old-rare)",
+   "protocol": "torrent",
+   "limited": false,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 116,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 0,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   }
+  },
+  {
+   "name": "Knaben",
+   "protocol": "torrent",
+   "limited": false,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 868,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 1,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   }
+  },
+  {
+   "name": "Knaben (old-rare)",
+   "protocol": "torrent",
+   "limited": false,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 266,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 0,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   }
+  },
+  {
+   "name": "NZBgeek",
+   "protocol": "usenet",
+   "limited": false,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 1642,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 16,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "premium": {
+    "lifetime": true,
+    "expires": null,
+    "expired": false
+   }
+  },
+  {
+   "name": "NZBIndex",
+   "protocol": "usenet",
+   "limited": false,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 18,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 0,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   }
+  },
+  {
+   "name": "The Pirate Bay",
+   "protocol": "torrent",
+   "limited": false,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 307,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 0,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   }
+  },
+  {
+   "name": "The Pirate Bay (old-rare)",
+   "protocol": "torrent",
+   "limited": false,
+   "window": "rolling",
+   "level": "ok",
+   "searches": {
+    "used": 266,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 0,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   }
+  }
+ ],
+ "subscriptions": [
+  {
+   "name": "Treasure Maps",
+   "kind": "indexer",
+   "lifetime": false,
+   "expires": "2031-11-17",
+   "daysLeft": 1828,
+   "expired": false,
+   "level": "ok",
+   "premium": {
+    "lifetime": false,
+    "expires": "2031-11-17",
+    "expired": false
+   }
+  },
+  {
+   "name": "Eweka",
+   "kind": "Usenet provider",
+   "lifetime": false,
+   "expires": "2026-11-18",
+   "daysLeft": 3,
+   "expired": false,
+   "level": "orange",
+   "premium": {
+    "lifetime": false,
+    "expires": "2026-11-18",
+    "expired": false
+   }
+  },
+  {
+   "name": "ProtonVPN Plus",
+   "kind": "VPN",
+   "lifetime": false,
+   "expires": "2027-06-15",
+   "daysLeft": 212,
+   "expired": false,
+   "level": "ok",
+   "premium": {
+    "lifetime": false,
+    "expires": "2027-06-15",
+    "expired": false
+   }
+  },
+  {
+   "name": "NZBgeek",
+   "kind": "indexer",
+   "lifetime": true,
+   "expires": null,
+   "daysLeft": null,
+   "expired": false,
+   "level": "ok",
+   "premium": {
+    "lifetime": true,
+    "expires": null,
+    "expired": false
+   }
+  },
+  {
+   "name": "NzbPlanet",
+   "kind": "indexer",
+   "lifetime": true,
+   "expires": null,
+   "daysLeft": null,
+   "expired": false,
+   "level": "ok",
+   "premium": {
+    "lifetime": true,
+    "expires": null,
+    "expired": false
+   }
+  }
+ ],
+ "storage": [
+  {
+   "name": "SSD",
+   "total": 15874605416448,
+   "used": 5854927069184,
+   "free": 10019678347264,
+   "pct": 36.9,
+   "level": "ok",
+   "yellow": 70,
+   "red": 80,
+   "parts": [
+    73.8,
+    0.0
+   ],
+   "sub": {
+    "en": "fast tier, new downloads",
+    "de": "schnell, neue Downloads"
+   },
+   "hint": {
+    "en": "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; from 80 % new downloads go straight to the HDD.",
+    "de": "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab 80 % landen neue Downloads direkt auf der HDD."
+   },
+   "partsLabel": "SSDs"
+  },
+  {
+   "name": "HDD",
+   "total": 29998208495616,
+   "used": 574425268224,
+   "free": 29423783227392,
+   "pct": 1.9,
+   "level": "ok",
+   "yellow": 80,
+   "red": 90,
+   "sub": {
+    "en": "archive",
+    "de": "Archiv"
+   },
+   "hint": {
+    "en": "Archive for older titles. From 90 % new downloads are no longer imported.",
+    "de": "Archiv für ältere Titel. Ab 90 % werden neue Downloads nicht mehr importiert."
+   }
+  }
+ ],
+ "note": {
+  "en": "When a limited indexer is used up, requests may wait until it resets; the other indexers keep searching. Searches made by hand on the indexer websites are not counted.",
+  "de": "Ist ein begrenzter Indexer aufgebraucht, warten Anfragen eventuell, bis er zurückgesetzt wird; die anderen Indexer suchen weiter. Von Hand auf den Indexer-Websites gemachte Suchen werden nicht gezählt."
+ },
+ "subtitles": [
+  {
+   "name": "SubDL",
+   "id": "subdl",
+   "window": "utc-day",
+   "status": "ok",
+   "searches": {
+    "used": 95735,
+    "limit": 2000,
+    "level": "full",
+    "resetsAt": "RESET",
+    "approx": true
+   },
+   "downloads": {
+    "used": 13,
+    "limit": 50,
+    "level": "ok",
+    "resetsAt": "RESET"
+   },
+   "level": "full"
+  },
+  {
+   "name": "OpenSubtitles",
+   "id": "opensubtitlescom",
+   "window": "utc-day",
+   "status": "ok",
+   "searches": {
+    "used": 0,
+    "limit": null,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "downloads": {
+    "used": 7,
+    "limit": 20,
+    "level": "ok",
+    "resetsAt": null
+   },
+   "level": "ok"
+  }
+ ],
+ "subtitlesOk": true
+}

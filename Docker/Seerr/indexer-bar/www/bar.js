@@ -151,16 +151,20 @@
 
   var SUB_WINDOW = "per day (00:00 UTC)", SUB_APPROX = "≈ = estimated from Bazarr's searches.";
   function subRows(d) { return d && Array.isArray(d.subtitles) ? d.subtitles : []; }
-  function subParts(r) {
-    var out = [];
-    [["searches", "searches"], ["downloads", "downloads"]].forEach(function (k) {
-      var m = r[k[0]];
-      if (!m) return;
-      if (m.limit != null) out.push(meter(m), metricText(m, k[1]));
-      else if (m.used) out.push(add(el("span", "ib-muted"), document.createTextNode(num(m.used)), el("span", "ib-word", " " + k[1])));
+  function subMetric(m, word) {
+    if (!m) return [];
+    if (m.limit != null) return [meter(m), metricText(m, word)];
+    return m.used ? [add(el("span", "ib-muted"), document.createTextNode(num(m.used)), el("span", "ib-word", " " + word))] : [];
+  }
+  function subState(r) { return r.status === "paused" && r.statusText ? el("span", "ib-full-text", r.statusText) : resetText(r); }
+  function subParts(r) { return subMetric(r.searches, "searches").concat(subMetric(r.downloads, "downloads"), [subState(r)]); }
+  function subCell(r) {
+    var cell = el("td"), st = subState(r);
+    [subMetric(r.searches, "searches"), subMetric(r.downloads, "downloads")].forEach(function (parts) {
+      if (parts.length) cell.appendChild(add.apply(null, [el("div", "ib-line")].concat(parts)));
     });
-    out.push(r.status === "paused" && r.statusText ? el("span", "ib-full-text", r.statusText) : resetText(r));
-    return out;
+    if (st) add(cell, add(el("div", "ib-line"), st));
+    return cell;
   }
   function subHint(r) {
     var approx = ["searches", "downloads"].some(function (k) { return r[k] && r[k].approx; });
@@ -183,7 +187,7 @@
     rows.forEach(function (r) {
       approx = approx || ["searches", "downloads"].some(function (k) { return r[k] && r[k].approx; });
       add(t, add(el("tr"), add(el("td"), named("div", r), el("div", "ib-muted", SUB_WINDOW)),
-        add(el("td"), add.apply(null, [el("div", "ib-line")].concat(subParts(r))))));
+        subCell(r)));
     });
     add(p, el("h4", null, "Subtitles"), t);
     if (approx) add(p, el("p", "ib-note", SUB_APPROX));
