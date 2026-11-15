@@ -744,3 +744,24 @@ test("running time off on a large file: the hint box explains why only admins ca
     assert.match(w.hgTip.text(w.hgTip.get($('[data-list] [data-virus-src="clamav"]'))), want);
   }
 });
+
+test("Next page: Seerr's 404 stays hidden and untouched until React hydrated it (no error #418, no redraw), then the page is put in", async () => {
+  const s = world({ "/api/v1/auth/me": ME, "/_download-now/manual/problems": { status: 200, body: { open: [problem()], done: [], admin: false } } });
+  const w = load("manual.js", `<div id="__next">${PAGE}</div>`, s.before, "https://requests.example.com/manual");
+  await new Promise((r) => setTimeout(r, 80));
+  assert.equal(w.document.getElementById("hg-manual"), null);
+  assert.equal(w.document.querySelector("main").hasAttribute("data-hg-manual"), false);
+  assert.equal(w.document.documentElement.hasAttribute("data-hg-manual-wait"), true);
+  assert.match(w.document.getElementById("hg-manual-wait").textContent, /html\[data-hg-manual-wait\] main\s*\{\s*visibility:\s*hidden/);
+  w.document.getElementById("__next").firstElementChild["__reactFiber$t"] = {};
+  await new Promise((r) => setTimeout(r, 80));
+  await settle();
+  assert.ok(w.document.querySelector("main > #hg-manual"));
+  assert.equal(w.document.documentElement.hasAttribute("data-hg-manual-wait"), false);
+});
+
+test("Next page elsewhere: nothing hidden while waiting for hydration", async () => {
+  const w = load("manual.js", `<div id="__next">${PAGE}</div>`, world({}).before, "https://requests.example.com/discover/tv");
+  await new Promise((r) => setTimeout(r, 40));
+  assert.equal(w.document.documentElement.hasAttribute("data-hg-manual-wait"), false);
+});

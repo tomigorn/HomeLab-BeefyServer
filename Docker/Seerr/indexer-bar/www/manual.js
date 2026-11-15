@@ -910,11 +910,40 @@
 
   if (typeof window === "undefined") return;
   window.hgManual = { TEXT: TEXT, langOf: langOf, overrideState: overrideState, setPoll: function (ms) { POLL = ms; } };
+  // React must hydrate Seerr's server-rendered 404 first: our page put in before makes it throw error #418 and redraw everything (as in menu-links.js)
+  function hydrated(doc) {
+    var root = doc.getElementById("__next");
+    if (!root) return true;
+    var first = root.firstElementChild;
+    if (!first) return false;
+    for (var k in first) if (k.indexOf("__reactFiber$") === 0) return true;
+    return false;
+  }
+
   try {
     if (!window.MutationObserver) return;
-    sync(window);
-    new MutationObserver(function () {
-      try { sync(window); } catch (e) { /* never break Seerr */ }
-    }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    var go = function () {
+      document.documentElement.removeAttribute("data-hg-manual-wait");
+      sync(window);
+      new MutationObserver(function () {
+        try { sync(window); } catch (e) { /* never break Seerr */ }
+      }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+    };
+    if (hydrated(document)) go();
+    else {
+      if (window.location.pathname.replace(/\/+$/, "") === ROUTE) {
+        var st = document.createElement("style");
+        st.id = "hg-manual-wait";
+        st.textContent = "html[data-hg-manual-wait] main { visibility: hidden; }";
+        (document.head || document.documentElement).appendChild(st);
+        document.documentElement.setAttribute("data-hg-manual-wait", "");
+      }
+      var frame = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : function (f) { setTimeout(f, 16); };
+      var until = Date.now() + 10000;
+      var wait = function () {
+        try { if (hydrated(document) || Date.now() > until) go(); else frame(wait); } catch (e) { go(); }
+      };
+      frame(wait);
+    }
   } catch (e) { /* never break Seerr */ }
 })();
