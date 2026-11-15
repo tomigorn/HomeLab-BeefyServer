@@ -1,0 +1,9 @@
+[Unit]
+Description=Jellyfin own lists: sync after a list is saved or deleted on Seerr's Collections page (or refreshed at night)
+
+[Path]
+PathChanged=/srv/appdata/seerr-collections/lists.json
+Unit=jellyfin-user-lists.service
+
+[Install]
+WantedBy=default.target
