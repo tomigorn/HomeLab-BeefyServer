@@ -150,7 +150,10 @@
       years: function (a, b) { return "Release year " + a + ", film " + b; }, episodes: function (n) { return n + (n === 1 ? " episode" : " episodes"); },
       readd: "Add again", del: "Delete request", delAgain: "Tap again to delete",
       delWarn: "Deletes only the Seerr request(s) of this title, nothing gets downloaded for it any more; the title data in Seerr and any files stay.",
-      block: "Block this release and search again", blockAgain: "Tap again to block it", profile2: function (p) { return "Allow older versions (" + p + ")"; },
+      block: "Wrong release — block it and search again", blockAgain: "Tap again to block it",
+      blockHint: "Blocks this release in Radarr/Sonarr, removes its files from the download client and searches for another one. For a wrong film or episode, a fake or a broken download.",
+      blockedBy: function (u) { return "Blocked and searched again by " + (u || "someone"); },
+      aka: "Also known as: ", nameMatch: function (n, original) { return original ? "✅ Release name matches the original title “" + n + "”" : "✅ Release name matches another name of this title: “" + n + "”"; }, profile2: function (p) { return "Allow older versions (" + p + ")"; },
       suggest: "Suggested: an old title, often only out as DVD or SD.", releases: "Show releases", hideReleases: "Hide releases", loading: "Loading…", searching: "Searching the indexers… (up to 2 min)",
       queued: function (title) { return title ? "Waiting for the search for “" + title + "” to finish, then this starts by itself." : "Waiting for other searches to finish, then this starts by itself."; }, season: "Season",
       override: "Download anyway", overrideHint: "Nothing found for a week: anyone may download a not allowed release anyway. A version the profile allows replaces it as soon as one turns up (searched every night).",
@@ -245,7 +248,10 @@
       years: function (a, b) { return "Release-Jahr " + a + ", Film " + b; }, episodes: function (n) { return n + (n === 1 ? " Folge" : " Folgen"); },
       readd: "Wieder hinzufügen", del: "Anfrage löschen", delAgain: "Nochmals tippen zum Löschen",
       delWarn: "Löscht nur die Seerr-Anfrage(n) dieses Titels, danach wird nichts mehr dafür heruntergeladen; die Titeldaten in Seerr und allfällige Dateien bleiben.",
-      block: "Release sperren und neu suchen", blockAgain: "Nochmals tippen zum Sperren", profile2: function (p) { return "Ältere Versionen erlauben (" + p + ")"; },
+      block: "Falsches Release — sperren und neu suchen", blockAgain: "Nochmals tippen zum Sperren",
+      blockHint: "Sperrt dieses Release in Radarr/Sonarr, entfernt seine Dateien aus dem Download-Programm und sucht ein anderes. Für einen falschen Film oder eine falsche Folge, eine Fälschung oder einen defekten Download.",
+      blockedBy: function (u) { return "Gesperrt und neu gesucht von " + (u || "jemandem"); },
+      aka: "Auch bekannt als: ", nameMatch: function (n, original) { return original ? "✅ Release-Name passt zum Originaltitel «" + n + "»" : "✅ Release-Name passt zu einem anderen Namen des Titels: «" + n + "»"; }, profile2: function (p) { return "Ältere Versionen erlauben (" + p + ")"; },
       suggest: "Empfohlen: ein alter Titel, oft nur als DVD oder SD erhältlich.", releases: "Releases zeigen", hideReleases: "Releases ausblenden", loading: "Lädt…", searching: "Sucht in den Indexern… (bis 2 Min.)",
       queued: function (title) { return title ? "Wartet, bis die Suche für «" + title + "» fertig ist, dann startet diese von selbst." : "Wartet, bis andere Suchen fertig sind, dann startet diese von selbst."; }, season: "Staffel",
       override: "Trotzdem herunterladen", overrideHint: "Seit einer Woche nichts gefunden: alle dürfen ein nicht erlaubtes Release trotzdem herunterladen. Eine vom Profil erlaubte Version ersetzt es, sobald es eine gibt (jede Nacht gesucht).",
@@ -468,6 +474,8 @@
     var title = String(p0.title || p0.key || "") + (p0.year ? " (" + p0.year + ")" : "");
     var link = /^(movie|tv)\/\d+$/.test(g.key) ? el(d, "a", { href: "/" + g.key }, title) : title;
     c.appendChild(el(d, "h2", { "data-title": true }, link));
+    var aka = g.items.map(function (p) { return (p.details || {}).names; }).filter(function (n) { return Array.isArray(n) && n.length; })[0];
+    if (aka) c.appendChild(el(d, "p", { "class": "hg-m-meta", "data-aka": true }, t.aka + aka.map(String).join(" · ")));
     if (g.items.length > 1) c.appendChild(el(d, "p", { "class": "hg-m-count", "data-count": true }, t.problems(g.items.length)));
     var names = [], first = null;
     g.items.forEach(function (p) {
@@ -525,6 +533,7 @@
       dl.appendChild(el(d, "p", { "class": "hg-m-file" }, el(d, "span", { "class": "hg-m-label", "data-file-label": true }, t.fileLabel), breakable(d, "hg-m-filename", x.release, { "data-file-name": true })));
       var sl = summaryLine(t, x);
       if (sl) dl.appendChild(el(d, "p", { "class": "hg-m-media", "data-summary": true }, sl));
+      if (x.nameMatch && x.nameMatch.name) dl.appendChild(el(d, "p", { "class": "hg-m-media", "data-name-match": true }, t.nameMatch(String(x.nameMatch.name), !!x.nameMatch.original)));
       c.appendChild(dl);
     }
     if (x.message && code !== "unknown") c.appendChild(el(d, "details", { "class": "hg-m-raw", "data-raw": true }, el(d, "summary", null, t.raw), el(d, "p", null, String(x.message))));
@@ -540,8 +549,14 @@
       var res = p.resolved || {};
       var by = (p.actions || []).filter(function (a) { return a.action === res.how; }).pop() || {};
       var how = res.how === "gone" || res.how === "imported" || res.how === "found" ? t[res.how] : res.how === "delete" ? t.removedBy(by.user ? String(by.user) : null)
-        : res.how === "override" ? t.overriddenBy(by.user ? String(by.user) : null) : t.fixedBy(by.user ? String(by.user) : null, t.actions[res.how] || String(res.how));
+        : res.how === "override" ? t.overriddenBy(by.user ? String(by.user) : null) : res.how === "block" ? t.blockedBy(by.user ? String(by.user) : null) : t.fixedBy(by.user ? String(by.user) : null, t.actions[res.how] || String(res.how));
       c.appendChild(el(d, "p", { "class": "hg-m-resolved", "data-resolved": true }, how + " · " + when(t, res.at)));
+      if (blocks(p)) {
+        var later = el(d, "div", { "class": "hg-m-actions" });
+        later.appendChild(this.blockButton(p, later));
+        c.appendChild(later);
+        c.appendChild(el(d, "p", { "class": "hg-m-msg", "data-msg": true, role: "status" }));
+      }
     }
     if (p.override && typeof p.override === "object") c.appendChild(el(d, "p", { "class": "hg-m-media", "data-override": true }, overrideState(t, p.override)));
     if ((p.actions || []).length) {
@@ -623,6 +638,15 @@
     });
   };
 
+  function blocks(p) { return Array.isArray(p.offers) && p.offers.indexOf("block") >= 0; }
+
+  App.prototype.blockButton = function (p, box, cls) {
+    var self = this, t = this.t, bl = this.button("block", t.block, cls);
+    tip(bl, { title: t.block, rows: [t.blockHint] });
+    this.twice(bl, t.blockAgain, null, box, function () { self.act(box.parentNode, p, { action: "block" }); });
+    return bl;
+  };
+
   App.prototype.actions = function (p, box) {
     var self = this, t = this.t, d = this.doc, x = p.details || {};
     var card = function () { return box.parentNode; };
@@ -636,9 +660,7 @@
         box.appendChild(del);
       }
     } else if (p.type === "wrong-film" || p.type === "failed") {
-      var bl = this.button("block", t.block, "hg-m-primary");
-      this.twice(bl, t.blockAgain, null, box, function () { self.act(card(), p, { action: "block" }); });
-      box.appendChild(bl);
+      if (blocks(p)) box.appendChild(this.blockButton(p, box, "hg-m-primary"));
     } else if (p.type === "no-release") {
       if (x.older) {
         if (x.old) box.appendChild(el(d, "p", { "class": "hg-m-suggest", "data-suggest": true }, t.suggest));
@@ -674,6 +696,7 @@
       var fl = this.button("files", t.files);
       this.toggle(fl, t.files, t.hideFiles, box, function () { return self.files(card(), p); });
       box.appendChild(fl);
+      if (blocks(p)) box.appendChild(this.blockButton(p, box));
       box.appendChild(el(d, "div", { "data-list": true }));
     }
   };

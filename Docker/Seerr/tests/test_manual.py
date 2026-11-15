@@ -1866,6 +1866,149 @@ class Override(unittest.TestCase):
         problems(w)
         self.assertIn(pid, json.loads(w.store.read_text())["problems"])
 
+    def test_downloading_override_offers_block_blocks_it_and_ends_the_nightly_search(self):
+        w, pid = self.overridden()
+        w.tags = [{"id": 6, "label": "override"}]
+        done = next(p for p in problems(w)["done"] if p["id"] == pid)
+        self.assertEqual(done["offers"], ["block"])
+        manual.THROTTLE.clear()
+        status, out = post(w, {"id": pid, "action": "block"})
+        self.assertEqual(status, 200, out)
+        self.assertEqual(w.writes, [("radarr", "DELETE", "/queue/bulk?removeFromClient=true&blocklist=true", {"ids": [31]}),
+                                    ("radarr", "PUT", "/movie/editor", {"movieIds": [21], "tags": [6], "applyTags": "remove"}),
+                                    ("radarr", "POST", "/command", {"name": "MoviesSearch", "movieIds": [21]})])
+        rec = self.stored(w, pid)
+        self.assertEqual((rec["resolved"]["how"], rec["override"]["state"], rec["actions"][-1]["user"]), ("block", "blocked", "jane"))
+        w.writes.clear()
+        manual.nightly(dn, w.deps())
+        self.assertEqual(w.writes, [])
+
+    def test_finished_override_has_no_block(self):
+        w, pid = self.overridden()
+        problems(w)
+        w.queues["radarr"] = []
+        manual.CACHE.clear()
+        manual.NOW = lambda: T + 2000
+        os.utime(w.rs_file, (T + 2000, T + 2000))
+        done = next(p for p in problems(w)["done"] if p["id"] == pid)
+        self.assertEqual(done["offers"], [])
+        self.assertEqual(post(w, {"id": pid, "action": "block"})[0], 404)
+        self.assertEqual(w.writes, [])
+
+
+TANK = {"id": 43, "title": "The Tank", "year": 2025, "tmdbId": 1252037, "originalTitle": "Der Tiger",
+        "alternateTitles": [{"title": "Тигр"}, {"title": "猛虎战车"}, {"title": "der tiger"}, {"title": "The Tank"}, {"title": "猛虎末路"}, {"title": "Der Tiger"},
+                            {"title": "Tiger"}, {"title": "Le Tigre"}, {"title": "La Tigre"}]}
+
+
+def tank_world(release="The.Tiger.2025.2160p.AMZN.WEB-DL.DUAL.DDP5.1.Atmos.HDR.H.265-FLUX", **movie):
+    r = qrec(31, kind="movie", title=release, year=2025, tid=43, tmdb=1252037, msgs=("Found matching movie via grab history, but release was matched to movie by ID.",))
+    r["movie"] = dict(TANK, **movie)
+    return World(rqueue=[r], requests=[request(11, "movie", 1252037, ext=43)])
+
+
+class WrongRelease(unittest.TestCase):
+    """Every card with a concrete download may block that release and search again (same action as the wrong film)."""
+
+    def setUp(self):
+        reset()
+
+    def offered(self, w, kind):
+        return one(w, kind)["offers"]
+
+    def test_block_is_offered_exactly_where_there_is_a_download(self):
+        cases = {
+            "import": World(squeue=[qrec(1, ep=501)]),
+            "wrong-film": World(rqueue=[qrec(31, kind="movie", title="Some.Film.1987.1080p-GRP", year=2024, tid=43, tmdb=673, msgs=("matched to movie by ID",))]),
+            "failed": World(squeue=[qrec(1, tds="failed", status="failed", ep=501, msgs=("failed",))]),
+        }
+        for kind, w in cases.items():
+            reset()
+            self.assertIn("block", self.offered(w, kind), kind)
+        without = {
+            "removed": World(rs=state(removed=["movie/10248"]), requests=[request(11, "movie", 10248, ext=21)]),
+            "unmatched": World(rs=state(queue={"tv/4040": {"state": "problem", "message": "", "code": "seerr"}}), requests=[request(13, "tv", 4040, status=4, tvdb=9090, seasons=(1,))]),
+            "no-release": World(rs=state(noRelease={"movie/10248": "2026-11-14T04:17:00Z"}), requests=[request(11, "movie", 10248, ext=21)],
+                                titles={"/movie/21": {"id": 21, "title": "The Ring Thing", "year": 2004, "tmdbId": 10248, "qualityProfileId": 7}}),
+        }
+        for kind, w in without.items():
+            reset()
+            self.assertNotIn("block", self.offered(w, kind), kind)
+            manual.THROTTLE.clear()
+            self.assertEqual(post(w, {"id": one(w, kind)["id"], "action": "block"})[0], 400, kind)
+            self.assertEqual(w.writes, [], kind)
+
+    def test_admin_only_actions_are_offered_to_admins_only(self):
+        w = World(rs=state(removed=["movie/10248"]), requests=[request(11, "movie", 10248, ext=21)])
+        self.assertEqual(self.offered(w, "removed"), ["readd"])
+        w.me = ADMIN
+        self.assertEqual(self.offered(w, "removed"), ["delete", "readd"])
+
+    def test_not_importable_release_is_removed_blocklisted_and_searched_again(self):
+        w = World(squeue=[qrec(1, ep=501), qrec(2, ep=502)], requests=[request(13, "tv", 4040, tvdb=9090, seasons=(1,))])
+        pid = one(w, "import")["id"]
+        status, out = post(w, {"id": pid, "action": "block"})
+        self.assertEqual(status, 200, out)
+        self.assertEqual(w.writes, [("sonarr", "DELETE", "/queue/bulk?removeFromClient=true&blocklist=true", {"ids": [1, 2]}),
+                                    ("sonarr", "POST", "/command", {"name": "EpisodeSearch", "episodeIds": [501, 502]})])
+        rec = out["problem"]
+        self.assertEqual(rec["resolved"]["how"], "block")
+        self.assertEqual((rec["actions"][-1]["user"], rec["actions"][-1]["action"]), ("jane", "block"))
+        self.assertEqual(json.loads(w.store.read_text())["problems"][pid]["resolved"]["how"], "block")
+
+    def test_every_page_user_may_block_but_only_with_origin_and_not_twice_in_a_row(self):
+        w = World(me=OTHER, rqueue=[qrec(31, kind="movie", title="Some.Film.2024.1080p-GRP", year=2024, tid=43, tmdb=673, msgs=(BY_ID,))])
+        pid = one(w, "import")["id"]
+        self.assertEqual(post(w, {"id": pid, "action": "block"}, {"Origin": "https://evil.example.com"})[0], 403)
+        self.assertEqual(w.writes, [])
+        self.assertEqual(post(w, {"id": pid, "action": "block"})[0], 200)
+        self.assertEqual(post(w, {"id": pid, "action": "block"})[0], 429)
+        self.assertEqual(len(w.writes), 2)
+
+
+class OtherNames(unittest.TestCase):
+    """The title's other names on the card, so a foreign-language release name can be recognised."""
+
+    def setUp(self):
+        reset()
+
+    def test_names_original_first_deduplicated_without_the_title_at_most_six(self):
+        d = one(tank_world(), "import")["details"]
+        self.assertEqual(d["names"], ["Der Tiger", "Тигр", "猛虎战车", "猛虎末路", "Tiger", "Le Tigre"])
+        self.assertIsNone(d["nameMatch"])
+
+    def test_release_named_like_the_original_title_says_so(self):
+        d = one(tank_world("Der.Tiger.2025.German.DL.2160p.WEB.H265-GRP"), "import")["details"]
+        self.assertEqual(d["nameMatch"], {"name": "Der Tiger", "original": True})
+
+    def test_release_named_like_another_name(self):
+        d = one(tank_world("Le Tigre (2025) 1080p BluRay x264"), "import")["details"]
+        self.assertEqual(d["nameMatch"], {"name": "Le Tigre", "original": False})
+
+    def test_release_named_like_the_title_itself_needs_no_line(self):
+        self.assertIsNone(one(tank_world("The.Tank.2025.1080p.WEB-DL-GRP"), "import")["details"]["nameMatch"])
+
+    def test_no_other_names(self):
+        d = one(tank_world(originalTitle="The Tank", alternateTitles=[]), "import")["details"]
+        self.assertEqual(d["names"], [])
+
+    def test_series_names_from_sonarr(self):
+        r = qrec(1, ep=501, title="Haus.des.Geldes.S01E01.German.1080p-GRP")
+        r["series"]["alternateTitles"] = [{"title": "La Casa de Papel", "seasonNumber": -1}, {"title": "Haus des Geldes", "seasonNumber": -1}, {"title": "Company Retreat"}]
+        d = one(World(squeue=[r]), "import")["details"]
+        self.assertEqual(d["names"], ["La Casa de Papel", "Haus des Geldes"])
+        self.assertEqual(d["nameMatch"], {"name": "Haus des Geldes", "original": False})
+
+    def test_nothing_found_card_has_the_names_too(self):
+        w = World(rs=state(noRelease={"movie/10248": "2026-11-14T04:17:00Z"}), requests=[request(11, "movie", 10248, ext=21)],
+                  titles={"/movie/21": {"id": 21, "title": "The Ring Thing", "year": 2004, "tmdbId": 10248, "qualityProfileId": 7, "originalTitle": "Das Ring-Ding", "alternateTitles": [{"title": "Ringding"}]}})
+        self.assertEqual(one(w, "no-release")["details"]["names"], ["Das Ring-Ding", "Ringding"])
+
+    def test_names_are_kept_with_the_problem(self):
+        w = tank_world()
+        pid = one(w, "import")["id"]
+        self.assertEqual(json.loads(w.store.read_text())["problems"][pid]["details"]["names"][0], "Der Tiger")
+
 
 if __name__ == "__main__":
     unittest.main()

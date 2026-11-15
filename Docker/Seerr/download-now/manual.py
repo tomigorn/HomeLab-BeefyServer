@@ -61,9 +61,12 @@ DECLINED, FAILED_REQUEST = 3, 4
 PROBLEM_STATES = {"importBlocked", "importFailed", "failedPending", "failed"}
 FAILED_STATES = {"failedPending", "failed"}
 PID = re.compile(r"^[0-9a-f]{12}$")
-ACTIONS = {"unmatched": {"link"}, "import": {"import"}, "wrong-film": {"block"}, "failed": {"block"}, "no-release": {"profile", "grab", "override"}, "removed": {"readd", "delete"}}
+ACTIONS = {"unmatched": {"link"}, "import": {"import", "block"}, "wrong-film": {"block"}, "failed": {"block"}, "no-release": {"profile", "grab", "override"}, "removed": {"readd", "delete"}}
 RESOLVING = {"link", "import", "block", "grab", "override", "readd", "delete"}
 OLDER = "older versions allowed"
+NAMES_MAX = 6
+# where the title part of a release name ends: its year, an episode tag or the resolution
+TITLE_END = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)|\b[Ss]\d{1,2}[Ee]\d|\b\d{3,4}p\b")
 DEFAULT_OLDER = "4K preferred · older versions allowed"
 # Radarr/Sonarr status messages → a reason code the page words in EN/DE (first match wins)
 REASONS = (
@@ -480,6 +483,37 @@ def queue_kind(recs, year, kind):
     return "import", {}
 
 
+def plain(s):
+    return re.sub(r"[\W_]+", " ", str(s).casefold()).strip()
+
+
+def other_names(t):
+    """The title's other names from Radarr/Sonarr: the original title first, then the alternate titles; deduplicated, without the title itself."""
+    t = t if isinstance(t, dict) else {}
+    seen, out = {plain(t.get("title") or "")}, []
+    alts = [a.get("title") for a in t.get("alternateTitles") or [] if isinstance(a, dict)]
+    for n in [t.get("originalTitle")] + alts:
+        if not isinstance(n, str) or not n.strip():
+            continue
+        k = plain(n)
+        if k and k not in seen:
+            seen.add(k)
+            out.append(n.strip()[:100])
+        if len(out) >= NAMES_MAX:
+            break
+    return out
+
+
+def name_match(release, t, names):
+    """The other name a release is called by (title part before its year, normalised), or None; a release named like the title itself needs no hint."""
+    end = TITLE_END.search(release or "")
+    part = plain(release[:end.start()] if end and end.start() else release or "")
+    if not part or part == plain(YEAR.sub("", str((t or {}).get("title") or ""))):
+        return None
+    hit = next((n for n in names if plain(YEAR.sub("", n)) == part), None)
+    return {"name": hit, "original": hit == (t or {}).get("originalTitle")} if hit else None
+
+
 def pid_of(kind, key, extra=""):
     return hashlib.sha1(f"{kind}|{key}|{extra}".encode()).hexdigest()[:12]
 
@@ -593,7 +627,7 @@ def scan(dn, deps, known):
             if t:
                 title, year = t.get("title") or title, t.get("year") or year
                 name = next((p.get("name") for p in profile_list(b["app"]) if p.get("id") == t.get("qualityProfileId")), None)
-                details.update(profile=name, older=older_profile(name, profile_list(b["app"])))
+                details.update(profile=name, older=older_profile(name, profile_list(b["app"])), names=other_names(t))
                 b["arrId"] = t.get("id")
                 b["runtime"] = t.get("runtime")
         except dn.ApiError:
@@ -625,7 +659,8 @@ def scan(dn, deps, known):
             msg = next((m for r in recs for sm in r.get("statusMessages") or [] for m in sm.get("messages") or [] if m), None) or recs[0].get("errorMessage")
             msgs = [m for r in recs for sm in r.get("statusMessages") or [] for m in sm.get("messages") or [] if m] + [recs[0].get("errorMessage") or ""]
             code = ptype if ptype in ("wrong-film", "failed") else next((c for c in map(reason_code, msgs) if c != "unknown"), "unknown")
-            details = {"reason": code, "release": str(recs[0].get("title") or "")[:200], "message": brief(msg), **more}
+            details = {"reason": code, "release": str(recs[0].get("title") or "")[:200], "message": brief(msg), "names": other_names(t), **more}
+            details["nameMatch"] = name_match(details["release"], t, details["names"])
             main_file = biggest_video(deps, recs[0].get("outputPath"))
             if not main_file and recs[0].get("downloadId") and recs[0].get("outputPath"):
                 main_file = own_main_file(deps, arr(app), recs[0]["downloadId"])
@@ -733,7 +768,18 @@ def merge(records, found, complete, now):
 
 def open_override(r):
     o = r.get("override") if isinstance(r, dict) else None
-    return isinstance(o, dict) and o.get("state") != "replaced"
+    return isinstance(o, dict) and o.get("state") not in ("replaced", "blocked")
+
+
+def blockable_override(r):
+    return open_override(r) and r["override"].get("state") in ("grabbed", "downloading")
+
+
+def override_queue(queue, o):
+    """The queue items of an override download: by its learned download ids, before those are known by the release name."""
+    ids = set(o.get("downloadIds") or [])
+    return [q for q in queue if isinstance(q, dict) and q.get("movieId" if o.get("kind") == "movie" else "seriesId") == o.get("arrId") and q.get("downloadId")
+            and (str(q["downloadId"]).lower() in ids or not ids and str(q.get("title") or "").lower() == str(o.get("release") or "").lower())]
 
 
 def seeds_of(deps, ids):
@@ -757,8 +803,7 @@ def track(deps, records, now):
         if queue is None:
             continue
         ids = set(o.get("downloadIds") or [])
-        own = [q for q in queue if q.get("movieId" if o.get("kind") == "movie" else "seriesId") == o.get("arrId") and q.get("downloadId")
-               and (str(q["downloadId"]).lower() in ids or not ids and str(q.get("title") or "").lower() == str(o.get("release") or "").lower())]
+        own = override_queue(queue, o)
         if own:
             o["downloadIds"] = sorted(ids | {str(q["downloadId"]).lower() for q in own})
             o["episodeIds"] = sorted(set(o.get("episodeIds") or []) | {q["episodeId"] for q in own if is_int(q.get("episodeId"))})
@@ -1602,9 +1647,43 @@ def problem(dn, deps, raw, force=False):
     return p
 
 
+def block_override(deps, me, pid):
+    """A download-anyway download that turned out wrong: blocked like a queue problem, the override ends (tag off, no nightly checks)."""
+    with STORE_LOCK:
+        try:
+            r = load(deps).get(pid)
+        except StoreUnreadable:
+            r = None
+    if not blockable_override(r):
+        raise Refused(404, "no such problem")
+    if not throttle(("act", pid), ACTION_GAP):
+        raise Refused(429, "slow down")
+    o = dict(r["override"])
+    arr = deps.arr(o["app"])
+    q = arr(f"/queue?page=1&pageSize=1000{'&includeMovie=true' if o['kind'] == 'movie' else '&includeSeries=true'}")
+    own = override_queue(q.get("records") or [] if isinstance(q, dict) else [], o)
+    ids = [x["id"] for x in own if is_int(x.get("id"))]
+    if not ids:
+        raise Refused(404, "no such problem")
+    arr("/queue/bulk?removeFromClient=true&blocklist=true", "DELETE", {"ids": ids})
+    set_tag(arr, o["kind"], o["arrId"], "remove")
+    search(arr, {"kind": o["kind"], "arrId": o["arrId"]}, o.get("episodeIds") or None)
+    result = "release removed and blocked, searching again"
+    o["state"] = "blocked"
+    print(f"manual: user {me.get('id')} block override {r.get('key')} ({r.get('title')}): {result}", flush=True)
+    rec = record(deps, pid, me, "block", result, True, o)
+    CACHE.pop("scan", None)
+    return {"ok": True, "result": result, "problem": rec}
+
+
 def act(dn, deps, me, req):
-    p = problem(dn, deps, req.get("id"))
     action = req.get("action")
+    try:
+        p = problem(dn, deps, req.get("id"))
+    except Refused as e:
+        if e.status == 404 and action == "block":
+            return block_override(deps, me, req["id"])
+        raise
     admin = dn.allowed(me)
     if action == "describe" and p["type"] == "no-release":
         if flooding(me):
@@ -1626,10 +1705,17 @@ def act(dn, deps, me, req):
     return {"ok": True, "result": result, "problem": rec}
 
 
+def offered(r, admin):
+    """What the page may offer on a record: its type's actions while open (delete for admins), a block on a running download-anyway download."""
+    if r.get("resolved") is None:
+        return sorted(a for a in ACTIONS.get(r.get("type"), ()) if admin or a != "delete")
+    return ["block"] if blockable_override(r) else []
+
+
 def view(deps, admin):
     with STORE_LOCK:
         try:
-            records = list(load(deps).values())
+            records = [dict(r, offers=offered(r, admin)) for r in load(deps).values() if isinstance(r, dict)]
         except StoreUnreadable:
             records = []
     open_ = sorted((r for r in records if r.get("resolved") is None), key=lambda r: r.get("firstSeen") or "")

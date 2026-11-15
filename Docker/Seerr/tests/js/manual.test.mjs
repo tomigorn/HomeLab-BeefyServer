@@ -180,7 +180,7 @@ test("removed: Add again for everyone, Delete request only for admins and only a
 });
 
 test("wrong film: Block and search again after a confirmation tap", async () => {
-  const p = problem({ type: "wrong-film", details: { release: "Some.Film.1987", releaseYear: 1987, year: 2024 } });
+  const p = problem({ type: "wrong-film", offers: ["block"], details: { release: "Some.Film.1987", releaseYear: 1987, year: 2024 } });
   const { $, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } }, "/_download-now/manual/action": { status: 200, body: { ok: true, result: "blocked" } } });
   assert.match($("[data-details]").textContent, /1987/);
   $('[data-act="block"]').click();
@@ -785,4 +785,75 @@ test("on /collections the early mark of that page is left for collections.js", a
   w.document.body.insertAdjacentHTML("beforeend", "<p>x</p>");
   await settle();
   assert.equal(w.document.documentElement.getAttribute("data-hg-early"), "collections");
+});
+
+test("every card with a download: Wrong release — block it and search again, second tap, hint box, EN and DE", async () => {
+  const cards = [problem({ type: "import", offers: ["block", "import"], details: { release: "The.Tiger.2025.2160p-FLUX" } }),
+    problem({ id: "bbbbbbbbbbbb", key: "movie/2", type: "wrong-film", offers: ["block"], details: { release: "Some.Film.1987", releaseYear: 1987, year: 2024 } }),
+    problem({ id: "cccccccccccc", key: "movie/3", type: "failed", offers: ["block"], details: { release: "Broken.Film.2020" } })];
+  for (const [body, label, again, hint] of [[PAGE, "Wrong release — block it and search again", "Tap again to block it", /removes its files from the download client/],
+    [PAGE.replace(">Series<", ">Serien<"), "Falsches Release — sperren und neu suchen", "Nochmals tippen zum Sperren", /entfernt seine Dateien aus dem Download-Programm/]]) {
+    const { w, $, $$, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: cards, done: [], admin: false } },
+      "/_download-now/manual/action": { status: 200, body: { ok: true, result: "blocked" } } }, undefined, body);
+    const btns = $$('[data-act="block"]');
+    assert.equal(btns.length, 3);
+    btns.forEach((b) => assert.equal(b.textContent, label));
+    assert.match(w.hgTip.text(w.hgTip.get(btns[0])), hint);
+    btns[0].click();
+    await settle();
+    assert.equal(posts(calls).length, 0);
+    assert.equal(btns[0].textContent, again);
+    btns[0].click();
+    await settle();
+    assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "block" });
+  }
+});
+
+test("no download on the card, no block: removed, unmatched, nothing found", async () => {
+  const open = [problem({ offers: ["readd"] }), problem({ id: "bbbbbbbbbbbb", key: "tv/4040", type: "unmatched", offers: ["link"] }),
+    problem({ id: "cccccccccccc", key: "movie/77", type: "no-release", offers: ["grab", "override", "profile"], details: { lastSearch: null, seasons: [] } })];
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open, done: [], admin: false } } });
+  assert.equal($('[data-act="block"]'), null);
+});
+
+test("done: a download-anyway download still running can be blocked; who blocked it, EN and DE", async () => {
+  const running = Object.assign(overridden(), { offers: ["block"] });
+  const blocked = problem({ id: "dddddddddddd", key: "movie/9", type: "import", resolved: { at: "2026-11-14T03:00:00Z", how: "block" },
+    actions: [{ at: "2026-11-14T03:00:00Z", user: "jane", action: "block", result: "release removed and blocked, searching again" }] });
+  for (const [body, by] of [[PAGE, "Blocked and searched again by jane"], [PAGE.replace(">Series<", ">Serien<"), "Gesperrt und neu gesucht von jane"]]) {
+    const { $, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [running, blocked], admin: false } },
+      "/_download-now/manual/action": { status: 200, body: { ok: true, result: "blocked" } } }, undefined, body);
+    $('[data-tab="done"]').click();
+    await settle();
+    assert.match($('[data-problem="dddddddddddd"] [data-resolved]').textContent.split(" · ")[0], new RegExp("^" + by + "$"));
+    assert.equal($('[data-problem="dddddddddddd"] [data-act]'), null);
+    const b = $('[data-problem="aaaaaaaaaaaa"] [data-act="block"]');
+    b.click();
+    b.click();
+    await settle();
+    assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "block" });
+  }
+});
+
+test("other names of the title on the card, plain text; a release named like one of them says so, EN and DE", async () => {
+  const p = problem({ type: "import", key: "movie/1252037", title: "The Tank", year: 2025, offers: ["block", "import"],
+    details: { release: "Der.Tiger.2025.2160p-GRP", names: ["Der Tiger", "Тигр", "<b>x</b>"], nameMatch: { name: "Der Tiger", original: true } } });
+  const other = problem({ id: "bbbbbbbbbbbb", type: "import", key: "movie/1252037", title: "The Tank", year: 2025, offers: ["block", "import"],
+    details: { release: "Le.Tigre.2025.1080p-GRP", names: ["Der Tiger", "Тигр", "<b>x</b>"], nameMatch: { name: "Le Tigre", original: false } } });
+  for (const [body, aka, orig, alt] of [[PAGE, "Also known as: Der Tiger · Тигр · <b>x</b>", "✅ Release name matches the original title “Der Tiger”", "✅ Release name matches another name of this title: “Le Tigre”"],
+    [PAGE.replace(">Series<", ">Serien<"), "Auch bekannt als: Der Tiger · Тигр · <b>x</b>", "✅ Release-Name passt zum Originaltitel «Der Tiger»", "✅ Release-Name passt zu einem anderen Namen des Titels: «Le Tigre»"]]) {
+    const { $, $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p, other], done: [], admin: false } } }, undefined, body);
+    assert.equal($$("[data-aka]").length, 1);
+    assert.equal($('[data-card="movie/1252037"] [data-aka]').textContent, aka);
+    assert.equal($("[data-aka] b"), null);
+    assert.equal($('[data-problem="aaaaaaaaaaaa"] [data-name-match]').textContent, orig);
+    assert.equal($('[data-problem="bbbbbbbbbbbb"] [data-name-match]').textContent, alt);
+  }
+});
+
+test("no other names: no line", async () => {
+  const p = problem({ type: "import", offers: ["block", "import"], details: { release: "The.Tank.2025.2160p-GRP", names: [], nameMatch: null } });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } } });
+  assert.equal($("[data-aka]"), null);
+  assert.equal($("[data-name-match]"), null);
 });
