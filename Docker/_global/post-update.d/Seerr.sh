@@ -32,6 +32,8 @@ if want seerr; then
   check seerr.webhook-floppy '^True 142 http://192\.168\.1\.102:8012/webhook/seerr/global/$' "$(jq -r '.notifications.agents.webhook | "\(if .enabled then "True" else "False" end) \(.types) \(.options.webhookUrl)"' "$SEERR_DIR/settings.json" 2>&1)"
   check seerr.avatar-db '^65109 2 [0-9]+$' "$(stat -c %u "$SEERR_DIR/db/db.sqlite3") $(sqlite3 "file:$SEERR_DIR/db/db.sqlite3?immutable=1" "SELECT count(*) FROM pragma_table_info('user') WHERE name IN ('avatar','avatarVersion'); SELECT count(*) FROM linked_accounts;" 2>&1 | xargs)"
   check seerr.trending-unticked '^0$' "$(jq '[.jellyfin.libraries[] | select((.name == "Trending items" or .name == "Trending shows") and .enabled)] | length' "$SEERR_DIR/settings.json" 2>&1)"
+  # tip.js finds Seerr's tooltip by these classes (README "Hint boxes"); a renamed class leaves Seerr's boxes following the mouse again
+  check seerr.tooltip-classes '^[1-9][0-9]*$' "$(docker exec seerr sh -c 'grep -lF "z-50 text-sm absolute font-normal bg-gray-800" /app/.next/static/chunks/*.js | wc -l' 2>&1)"
   check seerr.sso-reach '"issuer": ?"https://sso.holy-grail.ch/application/o/requests-login/"' "$(docker exec seerr wget -q -T 8 -O- https://sso.holy-grail.ch/application/o/requests-login/.well-known/openid-configuration 2>&1 | jq -c '{issuer}' 2>&1)"
   check seerr.extra-hosts '^192\.168\.1\.2$' "$(docker exec seerr getent ahostsv4 sso.holy-grail.ch 2>&1 | awk 'NR==1{print $1}')"
 fi
@@ -41,7 +43,7 @@ if want seerr-proxy; then
   check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/manual.js _indexer-bar/menu-links.css _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js _indexer-bar/request-origin.js _indexer-bar/request-sizes.js _indexer-bar/tip.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '\(src\|href\)="/_indexer-bar/[a-z-]*\.\(js\|css\)\(?v=[0-9a-f]*\)\?"' | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
   check seerr.hint-box '^1$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/tip.js | grep -c 'setAttribute("data-hg-tip-merged"' 2>&1)"
   check seerr.bar-hints '^[1-9][0-9]* 0$' "$(b=$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/bar.js); echo $(grep -c 'window.hgTip.set' <<<"$b") $(grep -cE '[A-Za-z]\.title = ' <<<"$b"))"
-  check seerr.hint-box-pinned '^1$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/tip.js | grep -c 'setAttribute("data-hg-tip-pin"' 2>&1)"
+  check seerr.hint-box-pinned '^2$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/tip.js | grep -cE 'setAttribute\("data-hg-tip-pin"|addEventListener\("pointerover"' 2>&1)"
   check seerr.data-needs-session '^401 401 401 401$' "$(for u in /_indexer-bar/usage.json /_indexer-bar/night-waiting.json /_indexer-bar/request-state.json '/_download-now/api?type=movie&tmdb=603'; do curl -s -m 8 -o /dev/null -w '%{http_code} ' "http://127.0.0.1:5055$u"; done | xargs 2>&1)"
   check seerr.jellyfin-auth-blocked '^403 403 403 [^4]' "$(for r in 'POST /api/v1/auth/jellyfin/quickconnect/initiate' 'POST /api/v1/auth/jellyfin' 'GET /api/v1/auth/JELLYFIN/quickconnect/check' 'GET /api/v1/auth/oidc/login/holy-grail'; do set -- $r; curl -s -m 8 -o /dev/null -w '%{http_code} ' -X $1 "http://127.0.0.1:5055$2"; done | xargs 2>&1)"
   check seerr.bar-config '^1$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -c 'bar.js?v=[0-9a-f]*" data-ib-data="/_indexer-bar/usage.json"')"

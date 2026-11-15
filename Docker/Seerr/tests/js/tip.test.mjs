@@ -248,9 +248,82 @@ test("pinned box: flips above when there is no room below, kept inside the viewp
   assert.deepEqual(pos(seerr), ["972px", "226px"]);
 });
 
-test("Seerr's box without our block is left to Seerr (not pinned)", async () => {
+test("Seerr's box with nothing hovered or focused is left to Seerr (not pinned)", async () => {
   const w = page('<a id="a" href="/tv/1">Available</a>');
   w.document.body.insertAdjacentHTML("beforeend", SEERR_TIP("Play on Jellyfin"));
   await tick();
   assert.equal(w.document.querySelector("[data-hg-tip-pin]"), null);
+});
+
+// Seerr's StatusBadge: Tooltip > Badge (a Link with the pill classes) > div > span; no hint of ours
+const PILL = '<div class="mt-2"><a id="pill" href="/movie/9" class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full whitespace-nowrap transition cursor-pointer"><div class="relative z-20 flex items-center"><span id="label">Available</span></div></a></div>';
+const plainPage = (body, rects, view = { w: 1280, h: 800 }) => {
+  const w = page(body);
+  Object.defineProperty(w, "innerWidth", { value: view.w });
+  Object.defineProperty(w, "innerHeight", { value: view.h });
+  for (const [id, r] of Object.entries(rects)) w.document.getElementById(id).getBoundingClientRect = () => ({ ...r, right: r.left + 80, bottom: r.top + 20, width: 80, height: 20 });
+  Object.defineProperty(w.HTMLElement.prototype, "offsetWidth", { configurable: true, get() { return /\bz-50\b/.test(this.className) ? 160 : 0; } });
+  Object.defineProperty(w.HTMLElement.prototype, "offsetHeight", { configurable: true, get() { return /\bz-50\b/.test(this.className) ? 30 : 0; } });
+  return w;
+};
+const over = (w, el) => el.dispatchEvent(ev(w, "pointerover"));
+const seerrOpens = async (w, inner = "Play on Jellyfin") => { w.document.body.insertAdjacentHTML("beforeend", SEERR_TIP(inner).replace('class="', 'style="position: absolute; inset: 0px auto auto 0px; transform: translate(520px, 330px);" class="')); await tick(); return w.document.body.lastElementChild; };
+
+test("a plain Seerr tooltip (no hint of ours) is pinned below its pill and stays put across mouse moves", async () => {
+  const w = plainPage(PILL, { pill: { left: 400, top: 300 }, label: { left: 410, top: 302 } });
+  over(w, w.document.getElementById("label"));
+  const seerr = await seerrOpens(w);
+  assert.equal(seerr.__hgTipFor, w.document.getElementById("pill"));
+  assert.equal(seerr.querySelector("[data-hg-tip-merged]"), null, "nothing merged");
+  assert.ok(seerr.hasAttribute("data-hg-tip-pin"));
+  assert.equal(seerr.getAttribute("data-side"), "below");
+  assert.deepEqual(pos(seerr), ["400px", "326px"]);
+  popper(w, seerr, 610, 280);
+  over(w, w.document.getElementById("label"));
+  await tick();
+  assert.deepEqual(pos(seerr), ["400px", "326px"]);
+  popper(w, seerr, 120, 340);
+  await tick();
+  assert.deepEqual(pos(seerr), ["400px", "326px"]);
+});
+
+test("plain Seerr tooltip: flips above near the bottom, inside the viewport, follows scroll and its own re-render", async () => {
+  const w = plainPage(PILL, { pill: { left: 1250, top: 770 } });
+  over(w, w.document.getElementById("label"));
+  const seerr = await seerrOpens(w);
+  assert.equal(seerr.getAttribute("data-side"), "above");
+  assert.deepEqual(pos(seerr), ["1112px", "734px"]);
+  w.document.getElementById("pill").getBoundingClientRect = () => ({ left: 300, top: 100, right: 380, bottom: 120, width: 80, height: 20 });
+  w.dispatchEvent(new w.Event("scroll"));
+  assert.deepEqual(pos(seerr), ["300px", "126px"]);
+  w.document.getElementById("pill").getBoundingClientRect = () => ({ left: 320, top: 100, right: 400, bottom: 120, width: 80, height: 20 });
+  seerr.textContent = "Play on Jellyfin (2)";
+  await tick();
+  assert.deepEqual(pos(seerr), ["320px", "126px"]);
+});
+
+test("trigger detection: the badge around the hovered text, a button around its icon, the focused element", async () => {
+  const w = plainPage('<span id="badge" class="px-2 inline-flex text-xs rounded-full cursor-default"><span id="t">Pending</span></span><button id="btn" class="z-40 mr-2"><svg id="icon"><path id="path"/></svg></button><a id="link" href="/x">x</a>', { badge: { left: 10, top: 10 }, btn: { left: 200, top: 10 }, link: { left: 400, top: 10 } });
+  over(w, w.document.getElementById("t"));
+  let seerr = await seerrOpens(w, "Pending");
+  assert.equal(seerr.__hgTipFor, w.document.getElementById("badge"));
+  seerr.remove();
+  over(w, w.document.getElementById("path"));
+  seerr = await seerrOpens(w, "Add to Blocklist");
+  assert.equal(seerr.__hgTipFor, w.document.getElementById("btn"));
+  assert.deepEqual(pos(seerr), ["200px", "36px"]);
+  seerr.remove();
+  w.document.getElementById("link").dispatchEvent(new w.FocusEvent("focusin", { bubbles: true }));
+  seerr = await seerrOpens(w, "Copy");
+  assert.equal(seerr.__hgTipFor, w.document.getElementById("link"));
+});
+
+test("moving into Seerr's interactive download box keeps the box pinned to its pill", async () => {
+  const w = plainPage(PILL, { pill: { left: 400, top: 300 } });
+  over(w, w.document.getElementById("label"));
+  const seerr = await seerrOpens(w, '<div class="p-4"><div id="row">Film.2004.1080p-GRP</div></div>');
+  over(w, w.document.getElementById("row"));
+  w.dispatchEvent(new w.Event("resize"));
+  assert.equal(seerr.__hgTipFor, w.document.getElementById("pill"));
+  assert.deepEqual(pos(seerr), ["400px", "326px"]);
 });

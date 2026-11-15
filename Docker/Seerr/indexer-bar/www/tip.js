@@ -1,4 +1,4 @@
-// Hint boxes for every script of ours (README "Hint boxes"): Seerr's tooltip look, instant on hover and keyboard focus, first tap on touch, one box at a time. When Seerr opens its own tooltip for the same element, our text goes into that one as its first block instead. Content: a string, { title, rows, sections } or an array of those; text only, never markup.
+// Hint boxes for every script of ours (README "Hint boxes"): Seerr's tooltip look, instant on hover and keyboard focus, first tap on touch, one box at a time. When Seerr opens its own tooltip for the same element, our text goes into that one as its first block instead. Every Seerr tooltip is pinned next to its trigger instead of following the mouse. Content: a string, { title, rows, sections } or an array of those; text only, never markup.
 (function () {
   "use strict";
   var ID = "hg-tip";
@@ -12,7 +12,7 @@
     "[data-hg-tip-merged]{max-width:22rem;padding:0 0 .25rem;margin-bottom:.25rem;border-bottom:1px solid #374151;font-size:.875rem;line-height:1.25rem;white-space:normal;overflow-wrap:anywhere;text-align:left}" +
     "[data-hg-tip-merged].hg-tip-roomy{max-width:none;padding:.75rem 1rem;margin:0}" +
     "[data-hg-tip-pin]{position:fixed !important;left:var(--hg-tip-x) !important;top:var(--hg-tip-y) !important;right:auto !important;bottom:auto !important;transform:none !important;margin:0 !important}";
-  var cur = null, host = null, pointer = null;
+  var cur = null, host = null, pointer = null, last = null;
 
   function sections(c) {
     if (typeof c === "function") { try { c = c(); } catch (e) { c = null; } }
@@ -116,7 +116,7 @@
     b.style.top = p.top;
   }
 
-  // Seerr's box carrying our block stays put next to the element; popper's cursor-following inline transform loses to the !important rule
+  // Seerr's box stays put next to its trigger; popper's cursor-following inline transform loses to the !important rule
   function pin(doc, h) {
     if (!h || !h.isConnected || !h.__hgTipFor || !h.__hgTipFor.isConnected) return;
     h.setAttribute("data-hg-tip-pin", "");
@@ -140,6 +140,30 @@
     return null;
   }
 
+  // Seerr's Tooltip portal has no link to its trigger: the badge, button or link around what the pointer or focus last reached
+  function trigger(doc, t) {
+    if (!t || t.nodeType !== 1 || !t.isConnected) return null;
+    for (var n = t; n && n !== doc.body; n = n.parentElement) if (isSeerr(doc, n) || n.id === ID) return null;
+    return t.closest('a[href],button,[role="button"],input,select,textarea,label,[tabindex]') || t.closest(".rounded-full,.inline-flex") || t;
+  }
+
+  function watch(doc, h) {
+    // React re-renders Seerr's box (text content, new rows): our block goes back on top, once; the new size is placed again
+    if (h.__hgTipWatch || !doc.defaultView || !doc.defaultView.MutationObserver) return;
+    h.__hgTipWatch = new doc.defaultView.MutationObserver(function () {
+      if (h.__hgTipBlock && h.firstChild !== h.__hgTipBlock) h.insertBefore(h.__hgTipBlock, h.firstChild);
+      pin(doc, h);
+    });
+    h.__hgTipWatch.observe(h, { childList: true, subtree: true, characterData: true });
+  }
+
+  function adopt(doc, h, el) {
+    host = h;
+    h.__hgTipFor = el;
+    watch(doc, h);
+    pin(doc, h);
+  }
+
   function merge(doc, h, el) {
     var block = h.__hgTipBlock;
     if (!block) {
@@ -151,17 +175,7 @@
     render(doc, block, el.__hgTip);
     block.className = h.querySelector(".p-4") ? "hg-tip-roomy" : "";
     if (h.firstChild !== block) h.insertBefore(block, h.firstChild);
-    // React re-renders Seerr's box (text content, new rows): our block goes back on top, once
-    if (!h.__hgTipWatch && doc.defaultView && doc.defaultView.MutationObserver) {
-      h.__hgTipWatch = new doc.defaultView.MutationObserver(function () {
-        if (h.__hgTipBlock && h.firstChild !== h.__hgTipBlock) h.insertBefore(h.__hgTipBlock, h.firstChild);
-        pin(doc, h);
-      });
-      h.__hgTipWatch.observe(h, { childList: true });
-    }
-    host = h;
-    h.__hgTipFor = el;
-    pin(doc, h);
+    adopt(doc, h, el);
     var b = box(doc);
     if (b) b.style.display = "none";
     if (el.getAttribute("aria-describedby") === ID) el.removeAttribute("aria-describedby");
@@ -204,12 +218,19 @@
     doc.addEventListener("keydown", function (e) { if (e.key === "Escape") hide(doc); });
     win.addEventListener("scroll", function () { pin(doc, host); hide(doc); }, true);
     win.addEventListener("resize", function () { pin(doc, host); hide(doc); });
+    doc.addEventListener("pointerover", function (e) { var t = trigger(doc, e.target); if (t) last = t; }, true);
+    doc.addEventListener("focusin", function (e) { var t = trigger(doc, e.target); if (t) last = t; }, true);
     if (!win.MutationObserver || !doc.body) return;
     // runs before the next paint: Seerr's box that opens for the hovered element takes our text, no second box flashes
     new win.MutationObserver(function (records) {
       for (var i = 0; i < records.length; i++) {
         var r = records[i], n;
-        for (n = 0; n < r.addedNodes.length; n++) if (cur && isSeerr(doc, r.addedNodes[n])) merge(doc, r.addedNodes[n], cur);
+        for (n = 0; n < r.addedNodes.length; n++) {
+          var add = r.addedNodes[n];
+          if (!isSeerr(doc, add)) continue;
+          if (cur) merge(doc, add, cur);
+          else if (last && last.isConnected) adopt(doc, add, last);
+        }
         for (n = 0; n < r.removedNodes.length; n++) {
           var gone = r.removedNodes[n];
           if (gone.__hgTipWatch) { gone.__hgTipWatch.disconnect(); gone.__hgTipWatch = null; }
@@ -256,4 +277,6 @@
   var api = { set: set, get: function (el) { return el ? el.__hgTip || null : null; }, text: text, headline: headline, show: function (el) { return show(el.ownerDocument, el); }, hide: function () { hide(document); }, render: render };
   if (typeof window === "undefined") return;
   window.hgTip = api;
+  if (document.body) global(document);
+  else document.addEventListener("DOMContentLoaded", function () { global(document); });
 })();
