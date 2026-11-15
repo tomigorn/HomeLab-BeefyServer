@@ -86,7 +86,8 @@ test("removed: Add again for everyone, Delete request only for admins and only a
   $('[data-act="delete"]').click();
   await settle();
   assert.equal(posts(calls).length, 0);
-  assert.match($("[data-warning]").textContent, /files/);
+  assert.match($("[data-warning]").textContent, /only the Seerr request/);
+  assert.match($("[data-warning]").textContent, /files stay/);
   $('[data-act="delete"]').click();
   await settle();
   assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "delete", confirm: "delete" });
@@ -104,7 +105,7 @@ test("wrong film: Block and search again after a confirmation tap", async () => 
   assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "block" });
 });
 
-const RELEASES = { releases: [
+const RELEASES = { token: "t-rel", releases: [
   { n: 0, title: "The.Ring.Thing.2004.German.720p", size: 2e9, quality: "WEBDL-720p", languages: ["German"], seeders: 9, score: 50, rejected: false, rejections: [], indexer: "Tracker", protocol: "torrent", age: 30 },
   { n: 1, title: "The.Ring.Thing.2004.DVDRip", size: 7e8, quality: "DVD", languages: ["German"], seeders: 4, score: 10, rejected: true, rejections: ["Quality DVD not wanted in profile"], indexer: "Tracker", protocol: "torrent", age: 100 }], season: null };
 
@@ -124,7 +125,7 @@ test("nothing found: older-versions switch suggested for old titles, release lis
   radios[0].checked = true;
   $('[data-act="grab"]').click();
   await settle();
-  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "grab", release: 0 });
+  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "grab", release: 0, token: "t-rel" });
 });
 
 test("nothing found, recent title: the switch is offered but not suggested", async () => {
@@ -136,7 +137,7 @@ test("nothing found, recent title: the switch is offered but not suggested", asy
 
 test("unmatched: search prefilled, most probable match preselected, Link sends the pick", async () => {
   const p = problem({ type: "unmatched", key: "tv/4040", title: "Seerr Series", year: 2019 });
-  const lookup = { results: [{ n: 0, title: "Other Show", year: 2001, overview: "", tvdbId: 1111, inLibrary: false, probable: false }, { n: 1, title: "Seerr Series", year: 2019, overview: "", tvdbId: 9090, inLibrary: false, probable: true }] };
+  const lookup = { token: "t-look", results: [{ n: 0, title: "Other Show", year: 2001, overview: "", tvdbId: 1111, inLibrary: false, probable: false }, { n: 1, title: "Seerr Series", year: 2019, overview: "", tvdbId: 9090, inLibrary: false, probable: true }] };
   const { $, $$, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
     "/_download-now/manual/lookup": { status: 200, body: lookup }, "/_download-now/manual/action": { status: 200, body: { ok: true, result: "linked" } } });
   assert.equal($("input[data-term]").value, "Seerr Series");
@@ -149,12 +150,12 @@ test("unmatched: search prefilled, most probable match preselected, Link sends t
   assert.match($$("[data-result]")[1].textContent, /Most likely/);
   $('[data-act="link"]').click();
   await settle();
-  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "link", pick: 1 });
+  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "link", pick: 1, token: "t-look" });
 });
 
 test("import: files with the probable episode picked, Import sends the checked files", async () => {
   const p = problem({ type: "import", key: "tv/4040", details: { release: "Company.Retreat.2026.S01", message: "matched to series by ID", episodes: 2 } });
-  const files = { kind: "tv", files: [{ n: 0, name: "CR.S01E01.mkv", size: 3e9, episodeIds: [501], probable: true, rejections: [] }, { n: 1, name: "sample.mkv", size: 1e6, episodeIds: [], probable: false, rejections: ["Sample"] }],
+  const files = { token: "t-files", kind: "tv", files: [{ n: 0, name: "CR.S01E01.mkv", size: 3e9, episodeIds: [501], probable: true, rejections: [] }, { n: 1, name: "sample.mkv", size: 1e6, episodeIds: [], probable: false, rejections: ["Sample"] }],
     episodes: [{ id: 501, label: "S01E01", title: "Pilot" }, { id: 502, label: "S01E02", title: "Two" }] };
   const { $, $$, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
     "/_download-now/manual/files": { status: 200, body: files }, "/_download-now/manual/action": { status: 200, body: { ok: true, result: "import started" } } });
@@ -167,12 +168,12 @@ test("import: files with the probable episode picked, Import sends the checked f
   sel[0].value = "502";
   $('[data-act="import"]').click();
   await settle();
-  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "import", files: [{ n: 0, episodeIds: [502] }] });
+  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "import", files: [{ n: 0, episodeIds: [502] }], token: "t-files" });
 });
 
 test("movie import: no episode picker, the files only", async () => {
   const p = problem({ type: "import", details: { release: "Some.Film.2024", message: "" } });
-  const files = { kind: "movie", files: [{ n: 0, name: "film.mkv", size: 9e9, episodeIds: [], probable: true, rejections: [] }], episodes: [] };
+  const files = { token: "t-movie", kind: "movie", files: [{ n: 0, name: "film.mkv", size: 9e9, episodeIds: [], probable: true, rejections: [] }], episodes: [] };
   const { $, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
     "/_download-now/manual/files": { status: 200, body: files }, "/_download-now/manual/action": { status: 200, body: { ok: true, result: "ok" } } });
   $('[data-act="files"]').click();
@@ -180,7 +181,7 @@ test("movie import: no episode picker, the files only", async () => {
   assert.equal($("select[data-episode]"), null);
   $('[data-act="import"]').click();
   await settle();
-  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "import", files: [{ n: 0 }] });
+  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "import", files: [{ n: 0 }], token: "t-movie" });
 });
 
 test("done tab: how it ended and who did what", async () => {

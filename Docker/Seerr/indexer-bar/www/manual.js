@@ -18,7 +18,7 @@
       requestedBy: "Requested by", nobody: "no Seerr request", since: "Since", lastSearch: "Last search", never: "never", profile: "Profile", release: "Release",
       years: function (a, b) { return "Release year " + a + ", film " + b; }, episodes: function (n) { return n + " episodes"; },
       readd: "Add again", del: "Delete request", delAgain: "Tap again to delete",
-      delWarn: "Deletes the request and everything of this title in Seerr; files still in the library are deleted too (Clear Data). Only when nobody wants the title any more.",
+      delWarn: "Deletes only the Seerr request(s) of this title, nothing gets downloaded for it any more; the title data in Seerr and any files stay.",
       block: "Block this release and search again", blockAgain: "Tap again to block it", profile2: function (p) { return "Allow older versions (" + p + ")"; },
       suggest: "Suggested: an old title, often only out as DVD or SD.", releases: "Show releases", searching: "Searching the indexers… (up to 2 min)", season: "Season",
       grab: "Download", noReleases: "No releases found.", pickOne: "Pick one first.", rejected: "not allowed: ", seeders: "seeders", score: "score",
@@ -26,7 +26,7 @@
       files: "Show files", "import": "Import", detected: "as detected", noEpisode: "—", needEpisode: "Pick an episode for every checked file.",
       history: "What happened", gone: "Solved itself", fixed: "Fixed: ",
       actions: { readd: "added again", "delete": "deleted", block: "blocked, searched again", profile: "older versions allowed", grab: "release picked", link: "matched", "import": "imported", reopened: "back again" },
-      errors: { 429: "Too many tries — wait a moment and try again.", 403: "Not allowed.", 400: "That does not fit any more — reload the page.", 404: "Already solved — reload the page.", other: "Radarr/Sonarr not reachable — try again later." },
+      errors: { 429: "Too many tries — wait a moment and try again.", 403: "Not allowed — an admin can do this.", 400: "That does not fit any more — reload the page.", 404: "Already solved — reload the page.", other: "Radarr/Sonarr not reachable — try again later." },
       ok: "Done: ", working: "Working…"
     },
     de: {
@@ -44,7 +44,7 @@
       requestedBy: "Angefragt von", nobody: "keine Seerr-Anfrage", since: "Seit", lastSearch: "Letzte Suche", never: "nie", profile: "Profil", release: "Release",
       years: function (a, b) { return "Release-Jahr " + a + ", Film " + b; }, episodes: function (n) { return n + " Folgen"; },
       readd: "Wieder hinzufügen", del: "Anfrage löschen", delAgain: "Nochmals tippen zum Löschen",
-      delWarn: "Löscht die Anfrage und alles zu diesem Titel in Seerr; noch vorhandene Dateien in der Bibliothek werden auch gelöscht (Clear Data). Nur wenn niemand den Titel mehr will.",
+      delWarn: "Löscht nur die Seerr-Anfrage(n) dieses Titels, danach wird nichts mehr dafür heruntergeladen; die Titeldaten in Seerr und allfällige Dateien bleiben.",
       block: "Release sperren und neu suchen", blockAgain: "Nochmals tippen zum Sperren", profile2: function (p) { return "Ältere Versionen erlauben (" + p + ")"; },
       suggest: "Empfohlen: ein alter Titel, oft nur als DVD oder SD erhältlich.", releases: "Releases anzeigen", searching: "Sucht in den Indexern… (bis 2 Min.)", season: "Staffel",
       grab: "Herunterladen", noReleases: "Keine Releases gefunden.", pickOne: "Zuerst eines wählen.", rejected: "nicht erlaubt: ", seeders: "Seeder", score: "Punkte",
@@ -52,7 +52,7 @@
       files: "Dateien anzeigen", "import": "Importieren", detected: "wie erkannt", noEpisode: "—", needEpisode: "Für jede gewählte Datei eine Folge wählen.",
       history: "Verlauf", gone: "Hat sich erledigt", fixed: "Behoben: ",
       actions: { readd: "wieder hinzugefügt", "delete": "gelöscht", block: "gesperrt, neu gesucht", profile: "ältere Versionen erlaubt", grab: "Release gewählt", link: "zugeordnet", "import": "importiert", reopened: "wieder da" },
-      errors: { 429: "Zu viele Versuche — kurz warten und nochmals versuchen.", 403: "Nicht erlaubt.", 400: "Das passt nicht mehr — Seite neu laden.", 404: "Schon gelöst — Seite neu laden.", other: "Radarr/Sonarr nicht erreichbar — später nochmals versuchen." },
+      errors: { 429: "Zu viele Versuche — kurz warten und nochmals versuchen.", 403: "Nicht erlaubt — das kann ein Admin.", 400: "Das passt nicht mehr — Seite neu laden.", 404: "Schon gelöst — Seite neu laden.", other: "Radarr/Sonarr nicht erreichbar — später nochmals versuchen." },
       ok: "Erledigt: ", working: "Läuft…"
     }
   };
@@ -301,7 +301,7 @@
       go.addEventListener("click", function () {
         var c = l.querySelector('input[name="release-' + p.id + '"]:checked');
         if (!c) return self.say(card, t.pickOne, true);
-        self.act(card, p, { action: "grab", release: Number(c.value) });
+        self.act(card, p, { action: "grab", release: Number(c.value), token: r.body.token });
       });
       l.appendChild(go);
     });
@@ -331,7 +331,7 @@
       go.addEventListener("click", function () {
         var c = l.querySelector('input[name="pick-' + p.id + '"]:checked');
         if (!c) return self.say(card, t.pickOne, true);
-        self.act(card, p, { action: "link", pick: Number(c.value) });
+        self.act(card, p, { action: "link", pick: Number(c.value), token: r.body.token });
       });
       l.appendChild(go);
     });
@@ -377,7 +377,7 @@
         });
         if (missing) return self.say(card, t.needEpisode, true);
         if (!out.length) return self.say(card, t.pickOne, true);
-        self.act(card, p, { action: "import", files: out });
+        self.act(card, p, { action: "import", files: out, token: r.body.token });
       });
       l.appendChild(go);
     });
