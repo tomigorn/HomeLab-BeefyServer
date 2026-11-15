@@ -253,7 +253,7 @@ class Order(Base):
     def test_f_negatives_still_reject(self):
         for app, kind, name, twin, orig, minor, resolutions, p in self.cases:
             richest = matched(app, orig, [orig, "English", "German"] + self.extras(app, orig), hdr=True, **self.best(minor))
-            top = score(p, richest)
+            top = score(p, richest) + (p["scores"].get("Anime Dual Audio", 0))
             for cf, s in p["scores"].items():
                 if s < 0 and cf not in MILD_NEGATIVES:
                     with self.subTest(app=app, profile=name, reject=cf):
@@ -294,7 +294,8 @@ class Order(Base):
                 with self.subTest(app=app, profile=name):
                     raw = profile(app, name)
                     self.assertEqual(raw["min"], 0, "minimum score like the normal profiles")
-                    self.assertEqual(raw["scores"].get("Anime Dual Audio", 0), 0, "dual audio is the language tier already")
+                    # Sonarr/Radarr parse "[Dual Audio]" as no language at all, so this is the only signal for original + English there (owner 2026-11-15).
+                    self.assertEqual(raw["scores"].get("Anime Dual Audio"), 5000000)
                     self.assertEqual(raw["scores"].get("x265 (no HDR/DV)", 0), 0, "no Golden Rule for anime")
                     self.assertEqual({a: raw["scores"].get(a) for a in AUDIO}, AUDIO)
                     self.assertEqual({v: raw["scores"].get(v) for v in ("v2", "v3", "v4")}, {"v2": 25, "v3": 50, "v4": 75})

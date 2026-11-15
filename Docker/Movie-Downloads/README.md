@@ -739,7 +739,7 @@ Owner's order 2026-10-26, inside one quality (quality always ranks first: any al
 
 | Guarantee | Why it holds |
 |---|---|
-| HDR beats any SDR release of the same quality (2160p too) | best without HDR: 7000000 + cut 1000000 + audio/group < 8010000 < 20000000 |
+| HDR beats any SDR release of the same quality (2160p too) | best without HDR: 7000000 + anime `Dual Audio` 5000000 + cut 1000000 + audio/group < 13010000 < 20000000 |
 | rungs before cut, audio and group | smallest rung gap 2000000 > cut 1000000 + audio + group (< 7000) |
 | equal real quality, equal score | size scores 0; lossless formats share one score; bonuses stay below the upgrade step |
 | every real improvement upgrades | minimum upgrade step 25; smallest real steps repack 25, remaster 25, anime `v2` 25 (Swiss German: step 1) |
@@ -831,7 +831,7 @@ Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-poli
 | Rung | Audio | Score | How it is detected |
 |---|---|---|---|
 | 1 | original + German + English | 7000000 | `German DL` + `Language: Original + English` |
-| 2 | original + English (non-English title) | 5000000 | `Language: Original + English` (own CF: English, the original, and a language other than the original all present); `Anime Dual Audio` 0 since 2026-11-15 (it double-counted this rung); 0 in the English-original profiles |
+| 2 | original + English (non-English title) | 5000000 | `Language: Original + English` (own CF: English, the original, and a language other than the original all present); anime also `Anime Dual Audio` 5000000 (title says "Dual Audio": the apps parse no language from it, so it is the only English signal there); 0 in the English-original profiles |
 | 3 | original + German | 2000000 | TRaSH `German DL` (German + original audio), `German DL (undefined)`; the Swiss German profile keeps 20000 |
 | 4 | original only | 0 | untagged releases count as the original language |
 | + | each further language | 1 | `Extra audio: <language>`, a tie-breaker below the upgrade step ([Which version gets downloaded](#which-version-gets-downloaded)) |
@@ -847,7 +847,7 @@ Lives in four places: `recyclarr/recyclarr.yml` (scores), `scripts/language-poli
 
   Verified 2026-10-31: *The Vampires* (*Les Vampires*, 1915, Sonarr) moved to the silent profile; its only releases (`The.Vampires.1915.S01…x265-iVy`, NZBgeek says English) lost the language reject but stay rejected (LQ group, x265 1080p, below the minimum size), so nothing was grabbed. Live `scoring-check.py` `(p)`: `Nosferatu.1922.ENGLISH…` accepted, a 2009 film `ENGLISH` still rejected.
   End-to-end 2026-11-01: still only the rejected iVy releases, so the rules stay as they are; one episode (S01E02) grabbed by hand for the test (`POST /api/v3/release` with its guid) → SABnzbd night → imported → Jellyfin series and episode metadata, poster and thumb. Seerr is not part of it (PD serials have no TVDB id there).
-- Anime: `Anime Dual Audio` scores 0 since 2026-11-15; before, it added up with `Language: Original + English` (10000000) and beat Japanese + German + English.
+- Anime: `Anime Dual Audio` and `Language: Original + English` add up when a title names the languages and says "Dual Audio" (10000000). Kept (owner 2026-11-15): "[Dual Audio]" alone parses as no language, so without it those releases would count as original only.
 - Subtitle sync (Bazarr, set by `scripts/language-policy.sh`): every downloaded full subtitle is synced (ffsubsync) to the original-language audio track, with frame-rate correction limited to the standard ratios (24/23.976, 25/23.976, 25/24; fixes the slowly growing lag of PAL and NTSC subtitles). Limits and repairs: [Subtitle tracks and sync](#subtitle-tracks-and-sync).
 - English originals: a custom format cannot see that the original *is* English, so `Language: Original + English` would fire on any extra dub (English + Portuguese). English-original titles therefore use the twin profiles `… - English original` (Radarr and Sonarr, 4K default and Any quality), identical except that CF at 0: English + German 2000000 › English (+ any dub) 0.
   - `scripts/language-policy.sh` moves English originals on the main 4K profile to the twin and others back (existing titles).

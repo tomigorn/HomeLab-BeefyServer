@@ -675,9 +675,9 @@ radarr:
           - 4a3b087eea2ce012fcc1ce319259a3be  # Anime Dual Audio
         assign_scores_to:
           - name: Anime - 4K HDR (1080p fallback)
-            score: 0
+            score: 5000000
           - name: Anime - 4K HDR · older versions allowed
-            score: 0
+            score: 5000000
       # HDR first: any HDR release beats any non-HDR one of the same quality (2160p and 1080p), whatever its languages and audio.
       # TRaSH `HDR` is the one HDR format (DV with HDR10 fallback, HDR10, HDR10+, HLG, PQ); DV without fallback is rejected below.
       - trash_ids:
@@ -1456,9 +1456,9 @@ sonarr:
           - 418f50b10f1907201b6cfdf881f467b7  # Anime Dual Audio
         assign_scores_to:
           - name: Anime - Bluray + WEB 1080p
-            score: 0
+            score: 5000000
           - name: Anime - Bluray + WEB 1080p · older versions allowed
-            score: 0
+            score: 5000000
       # HDR first, as in Radarr.
       - trash_ids:
           - 505d871304820ba7106b693be6fe4a9e  # HDR
