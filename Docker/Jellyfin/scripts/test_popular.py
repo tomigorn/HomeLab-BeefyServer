@@ -253,7 +253,7 @@ class FakeIo:
         de = "language=de" in path
         base = {"originalLanguage": "en", "posterPath": f"/{tid}{'de' if de else ''}.jpg", "externalIds": {"imdbId": f"tt{tid}", "tvdbId": int(tid) * 10}}
         if kind == "movie":
-            names = {"101": ("Animals", "Tiere"), "103": ("Nothing Found", "Nichts"), "104": ("Owned Film", "Eigener Film")}[tid]
+            names = {"101": ("Animals", "Tiere"), "103": ("Nothing Found", "Nichts"), "104": ("Owned Film", "Eigener Film"), "105": ("Fifth Film", "Fünfter Film")}[tid]
             return dict(base, title=names[1] if de else names[0], releaseDate="2026-10-01", imdbId=f"tt{tid}")
         return dict(base, name="Diplomatische Beziehungen" if de else "The Diplomat", firstAirDate="2023-04-20", seasons=seasons("1", "2", "3", "4"))
 
@@ -286,7 +286,8 @@ class Main(unittest.TestCase):
     def run_main(self, fake, sf, argv=(), now=None):
         out = io.StringIO()
         code = pop.main(list(argv), io_=fake, now=now or self.NOW, state_file=sf, overrides_file=pathlib.Path("/nonexistent"), out=out, sleep=lambda s: None,
-                        services=[(8, "Netflix")], genres=[("drama", "Drama", "Drama", "18", "18")], allow_file=sf.with_name("allow.json"), prom_file=sf.with_name("p.prom"))
+                        services=[(8, "Netflix")], genres=[("drama", "Drama", "Drama", "18", "18")], allow_file=sf.with_name("allow.json"), prom_file=sf.with_name("p.prom"),
+                        user_file=sf.with_name("user-lists.json"), lock_file=sf.with_name("popular.lock"))
         return code, out.getvalue()
 
     def data(self, fake):
@@ -376,7 +377,8 @@ class Main(unittest.TestCase):
             data = self.data(fake)
             self.assertEqual(got["updated"], self.NOW.isoformat(timespec="seconds"))
             self.assertEqual((got["rows"], got["home"]), (data["rows"], data["home"]))
-            self.assertEqual({k: v for k, v in got.items() if k != "updated"}, data)
+            self.assertEqual({k: v for k, v in got.items() if k not in ("updated", "user")}, data)
+            self.assertEqual(got["user"], [])
             self.assertEqual(stat.S_IMODE(lists.stat().st_mode), 0o644)
             self.assertFalse(lists.with_name("lists.json.tmp").exists())
 
@@ -637,6 +639,116 @@ class Main(unittest.TestCase):
             sf = pathlib.Path(d) / "s.json"
             self.run_main(FakeIo(), sf, ["--dry-run"])
             self.assertFalse(sf.with_name("p.prom").exists())
+
+
+
+def user_lists(*lists):
+    return {"updated": "2026-10-21T04:05:00Z", "lists": [{"id": lid, "name": name, "owner": 7, "ownerName": "jane", "query": query, "items": [{"k": k, "id": i, "t": "x"} for k, i in items]}
+                                                         for lid, name, query, items in lists]}
+
+
+class UserLists(unittest.TestCase):
+    """Own lists of the Seerr Collections page (Seerr README "Collections"): rows in lists.json for the trending sync, never on the web Popular page."""
+
+    NOW, run_main, data = Main.NOW, Main.run_main, Main.data
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.sf = pathlib.Path(self.tmp.name) / "s.json"
+        self.uf = self.sf.with_name("user-lists.json")
+        self.budget = pop.USER_SEARCH_MAX
+
+    def tearDown(self):
+        pop.USER_SEARCH_MAX = self.budget
+        self.tmp.cleanup()
+
+    def write(self, *lists):
+        self.uf.write_text(json.dumps(user_lists(*lists)))
+
+    def published(self):
+        return json.loads(self.sf.with_name("lists.json").read_text())
+
+    def test_user_list_rows_in_lists_json_with_ranks_states_and_owner(self):
+        self.write(("user-pat", "Pat produced", "producer:Pat Example", [("movie", 104), ("movie", 101), ("movie", 103), ("tv", 202)]))
+        fake = FakeIo()
+        self.assertEqual(self.run_main(fake, self.sf)[0], 0)
+        rows = self.published()["user"]
+        self.assertEqual([(r["id"], r["name"], r["kind"], r["type"], r["owner"], r["query"]) for r in rows],
+                         [("user-pat", {"en": "Pat produced", "de": "Pat produced"}, "mixed", "user", "jane", "producer:Pat Example")])
+        self.assertEqual([(i["r"], i["k"], i["id"], i["o"], i["f"], bool(i.get("x"))) for i in rows[0]["items"]],
+                         [(1, "movie", 104, True, None, False), (2, "movie", 101, False, "1080p", True), (3, "movie", 103, False, None, False), (4, "tv", 202, False, "2160p", True)])
+        allow = json.loads(self.sf.with_name("allow.json").read_text())["entries"]
+        self.assertEqual(allow[rows[0]["items"][1]["x"]]["ref"], "movie/101")
+        self.assertNotIn("user", self.data(fake))
+
+    def test_no_or_broken_user_file_means_no_user_rows(self):
+        fake = FakeIo()
+        self.assertEqual(self.run_main(fake, self.sf)[0], 0)
+        self.assertEqual(self.published()["user"], [])
+        self.uf.write_text("{broken")
+        self.assertEqual(self.run_main(fake, self.sf)[0], 0)
+        self.assertEqual(self.published()["user"], [])
+
+    def test_odd_lists_and_items_are_skipped(self):
+        data = user_lists(("user-ok", "Fine", "q", [("movie", 105), ("book", 1), ("movie", "7; rm")]), ("../evil", "Bad id", "q", [("movie", 101)]), ("user-noname", "", "q", [("movie", 101)]))
+        data["lists"].append("not a list")
+        self.uf.write_text(json.dumps(data))
+        self.assertEqual(self.run_main(FakeIo(), self.sf)[0], 0)
+        rows = self.published()["user"]
+        self.assertEqual([r["id"] for r in rows], ["user-ok"])
+        self.assertEqual([(i["k"], i["id"]) for i in rows[0]["items"]], [("movie", 105)])
+
+    def test_user_titles_have_their_own_search_budget(self):
+        self.write(("user-pat", "Pat produced", "q", [("movie", 105)]))
+        pop.USER_SEARCH_MAX = 0
+        fake = FakeIo()
+        self.assertEqual(self.run_main(fake, self.sf)[0], 0)
+        self.assertFalse(any("tt105" in s["query"] for s in fake.searches))
+        self.assertEqual(self.published()["home"]["movies"][0]["f"], "1080p")
+        item = self.published()["user"][0]["items"][0]
+        self.assertEqual((item["f"], item["n"], item["c"]), (None, True, None))
+
+    def test_user_mode_searches_only_user_titles_and_keeps_the_netflix_list(self):
+        fake = FakeIo()
+        self.assertEqual(self.run_main(fake, self.sf)[0], 0)
+        self.write(("user-pat", "Pat produced", "q", [("movie", 105), ("movie", 103)]))
+        fake.releases["movie/105"] = [rel("Fifth.Film.2026.1080p.WEB-DL.x264", 4)]
+        searched, fetched = len(fake.searches), fake.tsv_fetches
+        later = self.NOW + datetime.timedelta(days=1)
+        self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], now=later)[0], 0)
+        self.assertEqual(fake.tsv_fetches, fetched)
+        new = [s["query"] for s in fake.searches[searched:]]
+        self.assertTrue(new and all("tt105" in q or "Fifth" in q or "tt103" in q or "Nothing" in q for q in new), new)
+        self.assertEqual([(i["id"], i["f"]) for i in self.published()["user"][0]["items"]], [(105, "1080p"), (103, None)])
+        self.assertEqual(self.published()["home"]["movies"][0]["f"], "1080p")
+
+    def test_user_mode_runs_again_when_the_lists_changed_during_the_run(self):
+        self.write(("user-a", "A", "q", [("movie", 101)]))
+        fake = FakeIo()
+        owned, calls = fake.owned, []
+
+        def changing():
+            calls.append(1)
+            if len(calls) == 1:
+                self.write(("user-a", "A", "q", [("movie", 101)]), ("user-b", "B", "q", [("movie", 105)]))
+            return owned()
+        fake.owned = changing
+        self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"])[0], 0)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([r["id"] for r in self.published()["user"]], ["user-a", "user-b"])
+
+    def test_runs_wait_for_each_other(self):
+        import fcntl
+        lock = self.sf.with_name("popular.lock")
+        with open(lock, "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            pop.LOCK_WAIT, old = 0.2, pop.LOCK_WAIT
+            try:
+                code, out = self.run_main(FakeIo(), self.sf)
+            finally:
+                pop.LOCK_WAIT = old
+        self.assertEqual(code, 1)
+        self.assertIn("another run", out)
 
 
 if __name__ == "__main__":

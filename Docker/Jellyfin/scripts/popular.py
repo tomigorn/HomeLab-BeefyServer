@@ -4,8 +4,11 @@ Sources: Netflix's official weekly Top 10 for Switzerland (TSV) and TMDB popular
 Every rank is listed; a title not in the library is requestable only when a suitable release exists: Prowlarr searches (never grabs) on NzbPlanet / NZBgeek (by id) and Knaben (by name), throttled, cached (no release: again the next night; found: weekly; owned: never).
 Writes the JavaScript Injector entry "Currently popular" (window.HssPopular), the request allow-list for the popular backend (opaque entry ids; the backend accepts nothing else)
 lists.json next to it (the published lists, for the trending sync) and details.json (the details overlay of every listed title not owned, by its own opaque id; tmdb_details.py).
-Never prints API keys. Usage: popular.py [--dry-run] [--tsv FILE]  (FILE: the Netflix TSV downloaded elsewhere, when netflix.com is unreachable from beefy)"""
+The household's own lists (Seerr "Collections" page, /srv/appdata/seerr-collections/lists.json) become lists.json "user" rows with their own search budget; never on the web Popular page.
+--user-lists: only the own lists are searched (no Netflix fetch, no list refresh), run again when they changed meanwhile; runs wait for each other (lock).
+Never prints API keys. Usage: popular.py [--dry-run] [--user-lists] [--tsv FILE]  (FILE: the Netflix TSV downloaded elsewhere, when netflix.com is unreachable from beefy)"""
 import datetime
+import fcntl
 import io
 import itertools
 import json
@@ -37,6 +40,12 @@ STATE_FILE = pathlib.Path.home() / ".local" / "state" / "jellyfin-popular.json"
 ALLOW_FILE = pathlib.Path("/srv/appdata/jellyfin-popular/allow.json")
 PROM_FILE = pathlib.Path.home() / ".local" / "state" / "jellyfin-popular.prom"
 OVERRIDES = HERE / "popular-overrides.tsv"
+USER_FILE = pathlib.Path("/srv/appdata/seerr-collections/lists.json")
+LOCK_FILE = STATE_FILE.with_name("jellyfin-popular.lock")
+LOCK_WAIT = 2400
+USER_SEARCH_MAX = int(os.environ.get("POP_USER_SEARCH_MAX", "150"))
+USER_ID = re.compile(r"^user-[a-z0-9-]{1,40}$")
+USER_ITEMS = 100
 # Streaming services in Switzerland (TMDB watch provider ids, region CH), one row each, in this order.
 SERVICES = [(8, "Netflix"), (119, "Prime Video"), (337, "Disney+"), (350, "Apple TV+"), (210, "Sky"), (691, "Play Suisse"), (531, "Paramount+"), (150, "blue TV")]
 # (row id, English, German, TMDB film genres, TMDB series genres; "|" = any of them, None = no series)
@@ -225,6 +234,55 @@ def row_ids(services, genres):
     return out
 
 
+def read_user_lists(path):
+    """The own lists of the Seerr Collections page: [{id, name, owner, query, items: [(kind, tmdb)]}]; a missing or broken file and odd entries are left out."""
+    try:
+        data = json.loads(pathlib.Path(path).read_text())
+    except (OSError, ValueError):
+        return []
+    out = []
+    for l in (data.get("lists") if isinstance(data, dict) else None) or []:
+        if not isinstance(l, dict) or not isinstance(l.get("id"), str) or not USER_ID.match(l["id"]) or any(l["id"] == o["id"] for o in out):
+            continue
+        name = " ".join(str(l.get("name") or "").split())[:60] if isinstance(l.get("name"), str) else ""
+        if not name:
+            continue
+        items = []
+        for i in l.get("items") or []:
+            if isinstance(i, dict) and i.get("k") in ("movie", "tv") and isinstance(i.get("id"), int) and not isinstance(i.get("id"), bool) and i["id"] > 0 and (i["k"], i["id"]) not in items:
+                items.append((i["k"], i["id"]))
+        owner = l.get("ownerName") if isinstance(l.get("ownerName"), str) else ""
+        out.append({"id": l["id"], "name": name, "owner": owner[:60], "query": str(l.get("query") or "")[:300], "items": items[:USER_ITEMS]})
+    return out
+
+
+class Busy(Exception):
+    pass
+
+
+def run_lock(path, wait):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(path, "a")
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return f
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                f.close()
+                raise Busy
+            time.sleep(min(1.0, max(0.01, deadline - time.monotonic())))
+
+
+def file_stamp(path):
+    try:
+        st = os.stat(path)
+        return st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+
 def check_due(cache, now):
     if not cache:
         return True
@@ -386,11 +444,35 @@ def write_prom(path, now, ok, stats):
     os.replace(tmp, path)
 
 
-def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRIDES, out=sys.stdout, sleep=time.sleep, services=None, genres=None, allow_file=ALLOW_FILE, prom_file=PROM_FILE):
+def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRIDES, out=sys.stdout, sleep=time.sleep, services=None, genres=None, allow_file=ALLOW_FILE, prom_file=PROM_FILE,
+         user_file=None, lock_file=None):
     now = now or datetime.datetime.now()
+    user_file = USER_FILE if user_file is None else user_file
+    args = list(argv)
+    if "--tsv" in args:
+        i = args.index("--tsv")
+        args = args[:i] + args[i + 2:] if i + 1 < len(args) else ["--tsv"]
+    if any(a not in ("--dry-run", "--user-lists") for a in args):
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    try:
+        lock = run_lock(LOCK_FILE if lock_file is None else lock_file, LOCK_WAIT)
+    except Busy:
+        print(f"another run still busy after {LOCK_WAIT} s, nothing done", file=out)
+        return 1
+    with lock:
+        for again in (False, True):
+            before = file_stamp(user_file)
+            code = main_once(argv, io_, now, state_file, overrides_file, out, sleep, services, genres, allow_file, prom_file, user_file)
+            if again or code != 0 or "--user-lists" not in argv or file_stamp(user_file) == before:
+                return code
+            print("own lists changed during the run, once more", file=out)
+
+
+def main_once(argv, io_, now, state_file, overrides_file, out, sleep, services, genres, allow_file, prom_file, user_file):
     stats = {}
     try:
-        code = run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres, allow_file, stats)
+        code = run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres, allow_file, stats, user_file)
     except BaseException:
         if "--dry-run" not in argv:
             write_prom(prom_file, now, False, stats)
@@ -402,7 +484,7 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
     return code
 
 
-def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres, allow_file, stats):
+def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres, allow_file, stats, user_file=None):
     args = list(argv)
     tsv_file = None
     if "--tsv" in args:
@@ -412,10 +494,11 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             return 2
         tsv_file = pathlib.Path(args.pop(i + 1))
         args.pop(i)
-    if any(a != "--dry-run" for a in args):
+    if any(a not in ("--dry-run", "--user-lists") for a in args):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     dry = "--dry-run" in args
+    user_only = "--user-lists" in args
     io_ = io_ or Io()
     services = SERVICES if services is None else services
     genres = GENRES if genres is None else genres
@@ -430,7 +513,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
     overrides = load_overrides(overrides_file.read_text()) if overrides_file.exists() else {}
 
     top = state.get("top")
-    if tsv_file or not top or top.get("week", "") < due_week(now):
+    if not user_only and (tsv_file or not top or top.get("week", "") < due_week(now)):
         try:
             lines, lm = (tsv_file.read_text().splitlines(), f"file {tsv_file.name}") if tsv_file else io_.tsv((state.get("tsv") or {}).get("lastModified"))
             parsed = parse_week(lines, COUNTRY) if lines is not None else None
@@ -475,7 +558,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
 
     lists = state.get("lists")
     try:
-        lists = state["lists"] = refresh_lists(lists)
+        lists = state["lists"] = lists if user_only and lists else refresh_lists(lists)
     except FAILURES as e:
         if not lists:
             raise
@@ -517,13 +600,15 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             return None
         return {"kind": kind, "tmdb": tmdb, "season": season, "ref": ref(kind, tmdb, season), "d": d, "rank": rank}
 
-    def fill(cands, label):
-        """Checks the release of every candidate that is due."""
+    def fill(cands, label, budget=budget, search=True):
+        """Checks the release of every candidate that is due (search False: only what is cached)."""
         for c in cands:
             if c.get("unmatched"):
                 continue
             st = status(c["ref"])
             if st is None or (st == "none" and check_due(cache.get(c["ref"]), now)) or (st in ("1080p", "2160p") and check_due(cache.get(c["ref"]), now)):
+                if not search:
+                    continue
                 if dry:
                     say(f"{label}: {c['ref']} {c['d']['title']!r}: unchecked")
                     continue
@@ -558,7 +643,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
                 say(f"Netflix {kind} {e['rank']} {e['title']!r}: no match")
                 c = {"unmatched": True, "kind": kind, "rank": e["rank"], "title": e["title"]}
             cands.append(c)
-        fill(cands, f"Netflix {kind}")
+        fill(cands, f"Netflix {kind}", search=not user_only)
         home_cands[key] = cands
         if not dry:
             save_json(state_file, state)
@@ -566,16 +651,28 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
     row_cands = {}
     for rid, pairs in lists["rows"].items():
         cands = list(itertools.islice(filter(None, (candidate(k, t) for k, t in pairs)), ROW_SIZE))
-        fill(cands, rid)
+        fill(cands, rid, search=not user_only)
         row_cands[rid] = cands
         if not dry:
             save_json(state_file, state)
+
+    user_lists = read_user_lists(user_file) if user_file else []
+    user_cands = {ul["id"]: [c for c in (candidate(k, t) for k, t in ul["items"]) if c] for ul in user_lists}
+    seen, todo = set(), []
+    for c in [c for cs in user_cands.values() for c in cs]:
+        if c["ref"] not in seen:
+            seen.add(c["ref"])
+            todo.append(c)
+    todo.sort(key=lambda c: c["ref"] in cache)
+    fill(todo, "own lists", budget=[USER_SEARCH_MAX])
+    if not dry:
+        save_json(state_file, state)
 
     tokens = state.setdefault("tokens", {})
     allow = {}
     details_file = allow_file.with_name("details.json")
     infos = {}
-    for c in [c for cs in list(home_cands.values()) + list(row_cands.values()) for c in cs]:
+    for c in [c for cs in list(home_cands.values()) + list(row_cands.values()) + list(user_cands.values()) for c in cs]:
         if not c.get("unmatched") and status(c["ref"]) != "owned" and c["d"].get("info"):
             infos[f"{c['kind']}/{c['tmdb']}"] = c["d"]["info"]
     dtokens = tmdb_details.assign(details_file, infos)
@@ -612,7 +709,9 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
         shown = row_cands.get(rid, [])
         rows.append({"id": rid, "kind": kind, "type": typ, "name": {"en": en, "de": de}, "logo": logo, "items": [item(c, i) for i, c in enumerate(shown, 1)]})
     data = {"week": state["top"].get("week"), "lists": lists["at"], "home": home, "rows": rows}
-    say(f"home: {len(home['shows'])} shows, {len(home['movies'])} films; rows: " + ", ".join(f"{r['id']} {len(r['items'])}" for r in rows) + f"; searches {SEARCH_MAX - budget[0]}")
+    user_rows = [{"id": ul["id"], "kind": "mixed", "type": "user", "name": {"en": ul["name"], "de": ul["name"]}, "logo": None, "owner": ul["owner"], "query": ul["query"],
+                  "items": [item(c, i) for i, c in enumerate(user_cands[ul["id"]], 1)]} for ul in user_lists]
+    say(f"home: {len(home['shows'])} shows, {len(home['movies'])} films; rows: " + ", ".join(f"{r['id']} {len(r['items'])}" for r in rows) + f"; own lists {len(user_rows)}; searches {SEARCH_MAX - budget[0]}")
     stats["errors"] = len(failed)
     if dry:
         return 0
@@ -634,7 +733,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             io_.injector_put(upsert(config, source))
             say(f"upserted {NAME}")
     save_json(allow_file, {"updated": stamp, "entries": allow}, 0o644)
-    save_json(allow_file.with_name("lists.json"), {"updated": stamp, **data}, 0o644)
+    save_json(allow_file.with_name("lists.json"), {"updated": stamp, **data, "user": user_rows}, 0o644)
     tmdb_details.write_sidecar(details_file, stamp, infos, dtokens)
     save_json(state_file, state)
     return 0
