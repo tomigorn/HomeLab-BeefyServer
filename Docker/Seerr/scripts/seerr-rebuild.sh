@@ -83,7 +83,7 @@ else
   if ! gs apply --3way --index "$patch" > "$STATE/apply.log" 2>&1; then
     files=$(gs diff --name-only --diff-filter=U | tr '\n' ' ')
     [ -n "$files" ] || files=$(sed -n 's/^error: patch failed: \([^:]*\):.*/\1/p' "$STATE/apply.log" | sort -u | tr '\n' ' ')
-    alert "OIDC PR #$PRN (${sha:0:7}) does not apply onto $tag: conflicts in ${files:-?}- current image kept. Resolve by hand: Seerr README \"Own image\"."
+    once "conflict-$tag-${sha:0:12}" && alert "OIDC PR #$PRN (${sha:0:7}) does not apply onto $tag: conflicts in ${files:-?}- current image kept. Resolve by hand: Seerr README \"Own image\"."
     exit 2
   fi
 fi

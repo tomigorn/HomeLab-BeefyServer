@@ -86,7 +86,7 @@ What a run does:
 
 | Telegram | When |
 |---|---|
-| does not apply onto vX | PR conflicts with a new release: image kept, resolve below |
+| does not apply onto vX | PR conflicts with a new release: image kept, resolve below; told once per release + PR head (state `told-conflict-<tag>-<sha12>`), the weekly run stays quiet until then |
 | OIDC PR moved to X | review `git diff <reviewed> <new>` in `/var/lib/seerr-rebuild/work/seerr`, then `echo <new sha> > image/pr-reviewed`, commit |
 | build / tests failed | image kept |
 | vX built and tested, not deployed | new release held: deploy with `--deploy-release` (step 6) |

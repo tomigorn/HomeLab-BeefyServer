@@ -166,6 +166,8 @@ run true; rc=$?
 assert_eq "conflict: exit 2, nothing built" "2 " "$rc $(calls 'build|tag|compose')"
 assert_has "conflict: alert names the file" "src/a.txt" "$(cat "$T/alerts")"
 assert_has "conflict: alert says the image stays" "current image kept" "$(cat "$T/alerts")"
+run true; rc=$?
+assert_eq "conflict again (same release, same PR head): exit 2, no second alert" "2 " "$rc $(cat "$T/alerts")"
 
 # the committed resolution for exactly this tag + PR head is used instead
 cat > "$T/repo/image/resolutions/v1.0.1-${PR:0:12}.patch" <<EOF
