@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upsert app-banner/app-banner.js (phone browsers: "get the Moonfin app" with a store link) into the JavaScript Injector plugin config.
+"""Upsert app-banner/app-banner.js (phone browsers: "get the Moonfin app" with a store link) and app-banner/hide-header-button.js (no Moonbase "Open Moonfin" header button) into the JavaScript Injector plugin config.
 
   app-banner.py
 """
@@ -12,12 +12,18 @@ _spec = importlib.util.spec_from_file_location("tracker_link", HERE / "tracker-l
 _tl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_tl)
 
-NAME = "Moonfin app banner"
-SOURCE = HERE.parent / "app-banner" / "app-banner.js"
+ENTRIES = (
+    ("Moonfin app banner", HERE.parent / "app-banner" / "app-banner.js"),
+    ("Hide Moonfin header button", HERE.parent / "app-banner" / "hide-header-button.js"),
+)
 
 
 def main(argv, api=None, out=sys.stdout):
-    return _tl.main(argv, api=api, out=out, name=NAME, source_file=SOURCE)
+    for name, source in ENTRIES:
+        rc = _tl.main(argv, api=api, out=out, name=name, source_file=source)
+        if rc:
+            return rc
+    return 0
 
 
 if __name__ == "__main__":

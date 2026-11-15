@@ -812,6 +812,7 @@ Phone browsers (any browser on iPhone/iPad/Android) that cannot play our usual f
 - Play is caught at `POST /Items/{id}/PlaybackInfo`, both `fetch` (old API client) and `XMLHttpRequest` (the SDK via axios, which the web player uses). "Get Moonfin" opens the store, "Back" closes the prompt; both abort that request.
 - Files: `app-banner/app-banner.js`; install `python3 scripts/app-banner.py` (also after editing the JS). Tests: `sudo docker run --rm -u $(id -u):$(id -g) -v "$PWD":/w -w /w node:24-alpine node --test "app-banner/*.test.mjs"`, `cd scripts && python3 -m unittest test_app_banner`.
 - Switch off: Dashboard → Plugins → JavaScript Injector → "Moonfin app banner" → disable.
+- Moonbase's "Open Moonfin" button in the web header is hidden in every browser (owner 2026-11-15): injector entry "Hide Moonfin header button" (`app-banner/hide-header-button.js`, CSS `.headerMoonfinButton{display:none!important}`; Moonbase has no setting and re-adds a removed button). Installed by the same `scripts/app-banner.py`.
 
 ## Moonfin requests (Seerr facade) (2026-10-30)
 Moonfin's Seerr screens (discover, details, request dialog, my requests) talk to the facade instead of Seerr. Every request still follows the Popular rules (allow-list, 10 per user per 7 days, 30 per day, audit). Moonbase's Seerr URL is `http://jellyfin-popular:8099`, set by `scripts/moonbase.py` (live, no Jellyfin restart; check `GET /Moonfin/Seerr/Config`).

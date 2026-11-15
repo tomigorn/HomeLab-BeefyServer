@@ -27,7 +27,7 @@ class AppBannerTest(unittest.TestCase):
         api = FakeApi()
         self.assertEqual(ab.main([], api=api, out=io.StringIO()), 0)
         names = [s["Name"] for s in api.config["CustomJavaScripts"]]
-        self.assertEqual(names, ["Rate in Tracker", "Moonfin app banner"])
+        self.assertEqual(names, ["Rate in Tracker", "Moonfin app banner", "Hide Moonfin header button"])
         entry = api.config["CustomJavaScripts"][1]
         self.assertEqual(entry["Script"], (pathlib.Path(__file__).resolve().parent.parent / "app-banner" / "app-banner.js").read_text())
         self.assertTrue(entry["Enabled"])
@@ -37,6 +37,15 @@ class AppBannerTest(unittest.TestCase):
         ab.main([], api=api, out=io.StringIO())
         ab.main([], api=api, out=io.StringIO())
         self.assertEqual(sum(s["Name"] == "Moonfin app banner" for s in api.config["CustomJavaScripts"]), 1)
+
+
+    def test_hides_moonfin_header_button_everywhere(self):
+        api = FakeApi()
+        ab.main([], api=api, out=io.StringIO())
+        entry = api.config["CustomJavaScripts"][2]
+        self.assertIn(".headerMoonfinButton", entry["Script"])
+        self.assertIn("display:none", entry["Script"].replace(" ", ""))
+        self.assertNotIn("userAgent", entry["Script"], "every browser, desktop too")
 
 
 if __name__ == "__main__":
