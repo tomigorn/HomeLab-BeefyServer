@@ -54,6 +54,7 @@ class Deps:
     clamav_results: object = None
     scout_dir: object = None
     scout_requests: object = None
+    collections_file: object = None
 
 
 def redact(text):
@@ -253,6 +254,9 @@ def handle(method, path, headers, body, deps):
     if url.path == "/_download-now/by-size":
         import by_size
         return by_size.handle(sys.modules[__name__], method, path, headers, body, deps)
+    if url.path.startswith("/_download-now/collections/"):
+        import collections_page
+        return collections_page.handle(sys.modules[__name__], method, path, headers, body, deps)
     if url.path.startswith("/_download-now/manual/"):
         import manual
         return manual.handle(sys.modules[__name__], method, path, headers, body, deps)
@@ -390,6 +394,7 @@ def deps_from_env(env):
         clamav_results=env.get("DN_CLAMAV_RESULTS") or None,
         scout_dir=env.get("DN_SCOUT_DIR") or None,
         scout_requests=env.get("DN_SCOUT_REQUESTS") or None,
+        collections_file=env.get("DN_COLLECTIONS") or None,
         seerr_admin=seerr_admin_client(env.get("DN_SEERR", "http://seerr:5055"), secret("seerr.apikey")) if pathlib.Path(env.get("DN_SECRETS", "/run/secrets/download-now"), "seerr.apikey").is_file() else None,
     )
 
@@ -430,6 +435,9 @@ def main():
     if Handler.deps.manual_file:
         import manual
         threading.Thread(target=manual.loop, args=(sys.modules[__name__], Handler.deps), daemon=True).start()
+    if Handler.deps.collections_file:
+        import collections_page
+        threading.Thread(target=collections_page.loop, args=(sys.modules[__name__], Handler.deps), daemon=True).start()
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("DN_PORT", "8090"))), Handler)
     print(f"download-now listening on {srv.server_address[1]}", flush=True)
     srv.serve_forever()
