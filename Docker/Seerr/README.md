@@ -11,6 +11,7 @@ Jellyseerr itself is frozen at 2.7.3 (`fallenbagel/jellyseerr:2.7.3-deprecated`)
 
 ```bash
 sudo mkdir -p /srv/appdata/seerr && sudo chown 65109:1000 /srv/appdata/seerr && sudo chmod 2770 /srv/appdata/seerr
+sudo install -d -o 65127 -g 65127 -m 0700 /srv/appdata/seerr-download-now   # Manual interaction problem list
 cd ~/Projects/Docker/Seerr && sudo docker compose up -d
 curl -s http://127.0.0.1:5055/api/v1/status     # {"version":"3.5.1","commitTag":"v3.5.1-oidc2e52312",...}
 ```
@@ -287,7 +288,14 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 
 ## Menu links
 
-`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds **Audiobooks** (German UI: **Hörbücher**) after Series in the desktop sidebar, the phone drawer and the phone bottom bar (5th item, while it has room and no "more" button; otherwise in the "more" list), opening `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, public via Cloudflare, Holy Grail login, group `streaming-requesters`) in the same tab. Links and URL: `LINKS` at the top of the file. Seerr without a `/discover/tv` link: no entry, nothing breaks. Only menu links count: `/discover/tv` links inside `<main>` (Discover's **Popular Series** row title) are skipped, otherwise an "Audiobooks" title lands squeezed beside it (fixed 2026-10-28; Discover gets no own Audiobooks row, the menu entry covers it).
+`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds two entries after Series in the desktop sidebar, the phone drawer and the phone bottom bar:
+
+| Entry | Opens | Phone bottom bar (no "more" button; with one: in the "more" list) |
+|---|---|---|
+| **Audiobooks** (German UI: **Hörbücher**) | `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, public via Cloudflare, Holy Grail login, group `streaming-requesters`), same tab | while the bar has at most 5 items with it |
+| **Manual interaction** (**Manuell beheben**) + amber count of open problems (none at 0) | `/_manual/` ([Manual interaction](#manual-interaction); `?lang=de` when the menu is German) | while the bar has at most 6 items with it (so phones without a "more" list still reach it) |
+
+Count: `GET /_download-now/manual/count` once per page load, again on Seerr navigation at most every 5 min; no session or an error = no badge. Links and URL: `LINKS` at the top of the file. Seerr without a `/discover/tv` link: no entry, nothing breaks. Only menu links count: `/discover/tv` links inside `<main>` (Discover's **Popular Series** row title) are skipped, otherwise an "Audiobooks" title lands squeezed beside it (fixed 2026-10-28; Discover gets no own Audiobooks row, the menu entry covers it).
 
 | Check | Command |
 |---|---|
@@ -479,6 +487,35 @@ Requests made with Jellyfin's Popular buttons get a pill in the **Requested** li
 | Match | Requests rows ↔ request ids from `request-sizes.js` (`hgRequestSizes.rows`); title page: Seerr's `/api/v1/movie\|tv/<id>` `mediaInfo.requests` (one read per title) |
 | Script | `indexer-bar/www/request-origin.js` (injected by `seerr-proxy`); hint: hover / tap (night label's hint box) |
 | Tests | `python3 tests/test_download_now.py` (class `Origins`); JS `node --test` in `tests/js` (`request-origin.test.mjs`); Jellyfin `popular/test_app.py` (`Attribution`, `Origins`) |
+
+## Manual interaction
+
+Sidebar → **Manual interaction** (German **Manuell beheben**, amber count of open problems) opens `/_manual/`: every download problem that needs a hand, for **every** Seerr user, also on other people's requests (owner 2026-11-15). Tabs **Open** / **Done** (with who did what).
+
+| Problem | Found by | Actions |
+|---|---|---|
+| Removed from Radarr/Sonarr | `request-state.json` `removed` | **Add again** (request's profile/folder, else Seerr's default; monitored, searched; the add hook applies the profile rules). **Delete request**: admins / Manage Requests only, second tap + warning: `DELETE /api/v1/media/<id>` = Clear Data (`clear-data-wipe.sh`, files too) |
+| Not matched (Seerr could not hand it over) | `queue` code `seerr` | Radarr/Sonarr lookup (search box, most probable result preselected: title similarity + year) → **Use this one**: added as above unless already there; same id as Seerr's → the failed Seerr request is retried |
+| Downloaded, not importable | Radarr/Sonarr queue `importBlocked` / `importFailed` (incl. "matched by ID", year fits) | **Show files**: the arr's manual-import proposals, probable episode/film preselected (arr's match, else `S01E02` / `1x02` in the name; films: biggest file) → **Import** (`ManualImport`, mode auto) |
+| Wrong film | same block, release year more than 2 years off | **Block this release and search again** (second tap): queue remove + blocklist + search (episodes or film) |
+| Download failed | queue `failed` / `failedPending` | as wrong film |
+| Nothing found for days | `noRelease`, oldest request ≥ 3 days; unreleased titles never | **Allow older versions (…)**: the `· older versions allowed` twin (anime → anime twin, English original → its twin; Swiss German or already older: none), suggested for titles ≥ 12 years old, offered for all (niche is not detectable). **Show releases** (interactive search, series per requested season): quality, size, languages, seeders, score, why rejected → **Download** (rejected ones cannot be picked) |
+
+| Part | What |
+|---|---|
+| Page | `indexer-bar/www/manual.html` + `manual.js` (static, Seerr look, every text as `textContent`), served by `seerr-proxy` at `/_manual/` behind the session check (none → `/login`); German from `?lang=de` (menu entry) or the user's Seerr language |
+| Backend | `download-now/manual.py` in `seerr-download-now`, `/_download-now/manual/`: GET `problems` (`open`, `done`, `admin`), `count`, `history`, `lookup?id=&term=`, `releases?id=[&season=]`, `files?id=`; POST `action` `{id, action, …}`: `readd`, `delete` (+`"confirm":"delete"`), `link` (+`pick`), `import` (+`files: [{n, episodeIds}]`), `block`, `profile`, `grab` (+`release`) |
+| Who | every call: Seerr `auth/me` with the caller's session, like Download now; everything for every user, `delete` and `history` only ADMIN / MANAGE_REQUESTS; POST only with Origin + JSON. Requester names are shown to every user (owner's ask) |
+| Guards | picks are indexes into what the backend itself read for that problem in the last 10 min (lookup, release list, file list); rejected releases cannot be grabbed; episode ids must belong to the series; file paths, download links (`guid`) and keys never reach the browser; release search at most every 2 min per problem and one at a time, lookups every 2 s per user, actions every 20 s per problem |
+| Tracking | `/srv/appdata/seerr-download-now/manual.json` (`/state`, 65127 0700, the container's only writable path): per problem `id`, `type`, `key` (`movie\|tv/<tmdb>`), title, year, requesters, `firstSeen`, `lastSeen`, `details`, `actions` (time, user, action, result), `resolved` (`at`, `how`: `gone` or the action). Scanned every 10 min and on page/badge calls (at most once a minute); condition gone → Done (only when every source was readable); fixed by an action → Done, back to Open if still there after 30 min; Done kept 180 days |
+| Sources | `request-state.json` (read-only mount; older than 10 min = ignored), Seerr `/api/v1/request` (Seerr's key: requesters, ids), Radarr/Sonarr `/queue` |
+| Log | `sudo docker logs seerr-download-now`: one `manual:` line per action (user id, action, title, result) |
+| Tests | `python3 tests/test_manual.py`; JS `node --test` in `tests/js` (`manual.test.mjs`, `menu-links.test.mjs`) |
+
+| Check | Command |
+|---|---|
+| Open problems (Seerr key) | `curl -s -H "X-Api-Key: $(cat secrets/api-key)" localhost:5055/_download-now/manual/problems \| jq '.open[] \| {type, title}'` |
+| Export for review | same with `/_download-now/manual/history` |
 
 ## Delete a title
 

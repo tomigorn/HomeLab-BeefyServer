@@ -67,5 +67,10 @@ if want download-now seerr-proxy; then
   check seerr.origins-data '^object readable$' "$(seerr_data /_download-now/origins | jq -r '.requests|type' 2>&1) $(docker exec seerr-download-now test -r /run/origins/origins.json && echo readable || echo missing)"
   check seerr.origin-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-origin.js | grep -c 'data-hg-origin-fact' 2>&1)"
   check seerr.title-pill-hints '^[1-9] [1-9]$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'handed to Radarr/Sonarr' 2>&1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/download-now.js | grep -c 'grabbedHint' 2>&1)"
+  check seerr.manual-auth '^401 302$' "$(for u in /_download-now/manual/problems /_manual/; do curl -s -m 8 -o /dev/null -w '%{http_code} ' "http://127.0.0.1:5055$u"; done | xargs 2>&1)"
+  check seerr.manual-backend '^200 array$' "$(r=$(curl -s -m 90 -w '\n%{http_code}' -H "X-Api-Key: $(cat "$DIR/../../Seerr/secrets/api-key")" http://127.0.0.1:5055/_download-now/manual/problems); echo "$(tail -1 <<<"$r") $(head -n -1 <<<"$r" | jq -r '.open|type' 2>&1)")"
+  check seerr.manual-page '^200 1$' "$(echo "$(curl -s -m 8 -o /dev/null -w '%{http_code}' -H "X-Api-Key: $(cat "$DIR/../../Seerr/secrets/api-key")" http://127.0.0.1:5055/_manual/) $(curl -s -m 8 -H "X-Api-Key: $(cat "$DIR/../../Seerr/secrets/api-key")" http://127.0.0.1:5055/_manual/ | grep -c '/_indexer-bar/manual.js')")"
+  check seerr.manual-menu '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/menu-links.js | grep -c '"/_manual/"' 2>&1)"
+  check seerr.manual-state '^writable 65127 700$' "$(docker exec seerr-download-now sh -c 'test -w /state && echo writable || echo read-only' 2>&1) $(stat -c '%u %a' /srv/appdata/seerr-download-now 2>&1)"
   check seerr.download-now-script '^media-actions closest\("main"\)$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/download-now.js | grep -o 'media-actions' | head -1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/menu-links.js | grep -o 'closest("main")' | head -1)"
 fi
