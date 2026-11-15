@@ -35,6 +35,10 @@ class UpsertTest(unittest.TestCase):
         entry = tl.upsert_script({}, NAME, "a()")["CustomJavaScripts"][0]
         self.assertTrue(entry["RequiresAuthentication"])
 
+    def test_public_entry(self):
+        entry = tl.upsert_script({}, NAME, "a()", requires_auth=False)["CustomJavaScripts"][0]
+        self.assertFalse(entry["RequiresAuthentication"])
+
     def test_input_not_mutated(self):
         config = {"CustomJavaScripts": [{"Name": NAME, "Script": "old()", "Enabled": False, "RequiresAuthentication": False}]}
         tl.upsert_script(config, NAME, "new()")

@@ -12,15 +12,16 @@ _spec = importlib.util.spec_from_file_location("tracker_link", HERE / "tracker-l
 _tl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_tl)
 
+# The header rule is public (index.html loads public.js at once): signed-in scripts arrive seconds later, after the button has shown.
 ENTRIES = (
-    ("Moonfin app banner", HERE.parent / "app-banner" / "app-banner.js"),
-    ("Hide Moonfin header button", HERE.parent / "app-banner" / "hide-header-button.js"),
+    ("Moonfin app banner", HERE.parent / "app-banner" / "app-banner.js", True),
+    ("Hide Moonfin header button", HERE.parent / "app-banner" / "hide-header-button.js", False),
 )
 
 
 def main(argv, api=None, out=sys.stdout):
-    for name, source in ENTRIES:
-        rc = _tl.main(argv, api=api, out=out, name=name, source_file=source)
+    for name, source, requires_auth in ENTRIES:
+        rc = _tl.main(argv, api=api, out=out, name=name, source_file=source, requires_auth=requires_auth)
         if rc:
             return rc
     return 0

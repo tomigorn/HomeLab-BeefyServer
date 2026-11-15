@@ -47,6 +47,13 @@ class AppBannerTest(unittest.TestCase):
         self.assertIn("display:none", entry["Script"].replace(" ", ""))
         self.assertNotIn("userAgent", entry["Script"], "every browser, desktop too")
 
+    def test_header_button_rule_is_public_so_it_applies_before_first_paint(self):
+        api = FakeApi()
+        ab.main([], api=api, out=io.StringIO())
+        by_name = {s["Name"]: s for s in api.config["CustomJavaScripts"]}
+        self.assertFalse(by_name["Hide Moonfin header button"]["RequiresAuthentication"])
+        self.assertTrue(by_name["Moonfin app banner"]["RequiresAuthentication"])
+
 
 if __name__ == "__main__":
     unittest.main()

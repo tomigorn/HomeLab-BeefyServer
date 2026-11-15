@@ -13,8 +13,8 @@ NAME = "Rate in Tracker"
 SOURCE = pathlib.Path(__file__).resolve().parent.parent / "tracker-link" / "rate-in-tracker.js"
 
 
-def upsert_script(config, name, source):
-    entry = {"Name": name, "Script": source, "Enabled": True, "RequiresAuthentication": True}
+def upsert_script(config, name, source, requires_auth=True):
+    entry = {"Name": name, "Script": source, "Enabled": True, "RequiresAuthentication": requires_auth}
     scripts = list(config.get("CustomJavaScripts") or [])
     if any(s.get("Name") == name for s in scripts):
         scripts = [entry if s.get("Name") == name else s for s in scripts]
@@ -23,7 +23,7 @@ def upsert_script(config, name, source):
     return {**config, "CustomJavaScripts": scripts}
 
 
-def main(argv, api=None, source=None, out=sys.stdout, name=NAME, source_file=SOURCE):
+def main(argv, api=None, source=None, out=sys.stdout, name=NAME, source_file=SOURCE, requires_auth=True):
     if api is None:
         api = jellyfin_api.api
     if argv:
@@ -37,7 +37,7 @@ def main(argv, api=None, source=None, out=sys.stdout, name=NAME, source_file=SOU
     path = f"/Plugins/{plugin_id}/Configuration"
     source = source_file.read_text() if source is None else source
     with jellyfin_api.injector_lock():
-        api("POST", path, upsert_script(api("GET", path), name, source))
+        api("POST", path, upsert_script(api("GET", path), name, source, requires_auth))
     print(f"upserted {name}", file=out)
     return 0
 
