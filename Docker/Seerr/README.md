@@ -361,7 +361,7 @@ Status icons, for every open request (pending or approved, not available). Every
 
 Status icons (◌ ✅ ◐) come first, in the same purple circle/pill. ✅ never combines; ◐ combines with 🌙🧭📅 and with ◌ (series: some episodes here, more downloading now); a download paused for the night shows 🌙 instead of ◌. ◐ hints: 🌙 alone adds "the rest downloads at night", 🧭 reads "searched again tonight (04:17)", 📅 reads "next episode 11 Nov". Overview of all rows: Claude-Mockups `seerr-all-badges`; percent from Seerr's `downloadStatus` sizes, left out when unknown. Same on every card: Discover, search, collections, person pages. Title-page pills stay Seerr's look, but every state carries a hint (below).
 
-Order ⚠️⏳🔍🌙🧭📅, combined. Placements: status badges (title page, request cards, Requests list; after "Requested"/"Pending"), Discover cards (in Seerr's status circle: one icon = the 26px circle, two = a pill). Pills with Seerr's own spinner/progress get nothing of ours except ⚠️ (its popup shows the download). **Partially Available** pills are sky blue (`#0284c7`, not Seerr's green) and start with ◐; never ✅ inside. One hint on the whole badge / pill ([Hint boxes](#hint-boxes)), one section per icon, e.g. 🌙🧭: "🌙 Waiting for the night / Downloads at night (cheaper power)", line, "🧭 No release found yet / Searched again in tonight's scheduled search (04:17)"; ⚠️ needs import: "⚠️ Needs a manual import", "Release:", the release name (monospace), "What to do: open Manual interaction". Where Seerr opens its own popup for the pill, the hint is the first block inside it. `data-hg-hint` keeps the one-line form. While a 🔍/🔎 shows, the page reads `request-state.json` every 15 s and swaps the icon in place (spinner, 🧭, 🌙 when the search ends).
+Order ⚠️⏳🔍🌙🧭📅, combined. Placements: status badges (title page, request cards, Requests list; after "Requested"/"Pending"), Discover cards (in Seerr's status circle: one icon = the 26px circle, two = a pill). Pills with Seerr's own spinner/progress get nothing of ours except ⚠️ (its popup shows the download). **Partially Available** pills are sky blue (`#0284c7`, not Seerr's green) and start with ◐; never ✅ inside (hint per case: "Partially Available pill" below). One hint on the whole badge / pill ([Hint boxes](#hint-boxes)), one section per icon, e.g. 🌙🧭: "🌙 Waiting for the night / Downloads at night (cheaper power)", line, "🧭 No release found yet / Searched again in tonight's scheduled search (04:17)"; ⚠️ needs import: "⚠️ Needs a manual import", "Release:", the release name (monospace), "What to do: open Manual interaction". Where Seerr opens its own popup for the pill, the hint is the first block inside it. `data-hg-hint` keeps the one-line form. While a 🔍/🔎 shows, the page reads `request-state.json` every 15 s and swaps the icon in place (spinner, 🧭, 🌙 when the search ends).
 
 **Title-page pill hints** (`night-label.js`, `.media-status`): the pill always has a static hint, also where Seerr's popup exists or no icon of ours applies. Icons of ours (🌙 🔍 ◐ …) merge into the hint as above; otherwise by the pill's text (EN / DE):
 
@@ -372,9 +372,19 @@ Order ⚠️⏳🔍🌙🧭📅, combined. Placements: status badges (title page
 | Requested | - | Requested — approved, waiting for the search / Angefragt — freigegeben, wartet auf die Suche |
 | Pending | ⏳ | Waiting for approval / Wartet auf Freigabe |
 | Available | ✅ | Available in Jellyfin / In Jellyfin verfügbar |
-| Partially available | ◐ | Partly available (+ missing part's state) |
+| Partially available | ◐ | Partly available + the case below |
 | Declined | - | Declined — an admin refused the request / Abgelehnt — ein Admin hat die Anfrage abgelehnt |
 | Unknown, Deleted | - | Unknown — Seerr has no state for it · Deleted — removed from Jellyfin (DE: Unbekannt — …, Gelöscht — …) |
+
+**Partially Available pill** (Requests page, request cards, title page): ◐ "Partly available", then the first case that applies (EN / DE). Data: `request-state.json` (open requests) and Seerr's `GET /api/v1/tv/<id>` (requested seasons, Seerr's season states, TMDB's seasons, downloads), fetched for every such pill (cached 60 s). Nothing known: only "Partly available".
+
+| Case | Symbol | Hint |
+|---|---|---|
+| ⚠️ ⏳ 🔍 🔎 🌙 🧭 (open request) | as above | as above |
+| Downloading (Seerr's `downloadStatus` `downloading`, else queue) | ◌ | ⬇️ Downloading S01E05 (and 2 more) / Lädt S01E05 herunter (und 2 weitere); no episode: Downloading now |
+| Not released yet (open request) | 📅 | 📅 Next episode expected 18 Nov / Nächste Folge erwartet |
+| Every requested season in Jellyfin | - | ✅ Everything you requested is in Jellyfin / Alles Angefragte ist in Jellyfin; row: Seasons 3–7 were not requested / Staffeln 3–7 wurden nicht angefragt |
+| Requested season incomplete, nothing else known | - | Not everything you requested is in Jellyfin yet; In Jellyfin: Season 1; Episodes missing: Season 2; (Season 3 was not requested) |
 
 | Part | What |
 |---|---|

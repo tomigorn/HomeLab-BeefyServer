@@ -21,6 +21,10 @@
     en: { started: "Searching indexers now (started {t}) — usually a few minutes", queued: "Waiting for other searches ({n} ahead)", fresh: "Requested — search starts shortly", unsearched: "Requested — not searched yet; tonight's scheduled search (04:17) tries", pending: "Waiting for approval", problem: "Problem — see Requests/Activity", wrongFilm: "Wrong film downloaded (release from {ry}, film is {y}), being replaced", needsImport: "Needs a manual import (release title: '{r}')", importHead: "Needs a manual import", release: "Release:", todo: "What to do:", todoText: "open Manual interaction", seerr: "Problem — Seerr could not hand the request to Radarr/Sonarr", importing: "Importing…", imported: "Downloaded — in Jellyfin shortly", removed: "Removed from Radarr/Sonarr — nothing searches for it; request it again or delete the request", locale: "en-GB" },
     de: { started: "Sucht gerade in den Indexern (seit {t}) — dauert meist ein paar Minuten", queued: "Wartet auf andere Suchen ({n} davor)", fresh: "Angefragt — die Suche startet gleich", unsearched: "Angefragt — noch nicht gesucht; die geplante Suche heute Nacht (04:17) versucht es", pending: "Wartet auf Freigabe", problem: "Problem — siehe Anfragen/Aktivität", wrongFilm: "Falscher Film heruntergeladen (Release von {ry}, Film ist von {y}), wird ersetzt", needsImport: "Muss manuell importiert werden (Release-Titel: '{r}')", importHead: "Muss manuell importiert werden", release: "Release:", todo: "Was tun:", todoText: "«Manuell beheben» öffnen", seerr: "Problem — Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben", importing: "Wird importiert…", imported: "Heruntergeladen — gleich in Jellyfin", removed: "Aus Radarr/Sonarr entfernt — nichts sucht danach; neu anfragen oder die Anfrage löschen", locale: "de-CH" },
   };
+  var PARTLY = {
+    en: { all: "Everything you requested is in Jellyfin", some: "Not everything you requested is in Jellyfin yet", have: "In Jellyfin:", missing: "Episodes missing:", one: "Season", many: "Seasons", notOne: "{s} was not requested", notMany: "{s} were not requested", dl: "Downloading {e}", more: "(and {n} more)" },
+    de: { all: "Alles Angefragte ist in Jellyfin", some: "Noch nicht alles Angefragte ist in Jellyfin", have: "In Jellyfin:", missing: "Folgen fehlen:", one: "Staffel", many: "Staffeln", notOne: "{s} wurde nicht angefragt", notMany: "{s} wurden nicht angefragt", dl: "Lädt {e} herunter", more: "(und {n} weitere)" },
+  };
   var TITLE = {
     en: { requested: "Requested — approved, waiting for the search", processing: "Processing — handed to Radarr/Sonarr", declined: "Declined — an admin refused the request", unknown: "Unknown — Seerr has no state for it", deleted: "Deleted — removed from Jellyfin" },
     de: { requested: "Angefragt — freigegeben, wartet auf die Suche", processing: "Wird verarbeitet — an Radarr/Sonarr übergeben", declined: "Abgelehnt — ein Admin hat die Anfrage abgelehnt", unknown: "Unbekannt — Seerr kennt keinen Status", deleted: "Gelöscht — aus Jellyfin entfernt" },
@@ -141,14 +145,56 @@
     return out;
   }
 
-  function flagList(f, l, part, card) {
+  // status: the queue entry to use instead of the queue state (partly available pills)
+  function flagList(f, l, part, card, status) {
     if (f.soFar) return soFarList(f, l);
-    var out = liveList(f, l), st = !card && queueStatus(f, l);
+    var out = liveList(f, l), st = status !== undefined ? status : !card && queueStatus(f, l);
     if (st) out.push(st);
     if (f.moon) out.push(["🌙", FLAGS[l].moon]);
     if (f.compass) out.push(["🧭", FLAGS[l].compass]);
-    if (f.cal) out.push(["📅", FLAGS[l].cal + (f.date ? " — " + (part ? FLAGS[l].nextEp + " " + dateText(f.date, l, true) : FLAGS[l].expected + " " + dateText(f.date, l)) : "")]);
+    if (f.cal) out.push(["📅", part && f.date ? FLAGS[l].nextExp + " " + dateText(f.date, l, true) : FLAGS[l].cal + (f.date ? " — " + FLAGS[l].expected + " " + dateText(f.date, l) : "")]);
     return out;
+  }
+
+  function seasonText(nums, l) {
+    var runs = [];
+    nums.forEach(function (n) { var r = runs[runs.length - 1]; if (r && n === r[1] + 1) r[1] = n; else runs.push([n, n]); });
+    return (nums.length > 1 ? PARTLY[l].many : PARTLY[l].one) + " " + runs.map(function (r) { return r[0] === r[1] ? String(r[0]) : r[0] + "–" + r[1]; }).join(", ");
+  }
+
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+
+  // a partly available title downloading: its first episode by number, how many more
+  function partDownload(f, m, l, is4k) {
+    var run = (m ? (is4k ? m.items4k : m.items) : []).filter(function (it) { return String(it.status).toLowerCase() === "downloading"; });
+    if (!run.length) return f.downloading ? [SPIN, STATUS[l].spin, { title: "⬇️ " + STATUS[l].spin }] : f.importing ? [SPIN, LIVE[l].importing] : null;
+    var eps = run.filter(function (it) { return it.episode; }).sort(function (a, b) { return a.episode.seasonNumber - b.episode.seasonNumber || a.episode.episodeNumber - b.episode.episodeNumber; });
+    var t = eps.length ? PARTLY[l].dl.replace("{e}", "S" + pad(eps[0].episode.seasonNumber) + "E" + pad(eps[0].episode.episodeNumber)) + (run.length > 1 ? " " + PARTLY[l].more.replace("{n}", String(run.length - 1)) : "") : STATUS[l].spin;
+    return [SPIN, t, { title: "⬇️ " + t }];
+  }
+
+  // requested seasons against Seerr's season states (title data): all in Jellyfin, or which are and which are not
+  function partSeasons(m, l, is4k) {
+    if (!m || !m.requests || !m.seasons || !m.tmdbSeasons) return null;
+    var req = {}, st = {}, P = PARTLY[l];
+    m.requests.forEach(function (r) { if (r.status !== 3 && r.is4k === is4k) r.seasons.forEach(function (n) { req[n] = true; }); });
+    m.seasons.forEach(function (s) { st[s.n] = is4k ? s.status4k : s.status; });
+    var asked = Object.keys(req).map(Number).sort(function (a, b) { return a - b; });
+    if (!asked.length) return null;
+    var have = asked.filter(function (n) { return st[n] === 5; }), missing = asked.filter(function (n) { return st[n] !== 5; });
+    var other = m.tmdbSeasons.filter(function (n) { return n > 0 && !req[n] && st[n] !== 5; }), rows = [];
+    if (other.length) rows.push((other.length > 1 ? P.notMany : P.notOne).replace("{s}", seasonText(other, l)));
+    if (!missing.length) return ["", P.all, { title: "✅ " + P.all, rows: rows }];
+    rows.unshift([P.missing, seasonText(missing, l)]);
+    if (have.length) rows.unshift([P.have, seasonText(have, l)]);
+    return ["", P.some, { title: P.some, rows: rows }];
+  }
+
+  // what a Partially Available pill means: the missing part's state, else what the requested seasons say
+  function partList(f, l, m, is4k) {
+    var out = flagList(f, l, true, true, partDownload(f, m, l, is4k));
+    var seasons = !out.length && partSeasons(m, l, is4k);
+    return seasons ? [seasons] : out;
   }
 
   // one hint for a badge's icons together: 🌙 shortened when combined, 🧭 with the night when 🌙 is there
@@ -277,7 +323,14 @@
       if (info && info.tmdbId && (info.mediaType === "movie" || info.mediaType === "tv") && (info !== o || Array.isArray(info.downloadStatus))) {
         var key = info.mediaType + "/" + info.tmdbId, prev = state.media[key] || {};
         var names = info === o ? prev.names || [] : [o.title, o.name, o.originalTitle, o.originalName].filter(Boolean);
-        state.media[key] = { items: Array.isArray(info.downloadStatus) ? info.downloadStatus : [], items4k: Array.isArray(info.downloadStatus4k) ? info.downloadStatus4k : [], status: info.status, names: names.length ? names : prev.names || [], at: now };
+        var rec = { items: Array.isArray(info.downloadStatus) ? info.downloadStatus : [], items4k: Array.isArray(info.downloadStatus4k) ? info.downloadStatus4k : [], status: info.status, names: names.length ? names : prev.names || [], at: now, requests: prev.requests, seasons: prev.seasons, tmdbSeasons: prev.tmdbSeasons };
+        // title data (GET /api/v1/tv/<id>): requested seasons, Seerr's season states, every season TMDB knows
+        if (info !== o && Array.isArray(o.seasons) && Array.isArray(info.seasons) && Array.isArray(info.requests)) {
+          rec.tmdbSeasons = o.seasons.map(function (s) { return s && s.seasonNumber; }).filter(function (n) { return typeof n === "number"; });
+          rec.seasons = info.seasons.map(function (s) { return { n: s.seasonNumber, status: s.status, status4k: s.status4k }; });
+          rec.requests = info.requests.map(function (r) { return { status: r.status, is4k: !!r.is4k, seasons: (r.seasons || []).map(function (s) { return s.seasonNumber; }) }; });
+        }
+        state.media[key] = rec;
         if (info !== o && o.posterPath) state.posters[o.posterPath] = key;
       }
       for (var k in o) if (k !== "downloadStatus" && k !== "downloadStatus4k" && Object.prototype.hasOwnProperty.call(o, k)) walk(o[k], depth + 1);
@@ -317,9 +370,10 @@
     return state.waitingLoading;
   }
 
-  function loadMedia(key) {
+  // full: the title data is needed too (partly available pills)
+  function loadMedia(key, full) {
     var m = state.media[key];
-    if ((m && m.names.length && Date.now() - m.at < TTL) || state.loading[key]) return;
+    if ((m && m.names.length && Date.now() - m.at < TTL && (!full || m.tmdbSeasons)) || state.loading[key]) return;
     state.loading[key] = getJSON("/api/v1/" + key).then(remember, function () { /* Seerr unchanged */ }).then(function () {
       delete state.loading[key];
       schedule();
@@ -417,7 +471,7 @@
   }
 
   function setFlags(doc, b, place, f, l, part, extra) {
-    var list = part ? [[HALF, STATUS[l].part]].concat(flagList(f, l, true, true)) : flagList(f, l), only = null;
+    var list = part ? [[HALF, STATUS[l].part]].concat(part) : flagList(f, l), only = null;
     if (!list.length && extra) { if (extra[0]) list = [extra]; else only = extra[1]; }
     if (only) {
       var gone = b.querySelectorAll("[data-hg-flag-own]");
@@ -440,6 +494,7 @@
     b.removeAttribute("data-hg-hint");
     if (!want) { b.removeAttribute("data-hg-flags"); return; }
     for (var j = 0; j < list.length; j++) {
+      if (!list[j][0]) continue;
       var e = doc.createElement("span");
       e.setAttribute("data-hg-flag-own", "");
       e.setAttribute("role", "img");
@@ -487,9 +542,10 @@
     }
     for (var k = 0; k < seen.length; k++) {
       var badge = seen[k][0], text = seen[k][2], key = badgeKey(badge, loc), m = key && state.media[key];
-      if (key && rs && listed(rs, key)) loadMedia(key);
       text = badge.getAttribute("data-hg-orig") || text;
       var f = flags(key, rs, m), part = PART.test(text);
+      var full = part && /^tv\//.test(key || "");
+      if (key && (full || rs && listed(rs, key))) loadMedia(key, full);
       relabel(badge, seen[k][1], f.soFar && part ? FLAGS[lang(doc, text.replace(/^4K\s/, ""))].soFarLabel : null);
       if (f.soFar) part = false;
       if (part) badge.setAttribute("data-hg-part", ""); else badge.removeAttribute("data-hg-part");
@@ -502,7 +558,8 @@
       if (badge.closest(".media-status") && badge.getAttribute("data-hg-night") === null) {
         extra = titleState(badge, text, spin, m, lang(doc, text.replace(/^4K\s/, "")));
       }
-      setFlags(doc, badge, seen[k][1], f, lang(doc, text.replace(/^4K\s/, "")), part, extra);
+      var l = lang(doc, text.replace(/^4K\s/, ""));
+      setFlags(doc, badge, seen[k][1], f, l, part && partList(f, l, m, /^4K\s/.test(text)), extra);
     }
   }
 

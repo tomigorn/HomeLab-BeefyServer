@@ -472,8 +472,8 @@ const BADGE_ROWS = [
   { id: 908, name: "can wait + not released", card: "clock", status: 3, moon: true, cal: "2026-07-17", icons: "🌙📅", en: "Waiting for the night · Not released yet — expected 17 Jul 2026", de: "Wartet auf die Nacht · Noch nicht erschienen — erwartet DATE_DE" },
   { id: 909, name: "partly + can wait", card: "partial", status: 4, moon: true, icons: "◐🌙", en: "Partly available · Waiting for the night — the rest downloads at night", de: "Teilweise verfügbar · Wartet auf die Nacht — der Rest lädt nachts herunter" },
   { id: 910, name: "partly + can wait + nothing found", card: "partial", status: 4, moon: true, compass: true, icons: "◐🌙🧭", en: "Partly available · Waiting for the night · No release found yet — searched again tonight (04:17)", de: "Teilweise verfügbar · Wartet auf die Nacht · Noch kein Release gefunden — die Suche heute Nacht (04:17) sucht weiter" },
-  { id: 911, name: "partly + not aired", card: "partial", status: 4, cal: "2026-11-11", icons: "◐📅", en: "Partly available · Not released yet — next episode 11 Nov", de: "Teilweise verfügbar · Noch nicht erschienen — nächste Folge DATE_DE" },
-  { id: 912, name: "partly + can wait + not aired", card: "partial", status: 4, moon: true, cal: "2026-11-11", icons: "◐🌙📅", en: "Partly available · Waiting for the night · Not released yet — next episode 11 Nov", de: "Teilweise verfügbar · Wartet auf die Nacht · Noch nicht erschienen — nächste Folge DATE_DE" },
+  { id: 911, name: "partly + not aired", card: "partial", status: 4, cal: "2026-11-11", icons: "◐📅", en: "Partly available · Next episode expected 11 Nov", de: "Teilweise verfügbar · Nächste Folge erwartet DATE_DE" },
+  { id: 912, name: "partly + can wait + not aired", card: "partial", status: 4, moon: true, cal: "2026-11-11", icons: "◐🌙📅", en: "Partly available · Waiting for the night · Next episode expected 11 Nov", de: "Teilweise verfügbar · Wartet auf die Nacht · Nächste Folge erwartet DATE_DE" },
   { id: 913, name: "partly + downloading", card: "partial", status: 4, dl: true, icons: "◐◌", en: "Partly available · Downloading now — 40 %", de: "Teilweise verfügbar · Lädt gerade herunter — 40 %" },
 ];
 const badgeCard = (r) => (r.card === "clock" ? clockCard(`/b${r.id}.jpg`) : nativeCard(`/b${r.id}.jpg`, r.card === "partial" ? "partial" : r.card));
@@ -750,9 +750,9 @@ test("Partially Available pill: restyled away from green, ◐ first with the mis
   for (const b of [boys, mixed, solo]) assert.ok(b.hasAttribute("data-hg-part"));
   assert.match(w.document.getElementById("hg-night-style").textContent, /a\[data-hg-part\][^{]*\{[^}]*background-color:[^}]*!important/);
   assert.equal(pillIcons(boys), "◐🌙📅");
-  assert.equal(boys.getAttribute("data-hg-hint"), "Partly available · Waiting for the night · Not released yet — next episode 11 Nov");
-  assert.equal(pillIcons(mixed), "◐🔍");
-  assert.equal(mixed.getAttribute("data-hg-hint"), "Partly available · Waiting for other searches (0 ahead)");
+  assert.equal(boys.getAttribute("data-hg-hint"), "Partly available · Waiting for the night · Next episode expected 11 Nov");
+  assert.equal(pillIcons(mixed), "◐🔍◌");
+  assert.equal(mixed.getAttribute("data-hg-hint"), "Partly available · Waiting for other searches (0 ahead) · Downloading S01E02");
   assert.equal(pillIcons(solo), "◐");
   assert.equal(solo.getAttribute("data-hg-hint"), "Teilweise verfügbar");
 });
@@ -1002,4 +1002,83 @@ test("touch tap: the browser focuses the link before the click, the first tap st
   pill.dispatchEvent(tap);
   assert.equal(tap.defaultPrevented, true);
   assert.equal(visibleTip(w), "Requested\nApproved, waiting for the search");
+});
+
+// Partially Available pill: per case what the blue ◐ means, from request-state.json and Seerr's title data (requested seasons, season states, downloads)
+const tvPart = (id, { tmdb = [1, 2], have = [], requests = [[1, 2]], items = [], is4k = false } = {}) => ({
+  id, name: `Show ${id}`, posterPath: `/p${id}.jpg`, seasons: [0, ...tmdb].map((n) => ({ seasonNumber: n, episodeCount: 10 })),
+  mediaInfo: { tmdbId: id, mediaType: "tv", status: 4, status4k: 1, downloadStatus: items, downloadStatus4k: [], seasons: tmdb.map((n) => ({ seasonNumber: n, status: have.includes(n) ? 5 : n === Math.max(...requests.flat()) && !have.includes(n) ? 4 : 1, status4k: 1 })),
+    requests: requests.map((ss, i) => ({ id: i + 1, status: 5, is4k, seasons: ss.map((n) => ({ seasonNumber: n })) })) },
+});
+const ep = (id, status, s, e) => item(id, status, `Show.S0${s}E0${e}`, { seasonNumber: s, episodeNumber: e });
+const PART_ROUTES = {
+  "/api/v1/tv/801": tvPart(801, { tmdb: [1, 2, 3, 4, 5, 6, 7], have: [1, 2] }),
+  "/api/v1/tv/802": tvPart(802, { tmdb: [1, 2, 3], have: [1, 2, 3], requests: [[1], [2]] }),
+  "/api/v1/tv/803": tvPart(803, { tmdb: [1, 2, 3, 4, 5], have: [1, 2], requests: [[1, 2]] }),
+  "/api/v1/tv/804": tvPart(804, { tmdb: [1, 2], have: [1], requests: [[1, 2]], items: [ep("d7", "downloading", 2, 7), ep("d5", "downloading", 2, 5), ep("d6", "downloading", 2, 6), ep("p8", "paused", 2, 8)] }),
+  "/api/v1/tv/805": tvPart(805, { tmdb: [1, 2], have: [1], requests: [[1, 2]] }),
+  "/api/v1/tv/806": tvPart(806, { tmdb: [1, 2], have: [1], requests: [[1, 2]] }),
+  "/api/v1/tv/807": tvPart(807, { tmdb: [1, 2], have: [1], requests: [[1, 2]] }),
+  "/api/v1/tv/808": tvPart(808, { tmdb: [1, 2], have: [1], requests: [[1, 2]] }),
+  "/api/v1/tv/809": tvPart(809, { tmdb: [1, 2, 3], have: [1], requests: [[1, 2]] }),
+};
+const partPage = (keys, rs = live(), path = "/requests", lang = "") => {
+  const routes = { ...RS_ROUTES, ...PART_ROUTES, [RS_URL]: rs };
+  return night(lang + keys.map(([key, text]) => requestCard(key, key).replace(badge(key), partPill(key, text))).join(""), fakeXHR(routes, { value: fresh([]) }), path);
+};
+const tipOf = (w, el) => { hover(w, el); const t = visibleTip(w); unhover(w, el); return t; };
+const DATE = (iso, l = "en-GB") => new Date(iso + "T00:00:00Z").toLocaleDateString(l, { day: "numeric", month: "short", timeZone: "UTC" });
+
+const PART_CASES = [
+  { name: "all requested seasons in Jellyfin, the rest not requested", key: "tv/801", icons: "◐", hint: "Partly available · Everything you requested is in Jellyfin", tip: "◐ Partly available\n✅ Everything you requested is in Jellyfin\nSeasons 3–7 were not requested" },
+  { name: "all requested (two requests) in Jellyfin, nothing else", key: "tv/802", icons: "◐", hint: "Partly available · Everything you requested is in Jellyfin", tip: "◐ Partly available\n✅ Everything you requested is in Jellyfin" },
+  { name: "one season not requested", key: "tv/803", icons: "◐", tip: "◐ Partly available\n✅ Everything you requested is in Jellyfin\nSeasons 3–5 were not requested" },
+  { name: "downloading episodes", key: "tv/804", icons: "◐◌", hint: "Partly available · Downloading S02E05 (and 2 more)", tip: "◐ Partly available\n⬇️ Downloading S02E05 (and 2 more)" },
+  { name: "downloading per the queue only", key: "tv/805", rs: { queue: { "tv/805": { state: "downloading" } } }, icons: "◐◌", hint: "Partly available · Downloading now", tip: "◐ Partly available\n⬇️ Downloading now" },
+  { name: "waiting for the release", key: "tv/806", rs: { unreleased: { "tv/806": "2026-11-18" } }, icons: "◐📅", hint: `Partly available · Next episode expected ${DATE("2026-11-18")}`, tip: `◐ Partly available\n📅 Next episode expected ${DATE("2026-11-18")}` },
+  { name: "nothing found, searched at night", key: "tv/807", rs: { canWait: ["tv/807"], noRelease: { "tv/807": "2026-11-15T03:00:00Z" } }, icons: "◐🌙🧭", hint: "Partly available · Waiting for the night · No release found yet — searched again tonight (04:17)", tip: "◐ Partly available\n🌙 Waiting for the night\nDownloads at night (cheaper power)\n🧭 No release found yet\nSearched again in tonight's scheduled search (04:17)" },
+  { name: "problem", key: "tv/808", rs: { queue: { "tv/808": { state: "problem", message: "", code: "needs-import", release: "Show.S02E01" } } }, icons: "◐⚠️", hint: "Partly available · Needs a manual import (release title: 'Show.S02E01')" },
+  { name: "requested season missing, nothing else known", key: "tv/809", icons: "◐", hint: "Partly available · Not everything you requested is in Jellyfin yet", tip: "◐ Partly available\nNot everything you requested is in Jellyfin yet\nIn Jellyfin: Season 1\nEpisodes missing: Season 2\nSeason 3 was not requested" },
+];
+
+for (const c of PART_CASES) {
+  test(`Partially Available pill, ${c.name}: ${c.icons}`, async () => {
+    const w = partPage([[c.key]], live(c.rs || {}));
+    await settle();
+    const pill = w.document.querySelector('a[href$="?manage=1"]');
+    assert.ok(pill.hasAttribute("data-hg-part"));
+    assert.equal(pillIcons(pill), c.icons);
+    if (c.hint) assert.equal(flagTip(pill), c.hint);
+    if (c.tip) assert.equal(tipOf(w, pill), c.tip);
+  });
+}
+
+test("Partially Available pill in German: everything requested, downloading, missing", async () => {
+  const w = partPage([["tv/801", "Teilweise verfügbar"], ["tv/804", "Teilweise verfügbar"], ["tv/809", "Teilweise verfügbar"], ["tv/806", "Teilweise verfügbar"]], live({ unreleased: { "tv/806": "2026-11-18" } }));
+  await settle();
+  const [all, dl, miss, cal] = w.document.querySelectorAll('a[href$="?manage=1"]');
+  assert.equal(tipOf(w, all), "◐ Teilweise verfügbar\n✅ Alles Angefragte ist in Jellyfin\nStaffeln 3–7 wurden nicht angefragt");
+  assert.equal(tipOf(w, dl), "◐ Teilweise verfügbar\n⬇️ Lädt S02E05 herunter (und 2 weitere)");
+  assert.equal(tipOf(w, miss), "◐ Teilweise verfügbar\nNoch nicht alles Angefragte ist in Jellyfin\nIn Jellyfin: Staffel 1\nFolgen fehlen: Staffel 2\nStaffel 3 wurde nicht angefragt");
+  assert.equal(tipOf(w, cal), `◐ Teilweise verfügbar\n📅 Nächste Folge erwartet ${DATE("2026-11-18", "de-CH")}`);
+});
+
+test("Partially Available pill: season lists as ranges, the title page uses Seerr's own title response, no ✅ symbol inside", async () => {
+  const routes = { ...RS_ROUTES, [RS_URL]: live(), "/api/v1/tv/811": tvPart(811, { tmdb: [1, 2, 3, 4, 5, 6], have: [2, 4], requests: [[2], [4]] }) };
+  const calls = [];
+  const w = night(header(partPill("tv/811")), fakeXHR(routes, { value: fresh([]) }, calls), "/tv/811");
+  const x = new w.XMLHttpRequest();
+  x.open("GET", "/api/v1/tv/811");
+  x.send();
+  await settle();
+  const pill = w.document.querySelector(".media-status a");
+  assert.equal(pillIcons(pill), "◐");
+  assert.equal(tipOf(w, pill), "◐ Partly available\n✅ Everything you requested is in Jellyfin\nSeasons 1, 3, 5–6 were not requested");
+});
+
+test("Partially Available pill without Seerr's title data: only what is known (◐ Partly available)", async () => {
+  const w = partPage([["tv/899"]]);
+  await settle();
+  const pill = w.document.querySelector('a[href$="?manage=1"]');
+  assert.equal(flagTip(pill), "Partly available");
 });

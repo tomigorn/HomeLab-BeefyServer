@@ -54,6 +54,7 @@ if want seerr-proxy; then
   check seerr.request-state-live '^active [1-9]' "$(systemctl is-active request-state.timer 2>&1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'hg-pulse' 2>&1)"
   check seerr.status-icons-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'tonight.s scheduled search (04:17)' 2>&1)"
   check seerr.partly-half-circle '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'data-hg-half' 2>&1)"
+  check seerr.partly-hints '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'Everything you requested is in Jellyfin' 2>&1)"
   check seerr.request-sizes-data '^object [1-9]' "$(seerr_data /_indexer-bar/request-state.json | jq -r '"\(.sizes|type) \(.sizes|length)"' 2>&1)"
   check seerr.media-sizes-data '^object [1-9]' "$(seerr_data /_indexer-bar/request-state.json | jq -r '"\(.media|type) \(.media|length)"' 2>&1)"
   check seerr.request-sizes-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-sizes.js | grep -c 'data-hg-size-sort' 2>&1)"
