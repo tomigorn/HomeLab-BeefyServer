@@ -863,8 +863,10 @@
     return meta.Finished === true;
   }
 
-  function usable(c, now) {
-    return !!c && ageOf(c.base, now) <= RECENT_TTL_MS && ageOf(c.recent, now) <= RECENT_TTL_MS && ageOf(c.discover, now) < Infinity;
+  // What a paint may use: the layout at any age (its refresh follows within a second), watched rows only up to RECENT_TTL_MS (else skeletons).
+  function drawable(c, now) {
+    if (!c || !c.base) return null;
+    return { lang: c.lang, base: c.base, recent: ageOf(c.recent, now) <= RECENT_TTL_MS ? c.recent : null, discover: c.discover || null };
   }
 
   function slim(item) {
@@ -986,7 +988,8 @@
       return c && c.lang === lang ? c : null;
     }
 
-    function fetchParts(api, userId, lang, parts) {
+    // onPart(state): called as each part arrives, so the layout is drawn without waiting for the slower rows.
+    function fetchParts(api, userId, lang, parts, onPart) {
       var jobs = parts.map(function (p) {
         if (p === "base") {
           return Promise.all([
@@ -998,16 +1001,23 @@
         var cards = cardsOf(win);
         return loadDiscover(api, userId, cards).then(function (rows) { return { rows: rows, nets: netsKey(cards) }; });
       });
-      return Promise.all(jobs.map(function (j) { return j.then(null, function () { return null; }); })).then(function (vals) {
+      function merge(part, val) {
         var old = state(userId, lang) || {};
         var next = { lang: lang, base: old.base, recent: old.recent, discover: old.discover };
-        var at = Date.now();
-        for (var i = 0; i < parts.length; i++) {
-          if (!vals[i]) continue;
-          vals[i].at = at;
-          next[parts[i]] = vals[i];
+        if (part) {
+          val.at = Date.now();
+          next[part] = val;
         }
         mem[userId] = next;
+        return next;
+      }
+      return Promise.all(jobs.map(function (j, i) {
+        return j.then(function (val) {
+          var next = merge(parts[i], val);
+          if (onPart) onPart(next);
+        }, function () {});
+      })).then(function () {
+        var next = merge(null);
         writeCache(storage(), userId, next);
         return next;
       });
@@ -1113,8 +1123,9 @@
           });
           loading = extLoading(loading, exts, live[j]);
           render(live[j], enabled, names, lang, loading, modes, hints);
-          for (var r = 0; r < RECENT_ROWS.length; r++) syncRecent(live[j], RECENT_ROWS[r], recent[RECENT_ROWS[r]] || [], names[RECENT_ROWS[r]], api);
-          for (var s = 0; s < DISCOVER_ROWS.length; s++) syncDiscover(live[j], DISCOVER_ROWS[s], discover[DISCOVER_ROWS[s]] || [], names[DISCOVER_ROWS[s]], api);
+          // Rows without data yet keep what is on screen (skeleton or the last cards).
+          if (st.recent) for (var r = 0; r < RECENT_ROWS.length; r++) syncRecent(live[j], RECENT_ROWS[r], recent[RECENT_ROWS[r]] || [], names[RECENT_ROWS[r]], api);
+          if (st.discover) for (var s = 0; s < DISCOVER_ROWS.length; s++) syncDiscover(live[j], DISCOVER_ROWS[s], discover[DISCOVER_ROWS[s]] || [], names[DISCOVER_ROWS[s]], api);
           exts.forEach(function (e) { if (e.sync) extCall(function () { e.sync(live[j], api, lang, tools); }); });
           render(live[j], enabled, names, lang, loading, modes, hints);
         }
@@ -1154,7 +1165,7 @@
       var api = win.ApiClient;
       if (!api || !win.HssPageMeta || !api.getCurrentUserId || !api.getCurrentUserId()) return;
       var st = state(api.getCurrentUserId(), lang);
-      if (usable(st, Date.now())) paint(api, st);
+      paint(api, drawable(st, Date.now()));
       refresh(api, st, lang);
     }
 
@@ -1164,10 +1175,10 @@
       var now = Date.now();
       var parts = staleParts(st, now, cardsOf(win));
       if (!parts.length || inflight || now < retryAt || !liveContainers().length) return;
-      inflight = fetchParts(api, api.getCurrentUserId(), lang, parts).then(function (next) {
+      inflight = fetchParts(api, api.getCurrentUserId(), lang, parts, function (part) { paint(api, drawable(part, Date.now())); }).then(function (next) {
         inflight = null;
         if (staleParts(next, Date.now(), cardsOf(win)).length) retryAt = Date.now() + RETRY_MS;
-        paint(api, next);
+        paint(api, drawable(next, Date.now()));
       }, function () { inflight = null; retryAt = Date.now() + RETRY_MS; });
     }
 
@@ -1193,7 +1204,7 @@
         watch();
       }
       var st = state(api.getCurrentUserId(), lang);
-      if (usable(st, Date.now())) paint(api, st);
+      paint(api, drawable(st, Date.now()));
       refresh(api, st, lang);
       // Turns the remaining skeletons into hints once the slot wait is over.
       if (live.some(function (c) { return c.querySelector("[data-hss-loading]"); }) && !late) late = win.setTimeout(function () { late = null; run(); }, SLOT_WAIT_MS);
@@ -1227,7 +1238,7 @@
       hintFor: hintFor, namesOf: namesOf, modesOf: modesOf, enabledOf: enabledOf, start: start, pickMovies: pickMovies, seriesCandidates: seriesCandidates, pickSeries: pickSeries,
       completeCollection: completeCollection, loadRecent: loadRecent, withRecent: withRecent, recentName: recentName, syncRecent: syncRecent, RECENT_DAYS: RECENT_DAYS, RECENT_LIMIT: RECENT_LIMIT,
       withDiscover: withDiscover, withExtra: withExtra, extraRows: extraRows, homeExts: homeExts, withExts: withExts, discoverName: discoverName, countBy: countBy, pickBackdrops: pickBackdrops, genreColors: genreColors, loadDiscover: loadDiscover, syncDiscover: syncDiscover, DISCOVER_LIMIT: DISCOVER_LIMIT,
-      readCache: readCache, writeCache: writeCache, staleParts: staleParts, netsKey: netsKey, assignCards: assignCards, usable: usable, RECENT_TTL_MS: RECENT_TTL_MS, DISCOVER_TTL_MS: DISCOVER_TTL_MS
+      readCache: readCache, writeCache: writeCache, staleParts: staleParts, netsKey: netsKey, assignCards: assignCards, drawable: drawable, RECENT_TTL_MS: RECENT_TTL_MS, DISCOVER_TTL_MS: DISCOVER_TTL_MS
     };
   } else if (window.MutationObserver && document.body) {
     start(window);

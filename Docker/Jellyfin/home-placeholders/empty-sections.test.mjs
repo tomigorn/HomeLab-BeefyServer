@@ -795,7 +795,7 @@ test("cache: per user, survives a round trip, broken or blocked storage reads as
   assert.equal(es.readCache(null, "u1"), null);
 });
 
-test("cache: watched rows and section settings refresh after a minute and show for 10 min, discover rows refresh after a day", () => {
+test("cache: watched rows and section settings refresh after a minute, watched rows show for 10 min, the layout and discover rows until replaced, discover rows refresh after a day", () => {
   const now = 10 * 86400000;
   const entry = (age) => ({ at: now - age });
   const c = { base: entry(30000), recent: entry(30000), discover: { ...entry(3600000), nets: es.netsKey(undefined) } };
@@ -803,9 +803,11 @@ test("cache: watched rows and section settings refresh after a minute and show f
   assert.deepEqual(es.staleParts({ ...c, recent: entry(61000) }, now), ["recent"]);
   assert.deepEqual(es.staleParts({ ...c, discover: { ...entry(86400001), nets: es.netsKey(undefined) } }, now), ["discover"]);
   assert.deepEqual(es.staleParts(null, now), ["base", "recent", "discover"]);
-  assert.equal(es.usable({ ...c, recent: entry(601000) }, now), false);
-  assert.equal(es.usable({ ...c, discover: entry(30 * 86400000) }, now), true);
-  assert.equal(es.usable({ base: entry(1000) }, now), false);
+  assert.equal(es.drawable({ ...c, recent: entry(601000) }, now).recent, null);
+  assert.equal(es.drawable({ ...c, discover: entry(30 * 86400000) }, now).discover.at, now - 30 * 86400000);
+  assert.equal(es.drawable({ ...c, base: entry(30 * 86400000) }, now).base.at, now - 30 * 86400000);
+  assert.equal(es.drawable({ recent: entry(1000) }, now), null);
+  assert.equal(es.drawable(null, now), null);
   assert.equal(es.RECENT_TTL_MS, 600000);
   assert.equal(es.DISCOVER_TTL_MS, 86400000);
 });
@@ -1247,5 +1249,62 @@ test("fixed slots: a section that answered with titles keeps its skeleton until 
     assert.equal(h.c.querySelector('[data-hss-placeholder="HiddenGems"]'), null);
   } finally {
     h.win.close();
+  }
+});
+
+test("one first draw: without a cache the layout is drawn as soon as the section list is there, watched and discover rows as skeletons until their data arrives", async () => {
+  const dom = new JSDOM('<html lang="en"><body><div class="homeSectionsContainer"></div></body></html>', { url: "https://jf.example.com/web/" });
+  const win = dom.window;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  win.HssPageMeta = { Page: 1 };
+  win.ApiClient = {
+    getCurrentUserId: () => "u1",
+    getScaledImageUrl: fakeApi.getScaledImageUrl,
+    getUrl: (p, q) => p + "?" + new URLSearchParams(q),
+    getJSON: (u) => u.startsWith("ModularHomeViews/UserSettings") ? Promise.resolve({ EnabledSections: ["NextUp", "HiddenGems"] })
+      : u.startsWith("ModularHomeViews/Sections") ? Promise.resolve({ Items: [{ Section: "NextUp", DisplayText: "Next Up" }, { Section: "HiddenGems", DisplayText: "Hidden Gems" }] })
+      : gate.then(() => ({ Items: [] }))
+  };
+  try {
+    es.start(win);
+    const c = win.document.querySelector(".homeSectionsContainer");
+    c.innerHTML = section("NextUp", 3, 1);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.deepEqual(order(c), ["NextUp", "_HiddenGems", "_RecentlyWatchedMovies", "_RecentlyWatchedSeries", "_DiscoverStudios", "_DiscoverNetworks", "_DiscoverMovieGenres", "_DiscoverSeriesGenres"]);
+    assert.ok(c.querySelector('[data-hss-placeholder="RecentlyWatchedMovies"][data-hss-loading]'));
+    assert.ok(c.querySelector('[data-hss-placeholder="DiscoverStudios"][data-hss-loading]'));
+    release();
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(c.querySelector('[data-hss-placeholder="RecentlyWatchedMovies"]').hasAttribute("data-hss-loading"), false);
+    assert.equal(c.querySelector('[data-hss-placeholder="DiscoverStudios"]').hasAttribute("data-hss-loading"), false);
+  } finally {
+    win.close();
+  }
+});
+
+test("one first draw: an old cache still draws the layout at once; watched rows older than 10 min wait as skeletons, not as stale cards", async () => {
+  const dom = new JSDOM('<html lang="en"><body><div class="homeSectionsContainer"></div></body></html>', { url: "https://jf.example.com/web/" });
+  const win = dom.window;
+  const now = Date.now();
+  es.writeCache(win.localStorage, "u1", {
+    lang: "en",
+    base: { at: now - 3 * 86400000, enabled: ["NextUp", "HiddenGems"], names: { NextUp: "Next Up", HiddenGems: "Hidden Gems" }, modes: {} },
+    recent: { at: now - 601000, rows: { RecentlyWatchedMovies: [movie("m1", 0)], RecentlyWatchedSeries: [] } },
+    discover: { at: now - 1000, nets: es.netsKey(undefined), rows: { [STU]: [{ Id: "st1", Name: "Disney", Type: "Studio", ServerId: "s1", ParentId: null, logo: null }], [NET]: [], [MGEN]: [], [SGEN]: [] } }
+  });
+  win.HssPageMeta = { Page: 1 };
+  win.ApiClient = { getCurrentUserId: () => "u1", getScaledImageUrl: fakeApi.getScaledImageUrl, getUrl: (p, q) => p + "?" + new URLSearchParams(q), getJSON: () => new Promise(() => {}) };
+  try {
+    es.start(win);
+    const c = win.document.querySelector(".homeSectionsContainer");
+    c.innerHTML = section("NextUp", 3, 1);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(c.querySelector('[data-hss-placeholder="HiddenGems"]'));
+    assert.ok(c.querySelector('[data-hss-placeholder="RecentlyWatchedMovies"][data-hss-loading]'));
+    assert.equal(c.querySelector(".RecentlyWatchedMovies .card[data-id]"), null);
+    assert.ok(c.querySelector(".DiscoverStudios .card"));
+  } finally {
+    win.close();
   }
 });
