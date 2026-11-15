@@ -1,0 +1,196 @@
+(function () {
+  var APPLE = { name: "App Store", url: "https://apps.apple.com/app/id6761283970" };
+  var GOOGLE = { name: "Google Play", url: "https://play.google.com/store/apps/details?id=org.moonfin.androidtv" };
+  var TV = /SMART-TV|SmartTV|Tizen|Web0S|webOS|GoogleTV|Android TV|BRAVIA|\bAFT[A-Z0-9]*\b|\bCrKey\b/i;
+  // What most of our library needs (Docker/Jellyfin README "Moonfin app prompt").
+  var FORMATS = [
+    { name: "MKV", types: ["video/x-matroska"] },
+    { name: "HEVC 10-bit", types: ['video/mp4; codecs="hvc1.2.4.L153.B0"', 'video/mp4; codecs="hev1.2.4.L153.B0"'] },
+    { name: "Dolby Digital Plus", types: ['audio/mp4; codecs="ec-3"'] },
+  ];
+
+  function storeFor(ua, maxTouchPoints, nativeShell) {
+    ua = ua || "";
+    if (nativeShell || TV.test(ua)) return null;
+    if (/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && maxTouchPoints > 1)) return APPLE;
+    if (/Android/.test(ua)) return GOOGLE;
+    return null;
+  }
+
+  function missingFormats(canPlay) {
+    return FORMATS.filter(function (f) { return !f.types.some(canPlay); }).map(function (f) { return f.name; });
+  }
+
+  function promptOnStart(store, missing) {
+    return Boolean(store) && missing.length > 0;
+  }
+
+  function isPlaybackInfo(url, method) {
+    return /^post$/i.test(method || "") && /\/Items\/[^/?#]+\/PlaybackInfo(?:[?#]|$)/i.test(String(url));
+  }
+
+  function texts(lang, mode) {
+    var de = /^de\b/i.test(lang || "");
+    var t = de ? {
+      title: "Schau in der Moonfin-App",
+      body: "Dieser Browser kann die meisten unserer Filme nicht direkt abspielen: der Server muss sie umwandeln, ohne 4K HDR und mit längerem Start. Die kostenlose Moonfin-App spielt alles in voller Qualität.",
+      yes: "Ja, Moonfin laden",
+      no: mode === "play" ? "Trotzdem im Browser abspielen" : "Nein, ich stöbere nur",
+      more: "Weitere Optionen",
+      back: "← Zurück",
+    } : {
+      title: "Watch in the Moonfin app",
+      body: "This browser can't play most of our films directly: the server has to convert them, without 4K HDR and with a slower start. The free Moonfin app plays everything in full quality.",
+      yes: "Yes, get Moonfin",
+      no: mode === "play" ? "Play in the browser anyway" : "No, I'm only browsing",
+      more: "More options",
+      back: "← Back",
+    };
+    return t;
+  }
+
+  function layout(mode) {
+    return mode === "play" ? { back: true, shown: ["yes"], more: ["no"] } : { back: false, shown: ["yes", "no"], more: [] };
+  }
+
+  function canPlay(type) {
+    try {
+      if (document.createElement("video").canPlayType(type)) return true;
+      return Boolean(window.MediaSource && MediaSource.isTypeSupported(type));
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function button(label, primary) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.style.cssText = "display:block;width:100%;margin-top:12px;padding:14px 16px;border-radius:24px;font:inherit;font-size:16px;font-weight:600;cursor:pointer;" +
+      (primary ? "background:#00a4dc;color:#fff;border:0" : "background:transparent;color:#fff;border:1px solid rgba(255,255,255,.4)");
+    return b;
+  }
+
+  // Resolves "app", "browser" or "back" (play cancelled, stay on the page).
+  function ask(store, mode) {
+    return new Promise(function (resolve) {
+      var old = document.getElementById("hgAppPrompt");
+      if (old) old.remove();
+      var t = texts(navigator.language, mode);
+      var screen = document.createElement("div");
+      screen.id = "hgAppPrompt";
+      screen.setAttribute("role", "dialog");
+      screen.setAttribute("aria-modal", "true");
+      screen.setAttribute("aria-label", t.title);
+      screen.style.cssText = "position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;" +
+        "padding:24px 24px calc(24px + env(safe-area-inset-bottom));background:rgba(5,8,12,.96);color:#fff;font-family:inherit;text-align:center";
+      var box = document.createElement("div");
+      box.style.cssText = "max-width:420px;width:100%";
+      var title = document.createElement("h2");
+      title.textContent = t.title;
+      title.style.cssText = "margin:0 0 12px;font-size:24px";
+      var body = document.createElement("p");
+      body.textContent = t.body;
+      body.style.cssText = "margin:0 0 20px;font-size:16px;line-height:1.45;opacity:.85";
+      var yes = button(t.yes, true);
+      var no = button(t.no, false);
+      yes.addEventListener("click", function () {
+        window.open(store.url, "_blank", "noopener");
+        screen.remove();
+        resolve("app");
+      });
+      no.addEventListener("click", function () {
+        screen.remove();
+        resolve("browser");
+      });
+      box.appendChild(title);
+      box.appendChild(body);
+      var buttons = { yes: yes, no: no };
+      var l = layout(mode);
+      if (l.back) {
+        var back = document.createElement("button");
+        back.type = "button";
+        back.textContent = t.back;
+        back.style.cssText = "position:absolute;top:calc(12px + env(safe-area-inset-top));left:12px;padding:10px 12px;background:none;border:0;color:#fff;font:inherit;font-size:16px;cursor:pointer";
+        back.addEventListener("click", function () {
+          screen.remove();
+          resolve("back");
+        });
+        screen.appendChild(back);
+      }
+      l.shown.forEach(function (k) { box.appendChild(buttons[k]); });
+      if (l.more.length) {
+        var more = document.createElement("button");
+        more.type = "button";
+        more.textContent = t.more;
+        more.style.cssText = "display:block;margin:28px auto 0;padding:6px;background:none;border:0;color:rgba(255,255,255,.35);font:inherit;font-size:13px;text-decoration:underline;cursor:pointer";
+        var hidden = document.createElement("div");
+        hidden.hidden = true;
+        l.more.forEach(function (k) { hidden.appendChild(buttons[k]); });
+        more.addEventListener("click", function () {
+          more.remove();
+          hidden.hidden = false;
+        });
+        box.appendChild(more);
+        box.appendChild(hidden);
+      }
+      screen.appendChild(box);
+      document.body.appendChild(screen);
+      yes.focus();
+    });
+  }
+
+  // Holds every PlaybackInfo request (fetch and XMLHttpRequest) until ask() answers; asks on every play, nothing is remembered.
+  function gatePlayback(win, ask) {
+    var pending = null;
+    function decide() {
+      if (!pending) {
+        pending = ask().then(function (choice) {
+          pending = null;
+          return choice;
+        });
+      }
+      return pending;
+    }
+    var fetch0 = win.fetch;
+    win.fetch = function (input, init) {
+      var url = typeof input === "string" ? input : input && input.url;
+      var method = (init && init.method) || (input && input.method) || "GET";
+      if (!isPlaybackInfo(url, method)) return fetch0.apply(this, arguments);
+      var self = this, args = arguments;
+      return decide().then(function (choice) {
+        if (choice !== "browser") throw new Error("Playback cancelled: " + choice);
+        return fetch0.apply(self, args);
+      });
+    };
+    var proto = win.XMLHttpRequest.prototype;
+    var open0 = proto.open, send0 = proto.send;
+    proto.open = function (method, url) {
+      this.hgPlayback = isPlaybackInfo(url, method);
+      return open0.apply(this, arguments);
+    };
+    proto.send = function () {
+      if (!this.hgPlayback) return send0.apply(this, arguments);
+      var xhr = this, args = arguments;
+      decide().then(function (choice) {
+        if (choice === "browser") send0.apply(xhr, args); else xhr.abort();
+      });
+    };
+  }
+
+  function start() {
+    var store = storeFor(navigator.userAgent, navigator.maxTouchPoints || 0, Boolean(window.NativeShell));
+    var missing = missingFormats(canPlay);
+    if (!promptOnStart(store, missing)) return;
+    gatePlayback(window, function () { return ask(store, "play"); });
+    ask(store, "start");
+  }
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = { storeFor: storeFor, missingFormats: missingFormats, promptOnStart: promptOnStart, isPlaybackInfo: isPlaybackInfo, gatePlayback: gatePlayback, layout: layout, texts: texts, APPLE: APPLE, GOOGLE: GOOGLE, FORMATS: FORMATS };
+  } else if (document.body) {
+    start();
+  } else {
+    document.addEventListener("DOMContentLoaded", start);
+  }
+})();

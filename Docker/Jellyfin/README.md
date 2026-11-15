@@ -798,6 +798,21 @@ Test of the **Moonfin** TV apps (Apple TV, Android TV). The server plugin **Moon
 | Check | `../_global/scripts/post-update-check.sh Jellyfin` (ids `jf.plugin-moonbase`, `jf.moonbase-config`, `jf.moonbase-nav`, `jf.media-bar`, `jf.media-bar-timer`) |
 | Rollback | Dashboard → Plugins → Moonbase → Uninstall, restart (`sudo docker compose restart jellyfin`); remove the Moonbase repository. Pre-change backup: `~/backups/jellyfin/20261030-014107-pre-moonbase` |
 
+## Moonfin app prompt (2026-11-15)
+
+Phone browsers (any browser on iPhone/iPad/Android) that cannot play our usual files get a dark full-screen prompt to install Moonfin. Signed-in pages only (injector entry "Moonfin app banner", `RequiresAuthentication`).
+
+| When | Shows | Buttons |
+|---|---|---|
+| every page start | "Watch in the Moonfin app" | **Yes, get Moonfin** · **No, I'm only browsing** |
+| every play (nothing remembered, also the next episode) | same text | **Yes, get Moonfin**; a faint "More options" link reveals **Play in the browser anyway**; **← Back** (top left) cancels the play and stays on the page |
+
+- Who: `storeFor`: iPhone/iPad (also iPad desktop mode) → App Store `id6761283970`, Android → Google Play `org.moonfin.androidtv`. Desktops, TVs (Tizen, webOS, Google/Android TV, Fire TV) and Jellyfin's own apps (`window.NativeShell`) get nothing.
+- Only when the browser misses one of `FORMATS`: MKV, HEVC 10-bit, Dolby Digital Plus (most of the library: 83 % MKV, EAC3 in most files, 2026-11-15). iOS browsers never play MKV, Android Chrome usually lacks EAC3.
+- Play is caught at `POST /Items/{id}/PlaybackInfo`, both `fetch` (old API client) and `XMLHttpRequest` (the SDK via axios, which the web player uses). "Get Moonfin" opens the store, "Back" closes the prompt; both abort that request.
+- Files: `app-banner/app-banner.js`; install `python3 scripts/app-banner.py` (also after editing the JS). Tests: `sudo docker run --rm -u $(id -u):$(id -g) -v "$PWD":/w -w /w node:24-alpine node --test "app-banner/*.test.mjs"`, `cd scripts && python3 -m unittest test_app_banner`.
+- Switch off: Dashboard → Plugins → JavaScript Injector → "Moonfin app banner" → disable.
+
 ## Moonfin requests (Seerr facade) (2026-10-30)
 Moonfin's Seerr screens (discover, details, request dialog, my requests) talk to the facade instead of Seerr. Every request still follows the Popular rules (allow-list, 10 per user per 7 days, 30 per day, audit). Moonbase's Seerr URL is `http://jellyfin-popular:8099`, set by `scripts/moonbase.py` (live, no Jellyfin restart; check `GET /Moonfin/Seerr/Config`).
 
