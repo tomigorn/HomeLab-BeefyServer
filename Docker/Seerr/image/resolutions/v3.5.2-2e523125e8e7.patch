@@ -1,0 +1,3302 @@
+diff --git a/gen-docs/docusaurus.config.ts b/gen-docs/docusaurus.config.ts
+index d2a6c071..f3bded0f 100644
+--- a/gen-docs/docusaurus.config.ts
++++ b/gen-docs/docusaurus.config.ts
+@@ -193,6 +193,7 @@ const config: Config = {
+         'nix',
+         'nginx',
+         'batch',
++        'diff',
+       ],
+     },
+   } satisfies Preset.ThemeConfig,
+diff --git a/package.json b/package.json
+index 5ab74cea..4613a93b 100644
+--- a/package.json
++++ b/package.json
+@@ -75,6 +75,7 @@
+     "node-gyp": "12.2.0",
+     "node-schedule": "2.1.1",
+     "nodemailer": "10.2.1",
++    "openid-client": "^6.8.2",
+     "openpgp": "6.3.0",
+     "pg": "8.23.0",
+     "pug": "3.0.4",
+@@ -162,9 +163,11 @@
+     "eslint-plugin-prettier": "5.5.5",
+     "eslint-plugin-react": "7.37.5",
+     "eslint-plugin-react-hooks": "7.1.1",
++    "fetch-mock": "^12.6.0",
+     "globals": "^17.5.0",
+     "husky": "9.1.7",
+     "jiti": "^2.6.1",
++    "jose": "^6.1.3",
+     "lint-staged": "16.4.0",
+     "nodemon": "3.1.14",
+     "postcss": "^8.5.9",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index e20dfdac..318b8814 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -136,6 +136,9 @@ importers:
+       nodemailer:
+         specifier: 10.2.1
+         version: 10.2.1
++      openid-client:
++        specifier: ^6.8.2
++        version: 6.8.4
+       openpgp:
+         specifier: 6.3.0
+         version: 6.3.0
+@@ -392,6 +395,9 @@ importers:
+       eslint-plugin-react-hooks:
+         specifier: 7.1.1
+         version: 7.1.1(eslint@9.39.3(jiti@2.6.1))
++      fetch-mock:
++        specifier: ^12.6.0
++        version: 12.6.0
+       globals:
+         specifier: ^17.5.0
+         version: 17.5.0
+@@ -401,6 +407,9 @@ importers:
+       jiti:
+         specifier: ^2.6.1
+         version: 2.6.1
++      jose:
++        specifier: ^6.1.3
++        version: 6.2.3
+       lint-staged:
+         specifier: 16.4.0
+         version: 16.4.0
+@@ -2470,6 +2479,9 @@ packages:
+   '@types/express@5.0.6':
+     resolution: {integrity: sha512-sKYVuV7Sv9fbPIt/442koC7+IIwK5olP1KWeD88e/idgoJqDm3JV/YUiPwkoKK92ylff2MGxSz1CSjsXelx0YA==}
+ 
++  '@types/glob-to-regexp@0.4.4':
++    resolution: {integrity: sha512-nDKoaKJYbnn1MZxUY0cA1bPmmgZbg0cTq7Rh13d0KWYNOiKbqoR+2d89SnRPszGh7ROzSwZ/GOjZ4jPbmmZ6Eg==}
++
+   '@types/hast@3.0.4':
+     resolution: {integrity: sha512-WPs+bbQw5aCj+x6laNGWLH3wviHtoCv/P3+otBhbOhJgG8qtpdAMlTCxLtsTWA7LH1Oh/bFCHsBn0TPS5m30EQ==}
+ 
+@@ -4147,6 +4159,10 @@ packages:
+   fecha@4.2.3:
+     resolution: {integrity: sha512-OP2IUU6HeYKJi3i0z4A19kHMQoLVs4Hc+DPqqxI2h/DPZHTm/vjsfC6P0b4jCMy14XizLBqvndQ+UilD7707Jw==}
+ 
++  fetch-mock@12.6.0:
++    resolution: {integrity: sha512-oAy0OqAvjAvduqCeWveBix7LLuDbARPqZZ8ERYtBcCURA3gy7EALA3XWq0tCNxsSg+RmmJqyaeeZlOCV9abv6w==}
++    engines: {node: '>=18.11.0'}
++
+   figures@3.2.0:
+     resolution: {integrity: sha512-yaduQFRKLXYOGgEn6AZau90j3ggSOyiqXU0F9JZfeXYhNa+Jk4X+s45A2zg5jns87GAFa34BBm2kXw4XpNcbdg==}
+     engines: {node: '>=8'}
+@@ -4329,6 +4345,9 @@ packages:
+     resolution: {integrity: sha512-XxwI8EOhVQgWp6iDL+3b0r86f4d6AX6zSU55HfB4ydCEuXLXc5FcYeOu+nnGftS4TEju/11rt4KJPTMgbfmv4A==}
+     engines: {node: '>=10.13.0'}
+ 
++  glob-to-regexp@0.4.1:
++    resolution: {integrity: sha512-lkX1HJXwyMcprw/5YUZc2s7DrpAiHB21/V+E1rHUrVNokkvB6bqMzT0VfV6/86ZNabt1k14YOIaT7nDvOX3Iiw==}
++
+   glob@10.5.0:
+     resolution: {integrity: sha512-DfXN8DfhJ7NH3Oe7cFmu3NCu1wKbkReJ8TorzSAFbSKrlNaQSKfIzqYqVY8zlbs2NLBbWpRiU52GX2PbaBVNkg==}
+     deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+@@ -4835,6 +4854,9 @@ packages:
+     resolution: {integrity: sha512-ekilCSN1jwRvIbgeg/57YFh8qQDNbwDb9xT/qu2DAHbFFZUicIl4ygVaAvzveMhMVr3LnpSKTNnwt8PoOfmKhQ==}
+     hasBin: true
+ 
++  jose@6.2.3:
++    resolution: {integrity: sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==}
++
+   js-stringify@1.0.2:
+     resolution: {integrity: sha512-rtS5ATOo2Q5k1G+DADISilDA6lv79zIiwFd6CcjuIxGKLFm5C+RLImRscVap9k55i+MOZwgliw+NejvkLuGD5g==}
+ 
+@@ -5493,6 +5515,9 @@ packages:
+   nth-check@2.1.1:
+     resolution: {integrity: sha512-lqjrjmaOoAnWfMmBPL+XNnynZh2+swxiX3WUE0s4yEHI6m+AwrK2UZOimIRl3X/4QctVqS8AiZjFqyOGrMXb/w==}
+ 
++  oauth4webapi@3.8.6:
++    resolution: {integrity: sha512-iwemM91xz8nryHti2yTmg5fhyEMVOkOXwHNqbvcATjyajb5oQxCQzrNOA6uElRHuMhQQTKUyFKV9y/CNyg25BQ==}
++
+   object-assign@4.1.1:
+     resolution: {integrity: sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==}
+     engines: {node: '>=0.10.0'}
+@@ -5558,6 +5583,9 @@ packages:
+     resolution: {integrity: sha512-YgBpdJHPyQ2UE5x+hlSXcnejzAvD0b22U2OuAP+8OnlJT+PjWPxtgmGqKKc+RgTM63U9gN0YzrYc71R2WT/hTA==}
+     engines: {node: '>=18'}
+ 
++  openid-client@6.8.4:
++    resolution: {integrity: sha512-QSw0BA08piujetEwfZsHoTrDpMEha7GDZDicQqVwX4u0ChCjefvjDB++TZ8BTg76UpwhzIQgdvvfgfl3HpCSAw==}
++
+   openpgp@6.3.0:
+     resolution: {integrity: sha512-pLzCU8IgyKXPSO11eeharQkQ4GzOKNWhXq79pQarIRZEMt1/ssyr+MIuWBv1mNoenJLg04gvPx+fi4gcKZ4bag==}
+     engines: {node: '>= 18.0.0'}
+@@ -6174,6 +6202,10 @@ packages:
+     resolution: {integrity: sha512-dYqgNSZbDwkaJ2ceRd9ojCGjBq+mOm9LmtXnAnEGyHhN/5R7iDW2TRw3h+o/jCFxus3P2LfWIIiwowAjANm7IA==}
+     engines: {node: '>= 0.4'}
+ 
++  regexparam@3.0.0:
++    resolution: {integrity: sha512-RSYAtP31mvYLkAHrOlh25pCNQ5hWnT106VukGaaFfuJrZFkGRX5GhUAdPqpSDXxOhA2c4akmRuplv1mRqnBn6Q==}
++    engines: {node: '>=8'}
++
+   regexpu-core@6.4.0:
+     resolution: {integrity: sha512-0ghuzq67LI9bLXpOX/ISfve/Mq33a4aFRzoQYhnnok1JOFpmE/A2TBGkNVenOGEeSBCjIiWcc6MVOG5HEQv0sA==}
+     engines: {node: '>=4'}
+@@ -9545,6 +9577,8 @@ snapshots:
+       '@types/express-serve-static-core': 5.1.1
+       '@types/serve-static': 2.2.0
+ 
++  '@types/glob-to-regexp@0.4.4': {}
++
+   '@types/hast@3.0.4':
+     dependencies:
+       '@types/unist': 3.0.3
+@@ -11550,6 +11584,13 @@ snapshots:
+ 
+   fecha@4.2.3: {}
+ 
++  fetch-mock@12.6.0:
++    dependencies:
++      '@types/glob-to-regexp': 0.4.4
++      dequal: 2.0.3
++      glob-to-regexp: 0.4.1
++      regexparam: 3.0.0
++
+   figures@3.2.0:
+     dependencies:
+       escape-string-regexp: 1.0.5
+@@ -11753,6 +11794,8 @@ snapshots:
+     dependencies:
+       is-glob: 4.0.3
+ 
++  glob-to-regexp@0.4.1: {}
++
+   glob@10.5.0:
+     dependencies:
+       foreground-child: 3.2.1
+@@ -12311,6 +12354,8 @@ snapshots:
+ 
+   jiti@2.6.1: {}
+ 
++  jose@6.2.3: {}
++
+   js-stringify@1.0.2: {}
+ 
+   js-tokens@4.0.0: {}
+@@ -13094,6 +13139,8 @@ snapshots:
+     dependencies:
+       boolbase: 1.0.0
+ 
++  oauth4webapi@3.8.6: {}
++
+   object-assign@4.1.1: {}
+ 
+   object-hash@3.0.0: {}
+@@ -13172,6 +13219,11 @@ snapshots:
+       wsl-utils: 0.1.0
+     optional: true
+ 
++  openid-client@6.8.4:
++    dependencies:
++      jose: 6.2.3
++      oauth4webapi: 3.8.6
++
+   openpgp@6.3.0: {}
+ 
+   optionator@0.9.4:
+@@ -13867,6 +13919,8 @@ snapshots:
+       gopd: 1.2.0
+       set-function-name: 2.0.2
+ 
++  regexparam@3.0.0: {}
++
+   regexpu-core@6.4.0:
+     dependencies:
+       regenerate: 1.4.2
+diff --git a/public/images/openid.svg b/public/images/openid.svg
+new file mode 100644
+index 00000000..644f473c
+--- /dev/null
++++ b/public/images/openid.svg
+@@ -0,0 +1,57 @@
++<?xml version="1.0" encoding="UTF-8" standalone="no"?>
++<!-- Created with Inkscape (http://www.inkscape.org/) -->
++
++<svg
++   version="1.0"
++   width="120"
++   height="120"
++   id="svg2593"
++   xml:space="preserve"
++   sodipodi:docname="OpenID_logo_2.svg"
++   inkscape:version="1.3.2 (091e20e, 2023-11-25)"
++   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
++   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
++   xmlns="http://www.w3.org/2000/svg"
++   xmlns:svg="http://www.w3.org/2000/svg"><sodipodi:namedview
++     id="namedview1"
++     pagecolor="#505050"
++     bordercolor="#eeeeee"
++     borderopacity="1"
++     inkscape:showpageshadow="0"
++     inkscape:pageopacity="0"
++     inkscape:pagecheckerboard="0"
++     inkscape:deskcolor="#505050"
++     showgrid="false"
++     inkscape:zoom="5.3731101"
++     inkscape:cx="69.60587"
++     inkscape:cy="65.883631"
++     inkscape:window-width="1512"
++     inkscape:window-height="945"
++     inkscape:window-x="0"
++     inkscape:window-y="37"
++     inkscape:window-maximized="0"
++     inkscape:current-layer="svg2593" /><defs
++     id="defs2596"><clipPath
++       id="clipPath2616"><path
++         d="M 0,14400 H 14400 V 0 H 0 Z"
++         id="path2618" /></clipPath></defs><g
++     transform="matrix(1.25,0,0,-1.25,-8601.6804,9121.1624)"
++     id="g2602"><g
++       transform="matrix(0.375,0,0,0.375,4301.4506,4557.5812)"
++       id="g2734"><g
++         id="g2726"><g
++           transform="translate(6998.0969,7259.1135)"
++           id="g2604"><path
++             d="M 0,0 V -159.939 -180 l 32,15.061 V 15.633 Z"
++             id="path2606"
++             style="fill:#f8931e;fill-opacity:1;fill-rule:nonzero;stroke:none" /></g><g
++           transform="translate(7108.9192,7206.3137)"
++           id="g2608"><path
++             d="M 0,0 4.417,-45.864 -57.466,-32.4"
++             id="path2610"
++             style="fill:#b3b3b3;fill-opacity:1;fill-rule:nonzero;stroke:none" /></g><g
++           transform="translate(6934.0969,7147.6213)"
++           id="g2620"><path
++             d="M 0,0 C 0,22.674 24.707,41.769 58.383,47.598 V 67.923 C 6.873,61.697 -32,33.656 -32,0 -32,-34.869 9.725,-63.709 64,-68.508 v 20.061 C 27.484,-43.869 0,-23.919 0,0 M 101.617,67.915 V 47.598 c 13.399,-2.319 25.385,-6.727 34.951,-12.64 l 22.627,13.984 c -15.42,9.531 -35.322,16.283 -57.578,18.973"
++             id="path2622"
++             style="fill:#b3b3b3;fill-opacity:1;fill-rule:nonzero;stroke:none" /></g></g></g></g></svg>
+diff --git a/seerr-api.yml b/seerr-api.yml
+index 24b825c7..2ac617bf 100644
+--- a/seerr-api.yml
++++ b/seerr-api.yml
+@@ -274,6 +274,32 @@ components:
+         versionCheck:
+           type: boolean
+           example: false
++        openIdProviders:
++          type: array
++          items:
++            $ref: '#/components/schemas/PublicOidcProvider'
++    PublicOidcProvider:
++      type: object
++      readOnly: true
++      properties:
++        slug:
++          type: string
++        name:
++          type: string
++        logo:
++          type: string
++      required:
++        - slug
++        - name
++    LinkedAccount:
++      type: object
++      properties:
++        id:
++          type: number
++        username:
++          type: string
++        provider:
++          $ref: '#/components/schemas/PublicOidcProvider'
+     NetworkSettings:
+       type: object
+       properties:
+@@ -4213,6 +4239,129 @@ paths:
+               required:
+                 - email
+                 - password
++  /auth/oidc/login/{slug}:
++    get:
++      summary: Initiate OpenID Connect login
++      description: Initiates the OpenID Connect authorization code flow with PKCE for the specified provider. Returns a redirect URL to the provider's authorization endpoint.
++      security: []
++      tags:
++        - auth
++      parameters:
++        - in: path
++          name: slug
++          required: true
++          schema:
++            type: string
++          description: Provider slug
++        - in: query
++          name: returnUrl
++          required: false
++          allowReserved: true
++          schema:
++            type: string
++            format: uri-reference
++          description: URL to redirect to after login. Defaults to /login if not specified.
++      responses:
++        '200':
++          description: OK
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  redirectUrl:
++                    type: string
++        '403':
++          description: OpenID Connect sign-in is disabled or provider not found
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    example: 'UNAUTHORIZED'
++        '500':
++          description: An error occurred while creating the authorization redirect
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    example: 'OIDC_AUTHORIZATION_FAILED'
++  /auth/oidc/callback/{slug}:
++    post:
++      summary: Handle OpenID Connect callback
++      description: Handles the authorization code callback from the OpenID Connect provider. Exchanges the code for tokens, validates claims, and either logs in an existing user, links the account to the currently logged-in user, or creates a new user if allowed.
++      security: []
++      tags:
++        - auth
++      parameters:
++        - in: path
++          name: slug
++          required: true
++          schema:
++            type: string
++          description: Provider slug
++      requestBody:
++        required: true
++        content:
++          application/json:
++            schema:
++              type: object
++              required:
++                - callbackUrl
++              properties:
++                callbackUrl:
++                  type: string
++                  format: uri
++                  description: The full callback URL including the authorization code and any other parameters returned by the OIDC provider (e.g. https://example.com/login?code=xxx).
++                  example: 'https://example.com/login?code=xxx'
++      responses:
++        '204':
++          description: Authentication successful. No response body.
++        '400':
++          description: Unable to create account (e.g. missing email address)
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    example: 'OIDC_MISSING_EMAIL'
++        '403':
++          description: OpenID Connect sign-in is disabled, provider not found, or user does not meet required claims
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    example: 'UNAUTHORIZED'
++        '409':
++          description: The OIDC account is already linked to a different user
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    example: 'OIDC_ACCOUNT_ALREADY_LINKED'
++        '500':
++          description: An error occurred (e.g. provider discovery failed, authorization failed)
++          content:
++            application/json:
++              schema:
++                type: object
++                properties:
++                  error:
++                    type: string
++                    example: 'OIDC_AUTHORIZATION_FAILED'
+   /auth/logout:
+     post:
+       summary: Sign out and clear session cookie
+@@ -5250,6 +5399,29 @@ paths:
+       responses:
+         '204':
+           description: User password updated
++  /user/{userId}/settings/linked-accounts:
++    get:
++      summary: Lists the user's linked OpenID Connect accounts
++      description: Lists the user's linked OpenID Connect accounts
++      tags:
++        - users
++      parameters:
++        - in: path
++          name: userId
++          required: true
++          schema:
++            type: number
++      responses:
++        '200':
++          description: List of linked accounts
++          content:
++            application/json:
++              schema:
++                type: array
++                items:
++                  $ref: '#/components/schemas/LinkedAccount'
++        '403':
++          description: Insufficient permissions
+   /user/{userId}/settings/linked-accounts/plex:
+     post:
+       summary: Link the provided Plex account to the current user
+@@ -5382,6 +5554,32 @@ paths:
+           description: Account already linked
+         '500':
+           description: Server error
++  /user/{userId}/settings/linked-accounts/{acctId}:
++    delete:
++      summary: Remove a linked account for a user
++      description: Removes the linked account with the given ID for a specific user. Requires `MANAGE_USERS` permission if editing other users.
++      tags:
++        - users
++      parameters:
++        - in: path
++          name: userId
++          required: true
++          schema:
++            type: number
++        - in: path
++          name: acctId
++          required: true
++          schema:
++            type: number
++      responses:
++        '204':
++          description: Unlinking account succeeded
++        '400':
++          description: Unlink request invalid
++        '403':
++          description: Insufficient permissions
++        '404':
++          description: User or linked account does not exist
+   /user/{userId}/settings/notifications:
+     get:
+       summary: Get notification settings for a user
+diff --git a/server/constants/error.ts b/server/constants/error.ts
+index 54640b20..65072d43 100644
+--- a/server/constants/error.ts
++++ b/server/constants/error.ts
+@@ -6,6 +6,10 @@ export enum ApiErrorCode {
+   NotAdmin = 'NOT_ADMIN',
+   NoAdminUser = 'NO_ADMIN_USER',
+   ConnectionError = 'CONNECTION_ERROR',
++  OidcProviderDiscoveryFailed = 'OIDC_PROVIDER_DISCOVERY_FAILED',
++  OidcAuthorizationFailed = 'OIDC_AUTHORIZATION_FAILED',
++  OidcMissingEmail = 'OIDC_MISSING_EMAIL',
++  OidcAccountAlreadyLinked = 'OIDC_ACCOUNT_ALREADY_LINKED',
+   SyncErrorGroupedFolders = 'SYNC_ERROR_GROUPED_FOLDERS',
+   SyncErrorNoLibraries = 'SYNC_ERROR_NO_LIBRARIES',
+   Unauthorized = 'UNAUTHORIZED',
+diff --git a/server/datasource.ts b/server/datasource.ts
+index a87920f8..ed7b0b6a 100644
+--- a/server/datasource.ts
++++ b/server/datasource.ts
+@@ -2,6 +2,7 @@ import { Blocklist } from '@server/entity/Blocklist';
+ import DiscoverSlider from '@server/entity/DiscoverSlider';
+ import Issue from '@server/entity/Issue';
+ import IssueComment from '@server/entity/IssueComment';
++import { LinkedAccount } from '@server/entity/LinkedAccount';
+ import Media from '@server/entity/Media';
+ import { MediaRequest } from '@server/entity/MediaRequest';
+ import OverrideRule from '@server/entity/OverrideRule';
+@@ -29,6 +30,7 @@ const entities = [
+   DiscoverSlider,
+   Issue,
+   IssueComment,
++  LinkedAccount,
+   Media,
+   MediaRequest,
+   OverrideRule,
+diff --git a/server/entity/LinkedAccount.ts b/server/entity/LinkedAccount.ts
+new file mode 100644
+index 00000000..6bd25110
+--- /dev/null
++++ b/server/entity/LinkedAccount.ts
+@@ -0,0 +1,37 @@
++import {
++  Column,
++  Entity,
++  Index,
++  ManyToOne,
++  PrimaryGeneratedColumn,
++} from 'typeorm';
++import { User } from './User';
++
++@Index('IDX_linked_accounts_provider_sub', ['provider', 'sub'], {
++  unique: true,
++})
++@Entity('linked_accounts')
++export class LinkedAccount {
++  constructor(options: Omit<LinkedAccount, 'id'>) {
++    Object.assign(this, options);
++  }
++
++  @PrimaryGeneratedColumn()
++  id: number;
++
++  @Index()
++  @ManyToOne(() => User, (user) => user.linkedAccounts, { onDelete: 'CASCADE' })
++  user: User;
++
++  /** Slug of the OIDC provider. */
++  @Column({ type: 'varchar', length: 255 })
++  provider: string;
++
++  /** Unique ID from the OAuth provider */
++  @Column({ type: 'varchar', length: 255 })
++  sub: string;
++
++  /** Account username from the OAuth provider */
++  @Column()
++  username: string;
++}
+diff --git a/server/entity/User.ts b/server/entity/User.ts
+index cd9f8778..528aa5a2 100644
+--- a/server/entity/User.ts
++++ b/server/entity/User.ts
+@@ -26,6 +26,7 @@ import {
+   UpdateDateColumn,
+ } from 'typeorm';
+ import Issue from './Issue';
++import { LinkedAccount } from './LinkedAccount';
+ import { MediaRequest } from './MediaRequest';
+ import SeasonRequest from './SeasonRequest';
+ import { UserPushSubscription } from './UserPushSubscription';
+@@ -40,7 +41,7 @@ export class User {
+     return users.map((u) => u.filter(showFiltered));
+   }
+ 
+-  static readonly filteredFields: string[] = [
++  static readonly filteredFields: (keyof User)[] = [
+     'email',
+     'plexId',
+     'password',
+@@ -49,6 +50,7 @@ export class User {
+     'jellyfinAuthToken',
+     'plexToken',
+     'settings',
++    'linkedAccounts',
+   ];
+ 
+   static readonly serializationExcludedFields: string[] = ['settings'];
+@@ -103,6 +105,9 @@ export class User {
+   @Column({ type: 'varchar', nullable: true, select: false })
+   public plexToken?: string | null;
+ 
++  @OneToMany(() => LinkedAccount, (link) => link.user, { cascade: true })
++  public linkedAccounts: LinkedAccount[];
++
+   @Column({ type: 'integer', default: 0 })
+   public permissions = 0;
+ 
+@@ -202,6 +207,17 @@ export class User {
+     });
+   }
+ 
++  public getActiveLinkedAccounts(): LinkedAccount[] {
++    const settings = getSettings();
++    if (!settings.main.oidcLogin) {
++      return [];
++    }
++    const activeProviderSlugs = settings.oidc.providers.map((p) => p.slug);
++    return (this.linkedAccounts ?? []).filter((a) =>
++      activeProviderSlugs.includes(a.provider)
++    );
++  }
++
+   public async setPassword(password: string): Promise<void> {
+     const hashedPassword = await bcrypt.hash(password, 12);
+     this.password = hashedPassword;
+diff --git a/server/index.ts b/server/index.ts
+index cce36c96..fb376bf6 100644
+--- a/server/index.ts
++++ b/server/index.ts
+@@ -171,7 +171,7 @@ app
+     if (settings.network.trustProxy) {
+       server.enable('trust proxy');
+     }
+-    server.use(cookieParser());
++    server.use(cookieParser(settings.sessionSecret));
+     server.use(express.json());
+     server.use(express.urlencoded({ extended: true }));
+     server.use((req, _res, next) => {
+@@ -270,7 +270,12 @@ app
+     server.get('*path', (req, res) => handle(req, res));
+     server.use(
+       (
+-        err: { status: number; message: string; errors: string[] },
++        err: {
++          status: number;
++          message: string;
++          errors: string[];
++          error?: string;
++        },
+         _req: Request,
+         res: Response,
+         next: NextFunction
+@@ -282,6 +287,7 @@ app
+         res.status(err.status || 500).json({
+           message: err.message,
+           errors: err.errors,
++          ...(err.error && { error: err.error }),
+         });
+       }
+     );
+diff --git a/server/interfaces/api/settingsInterfaces.ts b/server/interfaces/api/settingsInterfaces.ts
+index 7d24e1b2..650ffc5d 100644
+--- a/server/interfaces/api/settingsInterfaces.ts
++++ b/server/interfaces/api/settingsInterfaces.ts
+@@ -1,3 +1,4 @@
++import type { PublicOidcProvider } from '@server/lib/settings';
+ import type { DnsEntries, DnsStats } from 'dns-caching';
+ import type { PaginatedResponse } from './common';
+ 
+@@ -51,6 +52,7 @@ export interface PublicSettingsResponse {
+   youtubeUrl: string;
+   versionCheck: boolean;
+   plexClientIdentifier: string;
++  openIdProviders: PublicOidcProvider[];
+ }
+ 
+ export interface CacheItem {
+diff --git a/server/interfaces/api/userSettingsInterfaces.ts b/server/interfaces/api/userSettingsInterfaces.ts
+index 57e7b3f6..b49bef2e 100644
+--- a/server/interfaces/api/userSettingsInterfaces.ts
++++ b/server/interfaces/api/userSettingsInterfaces.ts
+@@ -1,4 +1,7 @@
+-import type { NotificationAgentKey } from '@server/lib/settings';
++import type {
++  NotificationAgentKey,
++  PublicOidcProvider,
++} from '@server/lib/settings';
+ 
+ export interface UserSettingsGeneralResponse {
+   username?: string;
+@@ -38,3 +41,11 @@ export interface UserSettingsNotificationsResponse {
+   webPushEnabled?: boolean;
+   notificationTypes: Partial<NotificationAgentTypes>;
+ }
++
++export type UserSettingsLinkedAccount = {
++  id: number;
++  username: string;
++  provider: PublicOidcProvider;
++};
++
++export type UserSettingsLinkedAccountResponse = UserSettingsLinkedAccount[];
+diff --git a/server/lib/settings/index.ts b/server/lib/settings/index.ts
+index a52f8cf4..4d20b82f 100644
+--- a/server/lib/settings/index.ts
++++ b/server/lib/settings/index.ts
+@@ -8,8 +8,12 @@ import { mergeWith } from 'lodash';
+ import path from 'path';
+ import webpush from 'web-push';
+ 
++type DeepPartial<T> = {
++  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
++};
++
+ // Prevents stale array entries when incoming data has fewer elements
+-const mergeSettings = <T>(current: T, incoming: Partial<T>): T =>
++const mergeSettings = <T>(current: T, incoming: DeepPartial<T>): T =>
+   mergeWith({}, current, incoming, (_objValue, srcValue) =>
+     Array.isArray(srcValue) ? srcValue : undefined
+   ) as T;
+@@ -56,6 +60,25 @@ export interface JellyfinSettings {
+   serverId: string;
+   apiKey: string;
+ }
++
++export type OidcProvider = {
++  slug: string;
++  name: string;
++  issuerUrl: string;
++  clientId: string;
++  clientSecret: string;
++  logo?: string;
++  requiredClaims?: string;
++  scopes?: string;
++  newUserLogin?: boolean;
++};
++
++export type PublicOidcProvider = Pick<OidcProvider, 'slug' | 'name' | 'logo'>;
++
++export interface OidcSettings {
++  providers: OidcProvider[];
++}
++
+ export interface TautulliSettings {
+   hostname?: string;
+   port?: number;
+@@ -144,6 +167,7 @@ export interface MainSettings {
+   hideRequested: boolean;
+   localLogin: boolean;
+   mediaServerLogin: boolean;
++  oidcLogin: boolean;
+   newPlexLogin: boolean;
+   discoverRegion: string;
+   streamingRegion: string;
+@@ -219,6 +243,7 @@ interface FullPublicSettings extends PublicSettings {
+   youtubeUrl: string;
+   versionCheck: boolean;
+   plexClientIdentifier: string;
++  openIdProviders: PublicOidcProvider[];
+ }
+ 
+ export interface NotificationAgentConfig {
+@@ -382,6 +407,7 @@ export interface AllSettings {
+   main: MainSettings;
+   plex: PlexSettings;
+   jellyfin: JellyfinSettings;
++  oidc: OidcSettings;
+   tautulli: TautulliSettings;
+   radarr: RadarrSettings[];
+   sonarr: SonarrSettings[];
+@@ -402,245 +428,8 @@ class Settings {
+   private saveLock: Promise<void> = Promise.resolve();
+ 
+   constructor(initialSettings?: AllSettings) {
+-    this.data = {
+-      clientId: randomUUID(),
+-      sessionSecret: '',
+-      vapidPrivate: '',
+-      vapidPublic: '',
+-      main: {
+-        apiKey: '',
+-        applicationTitle: 'Seerr',
+-        applicationUrl: '',
+-        cacheImages: false,
+-        defaultPermissions: Permission.REQUEST,
+-        defaultQuotas: {
+-          movie: {},
+-          tv: {},
+-        },
+-        hideAvailable: false,
+-        hideBlocklisted: false,
+-        hideRequested: false,
+-        localLogin: true,
+-        mediaServerLogin: true,
+-        newPlexLogin: true,
+-        discoverRegion: '',
+-        streamingRegion: '',
+-        originalLanguage: '',
+-        blocklistRegion: '',
+-        blocklistLanguage: '',
+-        blocklistedTags: '',
+-        blocklistedTagsLimit: 50,
+-        mediaServerType: MediaServerType.NOT_CONFIGURED,
+-        partialRequestsEnabled: true,
+-        enableSpecialEpisodes: false,
+-        locale: 'en',
+-        youtubeUrl: '',
+-        versionCheck: true,
+-      },
+-      plex: {
+-        name: '',
+-        ip: '',
+-        port: 32400,
+-        useSsl: false,
+-        libraries: [],
+-      },
+-      jellyfin: {
+-        name: '',
+-        ip: '',
+-        port: 8096,
+-        useSsl: false,
+-        urlBase: '',
+-        externalHostname: '',
+-        jellyfinForgotPasswordUrl: '',
+-        libraries: [],
+-        serverId: '',
+-        apiKey: '',
+-      },
+-      tautulli: {},
+-      metadataSettings: {
+-        tv: MetadataProviderType.TMDB,
+-        anime: MetadataProviderType.TMDB,
+-      },
+-      radarr: [],
+-      sonarr: [],
+-      public: {
+-        initialized: false,
+-      },
+-      notifications: {
+-        agents: {
+-          email: {
+-            enabled: false,
+-            embedPoster: true,
+-            options: {
+-              userEmailRequired: false,
+-              emailFrom: '',
+-              smtpHost: '',
+-              smtpPort: 587,
+-              secure: false,
+-              ignoreTls: false,
+-              requireTls: false,
+-              allowSelfSigned: false,
+-              senderName: 'Seerr',
+-              usePublicLogo: false,
+-            },
+-          },
+-          discord: {
+-            enabled: false,
+-            embedPoster: true,
+-            types: 0,
+-            options: {
+-              webhookUrl: '',
+-              webhookRoleId: '',
+-              enableMentions: true,
+-              locale: 'en',
+-              useUserLocale: true,
+-            },
+-          },
+-          slack: {
+-            enabled: false,
+-            embedPoster: true,
+-            types: 0,
+-            options: {
+-              webhookUrl: '',
+-              locale: 'en',
+-            },
+-          },
+-          telegram: {
+-            enabled: false,
+-            embedPoster: true,
+-            types: 0,
+-            options: {
+-              botAPI: '',
+-              chatId: '',
+-              messageThreadId: '',
+-              sendSilently: false,
+-            },
+-          },
+-          pushbullet: {
+-            enabled: false,
+-            embedPoster: false,
+-            types: 0,
+-            options: {
+-              accessToken: '',
+-            },
+-          },
+-          pushover: {
+-            enabled: false,
+-            embedPoster: true,
+-            types: 0,
+-            options: {
+-              accessToken: '',
+-              userToken: '',
+-              sound: '',
+-            },
+-          },
+-          webhook: {
+-            enabled: false,
+-            embedPoster: true,
+-            types: 0,
+-            options: {
+-              webhookUrl: '',
+-              jsonPayload:
+-                'IntcbiAgXCJub3RpZmljYXRpb25fdHlwZVwiOiBcInt7bm90aWZpY2F0aW9uX3R5cGV9fVwiLFxuICBcImV2ZW50XCI6IFwie3tldmVudH19XCIsXG4gIFwic3ViamVjdFwiOiBcInt7c3ViamVjdH19XCIsXG4gIFwibWVzc2FnZVwiOiBcInt7bWVzc2FnZX19XCIsXG4gIFwiaW1hZ2VcIjogXCJ7e2ltYWdlfX1cIixcbiAgXCJ7e21lZGlhfX1cIjoge1xuICAgIFwibWVkaWFfdHlwZVwiOiBcInt7bWVkaWFfdHlwZX19XCIsXG4gICAgXCJ0bWRiSWRcIjogXCJ7e21lZGlhX3RtZGJpZH19XCIsXG4gICAgXCJ0dmRiSWRcIjogXCJ7e21lZGlhX3R2ZGJpZH19XCIsXG4gICAgXCJzdGF0dXNcIjogXCJ7e21lZGlhX3N0YXR1c319XCIsXG4gICAgXCJzdGF0dXM0a1wiOiBcInt7bWVkaWFfc3RhdHVzNGt9fVwiXG4gIH0sXG4gIFwie3tyZXF1ZXN0fX1cIjoge1xuICAgIFwicmVxdWVzdF9pZFwiOiBcInt7cmVxdWVzdF9pZH19XCIsXG4gICAgXCJyZXF1ZXN0ZWRCeV9lbWFpbFwiOiBcInt7cmVxdWVzdGVkQnlfZW1haWx9fVwiLFxuICAgIFwicmVxdWVzdGVkQnlfdXNlcm5hbWVcIjogXCJ7e3JlcXVlc3RlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X2F2YXRhclwiOiBcInt7cmVxdWVzdGVkQnlfYXZhdGFyfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7cmVxdWVzdGVkQnlfc2V0dGluZ3NfZGlzY29yZElkfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X3NldHRpbmdzX3RlbGVncmFtQ2hhdElkXCI6IFwie3tyZXF1ZXN0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2lzc3VlfX1cIjoge1xuICAgIFwiaXNzdWVfaWRcIjogXCJ7e2lzc3VlX2lkfX1cIixcbiAgICBcImlzc3VlX3R5cGVcIjogXCJ7e2lzc3VlX3R5cGV9fVwiLFxuICAgIFwiaXNzdWVfc3RhdHVzXCI6IFwie3tpc3N1ZV9zdGF0dXN9fVwiLFxuICAgIFwicmVwb3J0ZWRCeV9lbWFpbFwiOiBcInt7cmVwb3J0ZWRCeV9lbWFpbH19XCIsXG4gICAgXCJyZXBvcnRlZEJ5X3VzZXJuYW1lXCI6IFwie3tyZXBvcnRlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcInJlcG9ydGVkQnlfYXZhdGFyXCI6IFwie3tyZXBvcnRlZEJ5X2F2YXRhcn19XCIsXG4gICAgXCJyZXBvcnRlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7cmVwb3J0ZWRCeV9zZXR0aW5nc19kaXNjb3JkSWR9fVwiLFxuICAgIFwicmVwb3J0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZFwiOiBcInt7cmVwb3J0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2NvbW1lbnR9fVwiOiB7XG4gICAgXCJjb21tZW50X21lc3NhZ2VcIjogXCJ7e2NvbW1lbnRfbWVzc2FnZX19XCIsXG4gICAgXCJjb21tZW50ZWRCeV9lbWFpbFwiOiBcInt7Y29tbWVudGVkQnlfZW1haWx9fVwiLFxuICAgIFwiY29tbWVudGVkQnlfdXNlcm5hbWVcIjogXCJ7e2NvbW1lbnRlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X2F2YXRhclwiOiBcInt7Y29tbWVudGVkQnlfYXZhdGFyfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7Y29tbWVudGVkQnlfc2V0dGluZ3NfZGlzY29yZElkfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X3NldHRpbmdzX3RlbGVncmFtQ2hhdElkXCI6IFwie3tjb21tZW50ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2V4dHJhfX1cIjogW11cbn0i',
+-            },
+-          },
+-          webpush: {
+-            enabled: false,
+-            embedPoster: true,
+-            options: {},
+-          },
+-          gotify: {
+-            enabled: false,
+-            embedPoster: false,
+-            types: 0,
+-            options: {
+-              url: '',
+-              token: '',
+-              priority: 0,
+-              locale: 'en',
+-            },
+-          },
+-          ntfy: {
+-            enabled: false,
+-            embedPoster: true,
+-            types: 0,
+-            options: {
+-              url: '',
+-              topic: '',
+-              tags: '',
+-              priority: 3,
+-              locale: 'en',
+-            },
+-          },
+-        },
+-      },
+-      jobs: {
+-        'plex-recently-added-scan': {
+-          schedule: '0 */5 * * * *',
+-        },
+-        'plex-full-scan': {
+-          schedule: '0 0 3 * * *',
+-        },
+-        'plex-watchlist-sync': {
+-          schedule: '0 */3 * * * *',
+-        },
+-        'plex-refresh-token': {
+-          schedule: '0 0 5 * * *',
+-        },
+-        'radarr-scan': {
+-          schedule: '0 0 4 * * *',
+-        },
+-        'sonarr-scan': {
+-          schedule: '0 30 4 * * *',
+-        },
+-        'availability-sync': {
+-          schedule: '0 0 5 * * *',
+-        },
+-        'download-sync': {
+-          schedule: '0 * * * * *',
+-        },
+-        'download-sync-reset': {
+-          schedule: '0 0 1 * * *',
+-        },
+-        'jellyfin-recently-added-scan': {
+-          schedule: '0 */5 * * * *',
+-        },
+-        'jellyfin-full-scan': {
+-          schedule: '0 0 3 * * *',
+-        },
+-        'image-cache-cleanup': {
+-          schedule: '0 0 5 * * *',
+-        },
+-        'process-blocklisted-tags': {
+-          schedule: '0 30 1 */7 * *',
+-        },
+-      },
+-      network: {
+-        csrfProtection: false,
+-        forceIpv4First: false,
+-        trustProxy: false,
+-        proxy: {
+-          enabled: false,
+-          hostname: '',
+-          port: 8080,
+-          useSsl: false,
+-          user: '',
+-          password: '',
+-          bypassFilter: '',
+-          bypassLocalAddresses: true,
+-        },
+-        dnsCache: {
+-          enabled: false,
+-          forceMinTtl: 0,
+-          forceMaxTtl: -1,
+-        },
+-        apiRequestTimeout: 10000,
+-      },
+-      migrations: [],
+-    };
+-    if (initialSettings) {
+-      this.data = mergeSettings(this.data, initialSettings);
+-    }
++    this.reset();
++    if (initialSettings) this.load(initialSettings);
+   }
+ 
+   get main(): MainSettings {
+@@ -667,6 +456,14 @@ class Settings {
+     this.data.jellyfin = mergeSettings(this.data.jellyfin, data);
+   }
+ 
++  get oidc(): OidcSettings {
++    return this.data.oidc;
++  }
++
++  set oidc(data: OidcSettings) {
++    this.data.oidc = data;
++  }
++
+   get tautulli(): TautulliSettings {
+     return this.data.tautulli;
+   }
+@@ -745,6 +542,13 @@ class Settings {
+       youtubeUrl: this.data.main.youtubeUrl,
+       versionCheck: this.data.main.versionCheck,
+       plexClientIdentifier: this.data.clientId,
++      openIdProviders: this.data.main.oidcLogin
++        ? this.data.oidc.providers.map((p) => ({
++            slug: p.slug,
++            name: p.name,
++            logo: p.logo,
++          }))
++        : [],
+     };
+   }
+ 
+@@ -820,11 +624,23 @@ class Settings {
+    * values
+    */
+   public async load(
+-    overrideSettings?: AllSettings,
++    overrideSettings?: DeepPartial<AllSettings>,
++    raw?: false
++  ): Promise<Settings>;
++  public async load(
++    overrideSettings: AllSettings | undefined,
++    raw: true
++  ): Promise<Settings>;
++  public async load(
++    overrideSettings?: DeepPartial<AllSettings>,
+     raw = false
+   ): Promise<Settings> {
+     if (overrideSettings) {
+-      this.data = overrideSettings;
++      if (raw) {
++        this.data = overrideSettings as AllSettings;
++      } else {
++        this.data = mergeSettings(this.data, overrideSettings);
++      }
+       return this;
+     }
+ 
+@@ -893,6 +709,249 @@ class Settings {
+ 
+     return savePromise;
+   }
++
++  public reset() {
++    this.data = {
++      clientId: randomUUID(),
++      sessionSecret: '',
++      vapidPrivate: '',
++      vapidPublic: '',
++      main: {
++        apiKey: '',
++        applicationTitle: 'Seerr',
++        applicationUrl: '',
++        cacheImages: false,
++        defaultPermissions: Permission.REQUEST,
++        defaultQuotas: {
++          movie: {},
++          tv: {},
++        },
++        hideAvailable: false,
++        hideBlocklisted: false,
++        hideRequested: false,
++        localLogin: true,
++        mediaServerLogin: true,
++        oidcLogin: false,
++        newPlexLogin: true,
++        discoverRegion: '',
++        streamingRegion: '',
++        originalLanguage: '',
++        blocklistRegion: '',
++        blocklistLanguage: '',
++        blocklistedTags: '',
++        blocklistedTagsLimit: 50,
++        mediaServerType: MediaServerType.NOT_CONFIGURED,
++        partialRequestsEnabled: true,
++        enableSpecialEpisodes: false,
++        locale: 'en',
++        youtubeUrl: '',
++        versionCheck: true,
++      },
++      plex: {
++        name: '',
++        ip: '',
++        port: 32400,
++        useSsl: false,
++        libraries: [],
++      },
++      jellyfin: {
++        name: '',
++        ip: '',
++        port: 8096,
++        useSsl: false,
++        urlBase: '',
++        externalHostname: '',
++        jellyfinForgotPasswordUrl: '',
++        libraries: [],
++        serverId: '',
++        apiKey: '',
++      },
++      oidc: {
++        providers: [],
++      },
++      tautulli: {},
++      metadataSettings: {
++        tv: MetadataProviderType.TMDB,
++        anime: MetadataProviderType.TMDB,
++      },
++      radarr: [],
++      sonarr: [],
++      public: {
++        initialized: false,
++      },
++      notifications: {
++        agents: {
++          email: {
++            enabled: false,
++            embedPoster: true,
++            options: {
++              userEmailRequired: false,
++              emailFrom: '',
++              smtpHost: '',
++              smtpPort: 587,
++              secure: false,
++              ignoreTls: false,
++              requireTls: false,
++              allowSelfSigned: false,
++              senderName: 'Seerr',
++              usePublicLogo: false,
++            },
++          },
++          discord: {
++            enabled: false,
++            embedPoster: true,
++            types: 0,
++            options: {
++              webhookUrl: '',
++              webhookRoleId: '',
++              enableMentions: true,
++              locale: 'en',
++              useUserLocale: true,
++            },
++          },
++          slack: {
++            enabled: false,
++            embedPoster: true,
++            types: 0,
++            options: {
++              webhookUrl: '',
++              locale: 'en',
++            },
++          },
++          telegram: {
++            enabled: false,
++            embedPoster: true,
++            types: 0,
++            options: {
++              botAPI: '',
++              chatId: '',
++              messageThreadId: '',
++              sendSilently: false,
++            },
++          },
++          pushbullet: {
++            enabled: false,
++            embedPoster: false,
++            types: 0,
++            options: {
++              accessToken: '',
++            },
++          },
++          pushover: {
++            enabled: false,
++            embedPoster: true,
++            types: 0,
++            options: {
++              accessToken: '',
++              userToken: '',
++              sound: '',
++            },
++          },
++          webhook: {
++            enabled: false,
++            embedPoster: true,
++            types: 0,
++            options: {
++              webhookUrl: '',
++              jsonPayload:
++                'IntcbiAgXCJub3RpZmljYXRpb25fdHlwZVwiOiBcInt7bm90aWZpY2F0aW9uX3R5cGV9fVwiLFxuICBcImV2ZW50XCI6IFwie3tldmVudH19XCIsXG4gIFwic3ViamVjdFwiOiBcInt7c3ViamVjdH19XCIsXG4gIFwibWVzc2FnZVwiOiBcInt7bWVzc2FnZX19XCIsXG4gIFwiaW1hZ2VcIjogXCJ7e2ltYWdlfX1cIixcbiAgXCJ7e21lZGlhfX1cIjoge1xuICAgIFwibWVkaWFfdHlwZVwiOiBcInt7bWVkaWFfdHlwZX19XCIsXG4gICAgXCJ0bWRiSWRcIjogXCJ7e21lZGlhX3RtZGJpZH19XCIsXG4gICAgXCJ0dmRiSWRcIjogXCJ7e21lZGlhX3R2ZGJpZH19XCIsXG4gICAgXCJzdGF0dXNcIjogXCJ7e21lZGlhX3N0YXR1c319XCIsXG4gICAgXCJzdGF0dXM0a1wiOiBcInt7bWVkaWFfc3RhdHVzNGt9fVwiXG4gIH0sXG4gIFwie3tyZXF1ZXN0fX1cIjoge1xuICAgIFwicmVxdWVzdF9pZFwiOiBcInt7cmVxdWVzdF9pZH19XCIsXG4gICAgXCJyZXF1ZXN0ZWRCeV9lbWFpbFwiOiBcInt7cmVxdWVzdGVkQnlfZW1haWx9fVwiLFxuICAgIFwicmVxdWVzdGVkQnlfdXNlcm5hbWVcIjogXCJ7e3JlcXVlc3RlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X2F2YXRhclwiOiBcInt7cmVxdWVzdGVkQnlfYXZhdGFyfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7cmVxdWVzdGVkQnlfc2V0dGluZ3NfZGlzY29yZElkfX1cIixcbiAgICBcInJlcXVlc3RlZEJ5X3NldHRpbmdzX3RlbGVncmFtQ2hhdElkXCI6IFwie3tyZXF1ZXN0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2lzc3VlfX1cIjoge1xuICAgIFwiaXNzdWVfaWRcIjogXCJ7e2lzc3VlX2lkfX1cIixcbiAgICBcImlzc3VlX3R5cGVcIjogXCJ7e2lzc3VlX3R5cGV9fVwiLFxuICAgIFwiaXNzdWVfc3RhdHVzXCI6IFwie3tpc3N1ZV9zdGF0dXN9fVwiLFxuICAgIFwicmVwb3J0ZWRCeV9lbWFpbFwiOiBcInt7cmVwb3J0ZWRCeV9lbWFpbH19XCIsXG4gICAgXCJyZXBvcnRlZEJ5X3VzZXJuYW1lXCI6IFwie3tyZXBvcnRlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcInJlcG9ydGVkQnlfYXZhdGFyXCI6IFwie3tyZXBvcnRlZEJ5X2F2YXRhcn19XCIsXG4gICAgXCJyZXBvcnRlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7cmVwb3J0ZWRCeV9zZXR0aW5nc19kaXNjb3JkSWR9fVwiLFxuICAgIFwicmVwb3J0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZFwiOiBcInt7cmVwb3J0ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2NvbW1lbnR9fVwiOiB7XG4gICAgXCJjb21tZW50X21lc3NhZ2VcIjogXCJ7e2NvbW1lbnRfbWVzc2FnZX19XCIsXG4gICAgXCJjb21tZW50ZWRCeV9lbWFpbFwiOiBcInt7Y29tbWVudGVkQnlfZW1haWx9fVwiLFxuICAgIFwiY29tbWVudGVkQnlfdXNlcm5hbWVcIjogXCJ7e2NvbW1lbnRlZEJ5X3VzZXJuYW1lfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X2F2YXRhclwiOiBcInt7Y29tbWVudGVkQnlfYXZhdGFyfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X3NldHRpbmdzX2Rpc2NvcmRJZFwiOiBcInt7Y29tbWVudGVkQnlfc2V0dGluZ3NfZGlzY29yZElkfX1cIixcbiAgICBcImNvbW1lbnRlZEJ5X3NldHRpbmdzX3RlbGVncmFtQ2hhdElkXCI6IFwie3tjb21tZW50ZWRCeV9zZXR0aW5nc190ZWxlZ3JhbUNoYXRJZH19XCJcbiAgfSxcbiAgXCJ7e2V4dHJhfX1cIjogW11cbn0i',
++            },
++          },
++          webpush: {
++            enabled: false,
++            embedPoster: true,
++            options: {},
++          },
++          gotify: {
++            enabled: false,
++            embedPoster: false,
++            types: 0,
++            options: {
++              url: '',
++              token: '',
++              priority: 0,
++              locale: 'en',
++            },
++          },
++          ntfy: {
++            enabled: false,
++            embedPoster: true,
++            types: 0,
++            options: {
++              url: '',
++              topic: '',
++              tags: '',
++              priority: 3,
++              locale: 'en',
++            },
++          },
++        },
++      },
++      jobs: {
++        'plex-recently-added-scan': {
++          schedule: '0 */5 * * * *',
++        },
++        'plex-full-scan': {
++          schedule: '0 0 3 * * *',
++        },
++        'plex-watchlist-sync': {
++          schedule: '0 */3 * * * *',
++        },
++        'plex-refresh-token': {
++          schedule: '0 0 5 * * *',
++        },
++        'radarr-scan': {
++          schedule: '0 0 4 * * *',
++        },
++        'sonarr-scan': {
++          schedule: '0 30 4 * * *',
++        },
++        'availability-sync': {
++          schedule: '0 0 5 * * *',
++        },
++        'download-sync': {
++          schedule: '0 * * * * *',
++        },
++        'download-sync-reset': {
++          schedule: '0 0 1 * * *',
++        },
++        'jellyfin-recently-added-scan': {
++          schedule: '0 */5 * * * *',
++        },
++        'jellyfin-full-scan': {
++          schedule: '0 0 3 * * *',
++        },
++        'image-cache-cleanup': {
++          schedule: '0 0 5 * * *',
++        },
++        'process-blocklisted-tags': {
++          schedule: '0 30 1 */7 * *',
++        },
++      },
++      network: {
++        csrfProtection: false,
++        forceIpv4First: false,
++        trustProxy: false,
++        proxy: {
++          enabled: false,
++          hostname: '',
++          port: 8080,
++          useSsl: false,
++          user: '',
++          password: '',
++          bypassFilter: '',
++          bypassLocalAddresses: true,
++        },
++        dnsCache: {
++          enabled: false,
++          forceMinTtl: 0,
++          forceMaxTtl: -1,
++        },
++        apiRequestTimeout: 10000,
++      },
++      migrations: [],
++    };
++  }
+ }
+ 
+ let settings: Settings | undefined;
+diff --git a/server/migration/postgres/1742858617989-AddLinkedAccount.ts b/server/migration/postgres/1742858617989-AddLinkedAccount.ts
+new file mode 100644
+index 00000000..dfb7567a
+--- /dev/null
++++ b/server/migration/postgres/1742858617989-AddLinkedAccount.ts
+@@ -0,0 +1,33 @@
++import type { MigrationInterface, QueryRunner } from 'typeorm';
++
++export class AddLinkedAccount1742858617989 implements MigrationInterface {
++  name = 'AddLinkedAccount1742858617989';
++
++  public async up(queryRunner: QueryRunner): Promise<void> {
++    await queryRunner.query(
++      `CREATE TABLE "linked_accounts" ("id" SERIAL NOT NULL, "provider" character varying(255) NOT NULL, "sub" character varying(255) NOT NULL, "username" character varying NOT NULL, "userId" integer, CONSTRAINT "PK_445bf7a50aeeb7f0084052935a6" PRIMARY KEY ("id"))`
++    );
++    await queryRunner.query(
++      `ALTER TABLE "linked_accounts" ADD CONSTRAINT "FK_2c77d2a0c06eeab6e62dc35af64" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE NO ACTION`
++    );
++    await queryRunner.query(
++      `CREATE INDEX "IDX_2c77d2a0c06eeab6e62dc35af6" ON "linked_accounts" ("userId") `
++    );
++    await queryRunner.query(
++      `CREATE UNIQUE INDEX "IDX_linked_accounts_provider_sub" ON "linked_accounts" ("provider", "sub") `
++    );
++  }
++
++  public async down(queryRunner: QueryRunner): Promise<void> {
++    await queryRunner.query(
++      `DROP INDEX "public"."IDX_linked_accounts_provider_sub"`
++    );
++    await queryRunner.query(
++      `DROP INDEX "public"."IDX_2c77d2a0c06eeab6e62dc35af6"`
++    );
++    await queryRunner.query(
++      `ALTER TABLE "linked_accounts" DROP CONSTRAINT "FK_2c77d2a0c06eeab6e62dc35af64"`
++    );
++    await queryRunner.query(`DROP TABLE "linked_accounts"`);
++  }
++}
+diff --git a/server/migration/sqlite/1742858484395-AddLinkedAccounts.ts b/server/migration/sqlite/1742858484395-AddLinkedAccounts.ts
+new file mode 100644
+index 00000000..38b3dc37
+--- /dev/null
++++ b/server/migration/sqlite/1742858484395-AddLinkedAccounts.ts
+@@ -0,0 +1,23 @@
++import type { MigrationInterface, QueryRunner } from 'typeorm';
++
++export class AddLinkedAccounts1742858484395 implements MigrationInterface {
++  name = 'AddLinkedAccounts1742858484395';
++
++  public async up(queryRunner: QueryRunner): Promise<void> {
++    await queryRunner.query(
++      `CREATE TABLE "linked_accounts" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL, "provider" varchar(255) NOT NULL, "sub" varchar(255) NOT NULL, "username" varchar NOT NULL, "userId" integer, CONSTRAINT "FK_2c77d2a0c06eeab6e62dc35af64" FOREIGN KEY ("userId") REFERENCES "user" ("id") ON DELETE CASCADE ON UPDATE NO ACTION)`
++    );
++    await queryRunner.query(
++      `CREATE INDEX "IDX_2c77d2a0c06eeab6e62dc35af6" ON "linked_accounts" ("userId") `
++    );
++    await queryRunner.query(
++      `CREATE UNIQUE INDEX "IDX_linked_accounts_provider_sub" ON "linked_accounts" ("provider", "sub") `
++    );
++  }
++
++  public async down(queryRunner: QueryRunner): Promise<void> {
++    await queryRunner.query(`DROP INDEX "IDX_linked_accounts_provider_sub"`);
++    await queryRunner.query(`DROP INDEX "IDX_2c77d2a0c06eeab6e62dc35af6"`);
++    await queryRunner.query(`DROP TABLE "linked_accounts"`);
++  }
++}
+diff --git a/server/routes/auth.test.ts b/server/routes/auth.test.ts
+index d787165c..2ad0b6aa 100644
+--- a/server/routes/auth.test.ts
++++ b/server/routes/auth.test.ts
+@@ -1,11 +1,20 @@
+ import assert from 'node:assert/strict';
+-import { before, beforeEach, describe, it, mock } from 'node:test';
++import {
++  after,
++  afterEach,
++  before,
++  beforeEach,
++  describe,
++  it,
++  mock,
++} from 'node:test';
+ 
+ import JellyfinAPI from '@server/api/jellyfin';
+ import { ApiErrorCode } from '@server/constants/error';
+ import { MediaServerType } from '@server/constants/server';
+ import { UserType } from '@server/constants/user';
+ import { getRepository } from '@server/datasource';
++import { LinkedAccount } from '@server/entity/LinkedAccount';
+ import { User } from '@server/entity/User';
+ import PreparedEmail from '@server/lib/email';
+ import ImageProxy from '@server/lib/imageproxy';
+@@ -19,9 +28,11 @@ import {
+ } from '@server/test/userSettings';
+ import { ApiError } from '@server/types/error';
+ import axios from 'axios';
++import cookieParser from 'cookie-parser';
+ import type { Express } from 'express';
+ import express from 'express';
+ import session from 'express-session';
++import fetchMock from 'fetch-mock';
+ import request from 'supertest';
+ import authRoutes from './auth';
+ 
+@@ -109,6 +120,7 @@ let app: Express;
+ function createApp() {
+   const app = express();
+   app.use(express.json());
++  app.use(cookieParser('SECRET'));
+   app.use(
+     session({
+       secret: 'test-secret',
+@@ -118,19 +130,21 @@ function createApp() {
+   );
+   app.use(checkUser);
+   app.use('/auth', authRoutes);
+-  // Error handler matching how next({ status, message }) calls are handled
++  // Error handler matching how next({ status, error, message }) calls are handled
+   app.use(
+     (
+-      err: { status?: number; message?: string },
++      err: { status?: number; error?: string; message?: string },
+       _req: express.Request,
+       res: express.Response,
+       // We must provide a next function for the function signature here even though its not used
+       // eslint-disable-next-line @typescript-eslint/no-unused-vars
+       _next: express.NextFunction
+     ) => {
+-      res
+-        .status(err.status ?? 500)
+-        .json({ status: err.status ?? 500, message: err.message });
++      res.status(err.status ?? 500).json({
++        status: err.status ?? 500,
++        error: err.error,
++        message: err.message,
++      });
+     }
+   );
+   return app;
+@@ -140,6 +154,10 @@ before(async () => {
+   app = createApp();
+ });
+ 
++afterEach(() => {
++  getSettings().reset();
++});
++
+ setupTestDb();
+ 
+ /** Create a supertest agent that is logged in as the given user. */
+@@ -927,3 +945,417 @@ describe('POST /auth/reset-password/:guid', () => {
+     assert.strictEqual(second.status, 500);
+   });
+ });
++
++describe('OpenID Connect', () => {
++  const OIDC_REDIRECT_URL = 'https://jellyseerr.example.com/login';
++
++  // Default claims for new user registration tests
++  const DEFAULT_CLAIMS = {
++    sub: 'new-user-sub',
++    email: 'newuser@example.com',
++  };
++
++  // Claims for existing seeded user (demo@seerr.dev)
++  const EXISTING_USER_CLAIMS = {
++    sub: 'friend-oidc-sub',
++    email: 'demo@seerr.dev',
++  };
++
++  function buildMockWellKnown(options?: { supportsPKCE?: boolean }) {
++    return {
++      issuer: 'https://example.com',
++      authorization_endpoint: 'https://example.com/oauth/authorize',
++      token_endpoint: 'https://example.com/oauth/token',
++      userinfo_endpoint: 'https://example.com/userinfo',
++      jwks_uri: 'https://example.com/.well-known/jwks.json',
++      response_types_supported: [
++        'code',
++        'token',
++        'id_token',
++        'code token',
++        'code id_token',
++        'token id_token',
++        'code token id_token',
++        'none',
++      ],
++      subject_types_supported: ['public'],
++      id_token_signing_alg_values_supported: ['RS256'],
++      scopes_supported: ['openid', 'email', 'profile'],
++      ...(options?.supportsPKCE
++        ? { code_challenge_methods_supported: ['S256'] }
++        : {}),
++    };
++  }
++
++  /**
++   * Performs the login + callback flow and returns the callback response.
++   */
++  async function performOidcCallback() {
++    const loginResponse = await request(app)
++      .get('/auth/oidc/login/test')
++      .set('Accept', 'application/json');
++
++    assert.strictEqual(loginResponse.status, 200);
++
++    const redirectUrl = new URL(loginResponse.body.redirectUrl);
++    const state = redirectUrl.searchParams.get('state');
++
++    const cookies = loginResponse.get('Set-Cookie');
++    assert.notStrictEqual(cookies, undefined);
++    const cookieHeader = cookies!.map((c) => c.split(';')[0]).join('; ');
++
++    const callbackUrl = new URL(OIDC_REDIRECT_URL);
++    callbackUrl.searchParams.set('code', '123456');
++    if (state) callbackUrl.searchParams.set('state', state);
++
++    const response = await request(app)
++      .post('/auth/oidc/callback/test')
++      .set('Accept', 'application/json')
++      .set('Cookie', cookieHeader)
++      .send({ callbackUrl: callbackUrl.toString() });
++
++    return response;
++  }
++
++  let mockJwks: { keys: object[] };
++  let signIdToken: (claims?: Record<string, unknown>) => Promise<string>;
++
++  before(async () => {
++    const { generateKeyPair, exportJWK, SignJWT } = await import('jose');
++    const { privateKey, publicKey } = await generateKeyPair('RS256');
++    const jwk = await exportJWK(publicKey);
++    jwk.kid = 'test-key';
++    jwk.alg = 'RS256';
++    jwk.use = 'sig';
++    mockJwks = { keys: [jwk] };
++
++    signIdToken = (claims?: Record<string, unknown>) =>
++      new SignJWT({ ...DEFAULT_CLAIMS, ...claims })
++        .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
++        .setIssuer('https://example.com')
++        .setAudience('jellyseerr')
++        .setIssuedAt()
++        .setExpirationTime('1h')
++        .sign(privateKey);
++  });
++
++  beforeEach(() => {
++    // configure test provider settings
++    getSettings().load({
++      main: {
++        oidcLogin: true,
++        applicationUrl: new URL(OIDC_REDIRECT_URL).origin,
++      },
++      oidc: {
++        providers: [
++          {
++            slug: 'test',
++            name: 'Test Provider',
++            clientId: 'jellyseerr',
++            clientSecret: 'abcdefg',
++            issuerUrl: 'https://example.com',
++            newUserLogin: true,
++          },
++        ],
++      },
++    });
++  });
++
++  async function setupFetchMock(options?: {
++    supportsPKCE?: boolean;
++    userinfoResponse?: Record<string, unknown>;
++    idTokenClaims?: Record<string, unknown>;
++  }) {
++    const wellKnown = buildMockWellKnown(options);
++    const userinfo = options?.userinfoResponse ?? DEFAULT_CLAIMS;
++    const idTokenClaims = options?.idTokenClaims;
++    const idToken = await signIdToken(idTokenClaims);
++    const tokenResponse = {
++      access_token: 'abcdefg',
++      token_type: 'Bearer',
++      expires_in: 3600,
++      id_token: idToken,
++    };
++
++    fetchMock.mockGlobal();
++
++    fetchMock.route(
++      'https://example.com/.well-known/openid-configuration',
++      wellKnown
++    );
++    fetchMock.route('https://example.com/.well-known/jwks.json', mockJwks);
++    fetchMock.route('https://example.com/oauth/token', tokenResponse);
++    fetchMock.route('https://example.com/userinfo', userinfo);
++  }
++
++  describe('without PKCE support (uses state)', function () {
++    before(async () => {
++      await setupFetchMock({ supportsPKCE: false });
++    });
++
++    after(() => {
++      fetchMock.hardReset();
++    });
++
++    it('login endpoint produces correct redirect URL', async function () {
++      const response = await request(app)
++        .get('/auth/oidc/login/test')
++        .set('Accept', 'application/json');
++
++      assert.match(response.headers['content-type'], /json/);
++      assert.strictEqual(response.status, 200);
++      assert.match(
++        response.body.redirectUrl,
++        /^https:\/\/example.com\/oauth\/authorize\?/
++      );
++
++      const params = new URL(response.body.redirectUrl);
++      assert.strictEqual(params.searchParams.get('response_type'), 'code');
++      assert.strictEqual(params.searchParams.get('client_id'), 'jellyseerr');
++      assert.strictEqual(
++        params.searchParams.get('scope'),
++        'openid profile email'
++      );
++      assert.strictEqual(
++        params.searchParams.get('redirect_uri'),
++        OIDC_REDIRECT_URL
++      );
++      assert.ok(params.searchParams.get('state'));
++    });
++
++    it('callback endpoint successfully authorizes existing user', async function () {
++      // Link the seeded friend user to the OIDC provider
++      const userRepo = getRepository(User);
++      const linkedAccountRepo = getRepository(LinkedAccount);
++
++      const user = await userRepo.findOneOrFail({
++        where: { email: 'demo@seerr.dev' },
++      });
++
++      const linkedAccount = new LinkedAccount({
++        user,
++        provider: 'test',
++        sub: EXISTING_USER_CLAIMS.sub,
++        username: 'friend',
++      });
++      await linkedAccountRepo.save(linkedAccount);
++
++      // Setup mock to return the existing user's claims
++      await setupFetchMock({
++        supportsPKCE: false,
++        idTokenClaims: EXISTING_USER_CLAIMS,
++        userinfoResponse: EXISTING_USER_CLAIMS,
++      });
++
++      const response = await performOidcCallback();
++
++      assert.strictEqual(response.status, 204);
++    });
++  });
++
++  describe('with PKCE support (uses state and PKCE)', function () {
++    before(async () => {
++      await setupFetchMock({ supportsPKCE: true });
++    });
++
++    after(() => {
++      fetchMock.hardReset();
++    });
++
++    it('login endpoint includes both state and PKCE parameters', async function () {
++      const response = await request(app)
++        .get('/auth/oidc/login/test')
++        .set('Accept', 'application/json');
++
++      assert.strictEqual(response.status, 200);
++
++      const params = new URL(response.body.redirectUrl);
++      assert.ok(params.searchParams.get('state'));
++      assert.ok(params.searchParams.get('code_challenge'));
++      assert.strictEqual(
++        params.searchParams.get('code_challenge_method'),
++        'S256'
++      );
++    });
++
++    it('callback endpoint successfully authorizes existing user', async function () {
++      // Link the seeded friend user to the OIDC provider
++      const userRepo = getRepository(User);
++      const linkedAccountRepo = getRepository(LinkedAccount);
++
++      const user = await userRepo.findOneOrFail({
++        where: { email: 'demo@seerr.dev' },
++      });
++
++      const linkedAccount = new LinkedAccount({
++        user,
++        provider: 'test',
++        sub: EXISTING_USER_CLAIMS.sub,
++        username: 'friend',
++      });
++      await linkedAccountRepo.save(linkedAccount);
++
++      // Setup mock to return the existing user's claims
++      await setupFetchMock({
++        supportsPKCE: true,
++        idTokenClaims: EXISTING_USER_CLAIMS,
++        userinfoResponse: EXISTING_USER_CLAIMS,
++      });
++
++      const response = await performOidcCallback();
++
++      assert.strictEqual(response.status, 204);
++    });
++  });
++
++  describe('new user registration', function () {
++    before(async () => {
++      await setupFetchMock({ supportsPKCE: false });
++    });
++
++    after(() => {
++      fetchMock.hardReset();
++    });
++
++    it('creates a new user when newUserLogin is enabled', async function () {
++      const settings = getSettings();
++      settings.oidc.providers[0].newUserLogin = true;
++
++      const response = await performOidcCallback();
++
++      assert.strictEqual(response.status, 204);
++
++      // Verify user was created in the database
++      const userRepo = getRepository(User);
++      const createdUser = await userRepo.findOne({
++        where: { email: DEFAULT_CLAIMS.email },
++      });
++      assert.notStrictEqual(createdUser, null);
++      assert.strictEqual(createdUser!.email, DEFAULT_CLAIMS.email);
++
++      // Verify linked account was created
++      const linkedAccountRepo = getRepository(LinkedAccount);
++      const createdLink = await linkedAccountRepo.findOne({
++        where: { provider: 'test', sub: DEFAULT_CLAIMS.sub },
++      });
++      assert.notStrictEqual(createdLink, null);
++    });
++
++    it('rejects new user when newUserLogin is disabled', async function () {
++      const settings = getSettings();
++      settings.oidc.providers[0].newUserLogin = false;
++
++      const response = await performOidcCallback();
++
++      assert.strictEqual(response.status, 403);
++      assert.strictEqual(response.body.error, ApiErrorCode.Unauthorized);
++
++      // Verify no new user was created (only seeded users should exist)
++      const userRepo = getRepository(User);
++      const newUser = await userRepo.findOne({
++        where: { email: DEFAULT_CLAIMS.email },
++      });
++      assert.strictEqual(newUser, null);
++    });
++
++    it('rejects new user when email is missing', async function () {
++      fetchMock.hardReset();
++
++      const settings = getSettings();
++      settings.oidc.providers[0].newUserLogin = true;
++
++      // Setup mock without email in claims (explicitly set email to undefined to override DEFAULT_CLAIMS)
++      await setupFetchMock({
++        supportsPKCE: false,
++        idTokenClaims: { sub: 'no-email-sub', email: undefined },
++        userinfoResponse: { sub: 'no-email-sub' },
++      });
++
++      const response = await performOidcCallback();
++
++      assert.strictEqual(response.status, 400);
++      assert.strictEqual(response.body.error, ApiErrorCode.OidcMissingEmail);
++    });
++  });
++
++  describe('error handling', function () {
++    it('returns Unauthorized when OIDC login is disabled', async function () {
++      const settings = getSettings();
++      settings.main.oidcLogin = false;
++
++      const response = await request(app)
++        .get('/auth/oidc/login/test')
++        .set('Accept', 'application/json');
++
++      assert.strictEqual(response.status, 403);
++      assert.strictEqual(response.body.error, ApiErrorCode.Unauthorized);
++    });
++
++    it('returns Unauthorized for unknown provider', async function () {
++      const response = await request(app)
++        .get('/auth/oidc/login/unknown-provider')
++        .set('Accept', 'application/json');
++
++      assert.strictEqual(response.status, 403);
++      assert.strictEqual(response.body.error, ApiErrorCode.Unauthorized);
++    });
++
++    it('rejects callback when correlation cookies are missing', async function () {
++      await setupFetchMock();
++
++      const callbackUrl = new URL(OIDC_REDIRECT_URL);
++      callbackUrl.searchParams.set('code', '123456');
++      callbackUrl.searchParams.set('state', 'somestate');
++
++      // Send callback with no signed cookies at all
++      const response = await request(app)
++        .post('/auth/oidc/callback/test')
++        .set('Accept', 'application/json')
++        .send({ callbackUrl: callbackUrl.toString() });
++
++      assert.strictEqual(response.status, 400);
++      assert.strictEqual(
++        response.body.error,
++        ApiErrorCode.OidcAuthorizationFailed
++      );
++    });
++
++    it('rejects callback when only one correlation cookie is present', async function () {
++      await setupFetchMock();
++
++      // Perform login to get only the state cookie
++      const loginResponse = await request(app)
++        .get('/auth/oidc/login/test')
++        .set('Accept', 'application/json');
++
++      assert.strictEqual(loginResponse.status, 200);
++
++      const redirectUrl = new URL(loginResponse.body.redirectUrl);
++      const state = redirectUrl.searchParams.get('state');
++
++      // Extract only the state cookie, dropping the PKCE verifier cookie
++      const cookies = loginResponse.get('Set-Cookie');
++      assert.notStrictEqual(cookies, undefined);
++      const stateCookieOnly = cookies!
++        .filter((c) => c.includes('oidc-state'))
++        .map((c) => c.split(';')[0])
++        .join('; ');
++
++      const callbackUrl = new URL(OIDC_REDIRECT_URL);
++      callbackUrl.searchParams.set('code', '123456');
++      if (state) callbackUrl.searchParams.set('state', state);
++
++      const response = await request(app)
++        .post('/auth/oidc/callback/test')
++        .set('Accept', 'application/json')
++        .set('Cookie', stateCookieOnly)
++        .send({ callbackUrl: callbackUrl.toString() });
++
++      assert.strictEqual(response.status, 400);
++      assert.strictEqual(
++        response.body.error,
++        ApiErrorCode.OidcAuthorizationFailed
++      );
++    });
++  });
++});
+diff --git a/server/routes/auth.ts b/server/routes/auth.ts
+index f7185e2b..c1461678 100644
+--- a/server/routes/auth.ts
++++ b/server/routes/auth.ts
+@@ -4,6 +4,7 @@ import { ApiErrorCode } from '@server/constants/error';
+ import { MediaServerType, ServerType } from '@server/constants/server';
+ import { UserType } from '@server/constants/user';
+ import { getRepository } from '@server/datasource';
++import { LinkedAccount } from '@server/entity/LinkedAccount';
+ import { User } from '@server/entity/User';
+ import { startJobs } from '@server/job/schedule';
+ import { Permission } from '@server/lib/permissions';
+@@ -15,8 +16,10 @@ import { ApiError } from '@server/types/error';
+ import { getAppVersion } from '@server/utils/appVersion';
+ import { getHostname } from '@server/utils/getHostname';
+ import axios from 'axios';
+-import { Router } from 'express';
++import { Router, type Request } from 'express';
++import gravatarUrl from 'gravatar-url';
+ import net from 'net';
++import * as openIdClient from 'openid-client';
+ import validator from 'validator';
+ import { z } from 'zod';
+ 
+@@ -911,6 +914,374 @@ authRoutes.post('/local', async (req, res, next) => {
+   }
+ });
+ 
++const getOidcRedirectUrl = (req: Request) => {
++  const returnUrl =
++    typeof req.query.returnUrl === 'string' ? req.query.returnUrl : '/login';
++  return new URL(
++    returnUrl,
++    getSettings().main.applicationUrl || `${req.protocol}://${req.headers.host}`
++  );
++};
++
++const OIDC_STATE_KEY = 'oidc-state';
++const OIDC_CODE_VERIFIER_KEY = 'oidc-code-verifier';
++
++authRoutes.get('/oidc/login/:slug', async (req, res, next) => {
++  const settings = getSettings();
++  const provider = settings.oidc.providers.find(
++    (p) => p.slug === req.params.slug
++  );
++
++  if (!settings.main.oidcLogin || !provider) {
++    return next({
++      status: 403,
++      error: ApiErrorCode.Unauthorized,
++    });
++  }
++
++  let config: openIdClient.Configuration;
++  try {
++    config = await openIdClient.discovery(
++      new URL(provider.issuerUrl),
++      provider.clientId,
++      provider.clientSecret,
++      undefined,
++      {
++        execute:
++          process.env.OIDC_ALLOW_INSECURE === 'true'
++            ? [openIdClient.allowInsecureRequests]
++            : [],
++      }
++    );
++  } catch (error) {
++    logger.error('Failed OIDC provider discovery', {
++      label: 'Auth',
++      provider: provider.name,
++      ip: req.ip,
++      error: error instanceof Error ? error.message : 'Unknown error',
++    });
++    return next({
++      status: 500,
++      error: ApiErrorCode.OidcProviderDiscoveryFailed,
++    });
++  }
++
++  // Use of PKCE is backwards compatible even if the AS doesn't support it.
++  const code_verifier = openIdClient.randomPKCECodeVerifier();
++  const code_challenge =
++    await openIdClient.calculatePKCECodeChallenge(code_verifier);
++  res.cookie(OIDC_CODE_VERIFIER_KEY, code_verifier, {
++    httpOnly: true,
++    secure: req.protocol === 'https',
++    signed: true,
++    sameSite: 'strict',
++  });
++
++  const callbackUrl = getOidcRedirectUrl(req);
++
++  const parameters: Record<string, string> = {
++    redirect_uri: callbackUrl.toString(),
++    scope: provider.scopes ?? 'openid profile email',
++    code_challenge,
++    code_challenge_method: 'S256',
++  };
++
++  // State prevents CSRF attacks
++  const state = openIdClient.randomState();
++  parameters.state = state;
++  res.cookie(OIDC_STATE_KEY, state, {
++    httpOnly: true,
++    secure: req.protocol === 'https',
++    signed: true,
++    sameSite: 'strict',
++  });
++
++  let redirectUrl: URL;
++  try {
++    redirectUrl = openIdClient.buildAuthorizationUrl(config, parameters);
++  } catch (error) {
++    logger.error('Failed to build OIDC authorization URL', {
++      label: 'Auth',
++      provider: provider.name,
++      ip: req.ip,
++      error: error instanceof Error ? error.message : 'Unknown error',
++    });
++    return next({
++      status: 500,
++      error: ApiErrorCode.OidcAuthorizationFailed,
++    });
++  }
++
++  return res.status(200).json({
++    redirectUrl,
++  });
++});
++
++authRoutes.post(
++  '/oidc/callback/:slug',
++  async (
++    req: Request<{ slug: string }, never, { callbackUrl: string }>,
++    res,
++    next
++  ) => {
++    const settings = getSettings();
++    const provider = settings.oidc.providers.find(
++      (p) => p.slug === req.params.slug
++    );
++
++    if (!settings.main.oidcLogin || !provider) {
++      return next({
++        status: 403,
++        error: ApiErrorCode.Unauthorized,
++      });
++    }
++
++    let config: openIdClient.Configuration;
++    try {
++      config = await openIdClient.discovery(
++        new URL(provider.issuerUrl),
++        provider.clientId,
++        provider.clientSecret,
++        undefined,
++        {
++          execute:
++            process.env.OIDC_ALLOW_INSECURE === 'true'
++              ? [openIdClient.allowInsecureRequests]
++              : [],
++        }
++      );
++    } catch (error) {
++      logger.error('Failed OIDC provider discovery', {
++        label: 'Auth',
++        provider: provider.name,
++        ip: req.ip,
++        error: error instanceof Error ? error.message : 'Unknown error',
++      });
++      return next({
++        status: 500,
++        error: ApiErrorCode.OidcProviderDiscoveryFailed,
++      });
++    }
++
++    const pkceCodeVerifier: string | undefined =
++      req.signedCookies[OIDC_CODE_VERIFIER_KEY];
++    const expectedState: string | undefined = req.signedCookies[OIDC_STATE_KEY];
++
++    if (!pkceCodeVerifier || !expectedState) {
++      logger.warn('Rejected OIDC callback without correlation cookies', {
++        label: 'Auth',
++        provider: provider.slug,
++        ip: req.ip,
++      });
++      return next({
++        status: 400,
++        error: ApiErrorCode.OidcAuthorizationFailed,
++      });
++    }
++
++    res.clearCookie(OIDC_CODE_VERIFIER_KEY);
++    res.clearCookie(OIDC_STATE_KEY);
++
++    const redirectUrl = new URL(req.body.callbackUrl);
++
++    let tokens: openIdClient.TokenEndpointResponse &
++      openIdClient.TokenEndpointResponseHelpers;
++    try {
++      tokens = await openIdClient.authorizationCodeGrant(config, redirectUrl, {
++        pkceCodeVerifier,
++        expectedState,
++      });
++    } catch (error) {
++      logger.error('Failed OIDC authorization code grant', {
++        label: 'Auth',
++        provider: provider.name,
++        ip: req.ip,
++        error: error instanceof Error ? error.message : 'Unknown error',
++      });
++      return next({
++        status: 500,
++        error: ApiErrorCode.OidcAuthorizationFailed,
++      });
++    }
++
++    const claims = tokens.claims();
++    if (claims == null) {
++      logger.info('Failed OIDC login attempt', {
++        cause:
++          'Missing ID token in response. Provider does not support OpenID Connect.',
++        ip: req.ip,
++        provider: provider.name,
++      });
++
++      return next({
++        status: 500,
++        error: ApiErrorCode.OidcAuthorizationFailed,
++      });
++    }
++
++    const requiredClaims = (provider.requiredClaims ?? '')
++      .split(' ')
++      .filter((s) => !!s);
++
++    let fullUserInfo: openIdClient.IDToken & openIdClient.UserInfoResponse =
++      claims;
++
++    if (config.serverMetadata().userinfo_endpoint) {
++      try {
++        const userInfo = await openIdClient.fetchUserInfo(
++          config,
++          tokens.access_token,
++          claims.sub
++        );
++        fullUserInfo = { ...claims, ...userInfo };
++      } catch (error) {
++        logger.error('Failed to fetch OIDC user info', {
++          label: 'Auth',
++          provider: provider.name,
++          ip: req.ip,
++          error: error instanceof Error ? error.message : 'Unknown error',
++        });
++        return next({
++          status: 500,
++          error: ApiErrorCode.OidcAuthorizationFailed,
++        });
++      }
++    }
++
++    // Validate that user meets required claims
++    const hasRequiredClaims = requiredClaims.every((claim) => {
++      const value = fullUserInfo[claim];
++      return value === true;
++    });
++
++    if (!hasRequiredClaims) {
++      logger.info('Failed OIDC login attempt', {
++        cause: 'Failed to validate required claims',
++        ip: req.ip,
++        requiredClaims: provider.requiredClaims,
++      });
++      return next({
++        status: 403,
++        error: ApiErrorCode.Unauthorized,
++      });
++    }
++
++    // Map identifier to linked account
++    const userRepository = getRepository(User);
++    const linkedAccountsRepository = getRepository(LinkedAccount);
++
++    const linkedAccount = await linkedAccountsRepository.findOne({
++      relations: {
++        user: true,
++      },
++      where: {
++        provider: provider.slug,
++        sub: fullUserInfo.sub,
++      },
++    });
++    let user = linkedAccount?.user;
++
++    // If there is already a user logged in, handle account linking
++    if (req.user != null) {
++      // Check if this OIDC account is already linked to a different user
++      if (linkedAccount != null && linkedAccount.user.id !== req.user.id) {
++        logger.warn('Failed OIDC account linking attempt', {
++          cause: 'Account is already linked to a different user',
++          ip: req.ip,
++          provider: provider.slug,
++          currentUserId: req.user.id,
++          linkedUserId: linkedAccount.user.id,
++        });
++        return next({
++          status: 409,
++          error: ApiErrorCode.OidcAccountAlreadyLinked,
++        });
++      }
++
++      // If no linked account exists, link the account
++      if (linkedAccount == null) {
++        const newLinkedAccount = new LinkedAccount({
++          user: req.user,
++          provider: provider.slug,
++          sub: fullUserInfo.sub,
++          username: fullUserInfo.preferred_username ?? req.user.displayName,
++        });
++
++        await linkedAccountsRepository.save(newLinkedAccount);
++      }
++
++      return res.sendStatus(204);
++    }
++
++    // Create user if one doesn't already exist
++    if (!user && fullUserInfo.email != null && provider.newUserLogin) {
++      const normalizedEmail = fullUserInfo.email.trim().toLowerCase();
++
++      // Check if a user with this email already exists
++      const existingUser = await userRepository.findOne({
++        where: { email: normalizedEmail },
++      });
++
++      if (existingUser) {
++        return next({
++          status: 403,
++          error: ApiErrorCode.Unauthorized,
++        });
++      }
++
++      logger.info(`Creating user for ${normalizedEmail}`, {
++        ip: req.ip,
++        email: normalizedEmail,
++      });
++
++      const avatar =
++        fullUserInfo.picture ??
++        gravatarUrl(normalizedEmail, { default: 'mm', size: 200 });
++
++      user = new User({
++        avatar: avatar,
++        username: fullUserInfo.preferred_username,
++        email: normalizedEmail,
++        permissions: settings.main.defaultPermissions,
++        plexToken: '',
++        userType: UserType.LOCAL,
++      });
++
++      const linkedAccount = new LinkedAccount({
++        user,
++        provider: provider.slug,
++        sub: fullUserInfo.sub,
++        username: fullUserInfo.preferred_username ?? fullUserInfo.email,
++      });
++
++      user.linkedAccounts = [linkedAccount];
++      await userRepository.save(user);
++    }
++
++    if (!user) {
++      logger.debug('Failed OIDC sign-up attempt', {
++        cause: provider.newUserLogin
++          ? 'User did not have an account, and was missing an associated email address.'
++          : 'User did not have an account, and new user login was disabled.',
++      });
++      return next({
++        status: provider.newUserLogin ? 400 : 403,
++        error: provider.newUserLogin
++          ? ApiErrorCode.OidcMissingEmail
++          : ApiErrorCode.Unauthorized,
++      });
++    }
++
++    // Set logged in session and return
++    if (req.session) {
++      req.session.userId = user.id;
++    }
++
++    // Success!
++    return res.sendStatus(204);
++  }
++);
++
+ authRoutes.post('/logout', async (req, res, next) => {
+   try {
+     const userId = req.session?.userId;
+diff --git a/server/routes/user/usersettings.test.ts b/server/routes/user/usersettings.test.ts
+index f624c8fd..95185ed5 100644
+--- a/server/routes/user/usersettings.test.ts
++++ b/server/routes/user/usersettings.test.ts
+@@ -5,6 +5,7 @@ import JellyfinAPI from '@server/api/jellyfin';
+ import { MediaServerType } from '@server/constants/server';
+ import { UserType } from '@server/constants/user';
+ import { getRepository } from '@server/datasource';
++import { LinkedAccount } from '@server/entity/LinkedAccount';
+ import { User } from '@server/entity/User';
+ import { Permission } from '@server/lib/permissions';
+ import { getSettings } from '@server/lib/settings';
+@@ -252,3 +253,50 @@ describe('POST /user/:id/settings/password', () => {
+     assert.ok(await user.passwordMatch('reset12345'));
+   });
+ });
++
++describe('DELETE /user/:id/settings/linked-accounts/:acctId', () => {
++  async function linkAdmin() {
++    const { otherAdmin } = await seedManagerAndAdmin();
++    await otherAdmin.setPassword('admin21234');
++    await getRepository(User).save(otherAdmin);
++    const account = await getRepository(LinkedAccount).save(
++      new LinkedAccount({
++        user: otherAdmin,
++        provider: 'test',
++        sub: 'admin2-sub',
++        username: 'admin2',
++      })
++    );
++    return { otherAdmin, account };
++  }
++
++  it("stops a manager from unlinking an admin's account", async () => {
++    const { otherAdmin, account } = await linkAdmin();
++    const { agent } = await loginAs('demo@seerr.dev', 'test1234');
++
++    const res = await agent.delete(
++      `/user/${otherAdmin.id}/settings/linked-accounts/${account.id}`
++    );
++
++    assert.strictEqual(res.status, 403);
++    assert.ok(
++      await getRepository(LinkedAccount).exists({ where: { id: account.id } })
++    );
++  });
++
++  it("lets the owner unlink an admin's account", async () => {
++    const { otherAdmin, account } = await linkAdmin();
++    const { agent } = await loginAs('admin@seerr.dev', 'test1234');
++
++    const res = await agent.delete(
++      `/user/${otherAdmin.id}/settings/linked-accounts/${account.id}`
++    );
++
++    assert.strictEqual(res.status, 204);
++    assert.ok(
++      !(await getRepository(LinkedAccount).exists({
++        where: { id: account.id },
++      }))
++    );
++  });
++});
+diff --git a/server/routes/user/usersettings.ts b/server/routes/user/usersettings.ts
+index 0ecf3ea5..ba602461 100644
+--- a/server/routes/user/usersettings.ts
++++ b/server/routes/user/usersettings.ts
+@@ -4,10 +4,13 @@ import { ApiErrorCode } from '@server/constants/error';
+ import { MediaServerType } from '@server/constants/server';
+ import { UserType } from '@server/constants/user';
+ import { getRepository } from '@server/datasource';
++import { LinkedAccount } from '@server/entity/LinkedAccount';
+ import { User } from '@server/entity/User';
+ import { UserSettings } from '@server/entity/UserSettings';
+ import type {
+   UserSettingsGeneralResponse,
++  UserSettingsLinkedAccount,
++  UserSettingsLinkedAccountResponse,
+   UserSettingsNotificationsResponse,
+ } from '@server/interfaces/api/userSettingsInterfaces';
+ import { Permission } from '@server/lib/permissions';
+@@ -23,7 +26,7 @@ import {
+ } from '@server/utils/profileMiddleware';
+ import { Router } from 'express';
+ import net from 'net';
+-import { Not } from 'typeorm';
++import { Not, type FindOptionsWhere } from 'typeorm';
+ import { canMakePermissionsChange, canModifyUser } from '.';
+ 
+ const userSettingsRoutes = Router({ mergeParams: true });
+@@ -332,6 +335,7 @@ userSettingsRoutes.delete<{ id: string }>(
+       const user = await userRepository
+         .createQueryBuilder('user')
+         .addSelect('user.password')
++        .leftJoinAndSelect('user.linkedAccounts', 'linkedAccounts')
+         .where({
+           id: Number(req.params.id),
+         })
+@@ -354,9 +358,10 @@ userSettingsRoutes.delete<{ id: string }>(
+         });
+       }
+ 
+-      if (!user.email || !user.password) {
++      if (!user.password && user.getActiveLinkedAccounts().length === 0) {
+         return res.status(400).json({
+-          message: 'User does not have a local email or password set.',
++          message:
++            'User does not have a local password or other linked account.',
+         });
+       }
+ 
+@@ -492,6 +497,7 @@ userSettingsRoutes.delete<{ id: string }>(
+       const user = await userRepository
+         .createQueryBuilder('user')
+         .addSelect('user.password')
++        .leftJoinAndSelect('user.linkedAccounts', 'linkedAccounts')
+         .where({
+           id: Number(req.params.id),
+         })
+@@ -514,9 +520,10 @@ userSettingsRoutes.delete<{ id: string }>(
+         });
+       }
+ 
+-      if (!user.email || !user.password) {
++      if (!user.password && user.getActiveLinkedAccounts().length === 0) {
+         return res.status(400).json({
+-          message: 'User does not have a local email or password set.',
++          message:
++            'User does not have a local password or other linked account.',
+         });
+       }
+ 
+@@ -609,6 +616,101 @@ userSettingsRoutes.post<{ secret: string }>(
+   }
+ );
+ 
++userSettingsRoutes.get<{ id: string }, UserSettingsLinkedAccountResponse>(
++  '/linked-accounts',
++  isOwnProfileOrAdmin(),
++  async (req, res) => {
++    const settings = getSettings();
++    const userRepository = getRepository(User);
++
++    const user = await userRepository
++      .createQueryBuilder('user')
++      .leftJoinAndSelect('user.linkedAccounts', 'linkedAccounts')
++      .where({ id: Number(req.params.id) })
++      .getOne();
++
++    if (!user) {
++      return res.status(404).send();
++    }
++
++    const linkedAccountInfo = user.getActiveLinkedAccounts().map((acc) => {
++      const provider = settings.oidc.providers.find(
++        (p) => p.slug === acc.provider
++      )!;
++
++      return {
++        id: acc.id,
++        username: acc.username,
++        provider: {
++          slug: provider.slug,
++          name: provider.name,
++          logo: provider.logo,
++        },
++      } satisfies UserSettingsLinkedAccount;
++    });
++
++    return res.status(200).json(linkedAccountInfo);
++  }
++);
++
++userSettingsRoutes.delete<{ id: string; acctId: string }>(
++  '/linked-accounts/:acctId',
++  isOwnProfileOrAdmin(),
++  async (req, res) => {
++    const settings = getSettings();
++    const userRepository = getRepository(User);
++    const linkedAccountsRepository = getRepository(LinkedAccount);
++    const acctId = Number(req.params.acctId);
++
++    const user = await userRepository
++      .createQueryBuilder('user')
++      .addSelect('user.password')
++      .leftJoinAndSelect('user.linkedAccounts', 'linkedAccounts')
++      .where({ id: Number(req.params.id) })
++      .getOne();
++
++    if (!user) {
++      return res.status(404).send();
++    }
++
++    if (!canModifyUser(user, req.user)) {
++      return res.status(403).json({
++        message: "You do not have permission to modify this user's settings.",
++      });
++    }
++
++    const remainingOidcCount = user
++      .getActiveLinkedAccounts()
++      .filter((a) => a.id !== acctId).length;
++    const hasMediaServer =
++      (settings.main.mediaServerType === MediaServerType.PLEX &&
++        !!user.plexId) ||
++      ([MediaServerType.JELLYFIN, MediaServerType.EMBY].includes(
++        settings.main.mediaServerType
++      ) &&
++        !!user.jellyfinUserId);
++    if (!user.password && remainingOidcCount === 0 && !hasMediaServer) {
++      return res.status(400).json({
++        message: 'User does not have a local password or other linked account.',
++      });
++    }
++
++    const condition: FindOptionsWhere<LinkedAccount> = {
++      id: acctId,
++      user: {
++        id: Number(req.params.id),
++      },
++    };
++
++    if (await linkedAccountsRepository.exists({ where: condition })) {
++      await linkedAccountsRepository.delete(condition);
++      return res.status(204).send();
++    } else {
++      return res.status(404).send();
++    }
++  }
++);
++
+ userSettingsRoutes.get<{ id: string }, UserSettingsNotificationsResponse>(
+   '/notifications',
+   isOwnProfileOrAdmin(),
+diff --git a/server/test/index.mts b/server/test/index.mts
+index 2f6bf81c..492ebf08 100644
+--- a/server/test/index.mts
++++ b/server/test/index.mts
+@@ -88,6 +88,8 @@ const stream = run({
+     join(BASE_DIR, 'server/migration/**'),
+   ],
+   testNamePatterns: opts.testNamePattern,
++  // ensure test process doesn't hang when tests fail
++  forceExit: true,
+ });
+ 
+ // In CI, write a JUnit report to a file for use by GitHub
+diff --git a/src/components/Common/Button/index.tsx b/src/components/Common/Button/index.tsx
+index 757ec187..2b30df20 100644
+--- a/src/components/Common/Button/index.tsx
++++ b/src/components/Common/Button/index.tsx
+@@ -31,7 +31,7 @@ type BaseProps<P> = {
+   ) => void;
+ };
+ 
+-type ButtonProps<P extends React.ElementType> = {
++export type ButtonProps<P extends React.ElementType> = {
+   as?: P;
+ } & MergeElementProps<P, BaseProps<P>>;
+ 
+@@ -112,7 +112,7 @@ function Button<P extends ElementTypes = 'button'>(
+         {...(props as React.ComponentProps<'button'>)}
+         ref={ref as ForwardedRef<HTMLButtonElement>}
+       >
+-        <span className="flex items-center">{children}</span>
++        <span className="flex max-w-full items-center">{children}</span>
+       </button>
+     );
+   }
+diff --git a/src/components/Common/ButtonWithLoader/index.tsx b/src/components/Common/ButtonWithLoader/index.tsx
+new file mode 100644
+index 00000000..6e6c80ba
+--- /dev/null
++++ b/src/components/Common/ButtonWithLoader/index.tsx
+@@ -0,0 +1,36 @@
++import Button, { type ButtonProps } from '@app/components/Common/Button';
++import { SmallLoadingSpinner } from '@app/components/Common/LoadingSpinner';
++import { type PropsWithChildren } from 'react';
++import { twMerge } from 'tailwind-merge';
++
++export type ButtonWithLoaderProps = ButtonProps<'button'> &
++  PropsWithChildren<{
++    loading?: boolean;
++  }>;
++
++export default function ButtonWithLoader({
++  loading,
++  className,
++  disabled,
++  children,
++  ...buttonProps
++}: ButtonWithLoaderProps) {
++  return (
++    <Button
++      className={twMerge(
++        'relative bg-transparent disabled:opacity-50',
++        className
++      )}
++      disabled={loading || disabled}
++      {...buttonProps}
++    >
++      {loading && (
++        <div className="absolute right-0 mr-4 h-4 w-4">
++          <SmallLoadingSpinner />
++        </div>
++      )}
++
++      {children}
++    </Button>
++  );
++}
+diff --git a/src/components/Login/OidcLoginButton.tsx b/src/components/Login/OidcLoginButton.tsx
+new file mode 100644
+index 00000000..3f066644
+--- /dev/null
++++ b/src/components/Login/OidcLoginButton.tsx
+@@ -0,0 +1,91 @@
++import ButtonWithLoader from '@app/components/Common/ButtonWithLoader';
++import {
++  clearOidcProviderSlug,
++  getOidcErrorMessage,
++  getOidcProviderSlug,
++  initiateOidcLogin,
++  processOidcCallback,
++} from '@app/utils/oidc';
++import type { PublicOidcProvider } from '@server/lib/settings';
++import { useRouter } from 'next/router';
++import { useCallback, useEffect, useState } from 'react';
++import { useIntl } from 'react-intl';
++
++type OidcLoginButtonProps = {
++  provider: PublicOidcProvider;
++  onError?: (message: string) => void;
++};
++
++export default function OidcLoginButton({
++  provider,
++  onError,
++}: OidcLoginButtonProps) {
++  const intl = useIntl();
++  const router = useRouter();
++  const { query } = router;
++
++  const [loading, setLoading] = useState(false);
++
++  const redirectToLogin = useCallback(async () => {
++    setLoading(true);
++    try {
++      await initiateOidcLogin(
++        provider.slug,
++        new URL(window.location.pathname, window.location.origin).toString()
++      );
++    } catch (e) {
++      setLoading(false);
++      const errorCode = (e as { response?: { data?: { error?: string } } })
++        ?.response?.data?.error;
++      onError?.(getOidcErrorMessage(errorCode, provider.name, intl));
++    }
++  }, [provider, intl, onError]);
++
++  const handleCallback = useCallback(async () => {
++    setLoading(true);
++    const result = await processOidcCallback(provider.slug);
++    if (result.type === 'success') {
++      router.push('/');
++    } else {
++      router.replace('/login');
++      setLoading(false);
++      onError?.(getOidcErrorMessage(result.errorCode, provider.name, intl));
++    }
++  }, [provider, intl, onError, router]);
++
++  useEffect(
++    () => {
++      if (!router.isReady || loading) return;
++
++      // OIDC provider has redirected back with an authorization code or error
++      const isCallback = query.code != null || query.error != null;
++
++      if (isCallback && getOidcProviderSlug() === provider.slug) {
++        clearOidcProviderSlug();
++        handleCallback();
++      }
++      // Support direct redirect via ?provider=slug query param
++      else if (!isCallback && query.provider === provider.slug) {
++        redirectToLogin();
++      }
++    },
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++    [router.isReady]
++  );
++
++  return (
++    <ButtonWithLoader
++      loading={loading}
++      onClick={() => redirectToLogin()}
++      className="min-w-0 flex-grow"
++    >
++      {/* eslint-disable-next-line @next/next/no-img-element */}
++      <img
++        src={provider.logo || '/images/openid.svg'}
++        alt={provider.name}
++        className="mr-2 max-h-5 w-5"
++      />
++      <span className="min-w-0 truncate">{provider.name}</span>
++    </ButtonWithLoader>
++  );
++}
+diff --git a/src/components/Login/PlexLoginButton.tsx b/src/components/Login/PlexLoginButton.tsx
+index a048c1d7..70b5fc86 100644
+--- a/src/components/Login/PlexLoginButton.tsx
++++ b/src/components/Login/PlexLoginButton.tsx
+@@ -1,6 +1,5 @@
+ import PlexIcon from '@app/assets/services/plex.svg';
+-import Button from '@app/components/Common/Button';
+-import { SmallLoadingSpinner } from '@app/components/Common/LoadingSpinner';
++import ButtonWithLoader from '@app/components/Common/ButtonWithLoader';
+ import usePlexLogin from '@app/hooks/usePlexLogin';
+ import defineMessages from '@app/utils/defineMessages';
+ import { Fragment } from 'react';
+@@ -26,18 +25,12 @@ const PlexLoginButton = ({
+   const { loading, login } = usePlexLogin({ onAuthToken, onError });
+ 
+   return (
+-    <Button
+-      className="relative flex-1 border-[#cc7b19] bg-[rgba(204,123,25,0.3)] hover:border-[#cc7b19] hover:bg-[rgba(204,123,25,0.7)] disabled:opacity-50"
++    <ButtonWithLoader
++      className="min-w-0 flex-grow border-[#cc7b19] bg-[rgba(204,123,25,0.3)] hover:border-[#cc7b19] hover:bg-[rgba(204,123,25,0.7)]"
+       onClick={login}
+-      disabled={loading || isProcessing}
++      loading={loading || isProcessing}
+       data-testid="plex-login-button"
+     >
+-      {loading && (
+-        <div className="absolute right-0 mr-4 h-4 w-4">
+-          <SmallLoadingSpinner />
+-        </div>
+-      )}
+-
+       {large ? (
+         <FormattedMessage
+           {...messages.loginwithapp}
+@@ -60,7 +53,7 @@ const PlexLoginButton = ({
+       ) : (
+         <PlexIcon className="w-8" />
+       )}
+-    </Button>
++    </ButtonWithLoader>
+   );
+ };
+ 
+diff --git a/src/components/Login/index.tsx b/src/components/Login/index.tsx
+index 2c321490..2234d5cb 100644
+--- a/src/components/Login/index.tsx
++++ b/src/components/Login/index.tsx
+@@ -1,12 +1,13 @@
+ import EmbyLogo from '@app/assets/services/emby-icon-only.svg';
+ import JellyfinLogo from '@app/assets/services/jellyfin-icon.svg';
+ import PlexLogo from '@app/assets/services/plex.svg';
+-import Button from '@app/components/Common/Button';
++import ButtonWithLoader from '@app/components/Common/ButtonWithLoader';
+ import ImageFader from '@app/components/Common/ImageFader';
+ import PageTitle from '@app/components/Common/PageTitle';
+ import LanguagePicker from '@app/components/Layout/LanguagePicker';
+ import JellyfinLogin from '@app/components/Login/JellyfinLogin';
+ import LocalLogin from '@app/components/Login/LocalLogin';
++import OidcLoginButton from '@app/components/Login/OidcLoginButton';
+ import PlexLoginButton from '@app/components/Login/PlexLoginButton';
+ import useSettings from '@app/hooks/useSettings';
+ import { useUser } from '@app/hooks/useUser';
+@@ -121,10 +122,10 @@ const Login = () => {
+       ) : (
+         settings.currentSettings.localLogin &&
+         (mediaServerLogin ? (
+-          <Button
++          <ButtonWithLoader
+             key="seerr"
+             data-testid="seerr-login-button"
+-            className="flex-1 bg-transparent"
++            className="min-w-0 flex-grow"
+             onClick={() => setMediaServerLogin(false)}
+           >
+             {/* eslint-disable-next-line @next/next/no-img-element */}
+@@ -134,19 +135,26 @@ const Login = () => {
+               className="mr-2 h-5"
+             />
+             <span>{settings.currentSettings.applicationTitle}</span>
+-          </Button>
++          </ButtonWithLoader>
+         ) : (
+-          <Button
++          <ButtonWithLoader
+             key="mediaserver"
+             data-testid="mediaserver-login-button"
+-            className="flex-1 bg-transparent"
++            className="min-w-0 flex-grow"
+             onClick={() => setMediaServerLogin(true)}
+           >
+             <MediaServerLogo />
+             <span>{mediaServerName}</span>
+-          </Button>
++          </ButtonWithLoader>
+         ))
+       )),
++    ...settings.currentSettings.openIdProviders.map((provider) => (
++      <OidcLoginButton
++        key={provider.slug}
++        provider={provider}
++        onError={setError}
++      />
++    )),
+   ].filter((o): o is JSX.Element => !!o);
+ 
+   return (
+@@ -169,7 +177,7 @@ const Login = () => {
+       </div>
+       <div className="relative z-50 mt-8 sm:mx-auto sm:w-full sm:max-w-md">
+         <div
+-          className="bg-gray-800/50 shadow sm:rounded-lg"
++          className="overflow-hidden bg-gray-800/50 shadow sm:rounded-lg"
+           style={{ backdropFilter: 'blur(5px)' }}
+         >
+           <>
+@@ -183,7 +191,7 @@ const Login = () => {
+               leaveFrom="opacity-100"
+               leaveTo="opacity-0"
+             >
+-              <div className="mb-4 rounded-md bg-red-600 p-4">
++              <div className="bg-red-600 p-4">
+                 <div className="flex">
+                   <div className="flex-shrink-0">
+                     <XCircleIcon className="h-5 w-5 text-red-300" />
+@@ -197,39 +205,42 @@ const Login = () => {
+               </div>
+             </Transition>
+             <div className="px-10 py-8">
+-              <SwitchTransition mode="out-in">
+-                <CSSTransition
+-                  key={mediaServerLogin ? 'ms' : 'local'}
+-                  nodeRef={loginRef}
+-                  timeout={{ enter: 300, exit: 150 }}
+-                  onEntered={() => {
+-                    document
+-                      .querySelector<HTMLInputElement>('#email, #username')
+-                      ?.focus();
+-                  }}
+-                  classNames={{
+-                    enter: 'opacity-0',
+-                    enterActive: 'transition-opacity duration-300 opacity-100',
+-                    exit: 'opacity-100',
+-                    exitActive: 'transition-opacity duration-150 opacity-0',
+-                  }}
+-                >
+-                  <div ref={loginRef} className="button-container">
+-                    {isJellyfin &&
+-                    (mediaServerLogin ||
+-                      !settings.currentSettings.localLogin) ? (
+-                      <JellyfinLogin
+-                        serverType={settings.currentSettings.mediaServerType}
+-                        revalidate={revalidate}
+-                      />
+-                    ) : (
+-                      settings.currentSettings.localLogin && (
+-                        <LocalLogin revalidate={revalidate} />
+-                      )
+-                    )}
+-                  </div>
+-                </CSSTransition>
+-              </SwitchTransition>
++              {loginFormVisible && (
++                <SwitchTransition mode="out-in">
++                  <CSSTransition
++                    key={mediaServerLogin ? 'ms' : 'local'}
++                    nodeRef={loginRef}
++                    timeout={{ enter: 300, exit: 150 }}
++                    onEntered={() => {
++                      document
++                        .querySelector<HTMLInputElement>('#email, #username')
++                        ?.focus();
++                    }}
++                    classNames={{
++                      enter: 'opacity-0',
++                      enterActive:
++                        'transition-opacity duration-300 opacity-100',
++                      exit: 'opacity-100',
++                      exitActive: 'transition-opacity duration-150 opacity-0',
++                    }}
++                  >
++                    <div ref={loginRef} className="button-container">
++                      {isJellyfin &&
++                      (mediaServerLogin ||
++                        !settings.currentSettings.localLogin) ? (
++                        <JellyfinLogin
++                          serverType={settings.currentSettings.mediaServerType}
++                          revalidate={revalidate}
++                        />
++                      ) : (
++                        settings.currentSettings.localLogin && (
++                          <LocalLogin revalidate={revalidate} />
++                        )
++                      )}
++                    </div>
++                  </CSSTransition>
++                </SwitchTransition>
++              )}
+ 
+               {additionalLoginOptions.length > 0 &&
+                 (loginFormVisible ? (
+diff --git a/src/components/UserProfile/UserSettings/UserLinkedAccountsSettings/index.tsx b/src/components/UserProfile/UserSettings/UserLinkedAccountsSettings/index.tsx
+index d4b5365d..622dc08f 100644
+--- a/src/components/UserProfile/UserSettings/UserLinkedAccountsSettings/index.tsx
++++ b/src/components/UserProfile/UserSettings/UserLinkedAccountsSettings/index.tsx
+@@ -10,12 +10,23 @@ import useSettings from '@app/hooks/useSettings';
+ import { Permission, UserType, useUser } from '@app/hooks/useUser';
+ import globalMessages from '@app/i18n/globalMessages';
+ import defineMessages from '@app/utils/defineMessages';
++import {
++  clearOidcProviderSlug,
++  getOidcErrorMessage,
++  getOidcProviderSlug,
++  initiateOidcLogin,
++  processOidcCallback,
++} from '@app/utils/oidc';
+ import PlexOAuth from '@app/utils/plex';
+ import { TrashIcon } from '@heroicons/react/24/solid';
+ import { MediaServerType } from '@server/constants/server';
++import type {
++  UserSettingsLinkedAccount,
++  UserSettingsLinkedAccountResponse,
++} from '@server/interfaces/api/userSettingsInterfaces';
+ import axios from 'axios';
+ import { useRouter } from 'next/router';
+-import { useMemo, useState } from 'react';
++import { useEffect, useMemo, useState } from 'react';
+ import { useIntl } from 'react-intl';
+ import useSWR from 'swr';
+ import LinkJellyfinModal from './LinkJellyfinModal';
+@@ -43,12 +54,20 @@ enum LinkedAccountType {
+   Plex = 'Plex',
+   Jellyfin = 'Jellyfin',
+   Emby = 'Emby',
++  OpenIdConnect = 'oidc',
+ }
+ 
+-type LinkedAccount = {
+-  type: LinkedAccountType;
+-  username: string;
+-};
++type LinkedAccount =
++  | {
++      type:
++        | LinkedAccountType.Plex
++        | LinkedAccountType.Emby
++        | LinkedAccountType.Jellyfin;
++      username: string;
++    }
++  | ({
++      type: LinkedAccountType.OpenIdConnect;
++    } & UserSettingsLinkedAccount);
+ 
+ const UserLinkedAccountsSettings = () => {
+   const intl = useIntl();
+@@ -63,15 +82,53 @@ const UserLinkedAccountsSettings = () => {
+   const { data: passwordInfo } = useSWR<{ hasPassword: boolean }>(
+     user ? `/api/v1/user/${user?.id}/settings/password` : null
+   );
++  const { data: linkedOidcAccounts, mutate: revalidateLinkedAccounts } =
++    useSWR<UserSettingsLinkedAccountResponse>(
++      user ? `/api/v1/user/${user?.id}/settings/linked-accounts` : null
++    );
+   const [showJellyfinModal, setShowJellyfinModal] = useState(false);
+   const [showJellyfinQuickConnectModal, setShowJellyfinQuickConnectModal] =
+     useState(false);
+   const [error, setError] = useState<string | null>(null);
+ 
++  // Handle OIDC callback when the provider redirects back to this page
++  useEffect(() => {
++    if (!router.isReady) return;
++    const code = router.query.code;
++    const error = router.query.error;
++    const providerSlug = getOidcProviderSlug();
++    if (
++      (typeof code !== 'string' && typeof error !== 'string') ||
++      providerSlug == null
++    )
++      return;
++    clearOidcProviderSlug();
++
++    // Strip the OIDC params from the URL immediately
++    router.replace(router.pathname, undefined, { shallow: true });
++
++    processOidcCallback(providerSlug).then(async (result) => {
++      if (result.type === 'success') {
++        await revalidateLinkedAccounts();
++      } else {
++        const providerName =
++          settings.currentSettings.openIdProviders.find(
++            (p) => p.slug === providerSlug
++          )?.name ?? providerSlug;
++        setError(getOidcErrorMessage(result.errorCode, providerName, intl));
++      }
++    });
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [router.isReady]);
++
+   const applicationName = settings.currentSettings.applicationTitle;
+ 
+   const accounts: LinkedAccount[] = useMemo(() => {
+-    const accounts: LinkedAccount[] = [];
++    const accounts: LinkedAccount[] =
++      linkedOidcAccounts?.map((a) => ({
++        type: LinkedAccountType.OpenIdConnect,
++        ...a,
++      })) ?? [];
+     if (!user) return accounts;
+     if (user.userType === UserType.PLEX && user.plexUsername)
+       accounts.push({
+@@ -89,7 +146,7 @@ const UserLinkedAccountsSettings = () => {
+         username: user.jellyfinUsername,
+       });
+     return accounts;
+-  }, [user]);
++  }, [user, linkedOidcAccounts]);
+ 
+   const linkPlexAccount = async () => {
+     setError(null);
+@@ -143,6 +200,24 @@ const UserLinkedAccountsSettings = () => {
+         settings.currentSettings.mediaServerType !== MediaServerType.EMBY ||
+         accounts.some((a) => a.type === LinkedAccountType.Emby),
+     },
++    ...settings.currentSettings.openIdProviders.map((p) => ({
++      name: p.name,
++      action: async () => {
++        try {
++          await initiateOidcLogin(
++            p.slug,
++            new URL(window.location.pathname, window.location.origin).toString()
++          );
++        } catch {
++          setError(intl.formatMessage(messages.errorUnknown));
++        }
++      },
++      hide: accounts.some(
++        (a) =>
++          a.type === LinkedAccountType.OpenIdConnect &&
++          a.provider.slug === p.slug
++      ),
++    })),
+   ].filter((l) => !l.hide);
+ 
+   const deleteRequest = async (account: string) => {
+@@ -155,6 +230,7 @@ const UserLinkedAccountsSettings = () => {
+     }
+ 
+     await revalidateUser();
++    await revalidateLinkedAccounts();
+   };
+ 
+   if (
+@@ -177,7 +253,9 @@ const UserLinkedAccountsSettings = () => {
+     );
+   }
+ 
+-  const enableMediaServerUnlink = user?.id !== 1 && passwordInfo?.hasPassword;
++  const canUnlink = !!passwordInfo?.hasPassword || accounts.length > 1;
++  // primary admin cannot unlink their media server account
++  const canUnlinkMediaServer = canUnlink && user?.id !== 1;
+ 
+   return (
+     <>
+@@ -203,7 +281,7 @@ const UserLinkedAccountsSettings = () => {
+           <div>
+             <Dropdown text="Link Account" buttonType="ghost">
+               {linkable.map(({ name, action }) => (
+-                <Dropdown.Item key={name} onClick={action}>
++                <Dropdown.Item key={name} onClick={action} buttonType="ghost">
+                   {name}
+                 </Dropdown.Item>
+               ))}
+@@ -226,24 +304,38 @@ const UserLinkedAccountsSettings = () => {
+                   </div>
+                 ) : acct.type === LinkedAccountType.Emby ? (
+                   <EmbyLogo />
+-                ) : (
++                ) : acct.type === LinkedAccountType.Jellyfin ? (
+                   <JellyfinLogo />
+-                )}
++                ) : acct.type === LinkedAccountType.OpenIdConnect ? (
++                  // eslint-disable-next-line @next/next/no-img-element
++                  <img
++                    src={acct.provider.logo || '/images/openid.svg'}
++                    alt={acct.provider.name}
++                  />
++                ) : null}
+               </div>
+               <div>
+                 <div className="truncate text-sm font-bold text-gray-300">
+-                  {acct.type}
++                  {acct.type === LinkedAccountType.OpenIdConnect
++                    ? acct.provider.name
++                    : acct.type}
+                 </div>
+                 <div className="text-xl font-semibold text-white">
+                   {acct.username}
+                 </div>
+               </div>
+               <div className="flex-grow" />
+-              {enableMediaServerUnlink && (
++              {(acct.type === LinkedAccountType.OpenIdConnect
++                ? canUnlink
++                : canUnlinkMediaServer) && (
+                 <ConfirmButton
+                   onClick={() => {
+                     deleteRequest(
+-                      acct.type === LinkedAccountType.Plex ? 'plex' : 'jellyfin'
++                      acct.type === LinkedAccountType.OpenIdConnect
++                        ? String(acct.id)
++                        : acct.type === LinkedAccountType.Plex
++                          ? 'plex'
++                          : 'jellyfin'
+                     );
+                   }}
+                   confirmText={intl.formatMessage(globalMessages.areyousure)}
+diff --git a/src/context/SettingsContext.tsx b/src/context/SettingsContext.tsx
+index c5a77922..d24b280b 100644
+--- a/src/context/SettingsContext.tsx
++++ b/src/context/SettingsContext.tsx
+@@ -8,7 +8,7 @@ export interface SettingsContextProps {
+   children?: React.ReactNode;
+ }
+ 
+-const defaultSettings = {
++const defaultSettings: PublicSettingsResponse = {
+   initialized: false,
+   applicationTitle: 'Seerr',
+   applicationUrl: '',
+@@ -34,6 +34,7 @@ const defaultSettings = {
+   youtubeUrl: '',
+   versionCheck: true,
+   plexClientIdentifier: '',
++  openIdProviders: [],
+ };
+ 
+ export const SettingsContext = React.createContext<SettingsContextProps>({
+diff --git a/src/i18n/locale/en.json b/src/i18n/locale/en.json
+index 4a1a0eec..52834a6e 100644
+--- a/src/i18n/locale/en.json
++++ b/src/i18n/locale/en.json
+@@ -1712,5 +1712,11 @@
+   "pages.pagenotfound": "Page Not Found",
+   "pages.returnHome": "Return Home",
+   "pages.serviceunavailable": "Service Unavailable",
+-  "pages.somethingwentwrong": "Something Went Wrong"
++  "pages.somethingwentwrong": "Something Went Wrong",
++  "utils.oidc.oidcAccountAlreadyLinked": "This {provider} account is already linked to another user.",
++  "utils.oidc.oidcAuthorizationFailed": "Authorization with {provider} failed. Please try again.",
++  "utils.oidc.oidcLoginError": "An error occurred while logging in with {provider}.",
++  "utils.oidc.oidcMissingEmail": "Unable to create account. No email address was provided by {provider}.",
++  "utils.oidc.oidcProviderDiscoveryFailed": "Failed to connect to {provider}. Please try again later.",
++  "utils.oidc.oidcUnauthorized": "You do not have permission to sign in with {provider}."
+ }
+diff --git a/src/pages/_app.tsx b/src/pages/_app.tsx
+index e11bf14a..7bfbe86a 100644
+--- a/src/pages/_app.tsx
++++ b/src/pages/_app.tsx
+@@ -264,6 +264,7 @@ CoreApp.getInitialProps = async (initialProps) => {
+     youtubeUrl: '',
+     versionCheck: true,
+     plexClientIdentifier: '',
++    openIdProviders: [],
+   };
+ 
+   if (ctx.res) {
+@@ -297,7 +298,11 @@ CoreApp.getInitialProps = async (initialProps) => {
+         );
+         user = response.data;
+ 
+-        if (router.pathname.match(/(setup|login)/)) {
++        if (
++          router.pathname.match(/(setup|login)/) &&
++          // if code is set, we are in the callback of an OpenID Connect flow
++          router.query.code == null
++        ) {
+           ctx.res.writeHead(307, {
+             Location: '/',
+           });
+diff --git a/src/utils/oidc.ts b/src/utils/oidc.ts
+new file mode 100644
+index 00000000..ff4810e6
+--- /dev/null
++++ b/src/utils/oidc.ts
+@@ -0,0 +1,102 @@
++import defineMessages from '@app/utils/defineMessages';
++import { ApiErrorCode } from '@server/constants/error';
++import axios, { isAxiosError } from 'axios';
++import type { IntlShape } from 'react-intl';
++
++const messages = defineMessages('utils.oidc', {
++  oidcLoginError: 'An error occurred while logging in with {provider}.',
++  oidcProviderDiscoveryFailed:
++    'Failed to connect to {provider}. Please try again later.',
++  oidcAuthorizationFailed:
++    'Authorization with {provider} failed. Please try again.',
++  oidcMissingEmail:
++    'Unable to create account. No email address was provided by {provider}.',
++  oidcUnauthorized: 'You do not have permission to sign in with {provider}.',
++  oidcAccountAlreadyLinked:
++    'This {provider} account is already linked to another user.',
++});
++
++const OIDC_PROVIDER_KEY = 'oidc-provider';
++
++export function getOidcErrorMessage(
++  errorCode: string | undefined,
++  providerName: string,
++  intl: IntlShape
++): string {
++  const values = { provider: providerName };
++  switch (errorCode) {
++    case ApiErrorCode.OidcProviderDiscoveryFailed:
++      return intl.formatMessage(messages.oidcProviderDiscoveryFailed, values);
++    case ApiErrorCode.OidcAuthorizationFailed:
++      return intl.formatMessage(messages.oidcAuthorizationFailed, values);
++    case ApiErrorCode.OidcMissingEmail:
++      return intl.formatMessage(messages.oidcMissingEmail, values);
++    case ApiErrorCode.OidcAccountAlreadyLinked:
++      return intl.formatMessage(messages.oidcAccountAlreadyLinked, values);
++    case ApiErrorCode.Unauthorized:
++      return intl.formatMessage(messages.oidcUnauthorized, values);
++    default:
++      return intl.formatMessage(messages.oidcLoginError, values);
++  }
++}
++
++/**
++ * Initiates the OIDC login flow by fetching the authorization URL from the
++ * server and redirecting the browser to the OIDC provider. Stores the provider
++ * slug in sessionStorage so the callback page can identify which provider is
++ * completing the flow.
++ */
++export async function initiateOidcLogin(
++  providerSlug: string,
++  returnUrl: string
++): Promise<void> {
++  const res = await axios.get<{ redirectUrl: string }>(
++    `/api/v1/auth/oidc/login/${encodeURIComponent(providerSlug)}`,
++    { params: { returnUrl } }
++  );
++  sessionStorage.setItem(OIDC_PROVIDER_KEY, providerSlug);
++  window.location.href = res.data.redirectUrl;
++}
++
++/**
++ * Returns the provider slug stored by initiateOidcLogin.
++ */
++export function getOidcProviderSlug(): string | null {
++  return sessionStorage.getItem(OIDC_PROVIDER_KEY);
++}
++
++/**
++ * Clears the provider slug stored by initiateOidcLogin.
++ */
++export function clearOidcProviderSlug(): void {
++  sessionStorage.removeItem(OIDC_PROVIDER_KEY);
++}
++
++/**
++ * Processes the OIDC authorization code callback by posting the current URL
++ * (which contains the code and any state params) to the server.
++ */
++export async function processOidcCallback(
++  providerSlug: string
++): Promise<
++  { type: 'success' } | { type: 'error'; errorCode: string | undefined }
++> {
++  const params = new URLSearchParams(window.location.search);
++  const errorParam = params.get('error');
++  if (errorParam != null) {
++    return { type: 'error', errorCode: ApiErrorCode.OidcAuthorizationFailed };
++  }
++
++  try {
++    await axios.post(
++      `/api/v1/auth/oidc/callback/${encodeURIComponent(providerSlug)}`,
++      { callbackUrl: window.location.href }
++    );
++    return { type: 'success' };
++  } catch (e) {
++    return {
++      type: 'error',
++      errorCode: isAxiosError(e) ? e.response?.data?.error : undefined,
++    };
++  }
++}
