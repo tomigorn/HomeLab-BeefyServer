@@ -159,20 +159,41 @@
     } catch (e) { /* no badge */ }
   }
 
+  // React must hydrate Seerr's server-rendered menu first: an entry put in before makes it throw error #418 and redraw the whole page. Hydrated = React's fiber key on #__next's first element.
+  function hydrated(doc) {
+    var root = doc.getElementById("__next");
+    if (!root) return true;
+    var first = root.firstElementChild;
+    if (!first) return false;
+    for (var k in first) if (k.indexOf("__reactFiber$") === 0) return true;
+    return false;
+  }
+
   if (typeof window === "undefined") return;
   window.hgMenuLinks = { attach: attach, links: LINKS };
   try {
     if (!window.MutationObserver || !document.body) return;
-    attach(document);
-    settled(window);
     var fresh = function () {
       if (!window.fetch || Date.now() - asked < 300000) return;
       asked = Date.now();
       ask(window);
     };
+    var go = function () {
+      attach(document);
+      settled(window);
+      new MutationObserver(function () {
+        try { attach(document); fresh(); } catch (e) { /* never break Seerr */ }
+      }).observe(document.body, { childList: true, subtree: true });
+    };
     fresh();
-    new MutationObserver(function () {
-      try { attach(document); fresh(); } catch (e) { /* never break Seerr */ }
-    }).observe(document.body, { childList: true, subtree: true });
+    if (hydrated(document)) go();
+    else {
+      var frame = window.requestAnimationFrame ? window.requestAnimationFrame.bind(window) : function (f) { setTimeout(f, 16); };
+      var until = Date.now() + 10000;
+      var wait = function () {
+        try { if (hydrated(document) || Date.now() > until) go(); else frame(wait); } catch (e) { /* never break Seerr */ }
+      };
+      frame(wait);
+    }
   } catch (e) { /* never break Seerr */ }
 })();

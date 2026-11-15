@@ -198,3 +198,33 @@ test("menu-links.css hides Seerr's menu until ready, outside page content, and s
   assert.match(css, /animation:[^;]*\b2\.5s/);
   assert.match(css, /@keyframes[^{]*\{ ?to ?\{ ?visibility: ?visible/);
 });
+
+const frames = (n = 4) => new Promise((r) => setTimeout(r, 20 * n));
+const hydrate = (w) => { w.document.getElementById("__next").firstElementChild["__reactFiber$test"] = {}; };
+
+test("Next page: nothing is added before React hydrated Seerr's markup (no hydration error #418, no redraw), then the menu is completed and shown", async () => {
+  const w = load("menu-links.js", `<div id="__next"><div class="flex h-full">${SIDEBAR}</div></div>`);
+  await frames();
+  assert.equal(links(w).length, 0);
+  assert.equal(w.document.documentElement.hasAttribute("data-hg-menu"), false);
+  hydrate(w);
+  await frames();
+  assert.equal(links(w).length, 1);
+  assert.equal(manual(w).length, 1);
+  assert.equal(w.document.documentElement.hasAttribute("data-hg-menu"), true);
+});
+
+test("Next page hydrated before the script runs: entries at once", () => {
+  const w = load("menu-links.js", `<div id="__next"><div class="flex h-full">${SIDEBAR}</div></div>`, (win) => { win.document.getElementById("__next").firstElementChild["__reactFiber$x"] = {}; });
+  assert.equal(links(w).length, 1);
+});
+
+test("a Next page that renders its menu after hydration still gets the entries", async () => {
+  const w = load("menu-links.js", `<div id="__next"><div class="flex h-full"></div></div>`);
+  hydrate(w);
+  await frames();
+  w.document.querySelector("#__next > div").insertAdjacentHTML("beforeend", SIDEBAR);
+  await frames();
+  assert.equal(links(w).length, 1);
+});
+
