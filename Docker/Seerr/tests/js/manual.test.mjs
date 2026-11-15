@@ -474,3 +474,10 @@ test("one episode is singular", () => {
   const { TEXT } = w.hgManual;
   assert.deepEqual([TEXT.en.episodes(1), TEXT.en.episodes(2), TEXT.de.episodes(1), TEXT.de.episodes(2)], ["1 episode", "2 episodes", "1 Folge", "2 Folgen"]);
 });
+
+test("one waiting search per user: the message says so", () => {
+  const w = load("manual.js", "", null, "https://requests.example.com/discover/movies");
+  const { TEXT } = w.hgManual;
+  assert.equal(TEXT.en.errorCodes["too many searches"], "You already have a search waiting: this one can start when it is done.");
+  assert.equal(TEXT.de.errorCodes["too many searches"], "Du hast schon eine Suche in der Warteschlange: diese kann starten, wenn sie fertig ist.");
+});
