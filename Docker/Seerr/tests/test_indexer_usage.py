@@ -459,5 +459,119 @@ class Subtitles(unittest.TestCase):
         self.assertEqual(data["subtitles"], [])
 
 
+ME = {"status": True, "user": {"name": "someone"}, "apiKey": {"name": "key", "requestUsage": {"today": 989, "total": 6940, "limit": 2000},
+      "downloadUsage": {"today": 14, "total": 85, "limit": 50}}}
+INFO = {"data": {"allowed_downloads": 20, "remaining_downloads": 13, "downloads_count": 7, "level": "Sub leecher", "vip": False,
+                 "vip_expiry": None, "user_id": 42, "reset_time_utc": "2026-10-31T23:59:59.000Z"}}
+OS_CREDS = {"username": "someone", "password": "PASSWORD123", "api_key": "OSKEY123"}
+
+
+class Accounts(unittest.TestCase):
+    NOW = utc(2026, 10, 31, 13, 30)
+    STATUS = [{"name": "subdl", "status": "Good", "retry": "-"}, {"name": "opensubtitlescom", "status": "Good", "retry": "-"}]
+
+    def test_subdl_me_gives_exact_requests_and_downloads(self):
+        self.assertEqual(iu.subdl_account(ME), {"searches": {"used": 989, "limit": 2000}, "downloads": {"used": 14, "limit": 50}})
+
+    def test_opensubtitles_info_gives_downloads_and_limit(self):
+        self.assertEqual(iu.opensubs_account(INFO), {"downloads": {"used": 7, "limit": 20}})
+
+    def test_account_numbers_replace_the_estimate(self):
+        rows = iu.subtitles(SUBS, self.STATUS, {"subdl": 13, "opensubtitlescom": 3}, 95735, self.NOW,
+                            accounts={"subdl": iu.subdl_account(ME), "opensubtitlescom": iu.opensubs_account(INFO)})
+        sd = next(r for r in rows if r["id"] == "subdl")
+        self.assertEqual(sd["searches"], {"used": 989, "limit": 2000, "level": "ok", "resetsAt": "2026-11-01T00:00:00Z"})
+        self.assertEqual(sd["downloads"], {"used": 14, "limit": 50, "level": "ok", "resetsAt": "2026-11-01T00:00:00Z"})
+        os_ = next(r for r in rows if r["id"] == "opensubtitlescom")
+        self.assertEqual(os_["downloads"], {"used": 7, "limit": 20, "level": "ok", "resetsAt": "2026-11-01T00:00:00Z"})
+
+    def test_newer_history_beats_a_cached_download_count(self):
+        rows = iu.subtitles(SUBS, self.STATUS, {"opensubtitlescom": 9}, 0, self.NOW, accounts={"opensubtitlescom": iu.opensubs_account(INFO)})
+        self.assertEqual(rows[1]["downloads"]["used"], 9)
+
+    def test_without_account_the_estimate_stays(self):
+        sd = iu.subtitles(SUBS, self.STATUS, {"subdl": 13}, 95735, self.NOW, accounts={})[0]
+        self.assertEqual((sd["searches"]["used"], sd["searches"].get("approx")), (95735, True))
+
+    def fetchers(self, calls, fail=()):
+        def subdl(entry, now):
+            calls.append("subdl")
+            if "subdl" in fail:
+                raise iu.ApiError("HTTPError 500")
+            return iu.subdl_account(ME)
+
+        def opensubs(entry, now):
+            calls.append("os")
+            return iu.opensubs_account(INFO)
+        return {"subdl": (300, subdl), "opensubtitlescom": (600, opensubs)}
+
+    def test_cached_until_the_ttl_runs_out(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            st = pathlib.Path(d) / "acc.json"
+            a = iu.accounts(self.fetchers(calls), st, self.NOW)
+            iu.accounts(self.fetchers(calls), st, self.NOW + dt.timedelta(minutes=4))
+            self.assertEqual(calls, ["subdl", "os"])
+            b = iu.accounts(self.fetchers(calls), st, self.NOW + dt.timedelta(minutes=6))
+            self.assertEqual(calls, ["subdl", "os", "subdl"])
+            self.assertEqual(oct(st.stat().st_mode & 0o777), "0o600")
+        self.assertEqual(a, b)
+        self.assertEqual(a["subdl"]["searches"]["used"], 989)
+
+    def test_cache_from_yesterday_is_not_used(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            st = pathlib.Path(d) / "acc.json"
+            iu.accounts(self.fetchers(calls), st, utc(2026, 10, 31, 23, 58))
+            a = iu.accounts(self.fetchers(calls, fail=("subdl",)), st, utc(2026, 11, 1, 0, 1))
+        self.assertNotIn("subdl", a)
+        self.assertIn("opensubtitlescom", a)
+
+    def test_failure_falls_back_and_waits_for_the_ttl(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            st = pathlib.Path(d) / "acc.json"
+            a = iu.accounts(self.fetchers(calls, fail=("subdl",)), st, self.NOW)
+            iu.accounts(self.fetchers(calls, fail=("subdl",)), st, self.NOW + dt.timedelta(minutes=1))
+        self.assertNotIn("subdl", a)
+        self.assertEqual(calls.count("subdl"), 1)
+
+
+class OpenSubtitlesLogin(unittest.TestCase):
+    NOW = utc(2026, 10, 31, 13, 30)
+
+    def http(self, calls, expired=False):
+        def h(url, headers, body=None):
+            calls.append((url.rsplit("/", 2)[-2:], dict(headers), body))
+            if url.endswith("/login"):
+                return {"token": "TOK%d" % len(calls), "base_url": "api.opensubtitles.com", "user": {"allowed_downloads": 20}}
+            if expired and headers.get("Authorization") == "Bearer OLD":
+                raise iu.ApiError("HTTPError 401", 401)
+            return INFO
+        return h
+
+    def test_logs_in_once_and_reuses_the_token(self):
+        calls, entry = [], {}
+        fetch = iu.opensubs_fetcher(OS_CREDS, http=self.http(calls))
+        self.assertEqual(fetch(entry, self.NOW), {"downloads": {"used": 7, "limit": 20}})
+        fetch(entry, self.NOW + dt.timedelta(hours=2))
+        self.assertEqual([c[0][-1] for c in calls], ["login", "user", "user"])
+        self.assertEqual(calls[0][2], {"username": "someone", "password": "PASSWORD123"})
+        self.assertEqual(calls[0][1]["Api-Key"], "OSKEY123")
+        self.assertEqual(calls[1][1]["Authorization"], "Bearer TOK1")
+        self.assertNotIn("PASSWORD123", json.dumps(entry))
+
+    def test_expired_token_logs_in_again(self):
+        calls, entry = [], {"token": "OLD", "tokenAt": iu.iso(self.NOW - dt.timedelta(hours=1)), "host": "api.opensubtitles.com"}
+        fetch = iu.opensubs_fetcher(OS_CREDS, http=self.http(calls, expired=True))
+        self.assertEqual(fetch(entry, self.NOW)["downloads"]["limit"], 20)
+        self.assertEqual([c[0][-1] for c in calls], ["user", "login", "user"])
+
+    def test_token_older_than_12h_is_renewed(self):
+        calls, entry = [], {"token": "OLD", "tokenAt": iu.iso(self.NOW - dt.timedelta(hours=13)), "host": "api.opensubtitles.com"}
+        iu.opensubs_fetcher(OS_CREDS, http=self.http(calls))(entry, self.NOW)
+        self.assertEqual([c[0][-1] for c in calls], ["login", "user"])
+
+
 if __name__ == "__main__":
     unittest.main()

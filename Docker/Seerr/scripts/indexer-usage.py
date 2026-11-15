@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Indexer bar (README "Indexer bar"): counts Prowlarr searches (queries + RSS) and grabs per indexer inside its limit window from indexer-bar/limits.toml, adds the subscription deadlines and the SSD/HDD fill level (statvfs of each branch), and writes usage.json (names and counts only) for the bar the proxy shows above Seerr.
-Subtitle providers (limits.toml [subtitles.*]) from Bazarr: downloads per UTC day from its history (exact), API searches estimated from its finished jobs (≈, state in IB_SUB_STATE), paused providers from /api/providers.
+Subtitle providers (limits.toml [subtitles.*]) from Bazarr: downloads per UTC day from its history, paused providers from /api/providers. Exact usage and limits from the provider accounts (SubDL /api/v1/me every 5 min, OpenSubtitles /api/v1/infos/user every 10 min, keys in secrets/indexer-bar from scripts/subtitle-keys.sh, cache in IB_ACCOUNT_STATE); without them SubDL searches are estimated from Bazarr's finished jobs (≈, state in IB_SUB_STATE).
 Storage also goes to IB_STORAGE_PROM (default ~/.local/state/indexer-bar/storage.prom) for fastpi's alerts.
 Prowlarr unreachable: usage.json says ok=false (the bar shows "usage unavailable"), subscriptions stay. Run by systemd/indexer-usage.timer.
 Usage: scripts/indexer-usage.py"""
@@ -42,6 +42,13 @@ NOTE = {"en": "When a limited indexer is used up, requests may wait until it res
         "de": "Ist ein begrenzter Indexer aufgebraucht, warten Anfragen eventuell, bis er zurückgesetzt wird; die anderen Indexer suchen weiter. Von Hand auf den Indexer-Websites gemachte Suchen werden nicht gezählt."}
 PROM = pathlib.Path.home() / ".local/state/indexer-bar/storage.prom"
 SUB_STATE = pathlib.Path.home() / ".local/state/indexer-bar/subtitle-searches.json"
+ACCOUNT_STATE = pathlib.Path.home() / ".local/state/indexer-bar/subtitle-accounts.json"
+SECRETS = ROOT / "secrets" / "indexer-bar"
+SUBDL_ME = "https://api.subdl.com/api/v1/me"
+OPENSUBS_API = "https://api.opensubtitles.com/api/v1"
+USER_AGENT = "indexer-bar v1"
+SUBDL_TTL, OPENSUBS_TTL = 300, 600
+OPENSUBS_TOKEN_AGE = dt.timedelta(hours=12)
 BAZARR_TZ = TZ
 SUB_DOWNLOAD_ACTIONS = {1, 2, 3}
 # Provider calls per searched item: a movie is one search, an episode is searched per language with season fallback.
@@ -58,7 +65,9 @@ PAUSE_TEXT = {"DownloadLimitExceeded": "download limit reached", "APIThrottled":
 
 
 class ApiError(Exception):
-    pass
+    def __init__(self, msg, code=None):
+        super().__init__(msg)
+        self.code = code
 
 
 def iso(t):
@@ -180,13 +189,19 @@ def sub_metric(used, limit, approx, now):
     return m
 
 
-def subtitles(cfg, status, downloads, searches_used, now):
+def subtitles(cfg, status, downloads, searches_used, now, accounts=None):
     state = {s.get("name"): s for s in status}
     rows = []
     for pid, c in cfg.items():
-        approx = set(c.get("approx", []))
-        searches = sub_metric(searches_used if c.get("searches") is not None or "searches" in approx else 0, c.get("searches"), "searches" in approx, now)
-        dls = sub_metric(downloads.get(pid, 0), c.get("downloads"), "downloads" in approx, now)
+        approx, acc = set(c.get("approx", [])), (accounts or {}).get(pid, {})
+        if "searches" in acc:
+            searches = sub_metric(acc["searches"]["used"], acc["searches"]["limit"], False, now)
+        else:
+            searches = sub_metric(searches_used if c.get("searches") is not None or "searches" in approx else 0, c.get("searches"), "searches" in approx, now)
+        if "downloads" in acc:
+            dls = sub_metric(max(acc["downloads"]["used"], downloads.get(pid, 0)), acc["downloads"]["limit"], False, now)
+        else:
+            dls = sub_metric(downloads.get(pid, 0), c.get("downloads"), "downloads" in approx, now)
         row = {"name": c.get("name", pid), "id": pid, "window": "utc-day", "status": "ok", "searches": searches, "downloads": dls}
         s = state.get(pid, {})
         if s.get("status") and s["status"] != "Good":
@@ -198,7 +213,7 @@ def subtitles(cfg, status, downloads, searches_used, now):
     return rows
 
 
-def bazarr_usage(cfg, api, state_path, now):
+def bazarr_usage(cfg, api, state_path, now, accounts=None):
     status = api("/providers").get("data", [])
     jobs = api("/system/jobs").get("data", [])
     rows = []
@@ -212,7 +227,83 @@ def bazarr_usage(cfg, api, state_path, now):
     used, state = count_searches(jobs, state, now)
     pathlib.Path(state_path).parent.mkdir(parents=True, exist_ok=True)
     write(state_path, state)
-    return subtitles(cfg, status, {pid: history_downloads(rows, pid, now) for pid in cfg}, used, now)
+    return subtitles(cfg, status, {pid: history_downloads(rows, pid, now) for pid in cfg}, used, now, accounts)
+
+
+def http_json(url, headers, body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, headers=dict(headers, **{"User-Agent": USER_AGENT, "Accept": "application/json"},
+                                                              **({"Content-Type": "application/json"} if data else {})))
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        raise ApiError(f"HTTPError {e.code}", e.code) from None
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise ApiError(type(e).__name__) from None
+
+
+def subdl_account(me):
+    k = me["apiKey"]
+    return {"searches": {"used": int(k["requestUsage"]["today"]), "limit": int(k["requestUsage"]["limit"])},
+            "downloads": {"used": int(k["downloadUsage"]["today"]), "limit": int(k["downloadUsage"]["limit"])}}
+
+
+def opensubs_account(info):
+    d = info["data"]
+    out = {"downloads": {"used": int(d["downloads_count"]), "limit": int(d["allowed_downloads"])}}
+    return out
+
+
+def subdl_fetcher(key, http=http_json):
+    return lambda entry, now: subdl_account(http(SUBDL_ME, {"Authorization": "Bearer " + key}))
+
+
+def opensubs_fetcher(creds, http=http_json):
+    def login(entry, now):
+        r = http(OPENSUBS_API + "/login", {"Api-Key": creds["api_key"]}, {"username": creds["username"], "password": creds["password"]})
+        entry.update(token=r["token"], tokenAt=iso(now), host=r.get("base_url") or "api.opensubtitles.com")
+
+    def info(entry):
+        return http(f'https://{entry["host"]}/api/v1/infos/user', {"Api-Key": creds["api_key"], "Authorization": "Bearer " + entry["token"]})
+
+    def fetch(entry, now):
+        if not entry.get("token") or now - parse_time(entry["tokenAt"]) >= OPENSUBS_TOKEN_AGE:
+            login(entry, now)
+            return opensubs_account(info(entry))
+        try:
+            return opensubs_account(info(entry))
+        except ApiError as e:
+            if e.code != 401:
+                raise
+        login(entry, now)
+        return opensubs_account(info(entry))
+    return fetch
+
+
+def accounts(fetchers, state_path, now):
+    """Provider account usage per subtitle id, each refreshed once per ttl (a failure waits too); only today's (UTC) numbers count."""
+    state = {}
+    try:
+        state = json.loads(pathlib.Path(state_path).read_text())
+    except (OSError, ValueError):
+        pass
+    day, out = now.astimezone(UTC).date().isoformat(), {}
+    for pid, (ttl, fetch) in fetchers.items():
+        entry = state.setdefault(pid, {})
+        tried = entry.get("tried")
+        if not tried or now - parse_time(tried) >= dt.timedelta(seconds=ttl) or tried[:10] != day:
+            entry["tried"] = iso(now)
+            try:
+                entry.update(data=fetch(entry, now), day=day)
+            except (ApiError, KeyError, TypeError, ValueError) as e:
+                entry.pop("data", None)
+                print(f"indexer-usage: {pid} account unavailable: {e if isinstance(e, ApiError) else type(e).__name__}", file=sys.stderr)
+        if entry.get("data") and entry.get("day") == day:
+            out[pid] = entry["data"]
+    pathlib.Path(state_path).parent.mkdir(parents=True, exist_ok=True)
+    write(state_path, state, mode=0o600)
+    return out
 
 
 def subscriptions(subs, today):
@@ -293,7 +384,7 @@ def load_config(path):
     return {"indexers": limits, "subscriptions": subs, "subtitles": subtitle_cfg}
 
 
-def write(path, data):
+def write(path, data, mode=0o644):
     path = pathlib.Path(path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".usage-")
     with os.fdopen(fd, "w") as f:
@@ -301,11 +392,11 @@ def write(path, data):
             f.write(data)
         else:
             json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
-    os.chmod(tmp, 0o644)
+    os.chmod(tmp, mode)
     os.replace(tmp, path)
 
 
-def run(cfg, api, out, now, disks=DISKS, statvfs=os.statvfs, prom=None, bazarr=None, sub_state=SUB_STATE):
+def run(cfg, api, out, now, disks=DISKS, statvfs=os.statvfs, prom=None, bazarr=None, sub_state=SUB_STATE, sub_accounts=None):
     disk_rows = storage(disks, statvfs)
     data = {"ok": True, "generated": iso(now), "indexers": [], "subscriptions": subscriptions(cfg["subscriptions"], local_date(now)),
             "storage": [bar_disk(d) for d in disk_rows], "note": NOTE}
@@ -316,9 +407,11 @@ def run(cfg, api, out, now, disks=DISKS, statvfs=os.statvfs, prom=None, bazarr=N
     except ApiError as e:
         data["ok"] = False
         print(f"indexer-usage: Prowlarr unavailable: {e}", file=sys.stderr)
+    acc = {}
     if bazarr and cfg.get("subtitles"):
+        acc = sub_accounts(now) if sub_accounts else {}
         try:
-            data["subtitles"] = bazarr_usage(cfg["subtitles"], bazarr, sub_state, now)
+            data["subtitles"] = bazarr_usage(cfg["subtitles"], bazarr, sub_state, now, acc)
             data["subtitlesOk"] = True
         except (ApiError, AttributeError) as e:
             data["subtitles"], data["subtitlesOk"] = [], False
@@ -356,8 +449,19 @@ def main():
     except OSError:
         def bazarr(path):
             raise ApiError("no Bazarr API key")
+    secrets = pathlib.Path(os.environ.get("IB_SECRETS", SECRETS))
+    fetchers = {}
+    try:
+        fetchers["subdl"] = (SUBDL_TTL, subdl_fetcher((secrets / "subdl.apikey").read_text().strip()))
+    except OSError:
+        pass
+    try:
+        fetchers["opensubtitlescom"] = (OPENSUBS_TTL, opensubs_fetcher(json.loads((secrets / "opensubtitles.json").read_text())))
+    except (OSError, ValueError):
+        pass
     run(cfg, api, out, dt.datetime.now(UTC).replace(microsecond=0), prom=os.environ.get("IB_STORAGE_PROM", PROM),
-        bazarr=bazarr, sub_state=os.environ.get("IB_SUB_STATE", SUB_STATE))
+        bazarr=bazarr, sub_state=os.environ.get("IB_SUB_STATE", SUB_STATE),
+        sub_accounts=lambda now: accounts(fetchers, os.environ.get("IB_ACCOUNT_STATE", ACCOUNT_STATE), now))
 
 
 if __name__ == "__main__":
