@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +12,8 @@ RANK = {m: i for i, m in enumerate(METHODS)}
 GAP = 300.0
 KEEP_SECONDS = 90 * 86400
 DAY = 86400
+ENCODING_XML = Path("/srv/appdata/jellyfin/encoding.xml")
+TONEMAP_KEYS = ("EnableTonemapping", "EnableVppTonemapping", "EnableVideoToolboxTonemapping")
 
 
 def _video_stream(item):
@@ -41,8 +44,16 @@ def classify(session):
     return "remux" if info.get("IsAudioDirect") else "audio"
 
 
-def hdr_to_sdr(session):
-    """yes: picture converted, source range not SDR, and the output cannot be HDR (h264) or Jellyfin names the range as the reason."""
+def tonemapping_enabled(path):
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        return False
+    return any((root.findtext(k) or "").strip().lower() == "true" for k in TONEMAP_KEYS)
+
+
+def hdr_to_sdr(session, tonemapping=False):
+    """yes: picture converted, source range not SDR, and the output is SDR: h264, range named as a reason, or server tone mapping is on."""
     if classify(session) != "video":
         return "no"
     src = _video_stream(session.get("NowPlayingItem") or {}).get("VideoRangeType")
@@ -51,7 +62,8 @@ def hdr_to_sdr(session):
     info = session.get("TranscodingInfo") or {}
     if "VideoRangeTypeNotSupported" in _reasons(info):
         return "yes"
-    return "yes" if str(info.get("VideoCodec") or "").lower() == "h264" else "no"
+    codec = str(info.get("VideoCodec") or "").lower()
+    return "yes" if codec == "h264" or (codec == "hevc" and tonemapping) else "no"
 
 
 def title(item):
@@ -88,7 +100,7 @@ def read_plays(state_dir, since, now=None):
 
 
 class PlayLog:
-    def __init__(self, state_dir, now=None):
+    def __init__(self, state_dir, now=None, encoding_path=ENCODING_XML):
         self.dir = Path(state_dir)
         self.path = self.dir / "plays.jsonl"
         self.open_path = self.dir / "plays-open.json"
@@ -100,9 +112,21 @@ class PlayLog:
             for i in range(1, record.KEEP + 1):
                 self.path.with_name(f"{self.path.name}.{i}").unlink(missing_ok=True)
         self.open = _load_open(self.open_path)
+        self.encoding_path, self._enc_mtime, self._tonemap = Path(encoding_path), None, False
+
+    def _tonemapping(self):
+        try:
+            mtime = self.encoding_path.stat().st_mtime
+        except OSError:
+            self._enc_mtime, self._tonemap = None, False
+            return False
+        if mtime != self._enc_mtime:
+            self._enc_mtime, self._tonemap = mtime, tonemapping_enabled(self.encoding_path)
+        return self._tonemap
 
     def update(self, sessions, now):
         dirty = False
+        tonemap = self._tonemapping()
         seen = set()
         for s in sessions:
             item = s.get("NowPlayingItem")
@@ -134,7 +158,7 @@ class PlayLog:
                     pb["output_codec"] = info.get("VideoCodec")
                 if info.get("Bitrate") is not None:
                     pb["bitrate"] = info.get("Bitrate")
-            if hdr_to_sdr(s) == "yes":
+            if hdr_to_sdr(s, tonemap) == "yes":
                 pb["hdr_to_sdr"] = "yes"
             if before != (pb["method"], pb["reasons"], pb["hdr_to_sdr"], pb["output_codec"]):
                 dirty = True

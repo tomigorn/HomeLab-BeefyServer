@@ -55,6 +55,25 @@ class ClassifyTest(unittest.TestCase):
         v = info(False, True, codec="hevc")
         self.assertEqual(plays.hdr_to_sdr(sess(method="Transcode", info=v, rng="HDR10")), "no")
 
+    def test_hdr10plus_to_hevc_with_tonemapping_enabled(self):
+        v = info(False, True, ["ContainerNotSupported", "VideoCodecTagNotSupported"], codec="hevc")
+        s = sess(method="Transcode", info=v, rng="HDR10Plus")
+        self.assertEqual(plays.hdr_to_sdr(s, tonemapping=True), "yes")
+        self.assertEqual(plays.hdr_to_sdr(s, tonemapping=False), "no")
+        self.assertEqual(plays.hdr_to_sdr(sess(method="Transcode", info=v, rng="SDR"), tonemapping=True), "no")
+
+    def test_tonemapping_enabled_from_encoding_xml(self):
+        d = pathlib.Path(tempfile.mkdtemp())
+        p = d / "encoding.xml"
+        self.assertFalse(plays.tonemapping_enabled(p))
+        p.write_text("<EncodingOptions><EnableTonemapping>false</EnableTonemapping>"
+                     "<EnableVppTonemapping>true</EnableVppTonemapping></EncodingOptions>")
+        self.assertTrue(plays.tonemapping_enabled(p))
+        p.write_text("<EncodingOptions><EnableTonemapping>false</EnableTonemapping></EncodingOptions>")
+        self.assertFalse(plays.tonemapping_enabled(p))
+        p.write_text("not xml")
+        self.assertFalse(plays.tonemapping_enabled(p))
+
     def test_hdr_to_sdr_by_range_reason_with_hevc_output(self):
         v = info(False, True, reasons=["VideoRangeTypeNotSupported"], codec="hevc")
         self.assertEqual(plays.hdr_to_sdr(sess(method="Transcode", info=v, rng="HDR10")), "yes")
@@ -131,6 +150,19 @@ class PlayLogTest(unittest.TestCase):
         self.assertEqual(r["method"], "video")
         self.assertEqual(r["reasons"], ["VideoCodecNotSupported", "ContainerNotSupported"])
         self.assertEqual((r["output_codec"], r["bitrate"]), ("h264", 4_000_000))
+
+    def test_playlog_uses_encoding_xml_and_rereads_on_change(self):
+        enc = self.dir / "encoding.xml"
+        enc.write_text("<E><EnableTonemapping>true</EnableTonemapping></E>")
+        log = plays.PlayLog(self.dir, encoding_path=enc)
+        v = info(False, True, ["ContainerNotSupported"], codec="hevc")
+        log.update([sess(method="Transcode", info=v, rng="HDR10Plus")], T0)
+        self.assertEqual(log.recent(T0)[0]["hdr_to_sdr"], "yes")
+        enc.write_text("<E><EnableTonemapping>false</EnableTonemapping></E>")
+        import os
+        os.utime(enc, (T0 + 5, T0 + 5))
+        log.update([sess(sid="s2", method="Transcode", info=v, rng="HDR10Plus")], T0 + 5)
+        self.assertEqual([r["hdr_to_sdr"] for r in log.recent(T0 + 5)], ["yes", "no"])
 
     def test_hdr_to_sdr_sticky(self):
         s = sess(method="Transcode", info=info(False, True), rng="HDR10")

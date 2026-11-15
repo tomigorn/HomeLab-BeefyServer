@@ -434,7 +434,7 @@ Conversion report (2026-11-15): every playback (one session + item pair; gaps un
 | `audio` | Transcode with video direct, audio converted |
 | `video` | Transcode with video not direct (worst; `video` > `audio` > `remux` > `direct`) |
 
-`hdr_to_sdr` = `yes` when the method is `video`, the source `VideoRangeType` (item MediaStreams) is not SDR/unknown, and the output is SDR: output codec h264 (Jellyfin has no HDR h264 output) or `VideoRangeTypeNotSupported` in the reasons; sticky for the playback. Reasons = `TranscodeReasons`, raw names, all seen during the playback.
+`hdr_to_sdr` = `yes` when the method is `video`, the source `VideoRangeType` (item MediaStreams) is not SDR/unknown, and the output is SDR: output codec h264 (no HDR h264 output), `VideoRangeTypeNotSupported` in the reasons, or output codec hevc while server tone mapping is on (`/srv/appdata/jellyfin/encoding.xml`: any of `EnableTonemapping`, `EnableVppTonemapping`, `EnableVideoToolboxTonemapping` true; re-read when the file changes, unreadable = off, h264 rule only); sticky for the playback. Known limit: a rare HDR to HDR hevc bitrate transcode with tone mapping on is counted as SDR (seen 2026-11-15: HDR10Plus hevc source, hevc_qsv + tonemap_vaapi, reasons only ContainerNotSupported, VideoCodecTagNotSupported). Reasons = `TranscodeReasons`, raw names, all seen during the playback.
 
 Metrics in `playback.prom`: `jellyfin_playback_plays_24h{method}` (all four always present) and `jellyfin_playback_converted_info{user,client,device,title,method,reasons,hdr_to_sdr,started}` = 1 for audio/video playbacks started in the last 24 h (newest 20). An open playback is saved in `plays-open.json` so a service restart does not split it.
 
