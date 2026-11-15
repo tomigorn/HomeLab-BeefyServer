@@ -21,6 +21,12 @@
     return n;
   }
   function add(parent) { for (var i = 1; i < arguments.length; i++) if (arguments[i]) parent.appendChild(arguments[i]); return parent; }
+  // README "Hint boxes"; a page without tip.js gets no hints (aria-labels stay)
+  function tip(n, content, opts) { if (window.hgTip) window.hgTip.set(n, content, opts); return n; }
+  function hinted(n, content) { n.tabIndex = 0; return tip(n, content); }
+  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  // "A. B; c." → ["A", "B", "C"]
+  function sentences(s) { return s ? s.split(/[.;]\s+/).map(function (x) { return cap(x.trim().replace(/\.$/, "")); }).filter(Boolean) : []; }
   function num(n) {
     if (n >= 10000) return (Math.round(n / 100) / 10).toString().replace(/\.0$/, "") + "k";
     return String(n);
@@ -68,10 +74,12 @@
   }
 
   var TEXT = {
-    en: { free: "free", head: "Storage", quota: "My requests", frees: "next free ", days: function (n) { return " in " + n + " days"; },
-      quotaNote: function (q) { return q.limit + " requests per person in " + q.days + " days, deleted requests count too."; } },
-    de: { free: "frei", head: "Speicher", quota: "Meine Anfragen", frees: "wieder frei ", days: function (n) { return " in " + n + " Tagen"; },
-      quotaNote: function (q) { return q.limit + " Anfragen pro Person in " + q.days + " Tagen, gelöschte Anfragen zählen mit."; } }
+    en: { free: "free", used: "Used:", freeL: "Free:", head: "Storage", quota: "My requests", frees: "next free ", days: function (n) { return " in " + n + " days"; },
+      quotaNote: function (q) { return q.limit + " requests per person in " + q.days + " days, deleted requests count too."; },
+      quotaRows: function (q) { return [q.limit + " requests per person in " + q.days + " days", "Deleted requests count too"]; } },
+    de: { free: "frei", used: "Belegt:", freeL: "Frei:", head: "Speicher", quota: "Meine Anfragen", frees: "wieder frei ", days: function (n) { return " in " + n + " Tagen"; },
+      quotaNote: function (q) { return q.limit + " Anfragen pro Person in " + q.days + " Tagen, gelöschte Anfragen zählen mit."; },
+      quotaRows: function (q) { return [q.limit + " Anfragen pro Person in " + q.days + " Tagen", "Gelöschte Anfragen zählen mit"]; } }
   };
   var PAID = {
     en: { life: "Paid account (lifetime)", plain: "Paid account", until: "Paid subscription until ", ended: "Paid subscription, ended ", locale: "en-GB" },
@@ -89,7 +97,7 @@
     var n = el(tag, "ib-name", r.name);
     if (!r.premium) return n;
     var text = paidText(r.premium, lang()), star = el("span", "ib-star", "★");
-    star.title = text;
+    tip(star, text);
     star.setAttribute("aria-label", text);
     star.setAttribute("role", "img");
     star.tabIndex = 0;
@@ -114,9 +122,10 @@
   }
   function diskName(d, l) { return tr(d.label, l) || d.name; }
   function diskHint(d, l) {
-    var rule = tr(d.hint, l);
-    var parts = Array.isArray(d.parts) && d.parts.length > 1 ? " (" + d.parts.length + (d.partsLabel ? " " + d.partsLabel : "") + ": " + d.parts.map(function (p) { return Math.round(p) + " %"; }).join(" · ") + ")" : "";
-    return diskName(d, l) + ": " + bytes(d.free, l) + " " + TEXT[l].free + parts + "." + (rule ? " " + rule : "");
+    var sub = tr(d.sub, l), t = TEXT[l];
+    var rows = [[t.used, diskUsed(d, l) + " · " + Math.round(d.pct) + " %"], [t.freeL, bytes(d.free, l)]];
+    if (Array.isArray(d.parts) && d.parts.length > 1) rows.push([d.parts.length + (d.partsLabel ? " " + d.partsLabel : "") + ":", d.parts.map(function (p) { return Math.round(p) + " %"; }).join(" · ")]);
+    return { title: diskName(d, l) + (sub ? " — " + sub : ""), rows: rows, sections: [{ rows: sentences(tr(d.hint, l)) }] };
   }
   function diskMeter(d) {
     var box = el("span", "ib-meter ib-" + d.level), fill = el("span", "ib-fill");
@@ -131,7 +140,7 @@
       var c = add(el("span", "ib-chip"), el("span", "ib-name", diskName(x, l)), diskMeter(x),
         el("span", x.level === "ok" ? "" : "ib-" + x.level + "-text", diskUsed(x, l)), el("span", "ib-muted", Math.round(x.pct) + " %"));
       c.setAttribute("data-ib-disk", x.id || x.name);
-      c.title = diskHint(x, l);
+      hinted(c, diskHint(x, l));
       box.appendChild(c);
     });
   }
@@ -167,15 +176,24 @@
     return cell;
   }
   function subHint(r) {
-    var approx = ["searches", "downloads"].some(function (k) { return r[k] && r[k].approx; });
-    return r.name + ": subtitle provider, " + SUB_WINDOW + "." + (approx ? " " + SUB_APPROX : "");
+    var rows = ["Subtitle provider"], approx = false;
+    if (r.premium) rows.push("★ " + paidText(r.premium, lang()));
+    [["searches", "Searches:"], ["downloads", "Downloads:"]].forEach(function (k) {
+      var m = r[k[0]];
+      if (!m || (m.limit == null && !m.used)) return;
+      approx = approx || !!m.approx;
+      rows.push([k[1], (m.approx ? "≈" : "") + num(m.used) + (m.limit != null ? "/" + num(m.limit) : "")]);
+    });
+    if (r.status === "paused" && r.statusText) rows.push(cap(r.statusText));
+    rows.push(["Counted:", SUB_WINDOW]);
+    return { title: r.name, rows: rows, sections: approx ? [{ rows: [SUB_APPROX] }] : [] };
   }
   function subChips(box, d) {
     if (d && d.subtitlesOk === false) add(box, el("span", "ib-chip ib-muted", "Subtitle usage unavailable"));
     subRows(d).forEach(function (r) {
       var c = add.apply(null, [el("span", "ib-chip"), named("span", r)].concat(subParts(r)));
       c.setAttribute("data-ib-subtitle", r.id || r.name);
-      c.title = subHint(r);
+      hinted(c, subHint(r));
       box.appendChild(c);
     });
   }
@@ -203,7 +221,7 @@
     if (!quota) return;
     var l = lang(), c = add.apply(null, [el("span", "ib-chip"), el("span", "ib-name", TEXT[l].quota)].concat(quotaParts(quota, l)));
     c.setAttribute("data-ib-quota", "");
-    c.title = TEXT[l].quotaNote(quota);
+    hinted(c, { title: TEXT[l].quota, rows: TEXT[l].quotaRows(quota) });
     box.appendChild(c);
   }
   function quotaPanel(p) {
@@ -304,13 +322,14 @@
     try {
       if (!bar) return;
       var d = usable(), root = document.documentElement;
+      if (window.hgTip && bar.querySelector("[aria-describedby='hg-tip']")) window.hgTip.hide();
       root.classList.add("ib-on");
       root.classList.toggle("ib-mini", mini);
       bar.textContent = "";
       var rows = d && d.ok ? d.indexers.filter(function (r) { return r.limited; }) : [];
       var level = d ? worst(rows.concat(subRows(d), d.subscriptions || [], disks(d), quota ? [{ level: quotaLevel(quota) }] : [])) : null;
       var title = add(el("button", "ib-title"), el("span", "ib-dot" + (level ? " ib-" + level : "")), el("span", null, "Indexers"));
-      title.title = mini ? "Show indexer usage" : "Hide indexer usage";
+      tip(title, mini ? "Show indexer usage" : "Hide indexer usage", { tap: false });
       title.setAttribute("aria-expanded", String(!mini));
       title.addEventListener("click", function (e) { e.stopPropagation(); toggleMini(); });
       bar.appendChild(title);

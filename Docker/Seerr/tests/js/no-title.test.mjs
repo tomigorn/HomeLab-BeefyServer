@@ -3,8 +3,6 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 
 const WWW = new URL("../../indexer-bar/www/", import.meta.url);
-// bar.js (shared with AudioBookRequest) is converted on its own
-const LATER = { "bar.js": "bar.js still uses plain title tooltips" };
 
 // Plain browser tooltips (delay, other look, nothing on phones): every hint goes through tip.js. document.title is fine.
 function titleSets(src) {
@@ -16,7 +14,7 @@ function titleSets(src) {
 }
 
 for (const file of readdirSync(WWW).filter((f) => f.endsWith(".js")).sort()) {
-  test(`${file}: no title tooltips`, { todo: LATER[file] }, () => {
+  test(`${file}: no title tooltips`, () => {
     assert.deepEqual(titleSets(readFileSync(new URL(file, WWW), "utf8")), []);
   });
 }

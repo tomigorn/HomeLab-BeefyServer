@@ -1,6 +1,6 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { load, tick, SIDEBAR } from "./fixture.mjs";
+import { load, tick, SIDEBAR, hintOf } from "./fixture.mjs";
 
 const RESET = new Date(Date.now() + 3600e3).toISOString();
 const LIFETIME = { lifetime: true, expires: null, expired: false };
@@ -39,7 +39,8 @@ async function bar(data, body = "") {
   return w;
 }
 function stars(root) {
-  return [...root.querySelectorAll(".ib-star")].map((s) => [s.closest(".ib-name").firstChild.textContent, s.title]);
+  const w = root.ownerDocument.defaultView;
+  return [...root.querySelectorAll(".ib-star")].map((s) => [s.closest(".ib-name").firstChild.textContent, hintOf(w, s).text]);
 }
 
 test("chips: star with its text on paid indexers, subtitles and due subscriptions, none on free ones", async () => {
@@ -53,11 +54,11 @@ test("chips: star with its text on paid indexers, subtitles and due subscription
   ]);
 });
 
-test("star: ★ with an accessible label equal to the title, focusable for touch", async () => {
+test("star: ★ with an accessible label equal to its hint, focusable for touch", async () => {
   const w = await bar(usage());
   const s = w.document.querySelector("#indexer-bar .ib-chips .ib-star");
   assert.equal(s.textContent, "★");
-  assert.equal(s.getAttribute("aria-label"), s.title);
+  assert.equal(s.getAttribute("aria-label"), hintOf(w, s).text);
   assert.equal(s.getAttribute("role"), "img");
   assert.equal(s.tabIndex, 0);
 });
@@ -84,4 +85,13 @@ test("German UI: German star texts", async () => {
   assert.equal(got["Eweka"], "Bezahltes Abo, beendet am 3. März 2026");
   assert.equal(got["NZBgeek"], "Bezahltes Konto (lebenslang)");
   assert.equal(got["Paid Subs"], "Bezahltes Konto");
+});
+
+test("without tip.js: the star keeps its accessible label, no title", async () => {
+  const w = load("bar.js", "", (win) => { win.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve(usage()) }); }, undefined, undefined, { tip: false });
+  open.push(w);
+  await tick(); await tick(); await tick();
+  const s = w.document.querySelector("#indexer-bar .ib-chips .ib-star");
+  assert.equal(s.getAttribute("aria-label"), "Paid subscription until 18 Nov 2026");
+  assert.equal(s.hasAttribute("title"), false);
 });

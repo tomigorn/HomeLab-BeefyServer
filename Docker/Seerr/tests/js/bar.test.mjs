@@ -1,6 +1,6 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { load, SIDEBAR, tick } from "./fixture.mjs";
+import { load, SIDEBAR, tick, hintOf } from "./fixture.mjs";
 
 const TB = 1024 ** 4, GB = 1024 ** 3;
 
@@ -46,22 +46,69 @@ test("colour follows the level from the collector", async () => {
   assert.ok(w.document.querySelector("#indexer-bar .ib-title .ib-dot.ib-full"));
 });
 
-test("hint: free space and the rule (English)", async () => {
+test("hint: headline, used, free, then the rule one sentence per row (English)", async () => {
   const w = await bar(usage([SSD, HDD]));
-  assert.equal(chip(w, "SSD").title, "SSD: 4.6 TB free. Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; from 80 % new downloads go straight to the HDD.");
-  assert.equal(chip(w, "HDD").title, "HDD: 27.5 TB free. Archive for older titles. From 90 % new downloads are no longer imported.");
+  assert.deepEqual(hintOf(w, chip(w, "SSD")), { title: "SSD — fast tier, new downloads", sections: 2, text: [
+    "SSD — fast tier, new downloads", "Used: 2.7/7.3 TB · 38 %", "Free: 4.6 TB",
+    "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %", "From 80 % new downloads go straight to the HDD"].join("\n") });
+  assert.deepEqual(hintOf(w, chip(w, "HDD")), { title: "HDD — archive", sections: 2, text: [
+    "HDD — archive", "Used: 535 GB/28 TB · 2 %", "Free: 27.5 TB", "Archive for older titles", "From 90 % new downloads are no longer imported"].join("\n") });
 });
 
-test("two SSDs: the hint names each one", async () => {
+test("hint: no rule, no sub = one section with the name as headline", async () => {
+  const w = await bar(usage([{ ...HDD, sub: undefined, hint: undefined }]));
+  assert.deepEqual(hintOf(w, chip(w, "HDD")), { title: "HDD", sections: 1, text: "HDD\nUsed: 535 GB/28 TB · 2 %\nFree: 27.5 TB" });
+});
+
+test("two SSDs: the hint names each one on its own row", async () => {
   const w = await bar(usage([{ ...SSD, parts: [75, 0.4] }, HDD]));
-  assert.match(chip(w, "SSD").title, /^SSD: 4\.6 TB free \(2 SSDs: 75 % · 0 %\)\. Above 70 %/);
+  assert.match(hintOf(w, chip(w, "SSD")).text, /^SSD — fast tier, new downloads\nUsed: 2\.7\/7\.3 TB · 38 %\nFree: 4\.6 TB\n2 SSDs: 75 % · 0 %\nAbove 70 %/);
 });
 
 test("German UI: German hint and decimal comma", async () => {
   const w = await bar(usage([SSD, HDD]), SIDEBAR.replace(">Series<", ">Serien<"));
   assert.match(chip(w, "SSD").textContent, /2,7\/7,3 TB/);
-  assert.equal(chip(w, "SSD").title, "SSD: 4,6 TB frei. Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab 80 % landen neue Downloads direkt auf der HDD.");
-  assert.equal(chip(w, "HDD").title, "HDD: 27,5 TB frei. Archiv für ältere Titel. Ab 90 % werden neue Downloads nicht mehr importiert.");
+  assert.equal(hintOf(w, chip(w, "SSD")).text, ["SSD — schnell, neue Downloads", "Belegt: 2,7/7,3 TB · 38 %", "Frei: 4,6 TB",
+    "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %", "Ab 80 % landen neue Downloads direkt auf der HDD"].join("\n"));
+  assert.equal(hintOf(w, chip(w, "HDD")).text, ["HDD — Archiv", "Belegt: 535 GB/28 TB · 2 %", "Frei: 27,5 TB", "Archiv für ältere Titel", "Ab 90 % werden neue Downloads nicht mehr importiert"].join("\n"));
+});
+
+test("hinted chips are focusable, so keyboard and a tap open the hint", async () => {
+  const w = await bar(usage([SSD]));
+  assert.equal(chip(w, "SSD").tabIndex, 0);
+  assert.equal(chip(w, "SSD").hasAttribute("title"), false);
+});
+
+test("toggle button: hint names what a click does, a tap toggles at once", async () => {
+  const w = await bar(usage([SSD]));
+  const t = w.document.querySelector("#indexer-bar .ib-title");
+  assert.equal(hintOf(w, t).text, "Hide indexer usage");
+  t.click();
+  assert.equal(hintOf(w, w.document.querySelector("#indexer-bar .ib-title")).text, "Show indexer usage");
+  const down = new w.MouseEvent("pointerdown", { bubbles: true }); Object.defineProperty(down, "pointerType", { value: "touch" });
+  const b = w.document.querySelector("#indexer-bar .ib-title");
+  b.dispatchEvent(down);
+  b.click();
+  assert.equal(w.document.documentElement.classList.contains("ib-mini"), false);
+});
+
+test("a re-render while a hint is open closes it (its chip is gone)", async () => {
+  const w = await bar(usage([SSD]));
+  w.hgTip.show(chip(w, "SSD"));
+  const box = w.document.getElementById("hg-tip");
+  assert.notEqual(box.style.display, "none");
+  w.history.pushState({}, "", "/discover/movies");
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(box.style.display, "none");
+});
+
+test("without tip.js: no hints, no title, the bar still works", async () => {
+  const w = load("bar.js", "", (win) => { win.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve(usage([SSD])) }); }, undefined, undefined, { tip: false });
+  open.push(w);
+  await tick(); await tick(); await tick();
+  assert.equal(w.hgTip, undefined);
+  assert.match(chip(w, "SSD").textContent, /^SSD/);
+  assert.equal(w.document.querySelector("#indexer-bar [title]"), null);
 });
 
 test("panel lists storage with free space and the rule", async () => {

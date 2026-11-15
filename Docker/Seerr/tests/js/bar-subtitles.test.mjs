@@ -1,6 +1,6 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { load, tick } from "./fixture.mjs";
+import { load, tick, hintOf } from "./fixture.mjs";
 
 const RESET = new Date(Date.now() + 3600e3).toISOString();
 const SUBDL = { name: "SubDL", id: "subdl", window: "utc-day", status: "ok", level: "ok",
@@ -34,8 +34,22 @@ test("SubDL chip: ≈ searches and exact downloads with meters", async () => {
   const c = chip(w, "subdl");
   assert.equal(text(c), "SubDL ≈300/2000 searches 12/50 downloads");
   assert.equal(c.querySelectorAll(".ib-meter.ib-ok").length, 2);
-  assert.match(c.title, /≈ = estimated from Bazarr's searches/);
-  assert.match(c.title, /00:00 UTC/);
+});
+
+test("subtitle hint: name, provider, one count per row, the window, ≈ note as its own section", async () => {
+  const w = await bar(usage([SUBDL, OPENSUBS]));
+  assert.deepEqual(hintOf(w, chip(w, "subdl")), { title: "SubDL", sections: 2, text: [
+    "SubDL", "Subtitle provider", "Searches: ≈300/2000", "Downloads: 12/50", "Counted: per day (00:00 UTC)", "≈ = estimated from Bazarr's searches."].join("\n") });
+  assert.deepEqual(hintOf(w, chip(w, "opensubtitlescom")), { title: "OpenSubtitles", sections: 1, text: [
+    "OpenSubtitles", "Subtitle provider", "Downloads: 20", "Counted: per day (00:00 UTC)"].join("\n") });
+  assert.equal(chip(w, "subdl").tabIndex, 0);
+});
+
+test("subtitle hint: paid account and a pause reason get a row", async () => {
+  const w = await bar(usage([{ ...OPENSUBS, premium: { lifetime: false, expires: null, expired: false }, status: "paused", statusText: "download limit reached, retry in an hour" }]));
+  const h = hintOf(w, chip(w, "opensubtitlescom")).text;
+  assert.match(h, /\n★ Paid account\n/);
+  assert.match(h, /\nDownload limit reached, retry in an hour\n/);
 });
 
 test("downloads used up: red meter and the reset time", async () => {

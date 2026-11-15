@@ -226,7 +226,7 @@ email) are not set up: Settings -> Notifications.
 
 ## Hint boxes
 
-Every hover / tap hint of our scripts goes through one module, `indexer-bar/www/tip.js` (`window.hgTip`, injected first). No browser `title` tooltips (delay, other look, nothing on phones); `bar.js` still has its own, to be converted.
+Every hover / tap hint of our scripts goes through one module, `indexer-bar/www/tip.js` (`window.hgTip`, injected first). No browser `title` tooltips (delay, other look, nothing on phones), `bar.js` included (also on AudioBookRequest, which vendors `tip.js` with it); a page without `tip.js` shows the bar without hints (`aria-label`s stay).
 
 | Part | What |
 |---|---|
@@ -234,7 +234,8 @@ Every hover / tap hint of our scripts goes through one module, `indexer-bar/www/
 | Open | mouse hover and keyboard focus at once; touch: first tap shows, second tap goes through (menu links, sort select, tag ×: tap goes straight through); Escape, outside click, scroll close; one box at a time; `role="tooltip"`, `aria-describedby`, `aria-label` on elements without text |
 | Content | bold headline (emoji where it helps), then short rows (`label: value`), release / file names on their own line in monospace, thin line between sections; text only, never markup |
 | Seerr's own tooltip | opens for the same element (status pill: download popup, "Manage Movie", "Play on Jellyfin"): our text goes into Seerr's box as its first block, no second box; kept on top across React re-renders. That box is then pinned like ours (below the pill, left edges aligned, flips above, inside the viewport, follows scroll) instead of following the mouse (`data-hg-tip-pin`, `!important` CSS beats popper's inline transform); the 6 px gap keeps the download popup reachable. Seerr's boxes without our block stay as Seerr places them. Seerr's box hidden (phones hide the download popup) or none: our box |
-| Tests | `tip.test.mjs`; `no-title.test.mjs` (no `title` set in any script, `bar.js` todo); the test fixture fails every test whose script sets a `title` |
+| Bar hints | storage chip: **name — sub**, `Used:`, `Free:`, each SSD's %, then the rule one sentence per row; subtitle chip: **name**, provider, `Searches:` / `Downloads:`, paid ★, pause reason, `Counted:`, ≈ note as its own section; quota chip: **My requests** + the rule; ★: the paid text; Indexers button: Show / Hide (a tap toggles at once). Hinted chips are focusable; a bar re-render closes an open hint |
+| Tests | `tip.test.mjs`; `no-title.test.mjs` (no `title` set in any script); the test fixture fails every test whose script sets a `title`; `bar*.test.mjs` (hint contents, page without `tip.js`); `tests/test_bar_layout.py` (hints inside the screen at 390/1280 px) |
 
 ## Indexer bar
 
@@ -253,7 +254,7 @@ A thin bar at the top of every Seerr page (everyone who can open Requests sees i
 | Subtitle keys | `scripts/subtitle-keys.py` copies the SubDL key and the OpenSubtitles login + the API key Bazarr uses (from Bazarr's config and `get_providers.py`, needs sudo) to `secrets/indexer-bar/` (`subdl.apikey`, `opensubtitles.json`, 0400, gitignored). Re-run after changing a key/password in Bazarr or a Bazarr update (`seerr.bar-subtitle-accounts` fails). Bazarr key `../Movie-Downloads/secrets/hook/bazarr.apikey` (read only). State: `~/.local/state/indexer-bar/subtitle-searches.json` (hashed job ids and counts), `subtitle-accounts.json` (0600, cached numbers + OpenSubtitles token). Errors log only the HTTP status, never a credential |
 | Premium ★ | after the name of every paid account or subscription (indexer, subtitle and subscription rows, bar and **more**): names with a `[[subscriptions]]` entry, `premium = true` on an `[indexers."…"]`/`[subtitles.…]` entry, OpenSubtitles VIP. Hover / focus: "Paid account (lifetime)", "Paid subscription until 18 Nov 2026", "Paid subscription, ended 3 Mar 2026", "Paid account" (German when Seerr is German) |
 | Phones | the **more** popup stays inside the screen from 320 px: below 520 px each value cell wraps under its name. Browser test `tests/test_bar_layout.py` (320/390/430/1280 px) |
-| Storage | `SSD` (ssd-hot + ssd-hot2 together) and `HDD` chips: used/total and %, from `os.statvfs` of each branch (`1 − f_bavail/f_blocks`, the mergerfs measure). SSD green < 70 %, yellow 70-80, red ≥ 80; HDD green < 80, yellow 80-90, red ≥ 90. Hover (and **more**): free space, both SSDs' %, and the rule (mover from 70 % down to 60 % with titles unplayed for 30 days, from 80 % new downloads go to the HDD; HDD from 90 % no imports). EN/DE. The collector also writes `~/.local/state/indexer-bar/storage.prom` (sizes only), which fastpi pulls for its alerts |
+| Storage | `SSD` (ssd-hot + ssd-hot2 together) and `HDD` chips: used/total and %, from `os.statvfs` of each branch (`1 − f_bavail/f_blocks`, the mergerfs measure). SSD green < 70 %, yellow 70-80, red ≥ 80; HDD green < 80, yellow 80-90, red ≥ 90. Hover / tap (and **more**): used, free space, both SSDs' %, and the rule (mover from 70 % down to 60 % with titles unplayed for 30 days, from 80 % new downloads go to the HDD; HDD from 90 % no imports). EN/DE. The collector also writes `~/.local/state/indexer-bar/storage.prom` (sizes only), which fastpi pulls for its alerts |
 | Limits + deadlines | `indexer-bar/limits.toml` (committed, no secrets): indexers, subtitle providers, subscriptions; picked up on the next run, no restart |
 | Colours | limits: green < 70 %, amber 70-95 %, red ≥ 95 % with the reset time. Subscriptions: yellow ≤ 30 days left, orange ≤ 7, red on the end date and after, `lifetime` without countdown (same stages as the Telegram alerts) |
 | Windows | `rolling`: last 24 h, resets when the oldest counted event ages out (Prowlarr's own rule). `day`: calendar day Europe/Zurich, resets at midnight (DST-aware) |
@@ -287,7 +288,7 @@ sudo docker compose up -d
 | Check | Command |
 |---|---|
 | Tests | `python3 tests/test_indexer_usage.py`, `python3 tests/test_subtitle_keys.py`, `bash tests/test_bar_assets.sh`; JS `node --test` in `tests/js` (`bar*.test.mjs`) |
-| Browser test | once `sudo docker build --network host -t seerr-bar-test:local tests/browser-image`, then `sudo docker run --rm --network none -v $PWD:/w:ro -w /w seerr-bar-test:local python3 tests/test_bar_layout.py` (screenshots: `-e SHOT_DIR=/shots -v <dir>:/shots`) |
+| Browser test | once `sudo docker build --network host -t seerr-bar-test:local tests/browser-image`, then `sudo docker run --rm --network none -v $PWD:/w:ro -w /w seerr-bar-test:local python3 tests/test_bar_layout.py` (screenshots of the popup and the storage / subtitle hints: `-e SHOT_DIR=/shots -v <dir>:/shots`) |
 | Subtitle keys | `scripts/subtitle-keys.py` (once, and after a key change in Bazarr) |
 | Injected | `curl -sL localhost:5055/ \| grep _indexer-bar` (each with `?v=` = `scripts/bar-assets.sh version`) |
 | Data | `scripts/indexer-usage.py && python3 -m json.tool /srv/appdata/indexer-bar/usage.json \| head` |
