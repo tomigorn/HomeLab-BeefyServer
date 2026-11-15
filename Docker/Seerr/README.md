@@ -64,6 +64,7 @@ Owner decision 2026-11-01: we build and run our own image from the newest stable
 |---|---|
 | Image | `seerr-local:current` (`pull_policy: never`), also tagged `seerr-local:<release>-oidc<pr sha7>`; previous one `seerr-local:rollback`. Labels `holy-grail.seerr.{tree,upstream,pr}` |
 | Now | `v3.5.1-oidc2e52312` (2026-11-02, rebuilt 2026-11-15 with patch 20), upstream tests green; Next.js 16.4.3; Trivy critical 12 → 0, high 141 → 114 |
+| Built, not deployed | `v3.5.2-oidc2e52312` (2026-11-15, `seerr-local:candidate`): resolution `image/resolutions/v3.5.2-2e523125e8e7.patch`, typecheck + 331 tests green, throwaway start on a config copy OK (status 3.5.2, OIDC start redirects to sso); no DB migration over v3.5.1 |
 | Script | `scripts/seerr-rebuild.sh [--force] [--no-deploy] [--deploy-release]`, unit `systemd/seerr-rebuild.service` (buntu + docker group, state and clone in `/var/lib/seerr-rebuild`) |
 | Timer | `seerr-rebuild.timer` Tue 04:27 (maintenance window waits for it) |
 | Tests | `bash tests/test_seerr_rebuild.sh` (fake upstream git + fake docker) |
@@ -102,6 +103,13 @@ git diff --binary --cached <tag> > ~/Projects/Docker/Seerr/image/resolutions/<ta
 sudo systemctl start seerr-rebuild.service
 ```
 
+- `pnpm-lock.yaml`: resolve only the conflict hunk (keeps the PR's reviewed dependency versions), then `pnpm install --lockfile-only --ignore-scripts` in the Dockerfile's node image (`sudo docker run … --user 1000:1000 -v $PWD:/src -w /src <node image> corepack pnpm install --lockfile-only --ignore-scripts`) must leave it unchanged. Regenerating from scratch would lift openid-client/jose to unreviewed versions.
+- Test a resolution with `--no-deploy` first (systemd-run command of step 6 with `--no-deploy`).
+
+| Resolution | What |
+|---|---|
+| `v3.5.2-2e523125e8e7` | `package.json`/lockfile: upstream nodemailer 10.2.1 + the PR's openid-client 6.8.4, jose 6.2.3, fetch-mock. `usersettings.ts`: upstream's security fix (`canModifyUser`, a manager may not change an admin) kept in the Plex/Jellyfin unlink routes together with the PR's "password or linked account" rule; the same check added to the PR's own OIDC unlink route `DELETE /linked-accounts/:acctId` (+ 2 tests) |
+
 Next.js 16.4.3 (override; 16.2.6 had 5 critical CVEs). Under Turbopack it inlines a per-page bootstrap `<script>` (chunk list of `/_app` + the page, so a CSP hash would differ per page and per build), which our CSP (`script-src 'self'`, fastpi Traefik) blocks. `image/patches/10-turbopack-bootstrap-out-of-line.patch` (`_document.tsx`) puts that data into `<script type="application/json" id="__HG_TURBOPACK_BOOTSTRAP__">` and runs it from the static `/hg-turbopack-bootstrap.js`: the CSP stays unchanged. Checks `seerr.no-inline-script` (0) and `seerr.turbopack-bootstrap` roll a build back where Next changes this. (`next build --webpack` breaks title pages: SVG imports.)
 
 Request cards (Requests page, Recent Requests, profile): upstream re-fetched every card's `/api/v1/request/<id>` and its title on mount and on every tab focus, plus every 15 s while downloading (one open tab: 11,093 calls overnight, 100 per focus at 100 rows, each through the SSO check). `image/patches/20-request-cards-no-self-polling.patch` (`src/utils/requestCardSwr.ts` + test, `RequestList/RequestItem`, `RequestCard`): a card shows the list's answer, fetches on its own only while a download runs (every 60 s, until its own answer shows the download done), the newer of list and own answer wins; titles are fetched once. Approve / decline / retry / edit still refresh the card. Check `seerr.request-cards-no-poll`.
@@ -114,7 +122,7 @@ Manual rollback to the September preview (no DB migration between them):
 sudo docker tag ghcr.io/seerr-team/seerr:preview-new-oidc seerr-local:current && cd ~/Projects/Docker/Seerr && sudo docker compose up -d --no-deps seerr
 ```
 
-DB: v3.5.1 + PR adds no migration over the preview (56 both, 2026-11-02); a later release may migrate one way (held, step 6), the backup of step 7 is the way back. Backup before the switch: `~/backups/seerr-2026-11-01-pre-own-image.tgz`.
+DB: v3.5.1 + PR adds no migration over the preview (56 both, 2026-11-02); v3.5.2 adds none either (only edits of old, already applied SQLite migrations; 56 after a start on a copy, 2026-11-15); a later release may migrate one way (held, step 6), the backup of step 7 is the way back. Backup before the switch: `~/backups/seerr-2026-11-01-pre-own-image.tgz`.
 
 ### Back to stable
 
