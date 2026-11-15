@@ -73,6 +73,28 @@
     de: { free: "frei", head: "Speicher", quota: "Meine Anfragen", frees: "wieder frei ", days: function (n) { return " in " + n + " Tagen"; },
       quotaNote: function (q) { return q.limit + " Anfragen pro Person in " + q.days + " Tagen, gelöschte Anfragen zählen mit."; } }
   };
+  var PAID = {
+    en: { life: "Paid account (lifetime)", plain: "Paid account", until: "Paid subscription until ", ended: "Paid subscription, ended ", locale: "en-GB" },
+    de: { life: "Bezahltes Konto (lebenslang)", plain: "Bezahltes Konto", until: "Bezahltes Abo bis ", ended: "Bezahltes Abo, beendet am ", locale: "de-CH" }
+  };
+  function paidText(p, l) {
+    var t = PAID[l];
+    if (p.lifetime) return t.life;
+    if (!p.expires) return t.plain;
+    var d = p.expires.split("-"), date = new Date(+d[0], +d[1] - 1, +d[2]).toLocaleDateString(t.locale, { day: "numeric", month: "short", year: "numeric" });
+    return (p.expired ? t.ended : t.until) + date;
+  }
+  // Name with a ★ for paid accounts and subscriptions (usage.json "premium").
+  function named(tag, r) {
+    var n = el(tag, "ib-name", r.name);
+    if (!r.premium) return n;
+    var text = paidText(r.premium, lang()), star = el("span", "ib-star", "★");
+    star.title = text;
+    star.setAttribute("aria-label", text);
+    star.setAttribute("role", "img");
+    star.tabIndex = 0;
+    return add(n, star);
+  }
   function tr(v, l) { return v == null ? "" : typeof v === "string" ? v : v[l] || v.en || ""; }
   function lang() {
     var hook = cfg.ibLangHook && window[cfg.ibLangHook];
@@ -147,7 +169,7 @@
   function subChips(box, d) {
     if (d && d.subtitlesOk === false) add(box, el("span", "ib-chip ib-muted", "Subtitle usage unavailable"));
     subRows(d).forEach(function (r) {
-      var c = add.apply(null, [el("span", "ib-chip"), el("span", "ib-name", r.name)].concat(subParts(r)));
+      var c = add.apply(null, [el("span", "ib-chip"), named("span", r)].concat(subParts(r)));
       c.setAttribute("data-ib-subtitle", r.id || r.name);
       c.title = subHint(r);
       box.appendChild(c);
@@ -160,7 +182,7 @@
     var t = el("table"), approx = false;
     rows.forEach(function (r) {
       approx = approx || ["searches", "downloads"].some(function (k) { return r[k] && r[k].approx; });
-      add(t, add(el("tr"), add(el("td"), el("div", "ib-name", r.name), el("div", "ib-muted", SUB_WINDOW)),
+      add(t, add(el("tr"), add(el("td"), named("div", r), el("div", "ib-muted", SUB_WINDOW)),
         add(el("td"), add.apply(null, [el("div", "ib-line")].concat(subParts(r))))));
     });
     add(p, el("h4", null, "Subtitles"), t);
@@ -191,7 +213,7 @@
     var rows = d && d.ok ? d.indexers.filter(function (r) { return r.limited; }) : [];
     if (!d || !d.ok) add(box, el("span", "ib-chip ib-muted", "Indexer usage unavailable"));
     rows.forEach(function (r) {
-      var c = add(el("span", "ib-chip"), el("span", "ib-name", r.name));
+      var c = add(el("span", "ib-chip"), named("span", r));
       [["searches", "searches"], ["downloads", "downloads"]].forEach(function (k) {
         var m = r[k[0]];
         if (m.limit == null) return;
@@ -201,7 +223,7 @@
       box.appendChild(c);
     });
     (d && d.ok && d.showUnlimited ? d.indexers.filter(function (r) { return !r.limited; }) : []).forEach(function (r) {
-      var c = add(el("span", "ib-chip"), el("span", "ib-name", r.name));
+      var c = add(el("span", "ib-chip"), named("span", r));
       [["searches", "searches"], ["downloads", "downloads"]].forEach(function (k) {
         add(c, add(el("span", "ib-muted"), document.createTextNode(num(r[k[0]].used) + "/∞"), el("span", "ib-word", " " + k[1])));
       });
@@ -213,7 +235,7 @@
     var subs = d ? d.subscriptions || [] : [];
     var due = subs.filter(function (s) { return s.level !== "ok"; });
     due.forEach(function (s) {
-      add(box, add(el("span", "ib-chip"), el("span", "ib-dot ib-" + s.level), el("span", "ib-name", s.name),
+      add(box, add(el("span", "ib-chip"), el("span", "ib-dot ib-" + s.level), named("span", s),
         el("span", "ib-" + s.level + "-text", subText(s))));
     });
     if (!due.length) {
@@ -242,7 +264,7 @@
           });
           var rs = resetText(r);
           if (rs) add(cell, add(el("div", "ib-line"), rs));
-          var name = add(el("td"), el("div", "ib-name", r.name), el("div", "ib-muted", r.window === "day" ? "per day (midnight)" : "last 24 h"));
+          var name = add(el("td"), named("div", r), el("div", "ib-muted", r.window === "day" ? "per day (midnight)" : "last 24 h"));
           add(t, add(el("tr"), name, cell));
         });
         add(p, el("h4", null, "Limited indexers"), t);
@@ -250,7 +272,7 @@
       if (free.length) {
         var u = el("table");
         free.forEach(function (r) {
-          add(u, add(el("tr"), el("td", "ib-name", r.name),
+          add(u, add(el("tr"), named("td", r),
             el("td", "ib-muted", num(r.searches.used) + " searches · " + num(r.downloads.used) + " downloads · ∞")));
         });
         add(p, el("h4", null, "Unlimited (last 24 h)"), u);
@@ -261,7 +283,7 @@
     if (subs.length) {
       var s = el("table");
       subs.forEach(function (x) {
-        add(s, add(el("tr"), add(el("td"), el("div", "ib-name", x.name), el("div", "ib-muted", x.kind || "")),
+        add(s, add(el("tr"), add(el("td"), named("div", x), el("div", "ib-muted", x.kind || "")),
           add(el("td"), add(el("div", "ib-line"), x.lifetime ? null : el("span", "ib-dot ib-" + x.level),
             el("span", x.lifetime ? "ib-muted" : "ib-" + x.level + "-text", subText(x))))));
       });

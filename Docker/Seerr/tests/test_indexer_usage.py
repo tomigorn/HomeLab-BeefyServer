@@ -476,6 +476,10 @@ class Accounts(unittest.TestCase):
     def test_opensubtitles_info_gives_downloads_and_limit(self):
         self.assertEqual(iu.opensubs_account(INFO), {"downloads": {"used": 7, "limit": 20}})
 
+    def test_opensubtitles_vip_is_premium(self):
+        vip = {"data": dict(INFO["data"], vip=True, vip_expiry="2027-03-01T00:00:00Z", allowed_downloads=1000)}
+        self.assertEqual(iu.opensubs_account(vip)["premium"], {"lifetime": False, "expires": "2027-03-01", "expired": False})
+
     def test_account_numbers_replace_the_estimate(self):
         rows = iu.subtitles(SUBS, self.STATUS, {"subdl": 13, "opensubtitlescom": 3}, 95735, self.NOW,
                             accounts={"subdl": iu.subdl_account(ME), "opensubtitlescom": iu.opensubs_account(INFO)})
@@ -571,6 +575,59 @@ class OpenSubtitlesLogin(unittest.TestCase):
         calls, entry = [], {"token": "OLD", "tokenAt": iu.iso(self.NOW - dt.timedelta(hours=13)), "host": "api.opensubtitles.com"}
         iu.opensubs_fetcher(OS_CREDS, http=self.http(calls))(entry, self.NOW)
         self.assertEqual([c[0][-1] for c in calls], ["login", "user"])
+
+
+class Premium(unittest.TestCase):
+    NOW = utc(2026, 10, 26, 12, 0)
+    SUBS = [{"name": "Treasure Maps", "kind": "indexer", "expires": dt.date(2031, 11, 17)},
+            {"name": "Eweka", "kind": "Usenet provider", "expires": dt.date(2026, 3, 3)},
+            {"name": "NZBgeek", "kind": "indexer", "lifetime": True}]
+
+    def data(self, limits=LIMITS, subtitles=None, accounts=None):
+        def prowlarr(path):
+            return INDEXERS if path == "/indexer" else []
+
+        def bazarr(path):
+            return {"data": []}
+        cfg = {"indexers": limits, "subscriptions": self.SUBS, "subtitles": subtitles or {}}
+        with tempfile.TemporaryDirectory() as d:
+            out = pathlib.Path(d) / "usage.json"
+            return iu.run(cfg, prowlarr, out, self.NOW, bazarr=bazarr, sub_state=pathlib.Path(d) / "s.json",
+                          sub_accounts=(lambda now: accounts or {}))
+
+    def test_subscriptions_mark_rows_with_the_same_name(self):
+        d = self.data()
+        self.assertEqual(row(d, "Treasure Maps")["premium"], {"lifetime": False, "expires": "2031-11-17", "expired": False})
+        self.assertEqual(row(d, "NZBgeek")["premium"], {"lifetime": True, "expires": None, "expired": False})
+        self.assertNotIn("premium", row(d, "1337x"))
+        subs = {s["name"]: s for s in d["subscriptions"]}
+        self.assertEqual(subs["Eweka"]["premium"], {"lifetime": False, "expires": "2026-03-03", "expired": True})
+
+    def test_explicit_premium_without_a_subscription_stays_unlimited(self):
+        d = self.data(limits=dict(LIMITS, **{"1337x": {"premium": True}}))
+        r = row(d, "1337x")
+        self.assertEqual(r["premium"], {"lifetime": False, "expires": None, "expired": False})
+        self.assertFalse(r["limited"])
+
+    def test_subtitle_rows_free_unless_marked_or_vip(self):
+        subs = {"subdl": {"name": "SubDL"}, "opensubtitlescom": {"name": "OpenSubtitles"}, "x": {"name": "Paid Subs", "premium": True}}
+        d = self.data(subtitles=subs)
+        got = {r["id"]: r.get("premium") for r in d["subtitles"]}
+        self.assertEqual(got, {"subdl": None, "opensubtitlescom": None, "x": {"lifetime": False, "expires": None, "expired": False}})
+        vip = {"opensubtitlescom": {"downloads": {"used": 1, "limit": 1000}, "premium": {"lifetime": False, "expires": "2027-03-01", "expired": False}}}
+        d = self.data(subtitles=subs, accounts=vip)
+        self.assertEqual(d["subtitles"][1]["premium"]["expires"], "2027-03-01")
+
+    def test_premium_must_be_true_or_false(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "l.toml"
+            p.write_text('[indexers."X"]\npremium = "yes"\n')
+            with self.assertRaises(ValueError):
+                iu.load_config(p)
+
+    def test_repo_config_has_no_premium_on_free_subtitle_plans(self):
+        cfg = iu.load_config(ROOT / "indexer-bar" / "limits.toml")
+        self.assertFalse(any(c.get("premium") for c in cfg["subtitles"].values()))
 
 
 if __name__ == "__main__":

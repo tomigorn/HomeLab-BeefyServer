@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Indexer bar (README "Indexer bar"): counts Prowlarr searches (queries + RSS) and grabs per indexer inside its limit window from indexer-bar/limits.toml, adds the subscription deadlines and the SSD/HDD fill level (statvfs of each branch), and writes usage.json (names and counts only) for the bar the proxy shows above Seerr.
 Subtitle providers (limits.toml [subtitles.*]) from Bazarr: downloads per UTC day from its history, paused providers from /api/providers. Exact usage and limits from the provider accounts (SubDL /api/v1/me every 5 min, OpenSubtitles /api/v1/infos/user every 10 min, keys in secrets/indexer-bar from scripts/subtitle-keys.sh, cache in IB_ACCOUNT_STATE); without them SubDL searches are estimated from Bazarr's finished jobs (≈, state in IB_SUB_STATE).
+Premium (★): every row whose name has a [[subscriptions]] entry, or premium = true in limits.toml, or an OpenSubtitles VIP account.
 Storage also goes to IB_STORAGE_PROM (default ~/.local/state/indexer-bar/storage.prom) for fastpi's alerts.
 Prowlarr unreachable: usage.json says ok=false (the bar shows "usage unavailable"), subscriptions stay. Run by systemd/indexer-usage.timer.
 Usage: scripts/indexer-usage.py"""
@@ -133,7 +134,7 @@ def usage(indexers, history, limits, now):
         inside = [(kind, t) for kind, t in events.get(ix["id"], []) if (t > start if window == "rolling" else t >= start) and t <= now]
         searches = metric([t for kind, t in inside if kind in SEARCH_EVENTS], cfg.get("searches"), window, now)
         downloads = metric([t for kind, t in inside if kind in GRAB_EVENTS], cfg.get("downloads"), window, now)
-        rows.append({"name": ix["name"], "protocol": ix.get("protocol"), "limited": bool(cfg), "window": window,
+        rows.append({"name": ix["name"], "protocol": ix.get("protocol"), "limited": "searches" in cfg or "downloads" in cfg, "window": window,
                      "level": max(searches["level"], downloads["level"], key=RANK.get), "searches": searches, "downloads": downloads})
     rows.sort(key=lambda r: (0, order.index(r["name"])) if r["limited"] else (1, r["name"].lower()))
     return {"indexers": rows}
@@ -252,6 +253,8 @@ def subdl_account(me):
 def opensubs_account(info):
     d = info["data"]
     out = {"downloads": {"used": int(d["downloads_count"]), "limit": int(d["allowed_downloads"])}}
+    if d.get("vip"):
+        out["premium"] = {"lifetime": False, "expires": (d.get("vip_expiry") or "")[:10] or None, "expired": False}
     return out
 
 
@@ -304,6 +307,33 @@ def accounts(fetchers, state_path, now):
     pathlib.Path(state_path).parent.mkdir(parents=True, exist_ok=True)
     write(state_path, state, mode=0o600)
     return out
+
+
+def premium(cfg, subs, today, accounts):
+    """name -> premium info, from the subscriptions, premium = true in limits.toml and VIP provider accounts."""
+    out = {}
+    for s in subs:
+        lifetime = bool(s.get("lifetime"))
+        exp = None if lifetime else s["expires"]
+        out[s["name"]] = {"lifetime": lifetime, "expires": exp.isoformat() if exp else None, "expired": bool(exp and exp < today)}
+    plain = {"lifetime": False, "expires": None, "expired": False}
+    for name, c in cfg.get("indexers", {}).items():
+        if c.get("premium"):
+            out.setdefault(name, plain)
+    for pid, c in cfg.get("subtitles", {}).items():
+        name = c.get("name", pid)
+        if c.get("premium"):
+            out.setdefault(name, plain)
+        if (accounts or {}).get(pid, {}).get("premium"):
+            out.setdefault(name, accounts[pid]["premium"])
+    return out
+
+
+def mark_premium(data, paid):
+    for key in ("indexers", "subtitles", "subscriptions"):
+        for r in data.get(key) or []:
+            if r["name"] in paid:
+                r["premium"] = paid[r["name"]]
 
 
 def subscriptions(subs, today):
@@ -381,6 +411,10 @@ def load_config(path):
         for k in ("searches", "downloads"):
             if k in c and (not isinstance(c[k], int) or c[k] < 0):
                 raise ValueError(f"subtitles {pid!r}: {k} must be a whole number")
+    for kind, entries in (("indexer", limits), ("subtitles", subtitle_cfg)):
+        for name, c in entries.items():
+            if not isinstance(c.get("premium", False), bool):
+                raise ValueError(f"{kind} {name!r}: premium must be true or false")
     return {"indexers": limits, "subscriptions": subs, "subtitles": subtitle_cfg}
 
 
@@ -416,6 +450,7 @@ def run(cfg, api, out, now, disks=DISKS, statvfs=os.statvfs, prom=None, bazarr=N
         except (ApiError, AttributeError) as e:
             data["subtitles"], data["subtitlesOk"] = [], False
             print(f"indexer-usage: Bazarr unavailable: {e}", file=sys.stderr)
+    mark_premium(data, premium(cfg, cfg["subscriptions"], local_date(now), acc))
     write(out, data)
     if prom and disk_rows:
         pathlib.Path(prom).parent.mkdir(parents=True, exist_ok=True)

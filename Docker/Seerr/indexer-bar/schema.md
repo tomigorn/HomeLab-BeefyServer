@@ -30,13 +30,15 @@ Auth: the bar exists only after a 200 from `data-ib-data`; 401, 403 or a redirec
 |---|---|---|
 | `ok` | bool | false = Prowlarr not reachable ("usage unavailable"), rest still valid |
 | `generated` | ISO UTC | older than 10 min = shown as unavailable |
-| `indexers[]` | list | `name`, `limited`, `window` (`rolling`/`day`), `level`, `searches`/`downloads` = {`used`, `limit` (null = ∞), `level`, `resetsAt`} |
+| `indexers[]` | list | `name`, `limited`, `window` (`rolling`/`day`), `level`, `searches`/`downloads` = {`used`, `limit` (null = ∞), `level`, `resetsAt`}, optional `premium` |
 | `showUnlimited` | bool, optional | unlimited indexers also in the bar (not only under more) |
-| `subscriptions[]` | list | `name`, `kind`, `lifetime`, `expires`, `daysLeft`, `expired`, `level` |
+| `subscriptions[]` | list | `name`, `kind`, `lifetime`, `expires`, `daysLeft`, `expired`, `level`, optional `premium` |
 | `storage[]` | list | `name`, `id` (optional, chip key), `total`/`used`/`free` bytes, `pct`, `level`, `yellow`/`red` %, optional `parts` (% per member) + `partsLabel`, `label`/`sub`/`hint` = {`en`, `de`} |
 | `note` | {`en`, `de`} or string, optional | last line of the panel |
-| `subtitles[]` | list, optional | subtitle providers: `name`, `id`, `window` (`utc-day`), `status` (`ok`/`paused`), `statusText` (paused: reason + retry), `level`, `searches`/`downloads` = {`used`, `limit` (null = no limit shown), `level`, `resetsAt`, `approx` (true = estimate, shown with ≈)} |
+| `subtitles[]` | list, optional | subtitle providers: `name`, `id`, `window` (`utc-day`), `status` (`ok`/`paused`), `statusText` (paused: reason + retry), `level`, `searches`/`downloads` = {`used`, `limit` (null = no limit shown), `level`, `resetsAt`, `approx` (true = estimate, shown with ≈)}, optional `premium` |
 | `subtitlesOk` | bool, optional | false = Bazarr not reachable ("Subtitle usage unavailable"); absent = app without subtitles |
+
+`premium` = {`lifetime`, `expires` (YYYY-MM-DD or null), `expired`}: paid account/subscription, ★ after the name with "Paid account (lifetime)" / "Paid subscription until …" / "Paid subscription, ended …" / "Paid account" (DE too) as title and label; absent = free.
 
 Levels: `ok`, `yellow`, `warn`, `orange`, `full` (green → red).
 

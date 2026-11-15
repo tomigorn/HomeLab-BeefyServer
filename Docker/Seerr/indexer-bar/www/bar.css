@@ -57,6 +57,8 @@ html.ib-mini #indexer-bar .ib-dot { width: 6px; height: 6px; }
 #indexer-bar .ib-panel .ib-meter { width: 60px; }
 #indexer-bar .ib-panel td.ib-rule { text-align: left; white-space: normal; font-size: 12px; border-top: 0; padding-top: 0; }
 #indexer-bar .ib-note { margin: 10px 0 0; color: #9ca3af; font-size: 12px; }
+#indexer-bar .ib-star { margin-left: 3px; color: #fbbf24; cursor: help; }
+#indexer-bar .ib-star:focus-visible { outline: 1px solid #fbbf24; border-radius: 2px; }
 
 @media (max-width: 640px) {
   #indexer-bar .ib-chips .ib-word, #indexer-bar .ib-label { display: none; }
