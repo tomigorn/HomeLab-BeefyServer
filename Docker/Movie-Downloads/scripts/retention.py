@@ -32,6 +32,9 @@ NIGHT = (datetime.time(4, 0), datetime.time(4, 40))
 DELETED_TAG = "retention-deleted"
 DELETE_CAP = 20
 PROMOTE_HOURS = 24
+GONE_CAP = 500
+JF_LISTS = {"leaving": ("user-retention-leaving", "Leaving soon", "temporary titles that leave within 7 days"),
+            "gone": ("user-retention-gone", "Left the server", "files deleted by the storage cleanup; request again to download")}
 SEASON = re.compile(r"/Season (\d+)/")
 
 
@@ -258,6 +261,34 @@ def read_collections(path):
     return out
 
 
+def read_gone(path):
+    try:
+        data = json.loads(pathlib.Path(path).read_text())
+    except (OSError, ValueError):
+        return []
+    return [g for g in (data.get("gone") if isinstance(data, dict) else None) or [] if isinstance(g, dict) and rr.parse_key(g.get("key"))]
+
+
+def record_gone(path, key, title, year, when, cap=GONE_CAP):
+    gone = [g for g in read_gone(path) if g["key"] != key]
+    write_atomic(path, {"gone": ([{"key": key, "t": title, "y": year, "at": when.isoformat()}] + gone)[:cap]})
+
+
+def jellyfin_lists(entries, overrides, gone, today, since):
+    """Own-list rows (Seerr Collections format) for Jellyfin's Collections & Trending: titles leaving within 7 days (real items) and titles whose files went (placeholders, requestable again)."""
+    leaving = []
+    for k, e in entries.items():
+        st = rr.effective(e, overrides.get(k), today, since)
+        if not st["keep"] and st["soon"]:
+            leaving.append((st["deleteOn"], k))
+    rows = []
+    for which, keys in (("leaving", [k for _, k in sorted(leaving)]), ("gone", [g["key"] for g in gone if rr.parse_key(g.get("key"))])):
+        lid, name, query = JF_LISTS[which]
+        items = [{"k": rr.parse_key(k)[0], "id": rr.parse_key(k)[1]} for k in dict.fromkeys(keys)]
+        rows.append({"id": lid, "name": name, "ownerName": "the server", "query": query, "items": items[:100]})
+    return {"updated": datetime.datetime.now(TZ).isoformat(timespec="seconds"), "lists": rows}
+
+
 def in_night(now):
     return NIGHT[0] <= now.astimezone(TZ).time() < NIGHT[1]
 
@@ -269,7 +300,7 @@ def ensure_tag(call):
     return call("/tag", "POST", {"label": DELETED_TAG})["id"]
 
 
-def delete_due(titles, entries, overrides, now, switch, arr, log, cap=DELETE_CAP):
+def delete_due(titles, entries, overrides, now, switch, arr, log, cap=DELETE_CAP, gone_file=None):
     """Delete the media files of temporary titles whose date has come. Off unless switched on; files only, the title stays (unmonitored, tagged)."""
     if not switch.on:
         log("retention: observe mode (RETENTION_DELETE off) - nothing deleted")
@@ -303,6 +334,8 @@ def delete_due(titles, entries, overrides, now, switch, arr, log, cap=DELETE_CAP
             item["tags"] = sorted(set(item.get("tags") or []) | {tid})
             call(f"/{'movie' if t.kind == 'movie' else 'series'}/{t.id}", "PUT", item)
             done += 1
+            if gone_file:
+                record_gone(gone_file, t.key, t.title, t.year, today)
             log(f"retention: deleted the files of {t.key} ({t.title}, {st['why']} {st['deleteOn']}); title kept, unmonitored")
         except Exception as ex:
             log(f"retention: {t.key} ({t.title}) not deleted: {type(ex).__name__}")
@@ -386,9 +419,12 @@ def main(argv=None):
         print(f"retention: {len(lib.skipped)} series without a TMDB id left out", flush=True)
     if not a.dry_run:
         write_atomic(env.get("RT_OUT", "/srv/appdata/indexer-bar/retention.json"), doc)
+    state = pathlib.Path(env.get("RT_STATE", pathlib.Path.home() / ".local" / "state" / "movie-downloads"))
     if a.apply:
         arr = {"radarr": apis.radarr, "sonarr": apis.sonarr}
-        delete_due(lib.titles, entries, overrides, now, switch, lambda app: arr[app], lambda l: print(l, flush=True))
+        delete_due(lib.titles, entries, overrides, now, switch, lambda app: arr[app], lambda l: print(l, flush=True), gone_file=state / "retention-gone.json")
+    if switch.on and not a.dry_run:
+        write_atomic(state / "retention-lists.json", jellyfin_lists(entries, overrides, read_gone(state / "retention-gone.json"), now.date(), switch.since))
     return 0
 
 

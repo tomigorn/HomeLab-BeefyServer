@@ -299,5 +299,34 @@ class Delete(unittest.TestCase):
         self.assertEqual(n, 1)
 
 
+class JellyfinLists(unittest.TestCase):
+    def test_leaving_soon_and_gone_as_own_list_rows(self):
+        lib = library()
+        today = datetime.date(2027, 1, 25)
+        e = rt.classify(lib.titles, {}, set(), set(), set(), (100, 10), today)
+        gone = [{"key": "movie/1005", "t": "Niche Film", "y": 2022, "at": "2027-01-20"}, {"key": "bad"}]
+        doc = rt.jellyfin_lists(e, {}, gone, today, datetime.date(2026, 12, 1))
+        rows = {l["id"]: l for l in doc["lists"]}
+        self.assertEqual(sorted(rows), ["user-retention-gone", "user-retention-leaving"])
+        self.assertEqual(rows["user-retention-leaving"]["items"], [{"k": "movie", "id": 1001}])
+        self.assertEqual(rows["user-retention-gone"]["items"], [{"k": "movie", "id": 1005}])
+        self.assertEqual((rows["user-retention-leaving"]["name"], rows["user-retention-gone"]["name"]), ("Leaving soon", "Left the server"))
+
+    def test_gone_records_are_kept_and_capped(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d, "gone.json")
+            for i in range(3):
+                rt.record_gone(p, f"movie/{i + 1}", f"T{i}", 2020, datetime.date(2027, 1, 1 + i), cap=2)
+            self.assertEqual([g["key"] for g in rt.read_gone(p)], ["movie/3", "movie/2"])
+
+    def test_deletion_records_what_went(self):
+        lib = library()
+        e = rt.classify(lib.titles, {}, set(), set(), set(), (100, 10), NIGHT.date())
+        with tempfile.TemporaryDirectory() as d:
+            p = pathlib.Path(d, "gone.json")
+            rt.delete_due(lib.titles, e, {}, NIGHT, rt.Switch(True, datetime.date(2026, 12, 1)), Fake(), lambda l: None, gone_file=p)
+            self.assertEqual(sorted(g["key"] for g in rt.read_gone(p)), ["movie/1001", "tv/2001"])
+
+
 if __name__ == "__main__":
     unittest.main()
