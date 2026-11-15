@@ -38,13 +38,50 @@ const posts = (calls) => calls.filter((c) => c.opts.method === "POST").map((c) =
 
 test("open problems with title, type, requesters; tab counts", async () => {
   const done = problem({ id: "bbbbbbbbbbbb", resolved: { at: "2026-11-14T03:00:00Z", how: "gone" } });
-  const { $, $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [problem(), problem({ id: "cccccccccccc", type: "no-release", requesters: ["jane", "joe"] })], done: [done], admin: false } } });
+  const { $, $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [problem(), problem({ id: "cccccccccccc", key: "movie/77", title: "Other", type: "no-release", requesters: ["jane", "joe"] })], done: [done], admin: false } } });
   assert.equal($$("[data-problem]").length, 2);
-  assert.match($('[data-problem="aaaaaaaaaaaa"] [data-title]').textContent, /The Ring Thing \(2004\)/);
+  assert.match($('[data-card="movie/10248"] [data-title]').textContent, /The Ring Thing \(2004\)/);
   assert.match($('[data-problem="aaaaaaaaaaaa"] [data-type]').textContent, /Removed from Radarr\/Sonarr/);
-  assert.match($('[data-problem="cccccccccccc"] [data-requesters]').textContent, /jane, joe/);
+  assert.match($('[data-card="movie/77"] [data-requesters]').textContent, /jane, joe/);
   assert.match($('[data-tab="open"]').textContent, /Open \(2\)/);
   assert.match($('[data-tab="done"]').textContent, /Done \(1\)/);
+});
+
+test("one card per title: each download inside with its own actions; tabs count titles", async () => {
+  const a = problem({ type: "import", key: "tv/312697", title: "Company Retreat", details: { release: "Show.S01E09-GRP", episodes: 1 } });
+  const b = problem({ id: "dddddddddddd", type: "import", key: "tv/312697", title: "Company Retreat", requesters: ["joe"], details: { release: "Show.S01E10-GRP", episodes: 1 } });
+  const { $, $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [a, b], done: [], admin: false } } });
+  assert.equal($$("[data-card]").length, 1);
+  assert.equal($$('[data-card="tv/312697"] [data-problem]').length, 2);
+  assert.match($('[data-problem="dddddddddddd"] [data-details]').textContent, /S01E10/);
+  assert.equal($$('[data-card] [data-act="files"]').length, 2);
+  assert.match($("[data-requesters]").textContent, /jane, joe/);
+  assert.match($('[data-tab="open"]').textContent, /Open \(1\)/);
+});
+
+test("Show files toggles to Hide files, is disabled while loading, opens again", async () => {
+  const p = problem({ type: "import", details: { release: "Some.Film.2024", message: "" } });
+  let release;
+  const files = { token: "t", kind: "movie", files: [{ n: 0, name: "film.mkv", size: 9e9, episodeIds: [], probable: true, rejections: [] }], episodes: [] };
+  const { $, $$, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
+    "/_download-now/manual/files": () => ({ status: 200, body: files }) });
+  const btn = $('[data-act="files"]');
+  assert.equal(btn.textContent, "Show files");
+  btn.click();
+  assert.equal(btn.disabled, true);
+  assert.equal(btn.textContent, "Loading…");
+  await settle();
+  assert.equal(btn.disabled, false);
+  assert.equal(btn.textContent, "Hide files");
+  assert.equal($$("input[data-file]").length, 1);
+  btn.click();
+  await settle();
+  assert.equal($$("input[data-file]").length, 0);
+  assert.equal(btn.textContent, "Show files");
+  btn.click();
+  await settle();
+  assert.equal($$("input[data-file]").length, 1);
+  assert.equal(calls.filter((c) => c.url.startsWith("/_download-now/manual/files")).length, 2);
 });
 
 test("no open problems: a calm empty state", async () => {
@@ -55,7 +92,7 @@ test("no open problems: a calm empty state", async () => {
 test("text from the data is never markup", async () => {
   const evil = problem({ title: '<img src=x onerror="alert(1)">', requesters: ["<b>x</b>"], details: { release: "<script>alert(1)</script>" }, type: "import" });
   const { $, $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [evil], done: [], admin: false } } });
-  assert.equal($$("[data-problem] img, [data-problem] b, [data-problem] script").length, 0);
+  assert.equal($$("[data-card] img, [data-card] b, [data-card] script").length, 0);
   assert.match($("[data-title]").textContent, /<img src=x/);
 });
 
@@ -199,4 +236,17 @@ test("a refused action shows why, nothing breaks", async () => {
   $('[data-act="readd"]').click();
   await settle();
   assert.match($("[data-msg]").textContent, /Too many tries/);
+});
+
+test("Show releases toggles too, German labels", async () => {
+  const p = problem({ type: "no-release", details: { lastSearch: null, profile: "x", older: null, old: false, seasons: [] } });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
+    "/_download-now/manual/releases": { status: 200, body: RELEASES } }, "https://requests.example.com/_manual/?lang=de");
+  const btn = $('[data-act="releases"]');
+  assert.equal(btn.textContent, "Releases zeigen");
+  btn.click();
+  await settle();
+  assert.equal(btn.textContent, "Releases ausblenden");
+  btn.click();
+  assert.equal(btn.textContent, "Releases zeigen");
 });

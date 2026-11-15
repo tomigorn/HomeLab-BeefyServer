@@ -20,10 +20,10 @@
       readd: "Add again", del: "Delete request", delAgain: "Tap again to delete",
       delWarn: "Deletes only the Seerr request(s) of this title, nothing gets downloaded for it any more; the title data in Seerr and any files stay.",
       block: "Block this release and search again", blockAgain: "Tap again to block it", profile2: function (p) { return "Allow older versions (" + p + ")"; },
-      suggest: "Suggested: an old title, often only out as DVD or SD.", releases: "Show releases", searching: "Searching the indexers… (up to 2 min)", season: "Season",
+      suggest: "Suggested: an old title, often only out as DVD or SD.", releases: "Show releases", hideReleases: "Hide releases", loading: "Loading…", searching: "Searching the indexers… (up to 2 min)", season: "Season",
       grab: "Download", noReleases: "No releases found.", pickOne: "Pick one first.", rejected: "not allowed: ", seeders: "seeders", score: "score",
       lookup: "Search", link: "Use this one", probable: "Most likely", inLibrary: "already in the library", noResults: "Nothing found.",
-      files: "Show files", "import": "Import", detected: "as detected", noEpisode: "—", needEpisode: "Pick an episode for every checked file.",
+      files: "Show files", hideFiles: "Hide files", "import": "Import", detected: "as detected", noEpisode: "—", needEpisode: "Pick an episode for every checked file.",
       history: "What happened", gone: "Solved itself", fixed: "Fixed: ",
       actions: { readd: "added again", "delete": "deleted", block: "blocked, searched again", profile: "older versions allowed", grab: "release picked", link: "matched", "import": "imported", reopened: "back again" },
       errors: { 429: "Too many tries — wait a moment and try again.", 403: "Not allowed — an admin can do this.", 400: "That does not fit any more — reload the page.", 404: "Already solved — reload the page.", other: "Radarr/Sonarr not reachable — try again later." },
@@ -46,10 +46,10 @@
       readd: "Wieder hinzufügen", del: "Anfrage löschen", delAgain: "Nochmals tippen zum Löschen",
       delWarn: "Löscht nur die Seerr-Anfrage(n) dieses Titels, danach wird nichts mehr dafür heruntergeladen; die Titeldaten in Seerr und allfällige Dateien bleiben.",
       block: "Release sperren und neu suchen", blockAgain: "Nochmals tippen zum Sperren", profile2: function (p) { return "Ältere Versionen erlauben (" + p + ")"; },
-      suggest: "Empfohlen: ein alter Titel, oft nur als DVD oder SD erhältlich.", releases: "Releases anzeigen", searching: "Sucht in den Indexern… (bis 2 Min.)", season: "Staffel",
+      suggest: "Empfohlen: ein alter Titel, oft nur als DVD oder SD erhältlich.", releases: "Releases zeigen", hideReleases: "Releases ausblenden", loading: "Lädt…", searching: "Sucht in den Indexern… (bis 2 Min.)", season: "Staffel",
       grab: "Herunterladen", noReleases: "Keine Releases gefunden.", pickOne: "Zuerst eines wählen.", rejected: "nicht erlaubt: ", seeders: "Seeder", score: "Punkte",
       lookup: "Suchen", link: "Diesen verwenden", probable: "Am wahrscheinlichsten", inLibrary: "schon in der Bibliothek", noResults: "Nichts gefunden.",
-      files: "Dateien anzeigen", "import": "Importieren", detected: "wie erkannt", noEpisode: "—", needEpisode: "Für jede gewählte Datei eine Folge wählen.",
+      files: "Dateien zeigen", hideFiles: "Dateien ausblenden", "import": "Importieren", detected: "wie erkannt", noEpisode: "—", needEpisode: "Für jede gewählte Datei eine Folge wählen.",
       history: "Verlauf", gone: "Hat sich erledigt", fixed: "Behoben: ",
       actions: { readd: "wieder hinzugefügt", "delete": "gelöscht", block: "gesperrt, neu gesucht", profile: "ältere Versionen erlaubt", grab: "Release gewählt", link: "zugeordnet", "import": "importiert", reopened: "wieder da" },
       errors: { 429: "Zu viele Versuche — kurz warten und nochmals versuchen.", 403: "Nicht erlaubt — das kann ein Admin.", 400: "Das passt nicht mehr — Seite neu laden.", 404: "Schon gelöst — Seite neu laden.", other: "Radarr/Sonarr nicht erreichbar — später nochmals versuchen." },
@@ -131,7 +131,7 @@
     if (flash) this.root.appendChild(el(d, "p", { "class": "hg-m-flash", "data-flash": true, role: "status" }, flash));
     var tabs = el(d, "div", { "class": "hg-m-tabs", role: "tablist" });
     ["open", "done"].forEach(function (name) {
-      var b = el(d, "button", { type: "button", role: "tab", "data-tab": name, "aria-selected": String(self.tab === name), "class": self.tab === name ? "hg-m-tab hg-m-on" : "hg-m-tab" }, t[name] + " (" + (r.body[name] || []).length + ")");
+      var b = el(d, "button", { type: "button", role: "tab", "data-tab": name, "aria-selected": String(self.tab === name), "class": self.tab === name ? "hg-m-tab hg-m-on" : "hg-m-tab" }, t[name] + " (" + groups(r.body[name]).length + ")");
       b.addEventListener("click", function () { self.tab = name; self.show(r); });
       tabs.appendChild(b);
     });
@@ -141,18 +141,40 @@
       this.root.appendChild(el(d, "p", { "class": "hg-m-empty", "data-empty": true }, this.tab === "open" ? t.empty : t.emptyDone));
       return;
     }
-    list.forEach(function (p) { self.root.appendChild(self.card(p, self.tab === "open")); });
+    groups(list).forEach(function (g) { self.root.appendChild(self.card(g, self.tab === "open")); });
   };
 
-  App.prototype.card = function (p, open) {
-    var t = this.t, d = this.doc, self = this;
-    var c = el(d, "section", { "class": "hg-m-card", "data-problem": p.id });
-    var title = String(p.title || p.key || "") + (p.year ? " (" + p.year + ")" : "");
-    var link = /^(movie|tv)\/\d+$/.test(p.key || "") ? el(d, "a", { href: "/" + p.key }, title) : title;
+  // one card per title (movie|tv/<tmdb>): several downloads of a series are items inside it
+  function groups(list) {
+    var out = [], at = {};
+    (list || []).forEach(function (p) {
+      var k = String(p.key || p.id);
+      if (!(k in at)) { at[k] = out.length; out.push({ key: k, items: [] }); }
+      out[at[k]].items.push(p);
+    });
+    return out;
+  }
+
+  App.prototype.card = function (g, open) {
+    var t = this.t, d = this.doc, self = this, p0 = g.items[0];
+    var c = el(d, "section", { "class": "hg-m-card", "data-card": g.key });
+    var title = String(p0.title || p0.key || "") + (p0.year ? " (" + p0.year + ")" : "");
+    var link = /^(movie|tv)\/\d+$/.test(g.key) ? el(d, "a", { href: "/" + g.key }, title) : title;
     c.appendChild(el(d, "h2", { "data-title": true }, link));
+    var names = [], first = null;
+    g.items.forEach(function (p) {
+      (p.requesters || []).forEach(function (n) { if (names.indexOf(String(n)) < 0) names.push(String(n)); });
+      if (p.firstSeen && (!first || p.firstSeen < first)) first = p.firstSeen;
+    });
+    c.appendChild(el(d, "p", { "class": "hg-m-meta", "data-requesters": true }, t.requestedBy + ": " + (names.length ? names.join(", ") : t.nobody) + " · " + t.since + " " + when(t, first)));
+    g.items.forEach(function (p) { c.appendChild(self.item(p, open)); });
+    return c;
+  };
+
+  App.prototype.item = function (p, open) {
+    var t = this.t, d = this.doc;
+    var c = el(d, "div", { "class": "hg-m-item", "data-problem": p.id });
     c.appendChild(el(d, "p", { "class": "hg-m-type", "data-type": true }, t.types[p.type] || String(p.type)));
-    var who = (p.requesters || []).length ? p.requesters.map(String).join(", ") : t.nobody;
-    c.appendChild(el(d, "p", { "class": "hg-m-meta", "data-requesters": true }, t.requestedBy + ": " + who + " · " + t.since + " " + when(t, p.firstSeen)));
     c.appendChild(this.details(p));
     if (open) {
       c.appendChild(el(d, "p", { "class": "hg-m-hint" }, t.hints[p.type] || ""));
@@ -191,6 +213,27 @@
 
   App.prototype.button = function (name, label, cls) {
     return el(this.doc, "button", { type: "button", "data-act": name, "class": "hg-m-btn" + (cls ? " " + cls : "") }, label);
+  };
+
+  // Show ↔ Hide; disabled with "Loading…" while the list loads (no double calls); load() resolves true when a list is shown
+  App.prototype.toggle = function (btn, show, hide, box, load) {
+    var self = this, shown = false;
+    btn.addEventListener("click", function () {
+      if (btn.disabled) return;
+      if (shown) {
+        shown = false;
+        self.list(box);
+        btn.textContent = show;
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = self.t.loading;
+      Promise.resolve(load()).then(function (ok) {
+        btn.disabled = false;
+        shown = !!ok;
+        btn.textContent = shown ? hide : show;
+      });
+    });
   };
 
   App.prototype.say = function (card, text, bad) {
@@ -255,27 +298,32 @@
         box.appendChild(pick);
       }
       var rl = this.button("releases", t.releases);
-      rl.addEventListener("click", function () { self.releases(card(), p, pick ? pick.value : seasons.length ? String(seasons[0]) : null); });
+      this.toggle(rl, t.releases, t.hideReleases, box, function () { return self.releases(card(), p, pick ? pick.value : seasons.length ? String(seasons[0]) : null); });
       box.appendChild(rl);
       box.appendChild(el(d, "div", { "data-list": true }));
     } else if (p.type === "unmatched") {
       var term = el(d, "input", { type: "search", "data-term": true, "class": "hg-m-input", "aria-label": t.lookup, maxlength: "100" });
       term.value = String(p.title || "");
       var lk = this.button("lookup", t.lookup);
-      lk.addEventListener("click", function () { self.lookup(card(), p, term.value); });
+      lk.addEventListener("click", function () {
+        if (lk.disabled) return;
+        lk.disabled = true;
+        lk.textContent = t.loading;
+        self.lookup(card(), p, term.value).then(function () { lk.disabled = false; lk.textContent = t.lookup; });
+      });
       box.appendChild(term);
       box.appendChild(lk);
       box.appendChild(el(d, "div", { "data-list": true }));
     } else if (p.type === "import") {
       var fl = this.button("files", t.files);
-      fl.addEventListener("click", function () { self.files(card(), p); });
+      this.toggle(fl, t.files, t.hideFiles, box, function () { return self.files(card(), p); });
       box.appendChild(fl);
       box.appendChild(el(d, "div", { "data-list": true }));
     }
   };
 
   App.prototype.list = function (card) {
-    var l = card.querySelector("[data-list]");
+    var l = card.matches && card.matches("[data-list]") ? card : card.querySelector("[data-list]");
     while (l.firstChild) l.removeChild(l.firstChild);
     return l;
   };
@@ -288,7 +336,7 @@
       if (r.status !== 200) return self.say(card, errorText(t, r.status), true);
       self.say(card, "");
       var rel = (r.body && r.body.releases) || [];
-      if (!rel.length) return l.appendChild(el(d, "p", null, t.noReleases));
+      if (!rel.length) { l.appendChild(el(d, "p", null, t.noReleases)); return true; }
       var ul = el(d, "ul", { "class": "hg-m-rows" });
       rel.forEach(function (x) {
         var radio = el(d, "input", { type: "radio", name: "release-" + p.id, value: String(x.n), disabled: !!x.rejected });
@@ -304,6 +352,7 @@
         self.act(card, p, { action: "grab", release: Number(c.value), token: r.body.token });
       });
       l.appendChild(go);
+      return true;
     });
   };
 
@@ -380,6 +429,7 @@
         self.act(card, p, { action: "import", files: out, token: r.body.token });
       });
       l.appendChild(go);
+      return true;
     });
   };
 
