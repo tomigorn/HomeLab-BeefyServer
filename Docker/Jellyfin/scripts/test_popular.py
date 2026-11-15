@@ -283,9 +283,9 @@ class FakeIo:
 class Main(unittest.TestCase):
     NOW = datetime.datetime(2026, 10, 21, 4, 39)
 
-    def run_main(self, fake, sf, argv=(), now=None):
+    def run_main(self, fake, sf, argv=(), now=None, sleep=None):
         out = io.StringIO()
-        code = pop.main(list(argv), io_=fake, now=now or self.NOW, state_file=sf, overrides_file=pathlib.Path("/nonexistent"), out=out, sleep=lambda s: None,
+        code = pop.main(list(argv), io_=fake, now=now or self.NOW, state_file=sf, overrides_file=pathlib.Path("/nonexistent"), out=out, sleep=sleep or (lambda s: None),
                         services=[(8, "Netflix")], genres=[("drama", "Drama", "Drama", "18", "18")], allow_file=sf.with_name("allow.json"), prom_file=sf.with_name("p.prom"),
                         user_file=sf.with_name("user-lists.json"), lock_file=sf.with_name("popular.lock"))
         return code, out.getvalue()
@@ -681,7 +681,7 @@ class UserLists(unittest.TestCase):
         self.assertEqual(allow[rows[0]["items"][1]["x"]]["ref"], "movie/101")
         self.assertNotIn("user", self.data(fake))
 
-    def test_no_or_broken_user_file_means_no_user_rows(self):
+    def test_no_user_file_and_nothing_published_means_no_user_rows(self):
         fake = FakeIo()
         self.assertEqual(self.run_main(fake, self.sf)[0], 0)
         self.assertEqual(self.published()["user"], [])
@@ -689,14 +689,63 @@ class UserLists(unittest.TestCase):
         self.assertEqual(self.run_main(fake, self.sf)[0], 0)
         self.assertEqual(self.published()["user"], [])
 
+    def test_unreadable_user_file_keeps_the_published_rows_only_a_valid_file_counts(self):
+        self.write(("user-pat", "Pat produced", "q", [("movie", 101)]))
+        fake = FakeIo()
+        self.assertEqual(self.run_main(fake, self.sf)[0], 0)
+        before = self.published()["user"]
+        self.assertEqual([r["id"] for r in before], ["user-pat"])
+        for broken in ("{broken", json.dumps({"no": "lists"}), None):
+            if broken is None:
+                self.uf.unlink()
+            else:
+                self.uf.write_text(broken)
+            code, out = self.run_main(fake, self.sf)
+            self.assertEqual(code, 0)
+            self.assertEqual([r["id"] for r in self.published()["user"]], ["user-pat"])
+            self.assertIn("own lists unreadable", out)
+        self.uf.write_text(json.dumps({"lists": []}))
+        self.assertEqual(self.run_main(fake, self.sf)[0], 0)
+        self.assertEqual(self.published()["user"], [])
+
+    def test_own_list_searches_have_a_daily_budget_for_everyone(self):
+        self.write(("user-pat", "Pat produced", "q", [("movie", 105), ("movie", 103)]))
+        pop.USER_DAILY_MAX, old = 3, pop.USER_DAILY_MAX
+        try:
+            fake = FakeIo()
+            self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"])[0], 0)
+            self.assertEqual(len(fake.searches), 3)
+            items = {i["id"]: i for i in self.published()["user"][0]["items"]}
+            self.assertEqual((items[105]["c"], items[103]["c"]), ("2026-10-21", None))
+            later = self.NOW + datetime.timedelta(hours=2)
+            self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], now=later)[0], 0)
+            self.assertEqual(len(fake.searches), 3)
+            self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], now=self.NOW + datetime.timedelta(days=1))[0], 0)
+            self.assertGreater(len(fake.searches), 3)
+        finally:
+            pop.USER_DAILY_MAX = old
+
+    def test_own_list_runs_keep_ten_minutes_apart_so_changes_coalesce(self):
+        self.write(("user-pat", "Pat produced", "q", [("movie", 101)]))
+        fake, slept = FakeIo(), []
+        self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], sleep=slept.append)[0], 0)
+        self.assertFalse([s for s in slept if s > 60])
+        self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], now=self.NOW + datetime.timedelta(minutes=2), sleep=slept.append)[0], 0)
+        self.assertEqual([s for s in slept if s > 60], [480])
+        slept.clear()
+        self.assertEqual(self.run_main(fake, self.sf, now=self.NOW + datetime.timedelta(minutes=3), sleep=slept.append)[0], 0)
+        self.assertFalse([s for s in slept if s > 60])
+
     def test_odd_lists_and_items_are_skipped(self):
         data = user_lists(("user-ok", "Fine", "q", [("movie", 105), ("book", 1), ("movie", "7; rm")]), ("../evil", "Bad id", "q", [("movie", 101)]), ("user-noname", "", "q", [("movie", 101)]))
         data["lists"].append("not a list")
+        data["lists"][0]["ownerName"] = "<b>x</b>"
         self.uf.write_text(json.dumps(data))
         self.assertEqual(self.run_main(FakeIo(), self.sf)[0], 0)
         rows = self.published()["user"]
         self.assertEqual([r["id"] for r in rows], ["user-ok"])
         self.assertEqual([(i["k"], i["id"]) for i in rows[0]["items"]], [("movie", 105)])
+        self.assertEqual(rows[0]["owner"], "")
 
     def test_user_titles_have_their_own_search_budget(self):
         self.write(("user-pat", "Pat produced", "q", [("movie", 105)]))

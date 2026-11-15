@@ -44,6 +44,10 @@ USER_FILE = pathlib.Path("/srv/appdata/seerr-collections/lists.json")
 LOCK_FILE = STATE_FILE.with_name("jellyfin-popular.lock")
 LOCK_WAIT = 2400
 USER_SEARCH_MAX = int(os.environ.get("POP_USER_SEARCH_MAX", "150"))
+# indexer searches for the own lists per day, all users together; runs of --user-lists at least USER_GAP s apart (changes in between are taken together)
+USER_DAILY_MAX = int(os.environ.get("POP_USER_DAILY_MAX", "300"))
+USER_GAP = 600
+OWNER_OK = re.compile(r"^[\w ,.!?'&()+:-]{1,60}$")
 USER_ID = re.compile(r"^user-[a-z0-9-]{1,40}$")
 USER_ITEMS = 100
 # Streaming services in Switzerland (TMDB watch provider ids, region CH), one row each, in this order.
@@ -235,13 +239,15 @@ def row_ids(services, genres):
 
 
 def read_user_lists(path):
-    """The own lists of the Seerr Collections page: [{id, name, owner, query, items: [(kind, tmdb)]}]; a missing or broken file and odd entries are left out."""
+    """The own lists of the Seerr Collections page: [{id, name, owner, query, items: [(kind, tmdb)]}], odd entries left out; None when the file is missing or unreadable (only a valid file can remove lists)."""
     try:
         data = json.loads(pathlib.Path(path).read_text())
     except (OSError, ValueError):
-        return []
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("lists"), list):
+        return None
     out = []
-    for l in (data.get("lists") if isinstance(data, dict) else None) or []:
+    for l in data["lists"]:
         if not isinstance(l, dict) or not isinstance(l.get("id"), str) or not USER_ID.match(l["id"]) or any(l["id"] == o["id"] for o in out):
             continue
         name = " ".join(str(l.get("name") or "").split())[:60] if isinstance(l.get("name"), str) else ""
@@ -251,8 +257,8 @@ def read_user_lists(path):
         for i in l.get("items") or []:
             if isinstance(i, dict) and i.get("k") in ("movie", "tv") and isinstance(i.get("id"), int) and not isinstance(i.get("id"), bool) and i["id"] > 0 and (i["k"], i["id"]) not in items:
                 items.append((i["k"], i["id"]))
-        owner = l.get("ownerName") if isinstance(l.get("ownerName"), str) else ""
-        out.append({"id": l["id"], "name": name, "owner": owner[:60], "query": str(l.get("query") or "")[:300], "items": items[:USER_ITEMS]})
+        owner = l.get("ownerName") if isinstance(l.get("ownerName"), str) and OWNER_OK.match(l["ownerName"]) else ""
+        out.append({"id": l["id"], "name": name, "owner": owner, "query": str(l.get("query") or "")[:300], "items": items[:USER_ITEMS]})
     return out
 
 
@@ -460,8 +466,16 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
     except Busy:
         print(f"another run still busy after {LOCK_WAIT} s, nothing done", file=out)
         return 1
+    fixed = now
     with lock:
         for again in (False, True):
+            if "--user-lists" in argv:
+                last = load_json(state_file).get("userRun")
+                wait = USER_GAP - (now - datetime.datetime.fromisoformat(last)).total_seconds() if last else 0
+                if wait > 0:
+                    print(f"last own-list run {USER_GAP - wait:.0f} s ago, waiting {wait:.0f} s", file=out)
+                    sleep(wait)
+                    now = fixed or datetime.datetime.now()
             before = file_stamp(user_file)
             code = main_once(argv, io_, now, state_file, overrides_file, out, sleep, services, genres, allow_file, prom_file, user_file)
             if again or code != 0 or "--user-lists" not in argv or file_stamp(user_file) == before:
@@ -513,7 +527,7 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
     overrides = load_overrides(overrides_file.read_text()) if overrides_file.exists() else {}
 
     top = state.get("top")
-    if not user_only and (tsv_file or not top or top.get("week", "") < due_week(now)):
+    if not user_only and (tsv_file or not top or (top.get("week") or "") < due_week(now)):
         try:
             lines, lm = (tsv_file.read_text().splitlines(), f"file {tsv_file.name}") if tsv_file else io_.tsv((state.get("tsv") or {}).get("lastModified"))
             parsed = parse_week(lines, COUNTRY) if lines is not None else None
@@ -657,6 +671,11 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             save_json(state_file, state)
 
     user_lists = read_user_lists(user_file) if user_file else []
+    if user_lists is None:
+        prev = load_json(allow_file.with_name("lists.json")).get("user") or []
+        user_lists = [{"id": r["id"], "name": r["name"]["en"], "owner": r.get("owner") or "", "query": r.get("query") or "", "items": [(i["k"], i["id"]) for i in r.get("items") or [] if i.get("id")]}
+                      for r in prev if isinstance(r, dict) and r.get("id")]
+        say(f"own lists unreadable ({user_file}): the {len(user_lists)} published ones kept")
     user_cands = {ul["id"]: [c for c in (candidate(k, t) for k, t in ul["items"]) if c] for ul in user_lists}
     seen, todo = set(), []
     for c in [c for cs in user_cands.values() for c in cs]:
@@ -664,8 +683,14 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             seen.add(c["ref"])
             todo.append(c)
     todo.sort(key=lambda c: c["ref"] in cache)
-    fill(todo, "own lists", budget=[USER_SEARCH_MAX])
+    used = state.get("userSearches") if (state.get("userSearches") or {}).get("day") == today else {"day": today, "n": 0}
+    ubudget = [max(0, min(USER_SEARCH_MAX, USER_DAILY_MAX - used["n"]))]
+    start = ubudget[0]
+    fill(todo, "own lists", budget=ubudget)
     if not dry:
+        state["userSearches"] = {"day": today, "n": used["n"] + start - ubudget[0]}
+        if user_only:
+            state["userRun"] = stamp
         save_json(state_file, state)
 
     tokens = state.setdefault("tokens", {})
