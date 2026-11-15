@@ -26,7 +26,8 @@ def reasons(kind, year, this_year, niche_votes=None, rating=None, votes=None, ta
     if year and year <= this_year - OLD_YEARS:
         out.append("old")
     few = year is not None and year <= this_year - NICHE_MIN_AGE and isinstance(niche_votes, (int, float)) and niche_votes < NICHE_VOTES[kind]
-    if few or SWISS_TAG in (tags or ()) or any(p in (profile or "").lower() for p in NICHE_PROFILES):
+    picked = not out and any(p in (profile or "").lower() for p in NICHE_PROFILES)
+    if few or SWISS_TAG in (tags or ()) or picked:
         out.append("niche")
     if isinstance(rating, (int, float)) and isinstance(votes, (int, float)) and rating >= GOATED_RATING and votes >= GOATED_VOTES:
         out.append("goated")

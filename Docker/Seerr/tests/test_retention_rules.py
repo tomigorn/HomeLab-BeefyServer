@@ -32,6 +32,9 @@ class Reasons(unittest.TestCase):
         self.assertEqual(rr.reasons("movie", 2025, 2026, niche_votes=5000, profile="4K preferred · older versions allowed"), ["niche"])
         self.assertEqual(rr.reasons("movie", 2025, 2026, niche_votes=5000, profile="Swiss German (Mundart) only - any quality"), ["niche"])
 
+    def test_older_versions_profile_of_an_old_title_is_just_old(self):
+        self.assertEqual(rr.reasons("movie", 1990, 2026, niche_votes=5000, profile="4K preferred · older versions allowed"), ["old"])
+
     def test_goated_needs_rating_and_votes(self):
         self.assertEqual(rr.reasons("movie", 2025, 2026, niche_votes=5000, rating=8.0, votes=25000), ["goated"])
         self.assertEqual(rr.reasons("movie", 2025, 2026, niche_votes=5000, rating=8.4, votes=24999), [])
