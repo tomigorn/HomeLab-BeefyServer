@@ -1,10 +1,10 @@
-// Request filter (README "Request filter"): "✅ Finished" and "⏳ Not finished yet" right after "All" in the Requests filter select, as extra options carrying Seerr's own filter values (available, processing), so Seerr's state, URL, pagination and our size sort keep working.
+// Request filter (README "Request filter"): "✅ Request fulfilled" and "⏳ Request not yet finished" right after "All" in the Requests filter select, as extra options carrying Seerr's own filter values (available, processing), so Seerr's state, URL, pagination and our size sort keep working.
 (function () {
   "use strict";
   var ENTRIES = [["available", "finished"], ["processing", "open"]];
   var TEXT = {
-    en: { finished: "✅ Finished", open: "⏳ Not finished yet" },
-    de: { finished: "✅ Fertig", open: "⏳ Noch nicht fertig" },
+    en: { finished: "✅ Request fulfilled", open: "⏳ Request not yet finished" },
+    de: { finished: "✅ Anfrage erfüllt", open: "⏳ Anfrage noch nicht fertig" },
   };
 
   function lang(doc) {

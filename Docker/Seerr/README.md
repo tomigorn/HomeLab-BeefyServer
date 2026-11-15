@@ -518,8 +518,8 @@ Two entries right after **All** in the Requests filter (funnel icon), as extra o
 
 | Entry (DE) | Seerr filter | Shows |
 |---|---|---|
-| ✅ Finished (✅ Fertig) | `available` | approved and done, title fully in Jellyfin (partially available is not finished) |
-| ⏳ Not finished yet (⏳ Noch nicht fertig) | `processing` | approved, title unknown / pending / downloading / partially available (waiting for approval: Pending) |
+| ✅ Request fulfilled (✅ Anfrage erfüllt) | `available` | approved and done, title fully in Jellyfin (partially available is not finished) |
+| ⏳ Request not yet finished (⏳ Anfrage noch nicht fertig) | `processing` | approved, title unknown / pending / downloading / partially available (waiting for approval: Pending) |
 
 | Part | What |
 |---|---|

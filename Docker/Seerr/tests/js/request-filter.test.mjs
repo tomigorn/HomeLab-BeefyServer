@@ -22,27 +22,27 @@ const shownLabel = (w) => { const s = w.document.getElementById("filter"); retur
 test("Finished and Not finished yet come right after All, as Seerr's available and processing filters", async () => {
   const w = load2(page("all"));
   await tick();
-  assert.deepEqual(opts(w).slice(0, 3), [["all", "All"], ["available", "✅ Finished"], ["processing", "⏳ Not finished yet"]]);
+  assert.deepEqual(opts(w).slice(0, 3), [["all", "All"], ["available", "✅ Request fulfilled"], ["processing", "⏳ Request not yet finished"]]);
   assert.deepEqual(opts(w).slice(3).map((o) => o[0]), FILTERS.slice(1), "Seerr's own entries stay as they are");
   assert.equal(w.document.getElementById("filter").value, "all");
   assert.equal(w.document.getElementById("sort").options.length, 2);
   assert.equal(w.document.getElementById("mediaType").options.length, 2);
 });
 
-test("German UI: ✅ Fertig and ⏳ Noch nicht fertig", async () => {
+test("German UI: ✅ Anfrage erfüllt and ⏳ Anfrage noch nicht fertig", async () => {
   const w = load2(page("all", "de"));
   await tick();
-  assert.deepEqual(opts(w).slice(1, 3), [["available", "✅ Fertig"], ["processing", "⏳ Noch nicht fertig"]]);
+  assert.deepEqual(opts(w).slice(1, 3), [["available", "✅ Anfrage erfüllt"], ["processing", "⏳ Anfrage noch nicht fertig"]]);
 });
 
 test("the current filter processing / available shows our entry as the selected one", async () => {
   let w = load2(page("processing"));
   await tick();
-  assert.equal(shownLabel(w), "⏳ Not finished yet");
+  assert.equal(shownLabel(w), "⏳ Request not yet finished");
   assert.equal(w.document.getElementById("filter").value, "processing");
   w = load2(page("available"));
   await tick();
-  assert.equal(shownLabel(w), "✅ Finished");
+  assert.equal(shownLabel(w), "✅ Request fulfilled");
 });
 
 test("picking Finished hands Seerr's own change handler the value available", async () => {
@@ -64,12 +64,12 @@ test("React re-render (new select, relabelled options, language switch): entries
   wrap.insertAdjacentHTML("beforeend", filterSelect("processing", "de"));
   w.document.querySelector('a[href="/discover/tv"]').lastChild.textContent = "Serien";
   await tick();
-  assert.deepEqual(opts(w).slice(0, 3), [["all", "Alle"], ["available", "✅ Fertig"], ["processing", "⏳ Noch nicht fertig"]]);
-  assert.equal(shownLabel(w), "⏳ Noch nicht fertig");
+  assert.deepEqual(opts(w).slice(0, 3), [["all", "Alle"], ["available", "✅ Anfrage erfüllt"], ["processing", "⏳ Anfrage noch nicht fertig"]]);
+  assert.equal(shownLabel(w), "⏳ Anfrage noch nicht fertig");
   w.document.getElementById("filter").options[0].textContent = "Alle ";
   await tick();
   await tick();
-  assert.equal(opts(w).filter((o) => o[1].includes("Fertig")).length, 1);
+  assert.equal(opts(w).filter((o) => o[1].includes("erfüllt")).length, 1);
   assert.equal(opts(w).length, FILTERS.length + 2);
 });
 

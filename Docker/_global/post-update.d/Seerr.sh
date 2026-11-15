@@ -81,7 +81,7 @@ if want download-now seerr-proxy; then
   check seerr.delete-keeps-files '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/my-request.js | grep -c 'data-delete-keep' 2>&1)"
   check seerr.origins-auth '^401$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/_download-now/origins 2>&1)"
   check seerr.origins-data '^object readable$' "$(seerr_data /_download-now/origins | jq -r '.requests|type' 2>&1) $(docker exec seerr-download-now test -r /run/origins/origins.json && echo readable || echo missing)"
-  # Finished = Seerr's filter available: completed requests whose media is fully available (not partially)
+  # Request fulfilled = Seerr's filter available: completed requests whose media is fully available (not partially)
   check seerr.request-filter '^[1-9][0-9]* 1$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-filter.js | grep -c 'data-hg-filter' 2>&1) $(docker exec seerr grep -A1 "case 'available':" /app/dist/routes/request.js | grep -c 'mediaStatusFilter = \[media_1.MediaStatus.AVAILABLE\]' 2>&1)"
   check seerr.origin-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-origin.js | grep -c 'data-hg-origin-fact' 2>&1)"
   check seerr.title-pill-hints '^[1-9] [1-9]$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'handed to Radarr/Sonarr' 2>&1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/download-now.js | grep -c 'grabbedHint' 2>&1)"
