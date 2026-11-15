@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -136,18 +137,36 @@ class World:
         return dn.Deps(seerr=self.seerr, arr=self.arr, qbit=None, sab=None, origins={ORIGIN}, seerr_admin=self.admin,
                        manual_file=str(self.store), request_state_file=str(self.rs_file), clamav_results=str(self.clamav))
 
-    def scanned(self, path, verdict="clean", sig=None, at="2026-11-15T02:00:00Z"):
+    def scanned(self, path, verdict="clean", sig=None, at="2026-11-15T02:00:00Z", size=None):
+        if size is None:
+            size = os.path.getsize(path) if os.path.exists(path) else 1
+        if not os.path.exists(path):
+            FAKE_FILES.setdefault(path, (size, T - DAY))
         with open(self.clamav, "a") as f:
-            f.write(json.dumps({"at": at, "path": path, "size": 1, "verdict": verdict, "signature": sig, "mode": "queue"}) + "\n")
+            f.write(json.dumps({"at": at, "path": path, "size": size, "verdict": verdict, "signature": sig, "mode": "queue"}) + "\n")
+
+
+FAKE_FILES = {}
+
+
+def fake_stat(path):
+    """Download files of the fixtures that only exist as /data/... paths: (size, mtime)."""
+    if path in FAKE_FILES:
+        size, mtime = FAKE_FILES[path]
+        return types.SimpleNamespace(st_size=size, st_mtime=mtime)
+    return os.stat(path)
 
 
 def reset():
+    FAKE_FILES.clear()
+    manual.STAT = fake_stat
     manual.NOW = lambda: T
     manual.CACHE.clear()
     manual.OFFERS.clear()
     manual.THROTTLE.clear()
     manual.FLOOD.clear()
     manual.SEARCHES.clear()
+    manual.MAIN_FILE.clear()
     manual.KICK = manual.drain
 
 
@@ -1067,6 +1086,59 @@ class Media(unittest.TestCase):
         no_roots = dn.Deps(seerr=None, arr=None, qbit=None, sab=None)
         self.assertIsNone(manual.media_of(no_roots, str(self.file)))
 
+    def test_ffprobe_reads_local_media_containers_only(self):
+        cmd = manual.ffprobe_command("/data/x.mkv")
+        self.assertEqual(cmd[cmd.index("-protocol_whitelist") + 1], "file")
+        self.assertEqual(cmd[cmd.index("-format_whitelist") + 1], "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts")
+        self.assertEqual(cmd[-1], "file:/data/x.mkv")
+
+    def test_only_media_extensions_are_probed(self):
+        for name in ("Show.S01E09.m3u8", "Show.S01E09.nfo", "playlist.txt", "Show.S01E09"):
+            p = self.root / "tv" / "E09" / name
+            p.write_bytes(b"#EXTM3U")
+            self.assertIsNone(manual.media_of(self.deps(), str(p)), name)
+        self.assertEqual(self.runs, [])
+
+    def test_a_category_folder_is_never_walked_the_downloads_own_files_are_used(self):
+        other = self.root / "tv" / "Other.Show.S01E01"
+        other.mkdir()
+        (other / "Other.Show.S01E01.mkv").write_bytes(b"z" * 5000)
+        w = self.e09_world()
+        w.queues["sonarr"][0]["outputPath"] = str(self.root / "tv")
+        w.proposals = [{"path": str(self.file), "relativePath": "Show.S01E09.mkv", "size": 100, "quality": {}, "languages": [], "episodes": [], "rejections": [], "downloadId": "DL1"}]
+        deps = w.deps()
+        deps.download_roots = (str(self.root),)
+        dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)
+        self.assertEqual(self.runs, [str(self.file.resolve())])
+
+    def test_probes_never_run_while_the_problem_list_is_locked(self):
+        held = []
+        manual.FFPROBE = lambda path: (held.append(manual.STORE_LOCK.locked()), FFPROBE_E09)[1]
+        w = self.e09_world()
+        w.queues["sonarr"][0]["outputPath"] = str(self.root / "tv" / "E09")
+        deps = w.deps()
+        deps.download_roots = (str(self.root),)
+        dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)
+        self.assertEqual(held, [False])
+
+    def test_probes_of_one_scan_stop_at_the_budget(self):
+        manual.FFPROBE = lambda path: (self.runs.append(path), time.sleep(0.05), FFPROBE_E09)[2]
+        self.addCleanup(setattr, manual, "PROBE_SCAN_BUDGET", manual.PROBE_SCAN_BUDGET)
+        manual.PROBE_SCAN_BUDGET = 0.01
+        files = []
+        for n in range(3):
+            d = self.root / "tv" / f"D{n}"
+            d.mkdir()
+            (d / f"S01E0{n}.mkv").write_bytes(b"v" * (n + 1))
+            files.append(d)
+        w = World(squeue=[qrec(n, dl=f"DL{n}", ep=501 + n) for n in range(3)])
+        for n, d in enumerate(files):
+            w.queues["sonarr"][n]["outputPath"] = str(d)
+        deps = w.deps()
+        deps.download_roots = (str(self.root),)
+        dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)
+        self.assertEqual(len(self.runs), 1)
+
     def test_probes_are_cached_by_path_size_and_time(self):
         manual.media_of(self.deps(), str(self.file))
         manual.media_of(self.deps(), str(self.file))
@@ -1080,6 +1152,7 @@ class Media(unittest.TestCase):
         w.queues["sonarr"][0]["outputPath"] = str(self.root / "tv" / "E09")
         deps = w.deps()
         deps.download_roots = (str(self.root),)
+        dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)
         status, out = dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)
         self.assertEqual(out["open"][0]["details"]["media"]["video"], "H.264")
         self.assertEqual({c["rule"]: c["mark"] for c in out["open"][0]["details"]["checks"]}, {"original": "ok", "german": "none", "quality": "ok", "hdr": "ok", "runtime": "ok", "size": "none"})
@@ -1137,8 +1210,24 @@ class Virus(unittest.TestCase):
         self.w.scanned(self.path, "skipped")
         self.assertEqual(self.files()["state"], "unknown")
 
+    def test_a_replaced_file_is_not_clean_any_more(self):
+        self.w.scanned(self.path)
+        self.assertEqual(self.files()["state"], "clean")
+        FAKE_FILES[self.path] = (2, T - DAY)
+        self.assertEqual(self.files()["state"], "unknown")
+        FAKE_FILES[self.path] = (1, T)
+        self.assertEqual(self.files()["state"], "unknown")
+        FAKE_FILES[self.path] = (1, T - DAY)
+        self.assertEqual(self.files()["state"], "clean")
+
+    def test_a_vanished_file_is_not_clean(self):
+        self.w.scanned(self.path)
+        del FAKE_FILES[self.path]
+        self.assertEqual(self.files()["state"], "unknown")
+
     def test_the_rotated_log_counts_too(self):
-        pathlib.Path(str(self.w.clamav) + ".1").write_text(json.dumps({"at": "2026-11-14T01:00:00Z", "path": self.path, "verdict": "clean", "signature": None}) + "\n")
+        FAKE_FILES[self.path] = (5, T - 2 * DAY)
+        pathlib.Path(str(self.w.clamav) + ".1").write_text(json.dumps({"at": "2026-11-14T01:00:00Z", "path": self.path, "size": 5, "verdict": "clean", "signature": None}) + "\n")
         self.assertEqual(self.files()["state"], "clean")
 
     def test_clean_file_imports_for_everyone(self):
@@ -1175,10 +1264,11 @@ class Virus(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = pathlib.Path(tmp.name, "complete")
-        (root / "CR").mkdir(parents=True)
-        main = root / "CR" / "CR.S01E01.mkv"
+        (root / "tv" / "CR").mkdir(parents=True)
+        main = root / "tv" / "CR" / "CR.S01E01.mkv"
         main.write_bytes(b"x" * 10)
-        self.w.queues["sonarr"][0]["outputPath"] = str(root / "CR")
+        os.utime(main, (T - DAY, T - DAY))
+        self.w.queues["sonarr"][0]["outputPath"] = str(root / "tv" / "CR")
         self.w.scanned(str(main.resolve()), "clean")
         deps = self.w.deps()
         deps.download_roots = (str(root),)
@@ -1210,7 +1300,9 @@ class SearchQueue(unittest.TestCase):
         return get(self.w, f"releases?id={self.ids[title]}")
 
     def test_two_problems_back_to_back_both_complete(self):
-        first, second = self.rel("Tied Up"), self.rel("The Ring Thing")
+        first = self.rel("Tied Up")
+        self.w.me = OTHER
+        second = self.rel("The Ring Thing")
         self.assertEqual((first[0], first[1]["state"]), (200, "queued"))
         self.assertEqual((second[0], second[1]["state"], second[1]["waitingFor"], second[1]["ahead"]), (200, "queued", "Tied Up", 1))
         manual.drain(self.w.deps())
@@ -1232,13 +1324,35 @@ class SearchQueue(unittest.TestCase):
         self.w.me = OTHER
         self.assertEqual(self.rel("The Ring Thing"), (429, {"error": "search queue full"}))
 
-    def test_one_user_may_not_fill_the_queue(self):
-        manual.QUEUE_PER_USER = 2
+    def test_one_user_has_one_search_waiting_and_one_running(self):
+        self.assertEqual(manual.QUEUE_PER_USER, 1)
         self.rel("Tied Up")
-        self.rel("The Ring Thing")
+        self.assertEqual(self.rel("The Ring Thing"), (429, {"error": "too many searches"}))
+        manual.SEARCHES[self.ids["Tied Up"]]["state"] = "running"
+        self.assertEqual(self.rel("The Ring Thing")[1]["state"], "queued")
         self.assertEqual(self.rel("Third"), (429, {"error": "too many searches"}))
         self.w.me = OTHER
         self.assertEqual(self.rel("Third")[1]["state"], "queued")
+
+    def test_a_failed_search_is_forgotten_after_ten_minutes(self):
+        good = self.w.arr
+
+        def broken(app):
+            def call(path, method="GET", body=None, timeout=None):
+                if path.startswith("/release"):
+                    raise dn.ApiError("radarr: 500")
+                return good(app)(path, method, body)
+            return call
+        self.w.arr = broken
+        self.rel("Tied Up")
+        manual.drain(self.w.deps())
+        self.w.arr = good
+        manual.NOW = lambda: T + 11 * 60
+        os.utime(self.w.rs_file, (T + 660, T + 660))
+        manual.CACHE.clear()
+        manual.drain(self.w.deps())
+        self.assertNotIn(self.ids["Tied Up"], manual.SEARCHES)
+        self.assertEqual(self.rel("Tied Up")[1]["state"], "queued")
 
     def test_a_failed_search_says_so_and_can_be_asked_again(self):
         good = self.w.arr

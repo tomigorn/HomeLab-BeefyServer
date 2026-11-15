@@ -38,7 +38,7 @@ LOOKUP_GAP = 2
 FILES_GAP = 10
 # release searches wait in one FIFO (the arr runs them one after another anyway); a user clicking around is never refused, only flooding is
 QUEUE_MAX = 5
-QUEUE_PER_USER = 2
+QUEUE_PER_USER = 1
 FLOOD_MAX = 20
 FLOOD_WINDOW = 60
 SEARCHES = {}
@@ -84,6 +84,10 @@ PROBE_CACHE = {}
 PROBE_TIMEOUT = 20
 PROBE_MAX = 20
 PROBE_BUDGET = 60
+PROBE_SCAN_BUDGET = 30
+# local files in the usual video containers only: no network, no playlists (HLS, concat) that would open further inputs
+PROBE_FORMATS = "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts"
+MAIN_FILE = {}
 CODECS = {"h264": "H.264", "hevc": "HEVC", "av1": "AV1", "mpeg4": "MPEG-4", "mpeg2video": "MPEG-2", "vc1": "VC-1", "vp9": "VP9",
           "eac3": "E-AC3", "ac3": "AC3", "truehd": "TrueHD", "dts": "DTS", "aac": "AAC", "flac": "FLAC", "opus": "Opus", "mp3": "MP3", "pcm_s16le": "PCM", "pcm_s24le": "PCM"}
 SWISS = "Swiss German"
@@ -138,16 +142,21 @@ def summarise(data, size):
             "audio": audio[:12], "subtitles": [lang(x) or "?" for x in streams if x.get("codec_type") == "subtitle"][:20], "size": size, "minutes": minutes}
 
 
+def ffprobe_command(path):
+    return ["ffprobe", "-v", "error", "-protocol_whitelist", "file", "-format_whitelist", PROBE_FORMATS,
+            "-print_format", "json", "-show_format", "-show_streams", "file:" + path]
+
+
 def run_ffprobe(path):
     try:
-        r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format", "-show_streams", "file:" + path],
-                           capture_output=True, timeout=PROBE_TIMEOUT, check=False)
+        r = subprocess.run(ffprobe_command(path), capture_output=True, timeout=PROBE_TIMEOUT, check=False)
         return json.loads(r.stdout) if r.returncode == 0 else None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
 
 FFPROBE = run_ffprobe
+STAT = os.stat
 
 
 def inside(deps, path):
@@ -159,12 +168,15 @@ def inside(deps, path):
     return real if any(real.startswith(x.rstrip("/") + "/") for x in roots) else None
 
 
-def media_of(deps, path):
+def media_of(deps, path, run=True):
+    """ffprobe summary of a download file (cached by path, size, mtime); run=False only reads the cache."""
     real = inside(deps, path)
-    if not real or not os.path.isfile(real):
+    if not real or not real.lower().endswith(VIDEO) or not os.path.isfile(real):
         return None
     st = os.stat(real)
     key = (real, st.st_size, st.st_mtime_ns)
+    if key not in PROBE_CACHE and not run:
+        return None
     if key not in PROBE_CACHE:
         if len(PROBE_CACHE) > 300:
             PROBE_CACHE.clear()
@@ -173,13 +185,22 @@ def media_of(deps, path):
     return PROBE_CACHE[key]
 
 
+def depth_below_root(deps, real):
+    for root in (os.path.realpath(x) for x in getattr(deps, "download_roots", None) or ()):
+        if real.startswith(root.rstrip("/") + "/"):
+            return len(os.path.relpath(real, root).split(os.sep))
+    return 0
+
+
 def biggest_video(deps, path):
-    """The download's main video (largest, no sample) under its output path, two levels deep at most."""
+    """The download's main video (largest, no sample) under its own folder, two levels deep at most; a category folder (tv, movies) right under a root is never walked."""
     real = inside(deps, path)
     if not real:
         return None
     if os.path.isfile(real):
         return real if real.lower().endswith(VIDEO) else None
+    if depth_below_root(deps, real) < 2:
+        return None
     best, todo = None, [(real, 0)]
     while todo:
         d, depth = todo.pop()
@@ -306,6 +327,15 @@ def virus(deps, path):
     log = scan_log(deps)
     x = log.get(path) or (log.get(os.path.realpath(path)) if isinstance(path, str) else None) or {}
     state = {"clean": "clean", "infected": "infected", "queued": "pending"}.get(x.get("verdict"), "unknown")
+    if state == "clean":
+        # "clean" counts only for the very file that was scanned: same size, not changed after the scan
+        try:
+            st = STAT(path)
+            fits = st.st_size == x.get("size") and (epoch(x.get("at")) or 0) >= st.st_mtime - 1
+        except (OSError, TypeError):
+            fits = False
+        if not fits:
+            state = "unknown"
     return {"state": state, "at": x.get("at") if state != "unknown" else None, "signature": str(x.get("signature"))[:120] if state == "infected" and x.get("signature") else None}
 
 
@@ -393,9 +423,32 @@ def pid_of(kind, key, extra=""):
     return hashlib.sha1(f"{kind}|{key}|{extra}".encode()).hexdigest()[:12]
 
 
+def own_main_file(deps, arr, dl):
+    """The download's biggest video from the arr's own file list for that download id (when its output path is a category folder or unknown)."""
+    if dl in MAIN_FILE:
+        return MAIN_FILE[dl]
+    try:
+        got = arr(f"/manualimport?downloadId={urllib.parse.quote(str(dl), safe='')}&filterExistingFiles=true")
+    except Exception:
+        return None
+    best = None
+    for x in got if isinstance(got, list) else []:
+        if not isinstance(x, dict) or str(x.get("downloadId") or "").lower() != str(dl).lower():
+            continue
+        real = inside(deps, x.get("path"))
+        if real and real.lower().endswith(VIDEO) and "sample" not in os.path.basename(real).lower() and os.path.isfile(real):
+            size = os.path.getsize(real)
+            if best is None or size > best[0]:
+                best = (size, real)
+    if len(MAIN_FILE) > 200:
+        MAIN_FILE.clear()
+    MAIN_FILE[dl] = best[1] if best else None
+    return MAIN_FILE[dl]
+
+
 def scan(dn, deps, known):
-    """Every open problem now: (problems by id, complete). Incomplete (a source unreadable) = nothing may be called gone."""
-    now, complete, found, arrs, profiles = NOW(), True, {}, {}, {}
+    """Every open problem now: (problems by id, complete, files still to probe). Incomplete (a source unreadable) = nothing may be called gone."""
+    now, complete, found, arrs, profiles, pending = NOW(), True, {}, {}, {}, []
     rs = read_state(deps.request_state_file, now) if deps.request_state_file else None
     if rs is None:
         complete, rs = False, {}
@@ -512,9 +565,13 @@ def scan(dn, deps, known):
             code = ptype if ptype in ("wrong-film", "failed") else next((c for c in map(reason_code, msgs) if c != "unknown"), "unknown")
             details = {"reason": code, "release": str(recs[0].get("title") or "")[:200], "message": brief(msg), **more}
             main_file = biggest_video(deps, recs[0].get("outputPath"))
+            if not main_file and recs[0].get("downloadId") and recs[0].get("outputPath"):
+                main_file = own_main_file(deps, arr(app), recs[0]["downloadId"])
             if main_file:
                 details["virus"] = virus(deps, main_file)
-                details["media"] = media_of(deps, main_file)
+                details["media"] = media_of(deps, main_file, run=False)
+                if details["media"] is None:
+                    pending.append(main_file)
                 if details["media"]:
                     try:
                         plist = profile_list(app)
@@ -527,7 +584,7 @@ def scan(dn, deps, known):
                 details["episodes"] = len(recs)
             add(ptype, key, t.get("title") or key, t.get("year"), details, dl, kind=kind, app=app, arrId=tid, downloadId=recs[0].get("downloadId"),
                 queueIds=[r.get("id") for r in recs if isinstance(r.get("id"), int)], episodeIds=eps, tmdb=t.get("tmdbId"), media={}, seasons=[])
-    return found, complete
+    return found, complete, pending
 
 
 def load(deps):
@@ -632,11 +689,20 @@ def refresh(dn, deps, force=False):
         except StoreUnreadable as e:
             print(f"manual: problem list unreadable, not saving until fixed: {e}", flush=True)
             records, readable = {}, False
-        found, complete = scan(dn, deps, {r.get("key"): (r.get("title"), r.get("year")) for r in records.values() if isinstance(r, dict)})
+        found, complete, pending = scan(dn, deps, {r.get("key"): (r.get("title"), r.get("year")) for r in records.values() if isinstance(r, dict)})
         if readable:
             merge(records, found, complete, now)
             save(deps, records)
         CACHE["scan"] = (now, found)
+    # ffprobe outside the lock (it may take seconds per file); the next scan shows what it found
+    probed, began = False, time.monotonic()
+    for path in dict.fromkeys(pending):
+        if time.monotonic() - began > PROBE_SCAN_BUDGET:
+            break
+        if media_of(deps, path) is not None:
+            probed = True
+    if probed:
+        CACHE.pop("scan", None)
     return found
 
 
@@ -812,6 +878,7 @@ def releases(dn, deps, me, p, q):
     cached = CACHE.get(("releases", p["id"]))
     if cached and cached["season"] == season and NOW() - cached["at"] < RELEASE_GAP:
         return {"state": "done", "token": keep(p["id"], "releases", me, cached), "releases": cached["public"], "dropped": cached.get("dropped", 0), "season": season, "cached": True}
+    expire()
     with QUEUE_LOCK:
         job = SEARCHES.get(p["id"])
         if job and job["state"] in ("queued", "running"):
@@ -824,7 +891,7 @@ def releases(dn, deps, me, p, q):
         waiting_jobs = [j for j in SEARCHES.values() if j["state"] in ("queued", "running")]
         if sum(1 for j in waiting_jobs if j["state"] == "queued") >= QUEUE_MAX:
             raise Refused(429, "search queue full")
-        if sum(1 for j in waiting_jobs if j["user"] == me.get("id")) >= QUEUE_PER_USER:
+        if sum(1 for j in waiting_jobs if j["user"] == me.get("id") and j["state"] == "queued") >= QUEUE_PER_USER:
             raise Refused(429, "too many searches")
         SEQ[0] += 1
         path = f"/release?movieId={i['arrId']}" if i["kind"] == "movie" else f"/release?seriesId={i['arrId']}" + (f"&seasonNumber={season}" if season is not None else "")
@@ -874,8 +941,16 @@ def release_data(got, job):
     return {"season": season, "at": NOW(), "public": public, "dropped": dropped, "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": bool(x.get("rejected")), "title": str(x.get("title") or "")[:200]} for x in items]}
 
 
+def expire():
+    """Finished and failed searches are forgotten after OFFER_TTL: the next request starts afresh."""
+    with QUEUE_LOCK:
+        for k in [k for k, j in SEARCHES.items() if j["state"] in ("done", "failed") and NOW() - j["queued"] > OFFER_TTL]:
+            del SEARCHES[k]
+
+
 def drain(deps=None):
     """Run the queued release searches one at a time, oldest first; one drainer at a time, a job queued meanwhile is picked up too."""
+    expire()
     while True:
         if not SEARCH_LOCK.acquire(blocking=False):
             return
