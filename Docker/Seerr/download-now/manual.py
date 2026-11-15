@@ -887,10 +887,10 @@ def releases(dn, deps, me, p, q):
             raise Refused(400, "bad request")
     had = mine(p["id"], "releases", me)
     if had and had[1]["season"] == season and not q.get("refresh"):
-        return {"state": "done", "token": had[0], "releases": had[1]["public"], "dropped": had[1].get("dropped", 0), "season": season, "cached": True}
+        return {"state": "done", "token": had[0], "releases": with_scouts(deps, had[1]), "dropped": had[1].get("dropped", 0), "season": season, "cached": True}
     cached = CACHE.get(("releases", p["id"]))
     if cached and cached["season"] == season and NOW() - cached["at"] < RELEASE_GAP:
-        return {"state": "done", "token": keep(p["id"], "releases", me, cached), "releases": cached["public"], "dropped": cached.get("dropped", 0), "season": season, "cached": True}
+        return {"state": "done", "token": keep(p["id"], "releases", me, cached), "releases": with_scouts(deps, cached), "dropped": cached.get("dropped", 0), "season": season, "cached": True}
     expire()
     with QUEUE_LOCK:
         job = SEARCHES.get(p["id"])
@@ -919,7 +919,7 @@ def releases(dn, deps, me, p, q):
         if job["state"] != "done":
             return waiting(job)
     cached = CACHE[("releases", p["id"])]
-    return {"state": "done", "token": keep(p["id"], "releases", me, cached), "releases": cached["public"], "dropped": cached.get("dropped", 0), "season": season, "cached": False}
+    return {"state": "done", "token": keep(p["id"], "releases", me, cached), "releases": with_scouts(deps, cached), "dropped": cached.get("dropped", 0), "season": season, "cached": False}
 
 
 def waiting(job):
@@ -967,29 +967,141 @@ def private_indexer(x):
     return x.get("protocol") == "usenet" or any(p.lower() in name.lower() for p in PRIVATE_INDEXERS)
 
 
-def scout_langs(deps):
-    """Languages the NFO scout read in release descriptions (Movie-Downloads nfo-scout.json, read-only): release title → languages."""
+NFO_SOURCES = {"NZBgeek", "NzbPlanet", "Treasure Maps"}
+DESCRIPTION_PAGE = re.compile(r"^https?://(?:[^/]*thepiratebay[^/]*|knaben\.[a-z]+/thepiratebay)/description\.php\?id=\d+$|^https?://(www\.)?1337x\.[a-z]+/torrent/\d+/")
+READS_PER_USER = 5
+READS_MAX = 30
+
+
+def nfo_gid(guid):
+    m = re.search(r"(?:guid=|/details/|/getnzb/|[?&]id=)([0-9a-fA-F]{16,64})\b", guid or "")
+    return m.group(1).lower() if m else None
+
+
+def btih_key(guid, info_url):
+    m = re.search(r"btih:([0-9a-fA-F]{40}|[A-Z2-7]{32})", guid or "")
+    return "btih:" + m.group(1).upper() if m else "url:" + (info_url or guid or "")
+
+
+def readable(x):
+    """The NFO scout (usenet NZBgeek, NzbPlanet, Treasure Maps) or the description scout (TPB, Knaben→TPB, 1337x) can read this release."""
+    if x.get("protocol") == "usenet":
+        return str(x.get("indexer") or "").replace(" (Prowlarr)", "") in NFO_SOURCES and bool(nfo_gid(x.get("guid")))
+    return bool(DESCRIPTION_PAGE.match(str(x.get("infoUrl") or "")))
+
+
+def request_id(x):
+    return hashlib.sha1(f"{x.get('indexer')}|{x.get('guid')}".encode()).hexdigest()[:16]
+
+
+def scout_files(deps):
+    """Movie-Downloads' scout state (read-only mount): the NFO scout's releases and the description scout's entries, re-read when they change."""
     d = getattr(deps, "scout_dir", None)
-    if not d:
-        return {}
-    path = os.path.join(d, "nfo-scout.json")
-    try:
-        st = os.stat(path)
-    except OSError:
-        return {}
-    key = (st.st_mtime_ns, st.st_size)
-    if CACHE.get("scout-key") != key:
-        out = {}
+    out = {}
+    for name in ("nfo-scout.json", "description-scout.json"):
+        path = os.path.join(d, name) if d else None
         try:
-            with open(path, encoding="utf-8") as f:
-                rel = (json.load(f) or {}).get("releases") or {}
-            for v in rel.values():
-                if isinstance(v, dict) and isinstance(v.get("title"), str) and isinstance(v.get("langs"), list) and v["langs"]:
-                    out[v["title"]] = [str(x)[:40] for x in v["langs"]][:12]
-        except (OSError, ValueError, AttributeError):
-            out = {}
-        CACHE["scout-key"], CACHE["scout"] = key, out
-    return CACHE.get("scout") or {}
+            st = os.stat(path) if path else None
+        except OSError:
+            st = None
+        key = (st.st_mtime_ns, st.st_size) if st else None
+        c = CACHE.get(("scout", name))
+        if not c or c[0] != key:
+            data = {}
+            if st:
+                try:
+                    with open(path, encoding="utf-8") as f:
+                        data = json.load(f)
+                except (OSError, ValueError):
+                    data = {}
+            c = CACHE[("scout", name)] = (key, data if isinstance(data, dict) else {})
+        out[name] = c[1]
+    return out
+
+
+def clean_lines(v):
+    return [str(x)[:160] for x in v if isinstance(x, str)][:5] if isinstance(v, list) else []
+
+
+def scout_of(deps, x, files):
+    """What a scout read about this release, or where an on-demand read stands."""
+    if x.get("protocol") == "usenet":
+        e = (files["nfo-scout.json"].get("releases") or {}).get(f"{str(x.get('indexer') or '').replace(' (Prowlarr)', '')}|{nfo_gid(x.get('guid'))}")
+        if isinstance(e, dict) and e.get("verdict") in ("langs", "none", "push", "pushed", "skip") and isinstance(e.get("langs"), list):
+            return {"state": "read", "source": "nfo", "langs": [str(l)[:40] for l in e["langs"]][:12], "lines": clean_lines(e.get("lines"))}
+    else:
+        key = btih_key(x.get("guid"), x.get("infoUrl"))
+        e = files["description-scout.json"].get("read|" + key)
+        if isinstance(e, dict) and isinstance(e.get("langs"), list):
+            return {"state": "read", "source": "description", "langs": [str(l)[:40] for l in e["langs"]][:12], "lines": clean_lines(e.get("lines"))}
+        e = files["description-scout.json"].get(key)
+        if isinstance(e, dict) and e.get("verdict") == "match":
+            return {"state": "read", "source": "description", "langs": ["Swiss German"], "lines": []}
+    d = getattr(deps, "scout_requests", None)
+    if d:
+        rid = request_id(x)
+        if os.path.exists(os.path.join(d, rid + ".req")):
+            return {"state": "pending"}
+        try:
+            with open(os.path.join(d, rid + ".result.json"), encoding="utf-8") as f:
+                res = json.load(f)
+        except (OSError, ValueError):
+            res = None
+        if isinstance(res, dict) and res.get("state") in ("refused", "failed"):
+            return {"state": res["state"], "why": str(res.get("why") or "")[:120] or None}
+    return None
+
+
+def with_scouts(deps, data):
+    files = scout_files(deps)
+    items = data.get("items") or []
+    out = []
+    for pub in data.get("public") or []:
+        x = items[pub["n"]] if pub["n"] < len(items) else {}
+        out.append(dict(pub, scout=scout_of(deps, x, files), readable=readable(x) and bool(getattr(deps, "scout_requests", None))))
+    return out
+
+
+def do_describe(deps, me, p, req):
+    """Ask the beefy-side runner (Movie-Downloads scripts/scout-requests.py) to read one release's NFO or description: a request file, no keys here."""
+    o = offer(p["id"], "releases", me, req)
+    n = req.get("release")
+    d = getattr(deps, "scout_requests", None)
+    if o is None or not is_int(n) or not 0 <= n < len(o["items"]) or not d:
+        raise Refused(400, "bad request")
+    x = o["items"][n]
+    if not readable(x):
+        raise Refused(400, "bad request")
+    rid = request_id(x)
+    path = os.path.join(d, rid + ".req")
+    if os.path.exists(path):
+        return "already asked"
+    pending = [f for f in os.listdir(d) if f.endswith(".req")]
+    mine_ = [f for f in pending if request_user(os.path.join(d, f)) == me.get("id")]
+    if len(mine_) >= READS_PER_USER:
+        raise Refused(429, "too many reads")
+    if len(pending) >= READS_MAX:
+        raise Refused(429, "too many reads")
+    try:
+        os.unlink(os.path.join(d, rid + ".result.json"))
+    except OSError:
+        pass
+    body = {"id": rid, "indexer": x.get("indexer"), "protocol": x.get("protocol"), "guid": x.get("guid"), "infoUrl": x.get("infoUrl"), "title": x.get("title"),
+            "user": me.get("id"), "at": int(NOW())}
+    tmp = os.path.join(d, rid + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(body, f)
+    os.replace(tmp, path)
+    print(f"manual: user {me.get('id')} asks to read {x.get('indexer')} '{x.get('title')}'", flush=True)
+    return "asked"
+
+
+def request_user(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("user")
+    except (OSError, ValueError, AttributeError):
+        return None
 
 
 def matched(x, job):
@@ -1001,7 +1113,6 @@ def matched(x, job):
 
 def release_data(got, job):
     season = job.get("season")
-    langs = scout_langs(job.get("deps"))
     every = [x for x in got if isinstance(x, dict) and x.get("guid") and is_int(x.get("indexerId"))] if isinstance(got, list) else []
     items = [x for x in every if matched(x, job)]
     dropped = len(every) - len(items)
@@ -1016,8 +1127,9 @@ def release_data(got, job):
                "reasons": [release_reason(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
                "gbh": round((x.get("size") or 0) / 1e9 / (job["runtime"] / 60), 1) if job.get("kind") == "movie" and job.get("runtime") and x.get("size") else None,
                "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "age": x.get("age"),
-               "link": safe_link(x.get("infoUrl")), "private": private_indexer(x), "nfoLangs": langs.get(str(x.get("title") or "")) or None} for n, x in enumerate(items)]
-    return {"season": season, "at": NOW(), "public": public, "dropped": dropped, "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": bool(x.get("rejected")), "title": str(x.get("title") or "")[:200]} for x in items]}
+               "link": safe_link(x.get("infoUrl")), "private": private_indexer(x)} for n, x in enumerate(items)]
+    return {"season": season, "at": NOW(), "public": public, "dropped": dropped, "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": bool(x.get("rejected")), "title": str(x.get("title") or "")[:200],
+                                                                             "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "infoUrl": x.get("infoUrl")} for x in items]}
 
 
 def expire():
@@ -1277,6 +1389,10 @@ def act(dn, deps, me, req):
     p = problem(dn, deps, req.get("id"))
     action = req.get("action")
     admin = dn.allowed(me)
+    if action == "describe" and p["type"] == "no-release":
+        if flooding(me):
+            raise Refused(429, "slow down")
+        return {"ok": True, "result": do_describe(deps, me, p, req), "problem": None}
     if not isinstance(action, str) or action not in ACTIONS[p["type"]]:
         raise Refused(400, "bad request")
     if action == "delete" and not admin:

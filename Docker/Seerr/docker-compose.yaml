@@ -127,6 +127,7 @@ services:
       - DN_DOWNLOAD_ROOTS=/data/usenet/complete,/data/torrents
       - DN_CLAMAV_RESULTS=/run/clamav/clamav-results.jsonl
       - DN_SCOUT_DIR=/run/scouts
+      - DN_SCOUT_REQUESTS=/run/scout-requests
     volumes:
       - ./download-now:/app:ro
       - ./secrets/download-now:/run/secrets/download-now:ro
@@ -143,6 +144,8 @@ services:
       - /var/lib/clamav-scan/textfile:/run/clamav:ro
       # Movie-Downloads' scout state (nfo-scout.json: languages read in release descriptions), read-only
       - /home/buntu/.local/state/movie-downloads:/run/scouts:ro
+      # "Read description": request files for Movie-Downloads' scout-requests runner (65127:buntu 2770); the indexer keys stay with the runner
+      - /srv/appdata/seerr-scout-requests:/run/scout-requests
     networks:
       seerr-front: {}
       movie-downloads:

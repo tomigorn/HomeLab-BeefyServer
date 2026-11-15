@@ -489,8 +489,8 @@ test("one waiting search per user: the message says so", () => {
 test("release rows: details link at the indexer, account hint, what the NFO says", async () => {
   const p = problem({ type: "no-release", details: { reason: "no-release", lastSearch: null, profile: "x", older: null, old: false, seasons: [] } });
   const body = { state: "done", token: "t", dropped: 0, releases: [
-    Object.assign({}, RELEASES.releases[0], { link: "https://nzbgeek.info/geekseek.php?guid=abc", private: true, nfoLangs: ["Swiss German", "German"] }),
-    Object.assign({}, RELEASES.releases[0], { n: 2, title: "Other", link: "javascript:alert(1)", private: false, nfoLangs: null })] };
+    Object.assign({}, RELEASES.releases[0], { link: "https://nzbgeek.info/geekseek.php?guid=abc", private: true, scout: { state: "read", source: "nfo", langs: ["Swiss German", "German"], lines: ["Audio: <b>Schwiizerdütsch</b>, Deutsch"] } }),
+    Object.assign({}, RELEASES.releases[0], { n: 2, title: "Other", link: "javascript:alert(1)", private: false, scout: null, readable: false })] };
   const { $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } }, "/_download-now/manual/releases": { status: 200, body } });
   $$('[data-act="releases"]')[0].click();
   await settle();
@@ -501,9 +501,43 @@ test("release rows: details link at the indexer, account hint, what the NFO says
   assert.equal(link.getAttribute("rel"), "noopener noreferrer");
   assert.equal(link.textContent, "Details ↗");
   assert.match(a.textContent, /🔒 account needed/);
-  assert.match(a.textContent, /📄 Description\/NFO mentions: Swiss German, German/);
+  assert.match(a.querySelector("[data-scout]").textContent, /^📄 NFO: Swiss German, German/);
+  assert.equal(a.querySelector("[data-scout] li").textContent, "Audio: <b>Schwiizerdütsch</b>, Deutsch");
+  assert.equal(a.querySelector("[data-scout] b"), null);
   assert.equal(b.querySelector("a[data-details-link]"), null);
   assert.doesNotMatch(b.textContent, /account needed|NFO/);
+  assert.equal(b.querySelector('[data-act="describe"]'), null);
+});
+
+test("read a description on demand: asks, shows it is reading, the result arrives by itself", async () => {
+  const p = problem({ type: "no-release", details: { reason: "no-release", lastSearch: null, profile: "x", older: null, old: false, seasons: [] } });
+  const row = (scout) => ({ state: "done", token: "t", dropped: 0, releases: [Object.assign({}, RELEASES.releases[0], { title: "The Ring Thing (2004) [XVID]", readable: true, scout })] });
+  const answers = [row(null), row({ state: "pending" }), row({ state: "read", source: "description", langs: ["Swiss German"], lines: ["Language: Schwyzerdütsch"] })];
+  const { w, $, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
+    "/_download-now/manual/releases": () => ({ status: 200, body: answers.length > 1 ? answers.shift() : answers[0] }),
+    "/_download-now/manual/action": { status: 200, body: { ok: true, result: "asked" } } });
+  w.hgManual.setPoll(20);
+  $('[data-act="releases"]').click();
+  await settle();
+  assert.equal($('[data-act="describe"]').textContent, "Read description");
+  $('[data-act="describe"]').click();
+  await settle();
+  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "describe", release: 0, token: "t" });
+  assert.match($("[data-scout]").textContent, /Reading the description/);
+  for (let i = 0; i < 100 && !/Swiss German/.test(($("[data-scout]") || {}).textContent || ""); i++) await new Promise((r) => setTimeout(r, 5));
+  assert.match($("[data-scout]").textContent, /^📄 Description: Swiss German/);
+  assert.equal($('[data-act="releases"]').textContent, "Hide releases");
+});
+
+test("a refused read says why", async () => {
+  const p = problem({ type: "no-release", details: { reason: "no-release", lastSearch: null, profile: "x", older: null, old: false, seasons: [] } });
+  const body = { state: "done", token: "t", dropped: 0, releases: [Object.assign({}, RELEASES.releases[0], { readable: true, scout: { state: "refused", why: "daily limit reached, try tomorrow" } })] };
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } }, "/_download-now/manual/releases": { status: 200, body } },
+    undefined, PAGE.replace(">Series<", ">Serien<"));
+  $('[data-act="releases"]').click();
+  await settle();
+  assert.match($("[data-scout]").textContent, /daily limit reached, try tomorrow/);
+  assert.equal($('[data-act="describe"]').textContent, "Beschreibung lesen");
 });
 
 test("too big for the full virus scan: parts scan shown as it is", async () => {

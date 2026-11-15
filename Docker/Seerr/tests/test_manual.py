@@ -1513,21 +1513,95 @@ class Links(unittest.TestCase):
         for leak in ("gluetun", "apikey", "magnet", "192.168"):
             self.assertNotIn(leak, text)
 
-    def test_release_list_shows_what_the_nfo_scout_read(self):
+GEEK_GID = "00ba44e84141ab985531452d88d34c0d"
+BTIH = "180F491CAA6F63C4469294D239A5A98E02FBB9A5"
+
+
+class Scouts(unittest.TestCase):
+    """What the NFO / description scouts read about a release, and reading one on demand through the beefy-side runner."""
+
+    def setUp(self):
         reset()
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        pathlib.Path(tmp.name, "nfo-scout.json").write_text(json.dumps({"releases": {
-            "NZBgeek|abc": {"title": "The.Ring.Thing.2004.German.720p", "langs": ["Swiss German", "German"], "verdict": "push"},
-            "NZBgeek|def": {"title": "Other.Film.2004", "langs": ["French"]}}}))
-        w = World(rs=state(noRelease={"movie/10248": "2026-11-14T04:17:00Z"}), requests=[request(11, "movie", 10248, ext=21)],
-                  titles={"/movie/21": {"id": 21, "title": "The Ring Thing", "year": 2004, "tmdbId": 10248, "qualityProfileId": 13}})
-        w.releases = RELEASES
-        deps = w.deps()
-        deps.scout_dir = tmp.name
-        pid = dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)[1]["open"][0]["id"]
-        out = dn.handle("GET", f"/_download-now/manual/releases?id={pid}", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)[1]
-        self.assertEqual({r["title"]: r["nfoLangs"] for r in out["releases"]}, {"The.Ring.Thing.2004.German.720p": ["Swiss German", "German"], "The.Ring.Thing.2004.DVDRip": None})
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.scouts = pathlib.Path(self.tmp.name, "scouts")
+        self.scouts.mkdir()
+        self.req = pathlib.Path(self.tmp.name, "requests")
+        self.req.mkdir()
+        self.w = World(rs=state(noRelease={"movie/10248": "2026-11-14T04:17:00Z"}), requests=[request(11, "movie", 10248, ext=21)],
+                       titles={"/movie/21": {"id": 21, "title": "The Ring Thing", "year": 2004, "tmdbId": 10248, "qualityProfileId": 13}})
+        geek = dict(RELEASES[1], guid=f"https://nzbgeek.info/geekseek.php?guid={GEEK_GID}", indexer="NZBgeek (Prowlarr)", protocol="usenet", title="The.Ring.Thing.2004.MULTi.720p",
+                    infoUrl=f"https://nzbgeek.info/geekseek.php?guid={GEEK_GID}", customFormatScore=60)
+        tpb = dict(RELEASES[1], guid=f"magnet:?xt=urn:btih:{BTIH}&dn=x", indexer="The Pirate Bay (Prowlarr)", protocol="torrent", title="The Ring Thing (2004) [XVID]",
+                   infoUrl="https://thepiratebay.org/description.php?id=3872789", customFormatScore=50)
+        eztv = dict(RELEASES[1], guid="magnet:?xt=urn:btih:" + "A" * 40, indexer="EZTV (Prowlarr)", protocol="torrent", title="Other", infoUrl="https://eztvx.to/ep/1/x/", customFormatScore=40)
+        self.w.releases = [geek, tpb, eztv]
+        self.deps = self.w.deps()
+        self.deps.scout_dir = str(self.scouts)
+        self.deps.scout_requests = str(self.req)
+        self.pid = self.call("GET", "problems")[1]["open"][0]["id"]
+
+    def call(self, method, path, body=None, me=None):
+        h = {"Cookie": "connect.sid=s%3Aabc"}
+        if method == "POST":
+            h.update({"Content-Type": "application/json", "Origin": ORIGIN})
+        return dn.handle(method, "/_download-now/manual/" + path, h, json.dumps(body).encode() if body is not None else b"", self.deps)
+
+    def releases(self):
+        out = self.call("GET", f"releases?id={self.pid}")[1]
+        return out, {r["title"]: r for r in out["releases"]}
+
+    def test_what_the_scouts_already_read_is_on_each_release(self):
+        (self.scouts / "nfo-scout.json").write_text(json.dumps({"releases": {f"NZBgeek|{GEEK_GID}": {
+            "title": "The.Ring.Thing.2004.MULTi.720p", "langs": ["German", "French"], "lines": ["Audio: German, French"], "verdict": "langs"}}}))
+        (self.scouts / "description-scout.json").write_text(json.dumps({f"read|btih:{BTIH}": {"langs": ["Swiss German"], "lines": ["Language: Schwyzerdütsch"]}}))
+        _, rel = self.releases()
+        self.assertEqual(rel["The.Ring.Thing.2004.MULTi.720p"]["scout"], {"state": "read", "source": "nfo", "langs": ["German", "French"], "lines": ["Audio: German, French"]})
+        self.assertEqual(rel["The Ring Thing (2004) [XVID]"]["scout"], {"state": "read", "source": "description", "langs": ["Swiss German"], "lines": ["Language: Schwyzerdütsch"]})
+        self.assertEqual((rel["Other"]["scout"], rel["Other"]["readable"]), (None, False))
+
+    def test_the_description_scouts_own_match_counts(self):
+        (self.scouts / "description-scout.json").write_text(json.dumps({f"btih:{BTIH}": {"verdict": "match", "title": "x"}}))
+        _, rel = self.releases()
+        self.assertEqual(rel["The Ring Thing (2004) [XVID]"]["scout"], {"state": "read", "source": "description", "langs": ["Swiss German"], "lines": []})
+
+    def test_reading_on_demand_queues_a_request_for_the_runner(self):
+        out, rel = self.releases()
+        n = rel["The Ring Thing (2004) [XVID]"]["n"]
+        self.assertTrue(rel["The Ring Thing (2004) [XVID]"]["readable"])
+        status, res = self.call("POST", "action", {"id": self.pid, "action": "describe", "release": n, "token": out["token"]})
+        self.assertEqual(status, 200, res)
+        (f,) = list(self.req.glob("*.req"))
+        self.assertRegex(f.name, r"^[0-9a-f]{16}\.req$")
+        req = json.loads(f.read_text())
+        self.assertEqual((req["indexer"], req["protocol"], req["infoUrl"], req["guid"][:20]), ("The Pirate Bay (Prowlarr)", "torrent", "https://thepiratebay.org/description.php?id=3872789", "magnet:?xt=urn:btih:"))
+        self.assertNotIn("apikey", f.read_text())
+        _, rel = self.releases()
+        self.assertEqual(rel["The Ring Thing (2004) [XVID]"]["scout"], {"state": "pending"})
+        f.unlink()
+        f.with_name(f.name[:-4] + ".result.json").write_text(json.dumps({"state": "refused", "why": "daily limit reached, try tomorrow"}))
+        _, rel = self.releases()
+        self.assertEqual(rel["The Ring Thing (2004) [XVID]"]["scout"], {"state": "refused", "why": "daily limit reached, try tomorrow"})
+
+    def test_an_unreadable_release_or_a_stale_list_cannot_be_asked_for(self):
+        out, rel = self.releases()
+        self.assertEqual(self.call("POST", "action", {"id": self.pid, "action": "describe", "release": rel["Other"]["n"], "token": out["token"]})[0], 400)
+        self.assertEqual(self.call("POST", "action", {"id": self.pid, "action": "describe", "release": 0, "token": "nope"})[0], 400)
+        self.assertEqual(list(self.req.iterdir()), [])
+
+    def test_reads_do_not_count_as_fixes_and_have_their_own_limit(self):
+        out, rel = self.releases()
+        for title in ("The.Ring.Thing.2004.MULTi.720p", "The Ring Thing (2004) [XVID]"):
+            self.assertEqual(self.call("POST", "action", {"id": self.pid, "action": "describe", "release": rel[title]["n"], "token": out["token"]})[0], 200)
+        self.assertNotIn(("act", self.pid), manual.THROTTLE)
+        self.addCleanup(setattr, manual, "READS_PER_USER", manual.READS_PER_USER)
+        manual.READS_PER_USER = 2
+        self.w.releases.append(dict(self.w.releases[0], guid="https://nzbgeek.info/geekseek.php?guid=" + "c" * 32, title="Third.MULTi"))
+        manual.CACHE.clear()
+        manual.OFFERS.clear()
+        manual.SEARCHES.clear()
+        out, rel = self.releases()
+        self.assertEqual(self.call("POST", "action", {"id": self.pid, "action": "describe", "release": rel["Third.MULTi"]["n"], "token": out["token"]}), (429, {"error": "too many reads"}))
 
 
 if __name__ == "__main__":

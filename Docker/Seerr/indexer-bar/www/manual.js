@@ -60,6 +60,8 @@
     ".hg-m-check-warn { color: #fde68a; }" +
     ".hg-m-check-none { color: #9ca3af; }" +
     ".hg-m-info { color: #9ca3af; }" +
+    ".hg-m-scout { font-size: .85rem; color: #d1d5db; }" +
+    ".hg-m-lines { margin: .15rem 0 0; padding-left: 1rem; color: #9ca3af; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; overflow-wrap: anywhere; }" +
     ".hg-m-raw { font-size: .8rem; color: #9ca3af; }" +
     ".hg-m-raw summary { cursor: pointer; }" +
     ".hg-m-quote { font-size: .85rem; color: #d1d5db; border-left: 3px solid #4b5563; padding-left: .5rem; overflow-wrap: anywhere; }" +
@@ -110,7 +112,8 @@
       tooBig: "Too big for the full virus scan", partsClean: "attachments and subtitles scanned clean", genuine: "genuine video",
       partsError: function (why) { return "parts scan not possible" + (why ? " (" + why + ")" : "") + ": admins only"; },
       virus: { clean: "Virus scan: clean", pending: "Virus scan pending", infected: "Virus scan: malware found", unknown: "Virus scan: not scanned yet" },
-      detailsLink: "Details ↗", account: "🔒 account needed", nfo: "📄 Description/NFO mentions: ",
+      detailsLink: "Details ↗", account: "🔒 account needed", scoutNfo: "NFO", scoutDesc: "Description", scoutNone: "no language named",
+      scoutReading: "Reading the description… (a minute or two)", scoutRead: "Read description",
       noMatch: "No release found for this title — the indexers don't know a version yet.", olderHint: "For an old or rare title, try “Allow older versions” above.",
       noneAllowed: "Releases were found, but none the profile allows.", notAllowed: function (n) { return n + " more, not allowed — show why"; },
       releaseReasons: { "cf-score": "Its score by our rules is too low (e.g. wrong language, poor source).", "required-terms": "The name lacks a term the profile requires (e.g. the language).",
@@ -180,7 +183,8 @@
       tooBig: "Zu gross für den vollen Virenscan", partsClean: "Anhänge und Untertitel sauber", genuine: "echtes Video",
       partsError: function (why) { return "Teil-Scan nicht möglich" + (why ? " (" + why + ")" : "") + ": nur Admins"; },
       virus: { clean: "Virenscan: sauber", pending: "Virenscan läuft noch", infected: "Virenscan: Schadsoftware gefunden", unknown: "Virenscan: noch nicht geprüft" },
-      detailsLink: "Details ↗", account: "🔒 Konto nötig", nfo: "📄 Beschreibung/NFO nennt: ",
+      detailsLink: "Details ↗", account: "🔒 Konto nötig", scoutNfo: "NFO", scoutDesc: "Beschreibung", scoutNone: "keine Sprache genannt",
+      scoutReading: "Liest die Beschreibung… (ein, zwei Minuten)", scoutRead: "Beschreibung lesen",
       noMatch: "Kein Release für diesen Titel gefunden — die Indexer kennen noch keine Version.", olderHint: "Bei einem alten oder seltenen Titel oben «Ältere Versionen erlauben» versuchen.",
       noneAllowed: "Es gibt Releases, aber keines, das das Profil erlaubt.", notAllowed: function (n) { return n + " weitere, nicht erlaubt — Gründe zeigen"; },
       releaseReasons: { "cf-score": "Nach unseren Regeln zu tiefe Punktzahl (z. B. falsche Sprache, schlechte Quelle).", "required-terms": "Dem Namen fehlt ein Begriff, den das Profil verlangt (z. B. die Sprache).",
@@ -579,10 +583,10 @@
   };
 
   // a search behind others is queued by the backend: ask again every POLL ms until the list is there (5 min at most)
-  App.prototype.releases = function (card, p, season, tries) {
+  App.prototype.releases = function (card, p, season, tries, watch) {
     var self = this, t = this.t, d = this.doc;
-    var l = this.list(card);
-    if (!tries) this.say(card, t.searching);
+    var l = watch ? card.querySelector("[data-list]") : this.list(card);
+    if (!tries && !watch) this.say(card, t.searching);
     return call(this.win, API + "releases?id=" + encodeURIComponent(p.id) + (season ? "&season=" + encodeURIComponent(season) : "")).then(function (r) {
       if (r.status === 200 && r.body && (r.body.state === "queued" || r.body.state === "running")) {
         self.say(card, r.body.state === "queued" ? t.queued(r.body.waitingFor ? String(r.body.waitingFor) : null) : t.searching);
@@ -590,6 +594,7 @@
         return new Promise(function (ok) { self.win.setTimeout(ok, POLL); }).then(function () { return self.releases(card, p, season, (tries || 0) + 1); });
       }
       if (r.status !== 200) return self.say(card, errorText(t, r.status, r.body), true);
+      if (watch) { if (!l.isConnected || !l.firstChild) return false; self.list(card); }
       self.say(card, "");
       var rel = (r.body && r.body.releases) || [];
       if (!rel.length) {
@@ -604,15 +609,44 @@
         var reasons = (x.rejections || []).map(function (raw, k) { var c = (x.reasons || [])[k]; return c && t.releaseReasons[c] ? t.releaseReasons[c] : String(raw); });
         var why = x.rejected && reasons.length ? el(d, "span", { "class": "hg-m-why" }, reasons.filter(function (v, k) { return reasons.indexOf(v) === k; }).join(" ")) : null;
         var extra = null;
-        if ((typeof x.link === "string" && /^https?:\/\//.test(x.link)) || (x.nfoLangs || []).length) {
+        if (typeof x.link === "string" && /^https?:\/\//.test(x.link)) {
           extra = el(d, "span", { "class": "hg-m-facts hg-m-wide" });
-          if (typeof x.link === "string" && /^https?:\/\//.test(x.link)) {
-            extra.appendChild(el(d, "a", { href: x.link, target: "_blank", rel: "noopener noreferrer", "data-details-link": true }, t.detailsLink));
-            if (x.private) extra.appendChild(d.createTextNode(" · " + t.account));
-          }
-          if ((x.nfoLangs || []).length) extra.appendChild(el(d, "span", { "class": "hg-m-nfo" }, (extra.firstChild ? " · " : "") + t.nfo + x.nfoLangs.map(String).join(", ")));
+          extra.appendChild(el(d, "a", { href: x.link, target: "_blank", rel: "noopener noreferrer", "data-details-link": true }, t.detailsLink));
+          if (x.private) extra.appendChild(d.createTextNode(" · " + t.account));
         }
-        return el(d, "li", { "data-release": true, "class": x.rejected ? "hg-m-rejected" : null }, el(d, "label", null, radio, breakable(d, "hg-m-name", x.title), el(d, "span", { "class": "hg-m-facts" }, facts), why), extra);
+        return el(d, "li", { "data-release": true, "class": x.rejected ? "hg-m-rejected" : null }, el(d, "label", null, radio, breakable(d, "hg-m-name", x.title), el(d, "span", { "class": "hg-m-facts" }, facts), why), extra, scoutBlock(x));
+      };
+      // what the NFO / description scout read, or the button to have it read now (beefy-side, within the scouts' limits)
+      var scoutBlock = function (x) {
+        var sc = x.scout && typeof x.scout === "object" ? x.scout : null;
+        if (sc && sc.state === "read") {
+          var langs = (sc.langs || []).map(String);
+          var box = el(d, "div", { "class": "hg-m-scout hg-m-wide", "data-scout": true }, "📄 " + (sc.source === "nfo" ? t.scoutNfo : t.scoutDesc) + ": " + (langs.length ? langs.join(", ") : t.scoutNone));
+          if ((sc.lines || []).length) {
+            var ul = el(d, "ul", { "class": "hg-m-lines" });
+            sc.lines.slice(0, 5).forEach(function (line) { ul.appendChild(el(d, "li", null, String(line))); });
+            box.appendChild(ul);
+          }
+          return box;
+        }
+        if (sc && sc.state === "pending") return el(d, "div", { "class": "hg-m-scout hg-m-wide", "data-scout": true }, "📄 " + t.scoutReading);
+        var out = el(d, "div", { "class": "hg-m-scout hg-m-wide", "data-scout": true });
+        if (sc && (sc.state === "refused" || sc.state === "failed")) out.appendChild(el(d, "span", { "class": "hg-m-why" }, "📄 " + String(sc.why || t.errors.other) + " "));
+        if (x.readable) {
+          var b = self.button("describe", t.scoutRead);
+          b.addEventListener("click", function () {
+            if (b.disabled) return;
+            b.disabled = true;
+            b.textContent = t.loading;
+            call(self.win, API + "action", { id: p.id, action: "describe", release: x.n, token: r.body.token }).then(function (res) {
+              if (res.status !== 200) { b.disabled = false; b.textContent = t.scoutRead; return self.say(card, errorText(t, res.status, res.body), true); }
+              out.textContent = "📄 " + t.scoutReading;
+              self.watchScouts(card, p, season, 0);
+            });
+          });
+          out.appendChild(b);
+        }
+        return out.firstChild ? out : null;
       };
       var ok = rel.filter(function (x) { return !x.rejected; }), no = rel.filter(function (x) { return x.rejected; });
       if (ok.length) {
@@ -629,6 +663,7 @@
         fold.appendChild(ul2);
         l.appendChild(fold);
       }
+      if (rel.some(function (x) { return x.scout && x.scout.state === "pending"; })) self.watchScouts(card, p, season, (watch || 0));
       if (!ok.length) return true;
       var go = self.button("grab", t.grab, "hg-m-primary");
       go.addEventListener("click", function () {
@@ -639,6 +674,17 @@
       l.appendChild(go);
       return true;
     });
+  };
+
+  // while a read is pending, the list is asked again every POLL ms (3 min at most) and redrawn with what arrived
+  App.prototype.watchScouts = function (card, p, season, n) {
+    var self = this;
+    if (n > 180000 / POLL || card.__hgWatch) return;
+    card.__hgWatch = true;
+    self.win.setTimeout(function () {
+      card.__hgWatch = false;
+      self.releases(card, p, season, 0, n + 1);
+    }, POLL);
   };
 
   App.prototype.lookup = function (card, p, term) {
