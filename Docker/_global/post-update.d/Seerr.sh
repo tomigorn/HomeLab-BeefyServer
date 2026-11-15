@@ -40,7 +40,7 @@ fi
 if want seerr-proxy; then
   # nginx.conf still valid on the image and sub_filter (the bar injection) still compiled in
   check seerr.proxy-config '^ok ok http_sub_module$' "$(echo "$(docker exec seerr-proxy nginx -t 2>&1 | grep -c -e 'syntax is ok' -e 'test is successful' | sed 's/^2$/ok ok/') $(docker exec seerr-proxy nginx -V 2>&1 | grep -o http_sub_module | head -1)")"
-  check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/manual.js _indexer-bar/menu-links.css _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js _indexer-bar/request-origin.js _indexer-bar/request-sizes.js _indexer-bar/tip.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '\(src\|href\)="/_indexer-bar/[a-z-]*\.\(js\|css\)\(?v=[0-9a-f]*\)\?"' | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
+  check seerr.proxy-inject '^_indexer-bar/bar.css _indexer-bar/bar.js _indexer-bar/can-wait.js _indexer-bar/download-now.js _indexer-bar/manual.js _indexer-bar/menu-links.css _indexer-bar/menu-links.js _indexer-bar/my-request.js _indexer-bar/night-label.js _indexer-bar/request-filter.js _indexer-bar/request-origin.js _indexer-bar/request-sizes.js _indexer-bar/tip.js$' "$(curl -sL -m 8 http://127.0.0.1:5055/ | grep -o '\(src\|href\)="/_indexer-bar/[a-z-]*\.\(js\|css\)\(?v=[0-9a-f]*\)\?"' | grep -o '_indexer-bar/[a-z-]*\.\(js\|css\)' | sort -u | xargs)"
   check seerr.hint-box '^1$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/tip.js | grep -c 'setAttribute("data-hg-tip-merged"' 2>&1)"
   check seerr.bar-hints '^[1-9][0-9]* 0$' "$(b=$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/bar.js); echo $(grep -c 'window.hgTip.set' <<<"$b") $(grep -cE '[A-Za-z]\.title = ' <<<"$b"))"
   check seerr.hint-box-pinned '^2$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/tip.js | grep -cE 'setAttribute\("data-hg-tip-pin"|addEventListener\("pointerover"' 2>&1)"
@@ -80,6 +80,8 @@ if want download-now seerr-proxy; then
   check seerr.delete-keeps-files '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/my-request.js | grep -c 'data-delete-keep' 2>&1)"
   check seerr.origins-auth '^401$' "$(curl -s -m 8 -o /dev/null -w '%{http_code}' http://127.0.0.1:5055/_download-now/origins 2>&1)"
   check seerr.origins-data '^object readable$' "$(seerr_data /_download-now/origins | jq -r '.requests|type' 2>&1) $(docker exec seerr-download-now test -r /run/origins/origins.json && echo readable || echo missing)"
+  # Finished = Seerr's filter available: completed requests whose media is fully available (not partially)
+  check seerr.request-filter '^[1-9][0-9]* 1$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-filter.js | grep -c 'data-hg-filter' 2>&1) $(docker exec seerr grep -A1 "case 'available':" /app/dist/routes/request.js | grep -c 'mediaStatusFilter = \[media_1.MediaStatus.AVAILABLE\]' 2>&1)"
   check seerr.origin-script '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/request-origin.js | grep -c 'data-hg-origin-fact' 2>&1)"
   check seerr.title-pill-hints '^[1-9] [1-9]$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/night-label.js | grep -c 'handed to Radarr/Sonarr' 2>&1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/download-now.js | grep -c 'grabbedHint' 2>&1)"
   check seerr.manual-auth '^401 302$' "$(for u in /_download-now/manual/problems /_manual/; do curl -s -m 8 -o /dev/null -w '%{http_code} ' "http://127.0.0.1:5055$u"; done | xargs 2>&1)"

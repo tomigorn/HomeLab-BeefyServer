@@ -252,7 +252,7 @@ A thin bar at the top of every Seerr page (everyone who can open Requests sees i
 
 | Part | What |
 |---|---|
-| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` (and `can-wait.js`, `menu-links.js`, `night-label.js`, `download-now.js`, `my-request.js`, `request-sizes.js`, `request-origin.js`: [Can wait](#can-wait), [Menu links](#menu-links), [Night label](#night-label), [Download now](#download-now), [My request](#my-request), [Request sizes](#request-sizes), [Request origin](#request-origin)); `/_download-now/` goes to the `download-now` backend before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
+| `seerr-proxy` | `nginxinc/nginx-unprivileged`, uid 65124, read-only, no caps, 64 MB. Takes host port `5055`, proxies everything to `seerr:5055` (websockets too), adds `<link>` + `<script>` for `/_indexer-bar/bar.css` + `bar.js` (and `can-wait.js`, `menu-links.js`, `night-label.js`, `download-now.js`, `my-request.js`, `request-sizes.js`, `request-filter.js`, `request-origin.js`: [Can wait](#can-wait), [Menu links](#menu-links), [Night label](#night-label), [Download now](#download-now), [My request](#my-request), [Request sizes](#request-sizes), [Request filter](#request-filter), [Request origin](#request-origin)); `/_download-now/` goes to the `download-now` backend before `</head>` (`sub_filter`, Seerr's gzip off, nginx compresses again). Seerr down (just woke): 503 page that reloads itself. Config `indexer-bar/nginx.conf` |
 | Jellyfin sign-in blocked | `/api/v1/auth/jellyfin` and below (password login, Quick Connect initiate/check/authenticate) answer 403 in nginx (case-insensitive); users sign in via OIDC (`/api/v1/auth/oidc/…` untouched). Quick Connect ignores `mediaServerLogin`, so a Jellyfin-linked account could otherwise get a session without the SSO step. Gap: a client on a docker network reaching `seerr:5055` directly skips the proxy. Check: `seerr.jellyfin-auth-blocked` |
 | Session gate | `usage.json`, `night-waiting.json`, `request-state.json` and `/_download-now/` (not `/health`) need a Seerr session: nginx `auth_request` asks Seerr `GET /api/v1/auth/me` with the caller's own cookie (or `X-Api-Key`/`X-Api-User`), cached 10 s per credentials; none/invalid = 401. The bar scripts render only after a 200, never on `/login`, `/setup`, `/resetpassword`, and re-check after client-side navigation (login without reload). Check: `seerr.data-needs-session` |
 | Shared code | `bar.js` + `bar.css` (and the hint box `tip.js`) are one codebase with the requests bar above AudioBookRequest (fastpi, HomeLab-FastPi `Docker/Audiobook-Requests`): canonical here, vendored there unchanged; config = attributes on the `<script>` tag, app wording (disk hints, panel note) comes from `usage.json` (`indexer-usage.py`). Format: `indexer-bar/schema.md`. Change here, run both test suites, then on fastpi `Docker/Audiobook-Requests/scripts/sync-bar.sh` (fastpi's post-update check `books.bar-shared` compares the hashes) |
@@ -511,6 +511,22 @@ Requests page → every row gets a **Size** line under Profile (German **Grösse
 | Layout | line / row added inside the MutationObserver callback (before paint; title page: in the first frame the facts panel exists, measured); on wide screens (≥1280 px) every row, placeholders too, is 8.5rem instead of 7rem so the fifth line fits and nothing jumps, and the facts column (`data-hg-facts`) ends 1rem before the buttons; without buttons (normal users) the empty buttons column is hidden and the facts take its width; on phones (<640 px) the facts column fits inside the card; its text-only values (Profile, Size, …) end in `…` with the full text as tooltip, the pills always stay visible; the controls wrap to a second line when there is no room |
 | Script | `indexer-bar/www/request-sizes.js` (injected by `seerr-proxy`); hints ([hint boxes](#hint-boxes)): pills, episodes, per season, the sort select ("Sorted within this page"), and a cut-off value's full text (only while cut off) |
 | Tests | `python3 -m unittest tests.test_night_downloads` (Movie-Downloads, class `Sizes`); `python3 tests/test_by_size.py`; JS `node --test` in `tests/js` (`request-sizes.test.mjs`) |
+
+## Request filter
+
+Two entries right after **All** in the Requests filter (funnel icon), as extra options with Seerr's own filter values: Seerr's state, URL, pagination and the size sort (`hg_size`) keep working. Seerr's own entries stay below.
+
+| Entry (DE) | Seerr filter | Shows |
+|---|---|---|
+| ✅ Finished (✅ Fertig) | `available` | approved and done, title fully in Jellyfin (partially available is not finished) |
+| ⏳ Not finished yet (⏳ Noch nicht fertig) | `processing` | approved, title unknown / pending / downloading / partially available (waiting for approval: Pending) |
+
+| Part | What |
+|---|---|
+| Why not `completed` | Seerr's `completed` takes every completed request whatever the title's state now (partially available, deleted too); `available` only fully available ones |
+| Shown | the select shows the first option with the current value: ours, also when Seerr's own Available / Processing was picked |
+| Script | `indexer-bar/www/request-filter.js` (injected by `seerr-proxy`); survives React re-renders and the language switch |
+| Tests | JS `node --test` in `tests/js` (`request-filter.test.mjs`); check `seerr.request-filter` |
 
 ## Request origin
 
