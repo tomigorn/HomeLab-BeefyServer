@@ -315,3 +315,74 @@ test("signing out and in as someone else without a reload: the user is read agai
   await settle();
   assert.equal(calls.filter((c) => c.url === "/api/v1/auth/me").length, 2);
 });
+
+// low tariff (night-waiting.json low_tariff, via the backend): nothing waits for the night, no daytime price
+const at = (state, extra) => ({ state, released: state === "started" ? ["abc"] : [], app: "radarr", search: null, ...extra });
+
+test("low tariff with a night-category download: no daytime offer, no 'Waiting for the night', a neutral chip", async () => {
+  const w = page(titlePage(), routes(ME.admin, null, { [API]: at("started", { lowTariff: true }) }));
+  await settle();
+  const b = box(w);
+  assert.equal(b.tagName, "SPAN");
+  assert.equal(b.textContent, "🌙 Low tariff — downloads now at the cheaper night price");
+  assert.doesNotMatch(b.textContent + hint(w), /daytime|Waiting for the night|Download now/);
+  assert.equal(hint(w), "Low tariff now (22:00–06:00, all Sunday)\nWhat waits for the night downloads now on its own, nothing to press.");
+});
+
+test("low tariff, nothing grabbed: Search now without a daytime price", async () => {
+  const w = page(titlePage(), routes(ME.admin, null, { [API]: at("searching", { lowTariff: true }) }));
+  await settle();
+  assert.equal(box(w).tagName, "BUTTON");
+  assert.equal(box(w).textContent, "🔍 Search now");
+  assert.equal(hint(w), "Nothing grabbed yet\nSearches now; what it finds downloads at once, in the low tariff (cheaper power).");
+});
+
+test("low tariff, searched without a find: Search again without a daytime price", async () => {
+  const w = page(titlePage(), routes(ME.admin, null, { [API]: at("searching", { lowTariff: true, search: { status: null, started: null, ahead: 0, last: "2026-10-28T09:12:00Z" } }) }));
+  await settle();
+  assert.equal(w.document.querySelector("#hg-download-now button").textContent, "🔍 Search again now");
+});
+
+test("low tariff, started with Download now: the hint says low tariff, not daytime price", async () => {
+  const w = page(titlePage(), routes(ME.admin, null, { [API]: at("downloading", { lowTariff: true, now: true }) }));
+  await settle();
+  assert.equal(hint(w), "Downloading now in the low tariff (started with Download now)");
+});
+
+test("stalled torrent nobody shares (download anyway), at night: says so, no Download now", async () => {
+  const w = page(titlePage(), routes(ME.admin, null, { [API]: at("started", { lowTariff: true, seedless: true, override: true }) }));
+  await settle();
+  const b = box(w);
+  assert.equal(b.tagName, "SPAN");
+  assert.equal(b.textContent, "⏳ Nobody is sharing this file right now — it starts as soon as someone does; checked every night for a better version");
+  assert.equal(w.document.querySelector("#hg-download-now button"), null);
+});
+
+test("paused torrent nobody shares, at daytime: the same, not the daytime offer", async () => {
+  const w = page(titlePage(), routes(ME.admin, null, { [API]: at("started", { lowTariff: false, seedless: true, override: true }) }));
+  await settle();
+  assert.match(box(w).textContent, /^⏳ Nobody is sharing this file right now/);
+  assert.doesNotMatch(box(w).textContent + hint(w), /daytime|Waiting for the night/);
+});
+
+test("nobody sharing without download anyway: no nightly check promised; German", async () => {
+  const w = page(titlePage(), routes(ME.admin, null, { [API]: at("downloading", { lowTariff: false, seedless: true, now: true }) }));
+  await settle();
+  assert.equal(box(w).textContent, "⏳ Nobody is sharing this file right now — it starts as soon as someone does");
+  const de = page(titlePage("Verarbeiten"), routes(ME.admin, null, { [API]: at("started", { seedless: true, override: true }) }));
+  await settle();
+  assert.equal(box(de).textContent, "⏳ Gerade teilt niemand diese Datei — sie startet, sobald jemand sie teilt; jede Nacht wird nach einer besseren Version gesucht");
+});
+
+test("daytime, waiting download that has seeders: the Download now offer is unchanged", async () => {
+  const w = page(titlePage(), routes(ME.admin, null, { [API]: at("started", { lowTariff: false, seedless: false }) }));
+  await settle();
+  assert.match(box(w).textContent, /⚡ Download now — at daytime power price/);
+  assert.equal(hint(w), "Waiting for the night 🌙\nStarts at once instead, at the higher daytime power price.");
+});
+
+test("German low tariff chip", async () => {
+  const w = page(titlePage("Verarbeiten"), routes(ME.admin, null, { [API]: at("started", { lowTariff: true }) }));
+  await settle();
+  assert.equal(box(w).textContent, "🌙 Niedertarif — lädt jetzt zum günstigeren Nachtpreis");
+});

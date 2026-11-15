@@ -18,6 +18,14 @@
       again: "⚡ Search again now — at daytime power price",
       grabbed: "Downloading",
       grabbedHint: "Downloading now at the daytime power price (started with Download now)",
+      grabbedHintLow: "Downloading now in the low tariff (started with Download now)",
+      low: "🌙 Low tariff — downloads now at the cheaper night price",
+      lowHint: "Low tariff now (22:00–06:00, all Sunday). What waits for the night downloads now on its own, nothing to press.",
+      searchLow: "🔍 Search now",
+      searchingLow: "Nothing grabbed yet. Searches now; what it finds downloads at once, in the low tariff (cheaper power).",
+      againLow: "🔍 Search again now",
+      nobody: "⏳ Nobody is sharing this file right now — it starts as soon as someone does",
+      nobodyNightly: "; checked every night for a better version",
       locale: "en-GB",
     },
     de: {
@@ -33,6 +41,14 @@
       again: "⚡ Nochmals suchen — zum Tagstrompreis",
       grabbed: "Lädt herunter",
       grabbedHint: "Lädt jetzt zum Tagstrompreis herunter (mit Jetzt herunterladen gestartet)",
+      grabbedHintLow: "Lädt jetzt im Niedertarif herunter (mit Jetzt herunterladen gestartet)",
+      low: "🌙 Niedertarif — lädt jetzt zum günstigeren Nachtpreis",
+      lowHint: "Jetzt Niedertarif (22:00–06:00, ganzer Sonntag). Was auf die Nacht wartet, lädt jetzt von selbst, nichts zu drücken.",
+      searchLow: "🔍 Jetzt suchen",
+      searchingLow: "Noch nichts gefunden. Sucht jetzt; was sie findet, lädt sofort, im Niedertarif (günstigerer Strom).",
+      againLow: "🔍 Nochmals suchen",
+      nobody: "⏳ Gerade teilt niemand diese Datei — sie startet, sobald jemand sie teilt",
+      nobodyNightly: "; jede Nacht wird nach einer besseren Version gesucht",
       locale: "de-CH",
     },
   };
@@ -98,14 +114,19 @@
   }
 
   // downloading: the drawn spinner of the legend (✅ means available), with the static hint of the status badges
-  function grabbedChip(doc, t) {
+  function grabbedChip(doc, t, low) {
     var c = chip(doc, t.grabbed, true), nl = typeof window !== "undefined" && window.hgNightLabel;
     if (nl && nl.spinner) {
       var sp = nl.spinner();
       sp.style.marginRight = ".4rem";
       c.insertBefore(sp, c.firstChild);
     } else c.textContent = "◌ " + t.grabbed;
-    tip(c, t.grabbedHint);
+    hinted(c, low ? t.grabbedHintLow : t.grabbedHint);
+    return c;
+  }
+
+  function hinted(c, text) {
+    tip(c, text);
     c.setAttribute("tabindex", "0");
     c.style.cursor = "help";
     return c;
@@ -117,8 +138,13 @@
 
   // what the title's button area shows for a backend answer; null = nothing
   function view(doc, t, title, st) {
-    var s = st && st.search;
-    if (st && st.state === "downloading" && st.now) return grabbedChip(doc, t);
+    var s = st && st.search, low = !!(st && st.lowTariff);
+    // a torrent nobody shares: pressing cannot help, at any hour
+    if (st && st.seedless && ["started", "downloading"].indexOf(st.state) >= 0) {
+      var n = t.nobody + (st.override ? t.nobodyNightly : "");
+      return hinted(chip(doc, n, true), n);
+    }
+    if (st && st.state === "downloading" && st.now) return grabbedChip(doc, t, low);
     if (running(st)) return chip(doc, s.status === "started" ? t.running.replace("{t}", clock(s.started, t)) : t.queued.replace("{n}", String(s.ahead || 0)), true);
     if (st && st.state === "searching" && s && s.last) {
       var box = doc.createElement("div");
@@ -128,13 +154,16 @@
       var c = chip(doc, t.none.replace("{t}", clock(s.last, t)), false);
       c.className = c.className.replace(/\s?mr-2\b/, "");
       box.appendChild(c);
-      var again = button(doc, t, title, "searching", null, t.again);
+      var again = button(doc, t, title, "searching", null, low ? t.againLow : t.again, low ? t.searchingLow : null);
       again.removeAttribute("id");
       again.className = LOOK.replace(/\s?mr-2\b/, "");
       again.style.cssText = SECONDARY;
       box.appendChild(again);
       return box;
     }
+    // low tariff: nothing waits for the night, so no daytime offer
+    if (st && st.state === "started" && low) return hinted(chip(doc, t.low, true), t.lowHint);
+    if (st && st.state === "searching" && low) return button(doc, t, title, "searching", null, t.searchLow, t.searchingLow);
     if (st && ["started", "searching"].indexOf(st.state) >= 0) return button(doc, t, title, st.state);
     return null;
   }
@@ -165,16 +194,16 @@
     if (running(st)) poll(doc, t, title, mine);
   }
 
-  function button(doc, t, title, state, note, label) {
+  function button(doc, t, title, state, note, label, hint) {
     var b = doc.createElement("button");
     b.type = "button";
     b.id = BOX;
     b.className = LOOK;
     b.style.cssText = COLOURS;
     b.textContent = label || (note ? t.button + " · " + note : t.button);
-    tip(b, note || t[state]);
-    b.setAttribute("aria-label", t.button + ". " + (note || t[state]));
-    b.addEventListener("click", function () { press(doc, b, t, title, state); });
+    tip(b, note || hint || t[state]);
+    b.setAttribute("aria-label", (label || t.button) + ". " + (note || hint || t[state]));
+    b.addEventListener("click", function () { press(doc, b, t, title, state, label, hint); });
     return b;
   }
 
@@ -183,7 +212,7 @@
     if (old.parentNode) old.parentNode.replaceChild(el, old);
   }
 
-  function press(doc, b, t, title, state) {
+  function press(doc, b, t, title, state, label, hint) {
     if (b.disabled) return;
     b.disabled = true;
     b.textContent = t.busy;
@@ -208,7 +237,7 @@
       var nl = typeof window !== "undefined" && window.hgNightLabel;
       if (nl && nl.release && r.released && r.released.length) nl.release(r.released);
     }, function () {
-      swap(b.id === BOX ? b : b.parentNode, button(doc, t, title, state, t.error));
+      swap(b.id === BOX ? b : b.parentNode, button(doc, t, title, state, t.error, label && label + " · " + t.error, hint));
     });
   }
 
