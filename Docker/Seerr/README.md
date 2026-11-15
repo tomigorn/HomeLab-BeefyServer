@@ -672,7 +672,7 @@ Modern titles leave the server 90 days after the download, old, niche and top-ra
 | Part | What |
 |---|---|
 | Who | read: every Seerr session; **Keep forever**: anyone who may request (ADMIN, REQUEST, REQUEST_MOVIE, REQUEST_TV), on any title; **back to temporary**: a requester of the title or ADMIN / MANAGE_REQUESTS (owner's rule in the spec); the test film never changes |
-| Backend | `download-now/retention_api.py`, `/_download-now/retention/`: GET `title?type=&tmdb=`, `titles?keys=movie/1,tv/2` (≤ 100), `list` (ADMIN / MANAGE_REQUESTS); POST `keep` `{type, tmdbId, keep}` with Origin + JSON, body ≤ 1 KiB, every 3 s and 30 per hour per user. Session gate in nginx like the rest |
+| Backend | `download-now/retention_api.py`, `/_download-now/retention/`: GET `title?type=&tmdb=[&default=1]` (`default=1` only from the dialog: a title not in the library gets its category default from a Radarr/Sonarr lookup, cached 10 min), `titles?keys=movie/1,tv/2` (≤ 100), `list` (ADMIN / MANAGE_REQUESTS); POST `keep` `{type, tmdbId, keep}` with Origin + JSON, body ≤ 1 KiB, every 3 s and 30 per hour per user. Session gate in nginx like the rest |
 | Data | `retention.json` (Movie-Downloads `retention.py`, read-only via `/run/indexer-bar`); choices `/srv/appdata/seerr-retention/keep.json` (rw `/retention`, 65127:buntu 2750, file 0640 + `.bak`, unreadable = never overwritten; per title `keep`, `by` user id, `at`) |
 | Script | `indexer-bar/www/retention.js` (injected last), every text as `textContent`, hints via `tip.js`, EN/DE |
 | Log | `sudo docker logs seerr-download-now \| grep retention` (one line per choice: user id, title, keep / temporary) |
