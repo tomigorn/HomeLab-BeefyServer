@@ -114,6 +114,17 @@
       bigWhy: "ClamAV scans at most 2 GiB, so the video stream itself is not scanned.", bigParts: "Attachments and subtitles:", bigClean: "scanned clean", bigVideo: "Video:", bigGenuine: "genuine video stream",
       partsError: function (why) { return "parts scan not possible" + (why ? " (" + why + ")" : "") + ": admins only"; },
       virus: { clean: "Virus scan: clean", pending: "Virus scan pending", infected: "Virus scan: malware found", unknown: "Virus scan: not scanned yet" },
+      vt: {
+        queued: function () { return "VirusTotal: fingerprint check queued"; }, unchecked: function () { return "VirusTotal: not checked yet"; },
+        unknown: function () { return "Unknown to VirusTotal"; }, clean: function () { return "VirusTotal: known file, clean"; },
+        flagged: function (v) { return "VirusTotal: flagged by " + v.malicious + (v.malicious === 1 ? " scanner" : " scanners"); },
+        malware: function (v) { return "VirusTotal: known malware (" + v.malicious + " of " + v.engines + " scanners)"; }
+      },
+      vtShort: { flagged: "flagged by VirusTotal", malware: "known malware" },
+      vtHead: "VirusTotal fingerprint", vtChecked: "Checked:", vtHow: "Only the file's SHA-256 fingerprint is looked up; the file is never uploaded.",
+      vtWhy: { queued: "Looked up within a few minutes (at most 4 a minute, 500 a day).", unchecked: "The lookup failed or the daily limit is used up; it is retried later. No effect on the import.",
+        unknown: "Nobody has submitted this exact file yet: normal for a fresh video download. No effect on the import.", clean: "Known to VirusTotal; no scanner flags it.",
+        flagged: "1–2 scanners flag it, often a false alarm: only an admin can import it.", malware: "3 or more scanners flag it as malware: never imported, admins included." },
       detailsLink: "Details ↗", account: "🔒 account needed", scoutNfo: "NFO", scoutDesc: "Description", scoutNone: "no language named",
       scoutReading: "Reading the description… (a minute or two)", scoutRead: "Read description",
       noMatch: "No release found for this title — the indexers don't know a version yet.", olderHint: "For an old or rare title, try “Allow older versions” above.",
@@ -123,6 +134,7 @@
         blocklisted: "Blocked earlier (a failed or wrong download).", size: "Too big or too small for the profile.", "wrong-title": "Another title." },
       errorCodes: { "search queue full": "Too many searches are waiting right now: try again in a few minutes.", "too many searches": "You already have a search waiting: this one can start when it is done.",
         malware: "Malware found: this download is never imported.", "virus scan pending": "Wait for the virus scan (usually a few minutes); an admin can import before.",
+        flagged: "VirusTotal: some scanners flag this file — only an admin can import it.",
         "rejected file needs an admin": "Sonarr/Radarr rejected this file: only an admin can import it.", "another title needs an admin": "Another title than the requested one: only an admin can link it." },
       whatsWrong: "What's wrong", whatToDo: "What to do", download: "Download", fileLabel: "File name of the download:", raw: "Details from Sonarr/Radarr",
       audio: "Audio", subtitles: "Subtitles", min: "min",
@@ -193,6 +205,17 @@
       bigWhy: "ClamAV prüft höchstens 2 GiB, darum wird der Videostrom selbst nicht gescannt.", bigParts: "Anhänge und Untertitel:", bigClean: "sauber", bigVideo: "Video:", bigGenuine: "echter Videostrom",
       partsError: function (why) { return "Teil-Scan nicht möglich" + (why ? " (" + why + ")" : "") + ": nur Admins"; },
       virus: { clean: "Virenscan: sauber", pending: "Virenscan läuft noch", infected: "Virenscan: Schadsoftware gefunden", unknown: "Virenscan: noch nicht geprüft" },
+      vt: {
+        queued: function () { return "VirusTotal: Fingerabdruck-Prüfung in der Warteschlange"; }, unchecked: function () { return "VirusTotal: noch nicht geprüft"; },
+        unknown: function () { return "VirusTotal unbekannt"; }, clean: function () { return "VirusTotal: bekannte Datei, sauber"; },
+        flagged: function (v) { return "VirusTotal: von " + v.malicious + (v.malicious === 1 ? " Scanner" : " Scannern") + " gemeldet"; },
+        malware: function (v) { return "VirusTotal: bekannte Schadsoftware (" + v.malicious + " von " + v.engines + " Scannern)"; }
+      },
+      vtShort: { flagged: "von VirusTotal gemeldet", malware: "bekannte Schadsoftware" },
+      vtHead: "VirusTotal-Fingerabdruck", vtChecked: "Geprüft:", vtHow: "Nur der SHA-256-Fingerabdruck der Datei wird abgefragt; die Datei wird nie hochgeladen.",
+      vtWhy: { queued: "Wird in ein paar Minuten abgefragt (höchstens 4 pro Minute, 500 pro Tag).", unchecked: "Die Abfrage ist fehlgeschlagen oder das Tageslimit ist aufgebraucht; sie wird später wiederholt. Kein Einfluss auf den Import.",
+        unknown: "Diese genaue Datei hat noch niemand eingereicht: normal bei einem frischen Video-Download. Kein Einfluss auf den Import.", clean: "VirusTotal bekannt; kein Scanner meldet sie.",
+        flagged: "1–2 Scanner melden sie, oft ein Fehlalarm: nur ein Admin kann sie importieren.", malware: "3 oder mehr Scanner melden sie als Schadsoftware: wird nie importiert, auch nicht von Admins." },
       detailsLink: "Details ↗", account: "🔒 Konto nötig", scoutNfo: "NFO", scoutDesc: "Beschreibung", scoutNone: "keine Sprache genannt",
       scoutReading: "Liest die Beschreibung… (ein, zwei Minuten)", scoutRead: "Beschreibung lesen",
       noMatch: "Kein Release für diesen Titel gefunden — die Indexer kennen noch keine Version.", olderHint: "Bei einem alten oder seltenen Titel oben «Ältere Versionen erlauben» versuchen.",
@@ -202,6 +225,7 @@
         blocklisted: "Früher gesperrt (fehlgeschlagener oder falscher Download).", size: "Zu gross oder zu klein für das Profil.", "wrong-title": "Ein anderer Titel." },
       errorCodes: { "search queue full": "Gerade warten zu viele Suchen: in ein paar Minuten nochmals versuchen.", "too many searches": "Du hast schon eine Suche in der Warteschlange: diese kann starten, wenn sie fertig ist.",
         malware: "Schadsoftware gefunden: dieser Download wird nie importiert.", "virus scan pending": "Auf den Virenscan warten (meist ein paar Minuten); ein Admin kann vorher importieren.",
+        flagged: "VirusTotal: einige Scanner melden diese Datei — nur ein Admin kann sie importieren.",
         "rejected file needs an admin": "Sonarr/Radarr hat diese Datei abgelehnt: nur ein Admin kann sie importieren.", "another title needs an admin": "Ein anderer Titel als der angefragte: nur ein Admin kann ihn zuordnen." },
       whatsWrong: "Was nicht stimmt", whatToDo: "Was tun", download: "Download", fileLabel: "Dateiname des Downloads:", raw: "Details von Sonarr/Radarr",
       audio: "Ton", subtitles: "Untertitel", min: "Min.",
@@ -312,6 +336,9 @@
       var v = x.virus;
       parts.push(v.state === "clean" || v.state === "parts-clean" ? "✅ " + t.virusShort[v.state] : v.state === "infected" ? "❌ " + t.virusShort.infected + (v.signature ? " (" + String(v.signature) + ")" : "")
         : v.state === "parts-error" ? "⚠️ " + t.virusShort["parts-error"] : "⏳ " + (t.virusShort[v.state] || t.virusShort.unknown));
+      var vs = v.vt && typeof v.vt === "object" ? v.vt.state : null;
+      if (vs === "malware") parts.push("❌ " + t.vtShort.malware);
+      else if (vs === "flagged") parts.push("⚠️ " + t.vtShort.flagged);
     }
     return parts.join(" · ");
   }
@@ -334,6 +361,19 @@
     if (v.state === "infected" && v.signature) text += " (" + String(v.signature) + ")";
     if (v.state === "clean" && v.at) text += " (" + when(t, v.at) + ")";
     return el(doc, "p", { "class": "hg-m-virus hg-m-virus-" + (t.virus[v.state] ? v.state : "unknown"), "data-virus": true }, icon + " " + text);
+  }
+
+  // VirusTotal fingerprint verdict of one file (../Antivirus virustotal.py, hash lookups only)
+  function vtLine(doc, t, v) {
+    var x = v && typeof v === "object" && v.vt && typeof v.vt === "object" ? v.vt : null;
+    if (!x || !t.vt[x.state]) return null;
+    var icon = { queued: "⏳", unchecked: "⚪", unknown: "⚪", clean: "✅", flagged: "⚠️", malware: "❌" }[x.state];
+    var n = { malicious: Number(x.malicious) || 0, engines: Number(x.engines) || 0 };
+    var line = el(doc, "p", { "class": "hg-m-virus hg-m-virus-" + (x.state === "malware" ? "infected" : x.state), "data-vt": x.state }, icon + " " + t.vt[x.state](n));
+    var rows = [t.vtWhy[x.state], t.vtHow];
+    if (x.checked) rows.push([t.vtChecked, when(t, x.checked)]);
+    tip(line, { title: icon + " " + t.vtHead, rows: rows });
+    return line;
   }
 
   function App(win, root) {
@@ -777,6 +817,8 @@
         if (fm) row.appendChild(el(d, "span", { "class": "hg-m-facts hg-m-wide", "data-file-media": true }, fm));
         var fv = virusLine(d, t, f.virus);
         if (fv) row.appendChild(fv);
+        var fvt = vtLine(d, t, f.virus);
+        if (fvt) row.appendChild(fvt);
         var fc = checkList(d, t, f.checks);
         if (fc) row.appendChild(fc);
         if (tv) {

@@ -635,3 +635,47 @@ test("override states in both languages", () => {
   }
   assert.equal(w.hgManual.TEXT.de.overriddenBy("jane"), "Trotzdem heruntergeladen von jane");
 });
+
+test("VirusTotal fingerprint per file in both languages: line, hint box, card summary only for malware and flagged", async () => {
+  const at = "2026-11-15T04:25:00Z";
+  const cases = [[{ state: "queued" }, "⏳ VirusTotal: fingerprint check queued", "⏳ VirusTotal: Fingerabdruck-Prüfung in der Warteschlange", null, null],
+    [{ state: "unchecked" }, "⚪ VirusTotal: not checked yet", "⚪ VirusTotal: noch nicht geprüft", null, null],
+    [{ state: "unknown", checked: at }, "⚪ Unknown to VirusTotal", "⚪ VirusTotal unbekannt", null, null],
+    [{ state: "clean", malicious: 0, engines: 70, checked: at }, "✅ VirusTotal: known file, clean", "✅ VirusTotal: bekannte Datei, sauber", null, null],
+    [{ state: "flagged", malicious: 1, engines: 70, checked: at }, "⚠️ VirusTotal: flagged by 1 scanner", "⚠️ VirusTotal: von 1 Scanner gemeldet", "⚠️ flagged by VirusTotal", "⚠️ von VirusTotal gemeldet"],
+    [{ state: "flagged", malicious: 2, engines: 70, checked: at }, "⚠️ VirusTotal: flagged by 2 scanners", "⚠️ VirusTotal: von 2 Scannern gemeldet", "⚠️ flagged by VirusTotal", "⚠️ von VirusTotal gemeldet"],
+    [{ state: "malware", malicious: 41, engines: 70, checked: at }, "❌ VirusTotal: known malware (41 of 70 scanners)", "❌ VirusTotal: bekannte Schadsoftware (41 von 70 Scannern)", "❌ known malware", "❌ bekannte Schadsoftware"]];
+  for (const [vt, en, de, shortEn, shortDe] of cases) {
+    const virus = { state: "clean", at, vt };
+    const p = e09({ details: { reason: "id-match", release: E09, message: BY_ID, virus } });
+    const files = { token: "t", kind: "tv", files: [{ n: 0, name: E09 + ".mkv", size: 1.59e9, episodeIds: [2045], probable: true, rejections: [], virus }], episodes: [{ id: 2045, label: "S01E09", title: "" }] };
+    for (const [body, line, short, never] of [[PAGE, en, shortEn, /the file is never uploaded/], [PAGE.replace(">Series<", ">Serien<"), de, shortDe, /die Datei wird nie hochgeladen/]]) {
+      const { $, w } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files } }, undefined, body);
+      const summary = $("[data-summary]").textContent;
+      if (short) assert.ok(summary.endsWith(" · " + short), summary);
+      else assert.doesNotMatch(summary, /VirusTotal/);
+      $('[data-act="files"]').click();
+      await settle();
+      const v = $("[data-list] [data-vt]");
+      assert.equal(v.textContent, line);
+      assert.equal(v.getAttribute("data-vt"), vt.state);
+      assert.equal(v.getAttribute("title"), null);
+      assert.match(w.hgTip.text(w.hgTip.get(v)), never);
+    }
+  }
+});
+
+test("no fingerprint verdict, no VirusTotal line; a flagged file refused for a user says only an admin can import it", async () => {
+  const files = (vt) => ({ token: "t", kind: "tv", files: [{ n: 0, name: E09 + ".mkv", size: 1.59e9, episodeIds: [2045], probable: true, rejections: [], virus: Object.assign({ state: "clean" }, vt ? { vt } : {}) }], episodes: [{ id: 2045, label: "S01E09", title: "" }] });
+  let { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [e09()], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files(null) } });
+  $('[data-act="files"]').click();
+  await settle();
+  assert.equal($("[data-list] [data-vt]"), null);
+  ({ $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [e09()], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files({ state: "flagged", malicious: 2, engines: 70 }) },
+    "/_download-now/manual/action": { status: 403, body: { error: "flagged" } } }));
+  $('[data-act="files"]').click();
+  await settle();
+  $('[data-act="import"]').click();
+  await settle();
+  assert.match($("[data-msg]").textContent, /only an admin can import it/);
+});

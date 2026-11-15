@@ -89,6 +89,7 @@ if want download-now seerr-proxy; then
   check seerr.manual-scout '^readable$' "$(docker exec seerr-download-now sh -c 'test -r /run/scouts/nfo-scout.json && echo readable || echo missing' 2>&1)"
   check seerr.manual-scout-requests '^writable$' "$(docker exec seerr-download-now sh -c 'touch /run/scout-requests/.check && rm /run/scout-requests/.check && echo writable || echo read-only' 2>&1)"
   check seerr.manual-virus-log '^(readable|no-file-yet)$' "$(docker exec seerr-download-now sh -c 'if test -r /run/clamav/clamav-results.jsonl; then echo readable; elif test -d /run/clamav; then echo no-file-yet; else echo missing; fi' 2>&1)"
+  check seerr.manual-vt '^[1-9]' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/manual.js | grep -c 'data-vt' 2>&1)"
   check seerr.manual-override '^[1-9][0-9]* [1-9][0-9]*$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/manual.js | grep -c 'data-override') $(docker exec seerr-download-now grep -c 'nightly(dn, deps)' /app/manual.py 2>&1)"
   check seerr.manual-state '^writable 65127 700$' "$(docker exec seerr-download-now sh -c 'test -w /state && echo writable || echo read-only' 2>&1) $(stat -c '%u %a' /srv/appdata/seerr-download-now 2>&1)"
   check seerr.download-now-script '^media-actions closest\("main"\)$' "$(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/download-now.js | grep -o 'media-actions' | head -1) $(curl -s -m 5 http://127.0.0.1:5055/_indexer-bar/menu-links.js | grep -o 'closest("main")' | head -1)"

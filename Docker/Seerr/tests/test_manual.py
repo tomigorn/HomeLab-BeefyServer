@@ -1323,6 +1323,79 @@ class Virus(unittest.TestCase):
         self.assertEqual(out["open"][0]["details"]["virus"]["state"], "clean")
 
 
+class VirusTotal(unittest.TestCase):
+    """Hash-only lookups from ../Antivirus (virustotal-results.jsonl next to ClamAV's log): per file, last line wins."""
+
+    files = Virus.files
+    imp = Virus.imp
+
+    def setUp(self):
+        Virus.setUp(self)
+        manual.VT_CACHE.clear()
+
+    def vt(self, verdict, hashed="2026-11-15T02:00:00Z", size=None, **extra):
+        size = FAKE_FILES.get(self.path, (1,))[0] if size is None else size
+        FAKE_FILES.setdefault(self.path, (size, T - DAY))
+        with open(pathlib.Path(self.w.clamav).with_name("virustotal-results.jsonl"), "a") as f:
+            f.write(json.dumps({"at": "2026-11-15T02:10:00Z", "path": self.path, "size": size, "sha256": "a" * 64, "hashed": hashed, "vt": verdict, **extra}) + "\n")
+
+    def test_each_verdict_reaches_the_page(self):
+        self.w.scanned(self.path)
+        self.assertIsNone(self.files().get("vt"))
+        cases = [("queued", {}, {"state": "queued"}),
+                 ("error", {"why": "HTTP 500"}, {"state": "unchecked"}),
+                 ("unknown", {"checked": "2026-11-15T02:10:00Z"}, {"state": "unknown", "checked": "2026-11-15T02:10:00Z"}),
+                 ("clean", {"malicious": 0, "engines": 70, "checked": "2026-11-15T02:10:00Z"}, {"state": "clean", "malicious": 0, "engines": 70, "checked": "2026-11-15T02:10:00Z"}),
+                 ("flagged", {"malicious": 2, "engines": 70, "checked": "2026-11-15T02:10:00Z"}, {"state": "flagged", "malicious": 2, "engines": 70, "checked": "2026-11-15T02:10:00Z"}),
+                 ("malware", {"malicious": 41, "engines": 70, "checked": "2026-11-15T02:10:00Z"}, {"state": "malware", "malicious": 41, "engines": 70, "checked": "2026-11-15T02:10:00Z"})]
+        for verdict, extra, want in cases:
+            self.vt(verdict, **extra)
+            self.assertEqual(self.files()["vt"], want, verdict)
+
+    def test_waiting_for_clamav_means_the_fingerprint_check_is_queued_too(self):
+        self.w.scanned(self.path, "queued")
+        self.assertEqual(self.files()["vt"], {"state": "queued"})
+
+    def test_a_replaced_file_drops_the_verdict(self):
+        self.w.scanned(self.path)
+        self.vt("malware", malicious=41, engines=70)
+        FAKE_FILES[self.path] = (2, T - DAY)
+        self.assertIsNone(self.files().get("vt"))
+        FAKE_FILES[self.path] = (1, T)
+        self.assertIsNone(self.files().get("vt"))
+
+    def test_known_malware_is_never_imported_not_even_by_an_admin(self):
+        self.w.scanned(self.path)
+        self.vt("malware", malicious=3, engines=70)
+        for me in (USER, ADMIN):
+            self.w.me = me
+            self.files()
+            self.assertEqual(self.imp(), (403, {"error": "malware"}))
+        self.assertEqual(self.w.writes, [])
+
+    def test_flagged_by_one_or_two_scanners_imports_only_for_admins(self):
+        self.w.scanned(self.path)
+        self.vt("flagged", malicious=1, engines=70)
+        self.files()
+        self.assertEqual(self.imp(), (403, {"error": "flagged"}))
+        self.w.me = ADMIN
+        self.files()
+        self.assertEqual(self.imp()[0], 200)
+
+    def test_clean_unknown_unchecked_and_queued_change_nothing(self):
+        for verdict in ("clean", "unknown", "error", "queued"):
+            self.setUp()
+            self.w.scanned(self.path)
+            self.vt(verdict)
+            self.files()
+            self.assertEqual(self.imp()[0], 200, verdict)
+        self.setUp()
+        self.w.scanned(self.path, "queued")
+        self.vt("unknown")
+        self.files()
+        self.assertEqual(self.imp(), (403, {"error": "virus scan pending"}))
+
+
 class SearchQueue(unittest.TestCase):
     """Release searches run one after another; a second one waits instead of being refused."""
 

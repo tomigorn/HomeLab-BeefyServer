@@ -299,20 +299,24 @@ def check_context(t, profiles, kind, quality, expected):
 
 
 CLAMAV_CACHE = {}
+VT_CACHE = {}
 
 
-def scan_log(deps):
-    """ClamAV's per-file verdicts (Antivirus hook, clamav-results.jsonl and its rotated .1): path → last line."""
+def scan_log(deps, vt=False):
+    """ClamAV's per-file verdicts (Antivirus hook, clamav-results.jsonl and its rotated .1), or with vt the VirusTotal fingerprint verdicts next to it: path → last line."""
     path = getattr(deps, "clamav_results", None)
     if not path:
         return {}
+    if vt:
+        path = os.path.join(os.path.dirname(path), "virustotal-results.jsonl")
+    cache = VT_CACHE if vt else CLAMAV_CACHE
     files = [path + ".1", path]
     try:
         key = tuple((os.stat(f).st_mtime_ns, os.stat(f).st_size) if os.path.exists(f) else None for f in files)
     except OSError:
         return {}
-    if CLAMAV_CACHE.get("key") == key:
-        return CLAMAV_CACHE["log"]
+    if cache.get("key") == key:
+        return cache["log"]
     log = {}
     for f in files:
         try:
@@ -326,7 +330,7 @@ def scan_log(deps):
                         log[x["path"]] = x
         except OSError:
             continue
-    CLAMAV_CACHE.update(key=key, log=log)
+    cache.update(key=key, log=log)
     return log
 
 
@@ -354,6 +358,34 @@ def virus(deps, path):
         out.update(minutes=x.get("minutes") if is_int(x.get("minutes")) else None, parts=x.get("parts") if is_int(x.get("parts")) else None)
     if state == "parts-error":
         out["why"] = str(x.get("why") or "")[:80] or None
+    vt = virustotal(deps, path)
+    if vt is None and state == "pending":
+        vt = {"state": "queued"}
+    if vt:
+        out["vt"] = vt
+    return out
+
+
+def virustotal(deps, path):
+    """The VirusTotal fingerprint verdict of this very file (same size, hashed after its last change): queued / unchecked (lookup failed, retried) / unknown / clean / flagged / malware."""
+    log = scan_log(deps, vt=True)
+    x = log.get(path) or (log.get(os.path.realpath(path)) if isinstance(path, str) else None)
+    if not x:
+        return None
+    try:
+        st = STAT(path)
+        if st.st_size != x.get("size") or (epoch(x.get("hashed")) or 0) < st.st_mtime - 1:
+            return None
+    except (OSError, TypeError):
+        return None
+    state = {"queued": "queued", "error": "unchecked", "unknown": "unknown", "clean": "clean", "flagged": "flagged", "malware": "malware"}.get(x.get("vt"))
+    if not state:
+        return None
+    out = {"state": state}
+    if state in ("clean", "flagged", "malware"):
+        out.update(malicious=x.get("malicious") if is_int(x.get("malicious")) else None, engines=x.get("engines") if is_int(x.get("engines")) else None)
+    if state in ("unknown", "clean", "flagged", "malware"):
+        out["checked"] = x.get("checked") if isinstance(x.get("checked"), str) else None
     return out
 
 
@@ -1339,6 +1371,14 @@ def do_import(deps, me, admin, p, req):
         if scan["state"] == "infected":
             print(f"manual: user {me.get('id')} import of {p['key']} refused, malware ({scan['signature']})", flush=True)
             raise Refused(403, "malware")
+        vt = (scan.get("vt") or {}).get("state")
+        if vt == "malware":
+            print(f"manual: user {me.get('id')} import of {p['key']} refused, known malware on VirusTotal", flush=True)
+            raise Refused(403, "malware")
+        if vt == "flagged" and not admin:
+            raise Refused(403, "flagged")
+        if vt == "flagged":
+            print(f"manual: admin {me.get('id')} imports {p['key']} flagged by {scan['vt'].get('malicious')} VirusTotal scanners", flush=True)
         safe = scan["state"] == "clean" or scan["state"] == "parts-clean" and runtime_fits(scan.get("minutes"), (o.get("expected") or [])[n] if n < len(o.get("expected") or []) else None)
         if not safe and not admin:
             raise Refused(403, "virus scan pending")
