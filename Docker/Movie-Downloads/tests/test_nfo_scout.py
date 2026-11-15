@@ -486,5 +486,67 @@ class Scout(unittest.TestCase):
         self.assertEqual(self.run_scout(FakeApi([], {}, fail={"radarr"})), 1)
 
 
+DECISION = {"id": 7, "title": "Decision to Leave", "year": 2022, "imdbId": "tt12477480", "tmdbId": 705996, "monitored": True, "hasFile": False,
+            "tags": [], "originalLanguage": {"name": "Korean"}, "secondaryYear": None}
+
+
+def abbr_parse(title):
+    """Radarr-like: spelled-out names and only the codes ITA/ENG; no language = Unknown."""
+    words = title.replace("-", ".").split(".")
+    langs = [n for n in ("Italian", "Korean", "English", "German", "Japanese", "Czech") if n in words and n != "Czech"]
+    langs += [{"ITA": "Italian", "ENG": "English"}[w] for w in words if w in ("ITA", "ENG")]
+    langs = list(dict.fromkeys(langs)) or ["Unknown"]
+    return {"movie": {"id": 7}, "parsedMovieInfo": {"year": 2022, "quality": {"quality": {"name": "WEBDL-2160p", "resolution": 2160}}, "releaseGroup": "GRP"},
+            "languages": [{"name": n} for n in langs], "customFormatScore": 1000 * len(langs) if "Korean" in langs else -50000000}
+
+
+DEC_ABBR = rel("NzbPlanet", "Decision.to.Leave.2022.2160p.WEB-DL.ITA-KOR-ENG.DDP5.1.H.265-GRP", "e" * 32, 2)
+DEC_DUB = rel("NZBgeek", "Decision.to.Leave.2022.2160p.WEB-DL.ENG.GER.DDP5.1.H.265-GRP", "f" * 32, 1)
+
+
+class ScoutAbbreviations(unittest.TestCase):
+    setUp, tearDown, run_scout, dub_list = Scout.setUp, Scout.tearDown, Scout.run_scout, Scout.dub_list
+
+    def test_abbreviated_release_is_pushed_without_an_indexer_call(self):
+        api = FakeApi([DEC_ABBR], {}, movies=(DECISION,), parse=abbr_parse)
+        self.assertEqual(self.run_scout(api), 0)
+        self.assertEqual(api.fetches, [])
+        self.assertEqual([p["title"] for p in api.pushes], ["Decision.to.Leave.2022.2160p.WEB-DL.ITA-KOR-ENG.Italian.Korean.English.ABBR.DDP5.1.H.265-GRP"])
+        self.assertEqual((api.pushes[0]["guid"], api.pushes[0]["tmdbId"]), (DEC_ABBR["guid"], 705996))
+        self.assertTrue(any("score -50000000 -> 3000" in l for l in self.log))
+        api2 = FakeApi([DEC_ABBR], {}, movies=(DECISION,), parse=abbr_parse)
+        self.run_scout(api2)
+        self.assertEqual(api2.pushes, [])
+
+    def test_original_still_missing_is_neither_pushed_nor_listed_as_dub(self):
+        api = FakeApi([DEC_DUB], {}, movies=(DECISION,), parse=abbr_parse)
+        self.run_scout(api)
+        self.assertEqual((api.pushes, api.fetches, self.dub_list()), ([], [], []))
+        self.assertTrue(any("no Korean (original)" in l for l in self.log))
+
+    def test_unnameable_extra_is_dropped(self):
+        r = dict(DEC_ABBR, title="Decision.to.Leave.2022.2160p.WEB-DL.KOR.CZE.ENG.DDP5.1.H.265-GRP")
+        api = FakeApi([r], {}, movies=(DECISION,), parse=abbr_parse)
+        self.run_scout(api)
+        self.assertEqual([p["title"] for p in api.pushes], ["Decision.to.Leave.2022.2160p.WEB-DL.KOR.CZE.ENG.Korean.English.ABBR.DDP5.1.H.265-GRP"])
+
+    def test_dry_run_and_push_cap(self):
+        api = FakeApi([DEC_ABBR], {}, movies=(DECISION,), parse=abbr_parse)
+        self.run_scout(api, dry_run=True)
+        self.assertEqual(api.pushes, [])
+        self.assertTrue(any("would push" in l and "Korean.English.ABBR" in l for l in self.log))
+        self.run_scout(api, max_push=0)
+        self.assertEqual(api.pushes, [])
+        self.run_scout(api)
+        self.assertEqual(len(api.pushes), 1)
+
+    def test_abbreviated_multi_release_is_not_fetched(self):
+        r = dict(DEC_ABBR, title="Decision.to.Leave.2022.2160p.WEB-DL.ITA-KOR-ENG.MULTI.DDP5.1.H.265-GRP")
+        api = FakeApi([r], {}, movies=(DECISION,), parse=abbr_parse)
+        self.run_scout(api)
+        self.assertEqual(api.fetches, [])
+        self.assertEqual([p["title"] for p in api.pushes], ["Decision.to.Leave.2022.2160p.WEB-DL.ITA-KOR-ENG.Italian.Korean.English.ABBR.MULTI.DDP5.1.H.265-GRP"])
+
+
 if __name__ == "__main__":
     unittest.main()

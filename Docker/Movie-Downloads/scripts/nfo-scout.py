@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NFO scout (README "NFO scout"): Radarr and Sonarr read languages only from the release name, so a usenet release named just "MULTi" counts as the original language only. For every monitored Radarr movie and Sonarr series below the cutoff or missing, this searches the usenet indexers through Prowlarr, reads the audio languages of MULTi-only releases from the indexer (NzbPlanet, Treasure Maps: the NFO via t=getnfo; NZBgeek: the language attributes of t=details) and hands such a release to Radarr/Sonarr (release push) with the languages written into its name plus `.NFO`. The app then decides as usual. Run by systemd/nfo-scout.timer.
+"""NFO scout (README "NFO scout"): Radarr and Sonarr read languages only from the release name, so a usenet release named just "MULTi" counts as the original language only. For every monitored Radarr movie and Sonarr series below the cutoff or missing, this searches the usenet indexers through Prowlarr, reads the audio languages of MULTi-only releases from the indexer (NzbPlanet, Treasure Maps: the NFO via t=getnfo; NZBgeek: the language attributes of t=details) and hands such a release to Radarr/Sonarr (release push) with the languages written into its name plus `.NFO`. A result whose language codes (JPN, KOR, GER, …) name more languages than the app parses is pushed with them spelled out plus `.ABBR`, without an indexer call (README "Language codes in the name"). The app then decides as usual. Run by systemd/nfo-scout.timer.
 Usage: scripts/nfo-scout.py [--dry-run] [--tmdb ID | --tvdb ID]   (--dry-run fetches within budget and caches what it read, never pushes)"""
 import argparse
 import calendar
@@ -29,7 +29,6 @@ TM = "Treasure Maps"
 SOURCES = {"NZBgeek": "details", "NzbPlanet": "getnfo", TM: "getnfo"}
 USER_AGENT = "nfo-scout/1.0 (Movie-Downloads)"
 SWISS_TAG = "audio-swiss-german"
-NOT_LANGUAGES = {"Unknown", "Original", "Any"}
 DAY = 86400
 DUB_DAYS = 30
 
@@ -229,8 +228,7 @@ def guid_id(guid):
     return m.group(1).lower() if m else None
 
 
-def has_original(langs, original):
-    return original in langs or any(l.startswith(original + " (") for l in langs)
+has_original = ds.has_original
 
 
 def multi_marker(title):
@@ -246,42 +244,11 @@ def amend_title(title, langs):
     return f"{title[:m.end()]}.{'.'.join(token(l) for l in langs)}.{MARKER}{title[m.end():]}"
 
 
-def parsed_info(p):
-    return (p or {}).get("parsedMovieInfo") or (p or {}).get("parsedEpisodeInfo") or {}
-
-
-def parsed_languages(p):
-    langs = (p or {}).get("languages") or parsed_info(p).get("languages") or []
-    return [l["name"] for l in langs if l.get("name") not in NOT_LANGUAGES]
-
-
-def quality_of(p):
-    info = parsed_info(p)
-    q = ((info.get("quality") or {}).get("quality") or {})
-    return q.get("name"), (info.get("releaseGroup") or "").casefold()
+parsed_info, parsed_languages, quality_of = ds.parsed_info, ds.parsed_languages, ds.quality_of
 
 
 def verified_title(title, langs, original, parse):
-    """The amended name whose parse gives exactly these languages (extras the parser cannot name are dropped), same quality and group; else (None, None, why)."""
-    base = quality_of(parse(title))
-    want = list(langs)
-    for _ in range(len(langs) + 1):
-        t = amend_title(title, want)
-        p = parse(t)
-        if quality_of(p) != base:
-            return None, None, f"quality/group {quality_of(p)} differs from {base} after renaming"
-        got = parsed_languages(p)
-        if set(got) - set(want):
-            return None, None, f"parses as {got}, not {want}"
-        missing = [l for l in want if l not in got]
-        if not missing:
-            if len(want) < 2:
-                return None, None, f"only {want} can be written into the name"
-            return t, want, ""
-        if set(missing) & {original, "English", "German"}:
-            return None, None, f"{', '.join(missing)} cannot be written into the name"
-        want = [l for l in want if l not in missing]
-    return None, None, "no stable name"
+    return ds.verified_title(title, langs, original, parse, amend_title)
 
 
 def parse_time(s):
@@ -340,7 +307,7 @@ class Scout:
         self.tm_searches = [t for t in self.state.get("tm_searches", []) if t > self.now - DAY]
         self.refused = {k: v for k, v in self.state.get("refused", {}).items() if v > self.now - DAY}
         self.call_delay, self.last_call = call_delay, {}
-        self.pushes = self.candidates = 0
+        self.pushes = self.candidates = self.abbr_candidates = 0
         self.dub_paths, self.dub = {k: pathlib.Path(v) for k, v in (dub_paths or {}).items()}, {}
 
     def dub_load(self, app_name):
@@ -393,7 +360,7 @@ class Scout:
         self.save()
         self.dub_save()
         fetched = ", ".join(f"{k} {v}" for k, v in sorted(self.budget.run.items())) or "none"
-        self.log(f"run done: {self.candidates} MULTi-only candidate(s), indexer calls {fetched}, pushes {self.pushes}"
+        self.log(f"run done: {self.candidates} MULTi-only candidate(s), {self.abbr_candidates} with language codes, indexer calls {fetched}, pushes {self.pushes}"
                  f", Treasure Maps {len(self.budget.calls.get(TM, []))}/{self.budget.tm_day} NFO calls in 24 h")
         return rc
 
@@ -463,17 +430,32 @@ class Scout:
 
     def title(self, name, item, wanted_eps, app_name, app, app_indexers):
         series = wanted_eps is not None
-        parse = lambda t: app("GET", "/parse", {"title": t})
+        parsed = {}
+
+        def parse(t):
+            if t not in parsed:
+                parsed[t] = app("GET", "/parse", {"title": t})
+            return parsed[t]
         mapping = (lambda p, imdb: ds.mapping_ok_series(item, p, imdb, wanted_eps)) if series else (lambda p, imdb: ds.mapping_ok(item, p, imdb))
         results = self.search(item, series)
         original = (item.get("originalLanguage") or {}).get("name")
-        cands = []
+        cands, abbr = [], []
         for r in results:
             idx = r.get("indexer")
             gid = guid_id(r.get("guid"))
-            if r.get("protocol") != "usenet" or idx not in SOURCES or not gid or not multi_marker(r.get("title")):
+            if r.get("protocol") != "usenet" or idx not in SOURCES or not gid:
                 continue
             st = self.releases.get(f"{idx}|{gid}", {})
+            if ds.abbreviated_languages(r.get("title")) and not st.get("pushed"):
+                ast = self.releases.get(f"abbr|{idx}|{gid}", {})
+                if not ast.get("pushed") and ast.get("verdict") not in ("skip", "failed"):
+                    p = parse(r["title"])
+                    if mapping(p, r.get("imdbId") or None)[0] and ds.abbreviation_languages(r["title"], p, original):
+                        res = ((parsed_info(p).get("quality") or {}).get("quality") or {}).get("resolution") or 0
+                        abbr.append((res, r.get("size") or 0, r, gid))
+                        continue
+            if not multi_marker(r.get("title")):
+                continue
             earlier_dub = st.get("verdict") == "skip" and bool(original) and not has_original(st.get("langs") or [], original)
             if (st.get("pushed") or st.get("verdict") in ("none", "failed", "skip")) and not earlier_dub:
                 continue
@@ -486,8 +468,24 @@ class Scout:
             res = ((parsed_info(p).get("quality") or {}).get("quality") or {}).get("resolution") or 0
             cands.append((res, r.get("size") or 0, r, gid))
         cands.sort(key=lambda c: (c[0], c[1]), reverse=True)
-        self.log(f"{name}: {len(results)} usenet results, {len(cands)} MULTi-only to check")
+        abbr.sort(key=lambda c: (c[0], c[1]), reverse=True)
+        self.log(f"{name}: {len(results)} usenet results, {len(abbr)} with language codes, {len(cands)} MULTi-only to check")
         self.candidates += len(cands)
+        self.abbr_candidates += len(abbr)
+        for _, _, r, gid in abbr:
+            idx, key = r["indexer"], f"abbr|{r['indexer']}|{gid}"
+            st = self.releases.setdefault(key, {"title": r["title"]})
+            res = ds.spelled_out(r["title"], parse(r["title"]), original, parse, lambda p: mapping(p, r.get("imdbId") or None))
+            if "why" in res:
+                st.update(verdict="skip", why=res["why"])
+                self.log(f"{name}: '{r['title']}' ({idx}): {res['why']}, not pushed")
+                continue
+            st["langs"] = res["langs"]
+            payload = self.payload(r, item, res["title"], app_indexers, series)
+            if not payload:
+                self.log(f"{name}: '{r['title']}': indexer {idx} not in {app_name} or download link not from Prowlarr, not pushed")
+                continue
+            self.push(name, r, st, payload, res["langs"], res["score"], app_name, app)
         for _, _, r, gid in cands:
             idx, key = r["indexer"], f"{r['indexer']}|{gid}"
             langs = self.languages(name, r, gid, key)
@@ -520,28 +518,32 @@ class Scout:
                 st.update(verdict="skip", why=score)
                 self.log(f"{name}: '{title}' ({idx}, audio {', '.join(used)}): {score}, {'rejected anyway' if after < 0 else 'no gain'}, not pushed")
                 continue
-            if self.pushes >= self.max_push:
-                self.log(f"{name}: '{title}': push cap ({self.max_push}) reached, next run")
-                continue
-            self.pushes += 1
-            if self.dry_run:
-                self.log(f"{name}: dry run, would push '{title}' ({idx}, audio {', '.join(used)}, {score}) to {app_name}")
-                continue
-            try:
-                answer = app("POST", "/release/push", body=payload)
-            except ApiError as e:
-                st["errors"] = st.get("errors", 0) + 1
-                if st["errors"] >= MAX_ERRORS:
-                    st["verdict"] = "failed"
-                self.save()
-                self.log(f"{name}: '{title}': push failed ({st['errors']}/{MAX_ERRORS}): {e}")
-                continue
-            d = (answer or [{}])[0]
-            st.update(pushed=time.strftime("%Y-%m-%dT%H:%M:%S"), approved=bool(d.get("approved")), pushed_title=title)
+            self.push(name, r, st, payload, used, score, app_name, app)
+
+    def push(self, name, r, st, payload, used, score, app_name, app):
+        idx, title = r["indexer"], payload["title"]
+        if self.pushes >= self.max_push:
+            self.log(f"{name}: '{title}': push cap ({self.max_push}) reached, next run")
+            return
+        self.pushes += 1
+        if self.dry_run:
+            self.log(f"{name}: dry run, would push '{title}' ({idx}, audio {', '.join(used)}, {score}) to {app_name}")
+            return
+        try:
+            answer = app("POST", "/release/push", body=payload)
+        except ApiError as e:
+            st["errors"] = st.get("errors", 0) + 1
+            if st["errors"] >= MAX_ERRORS:
+                st["verdict"] = "failed"
             self.save()
-            rej = "; ".join(x.get("reason", str(x)) if isinstance(x, dict) else str(x) for x in d.get("rejections") or [])
-            self.log(f"{name}: pushed '{title}' ({idx}, audio {', '.join(used)}, {score}) to {app_name}: "
-                     f"{'approved, ' + app_name + ' grabs it' if d.get('approved') else 'rejected: ' + rej}")
+            self.log(f"{name}: '{title}': push failed ({st['errors']}/{MAX_ERRORS}): {e}")
+            return
+        d = (answer or [{}])[0]
+        st.update(pushed=time.strftime("%Y-%m-%dT%H:%M:%S"), approved=bool(d.get("approved")), pushed_title=title)
+        self.save()
+        rej = "; ".join(x.get("reason", str(x)) if isinstance(x, dict) else str(x) for x in d.get("rejections") or [])
+        self.log(f"{name}: pushed '{title}' ({idx}, audio {', '.join(used)}, {score}) to {app_name}: "
+                 f"{'approved, ' + app_name + ' grabs it' if d.get('approved') else 'rejected: ' + rej}")
 
     def languages(self, name, r, gid, key):
         idx = r["indexer"]

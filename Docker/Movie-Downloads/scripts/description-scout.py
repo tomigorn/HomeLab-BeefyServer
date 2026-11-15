@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Description scout (README "Description scout"): the audio-<language> filter sees only release names, so a release that says the language only in its description is never grabbed. For every monitored Radarr movie without a file and every monitored Sonarr series with missing episodes that carries a scouted audio tag, this searches the torrent indexers through Prowlarr, reads the descriptions of releases that are surely that title (TPB via apibay, 1337x via its page, both through FlareSolverr in the VPN), and hands a match with seeders to Radarr/Sonarr (release push) with the language word appended to its name. The app then decides as usual. Run by systemd/description-scout.timer.
+"""Description scout (README "Description scout"): the audio-<language> filter sees only release names, so a release that says the language only in its description is never grabbed. For every monitored Radarr movie without a file and every monitored Sonarr series with missing episodes that carries a scouted audio tag, this searches the torrent indexers through Prowlarr, reads the descriptions of releases that are surely that title (TPB via apibay, 1337x via its page, both through FlareSolverr in the VPN), and hands a match with seeders to Radarr/Sonarr (release push) with the language word appended to its name. The app then decides as usual. A result whose language codes (JPN, KOR, GER, …) name more languages than the app parses is pushed with them spelled out plus `.ABBR` (README "Language codes in the name"). Run by systemd/description-scout.timer.
 Usage: scripts/description-scout.py [--dry-run] [--tmdb ID | --tvdb ID]   (an id with --dry-run also takes an unmonitored title)
        scripts/description-scout.py --resolve-flaresolverr FILE   (root, writes FlareSolverr's URL; the unit runs it first)"""
 import argparse
@@ -22,6 +22,19 @@ MAX_ERRORS = 3
 SUBS = re.compile(r"sub(title)?s?\b|subbed|untertitel|\but\b|\bst\b", re.I)
 AUDIO = re.compile(r"audio|language|sprache|\bton\b|dub|spoken|langue|lingua", re.I)
 TRACKERS = "&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.torrent.eu.org%3A451%2Fannounce"
+ABBR_MARKER = "ABBR"
+NOT_LANGUAGES = {"Unknown", "Original", "Any"}
+ABBREVIATIONS = {}
+for _name, _codes in {
+    "German": "ger deu deutsch", "Japanese": "jpn jap", "Korean": "kor", "Chinese": "chi chn zho", "Vietnamese": "vie", "French": "fre fra",
+    "Portuguese": "por", "Polish": "pol", "Dutch": "dut nld", "Swedish": "swe", "Norwegian": "nor", "Danish": "dan", "Finnish": "fin",
+    "Czech": "cze ces", "Greek": "gre ell", "Arabic": "ara", "Hebrew": "heb", "Hindi": "hin", "Tamil": "tam", "Telugu": "tel", "Thai": "tha",
+    "English": "eng", "Italian": "ita", "Spanish": "spa esp", "Russian": "rus", "Hungarian": "hun", "Ukrainian": "ukr", "Turkish": "tur",
+}.items():
+    for _c in _codes.split():
+        ABBREVIATIONS[_c] = _name
+TITLE_END = re.compile(r"(?<![A-Za-z0-9])(?:(?:19|20)\d{2}|S\d{1,3}(?:E\d{1,4})*|\d{3,4}[pi])(?![A-Za-z0-9])", re.I)
+NAME_TOKEN = re.compile(r"[^.\-_+\s\[\](){}]+")
 
 
 class ApiError(Exception):
@@ -162,6 +175,101 @@ def search_title(title):
     return re.sub(r"\s*\([^)]*\)\s*$", "", title).strip() or title
 
 
+def abbreviation_codes(title):
+    # Only after the title (first year, episode or resolution) and never the release group, so title words like "Dan" or "Vie" do not count.
+    title = title or ""
+    m = TITLE_END.search(title)
+    if not m:
+        return []
+    tokens = list(NAME_TOKEN.finditer(title, m.end()))
+    if tokens and title[tokens[-1].start() - 1] == "-":
+        tokens.pop()
+    return [(ABBREVIATIONS[t.group().casefold()], t.end()) for t in tokens if t.group().casefold() in ABBREVIATIONS]
+
+
+def abbreviated_languages(title):
+    """Languages a release name gives as codes (JPN, KOR, GER, Deutsch, …), as Radarr/Sonarr names, in order."""
+    return list(dict.fromkeys(name for name, _ in abbreviation_codes(title)))
+
+
+def abbr_title(title, langs):
+    end = abbreviation_codes(title)[-1][1]
+    return f"{title[:end]}.{'.'.join(re.sub(r'[^A-Za-z]', '', l) for l in langs)}.{ABBR_MARKER}{title[end:]}"
+
+
+def parsed_info(p):
+    return (p or {}).get("parsedMovieInfo") or (p or {}).get("parsedEpisodeInfo") or {}
+
+
+def parsed_languages(p):
+    langs = (p or {}).get("languages") or parsed_info(p).get("languages") or []
+    return [l["name"] for l in langs if l.get("name") not in NOT_LANGUAGES]
+
+
+def quality_of(p):
+    info = parsed_info(p)
+    q = ((info.get("quality") or {}).get("quality") or {})
+    return q.get("name"), (info.get("releaseGroup") or "").casefold()
+
+
+def has_original(langs, original):
+    return original in langs or any(l.startswith(original + " (") for l in langs)
+
+
+def verified_title(title, langs, original, parse, amend):
+    """The amended name whose parse gives exactly these languages (extras the parser cannot name are dropped), same quality and group; else (None, None, why)."""
+    base = quality_of(parse(title))
+    want = list(langs)
+    for _ in range(len(langs) + 1):
+        t = amend(title, want)
+        p = parse(t)
+        if quality_of(p) != base:
+            return None, None, f"quality/group {quality_of(p)} differs from {base} after renaming"
+        got = parsed_languages(p)
+        if set(got) - set(want):
+            return None, None, f"parses as {got}, not {want}"
+        missing = [l for l in want if l not in got]
+        if not missing:
+            if len(want) < 2:
+                return None, None, f"only {want} can be written into the name"
+            return t, want, ""
+        if set(missing) & {original, "English", "German"}:
+            return None, None, f"{', '.join(missing)} cannot be written into the name"
+        want = [l for l in want if l not in missing]
+    return None, None, "no stable name"
+
+
+def abbreviation_languages(title, parsed, original):
+    """All languages of a release whose codes name more than its parse, when the added ones include the original, English or German; else None."""
+    got = parsed_languages(parsed)
+    abbr = abbreviated_languages(title)
+    added = [l for l in abbr if l not in got]
+    if not set(added) & {original, "English", "German"}:
+        return None
+    return abbr + [l for l in got if l not in abbr]
+
+
+def spelled_out(title, parsed, original, parse, mapping):
+    """A release with language codes renamed with the languages spelled out: {"title", "langs", "score"} when worth pushing, {"why"} when not, None when it is no candidate."""
+    langs = abbreviation_languages(title, parsed, original)
+    if not langs:
+        return None
+    if not original or not has_original(langs, original):
+        return {"why": f"audio {', '.join(langs)} has no {original} (original)"}
+    new, used, why = verified_title(title, langs, original, parse, abbr_title)
+    if not new:
+        return {"why": why}
+    p = parse(new)
+    ok, why = mapping(p)
+    if not ok:
+        return {"why": f"{why} after renaming"}
+    before, after = (parsed or {}).get("customFormatScore") or 0, (p or {}).get("customFormatScore") or 0
+    score = f"score {before} -> {after}"
+    if after < 0 or after <= before:
+        return {"why": f"'{new}' (audio {', '.join(used)}): {score}, {'rejected anyway' if after < 0 else 'no gain'}"}
+    return {"title": new, "langs": used, "score": score}
+
+
 class Scout:
     def __init__(self, radarr, prowlarr, fetch, state_path, log, dry_run=False, max_push=2, max_fetch=15, sonarr=None):
         self.radarr, self.sonarr, self.prowlarr, self.fetch, self.log = radarr, sonarr, prowlarr, fetch, log
@@ -290,6 +398,8 @@ class Scout:
         name = f"{movie['title']} ({movie.get('year')})"
         results = self.search(movie, pindexers)
         self.log(f"{name}: {len(results)} torrent results")
+        self.abbreviations(name, results, movie, rindexers, "Radarr", self.radarr, lambda p, imdb: mapping_ok(movie, p, imdb),
+                           lambda r, magnet, indexer: push_payload(r, movie, lang, magnet, indexer))
         self.scout(name, results, lang, rindexers, "Radarr", self.radarr,
                    lambda title, imdb: mapping_ok(movie, self.radarr("GET", "/parse", {"title": title}), imdb),
                    lambda r, magnet, indexer: push_payload(r, movie, lang, magnet, indexer),
@@ -299,6 +409,8 @@ class Scout:
         name = f"{series['title']} ({series.get('year')}, series)"
         results = self.search_series(series, pindexers)
         self.log(f"{name}: {len(results)} torrent results, {len(wanted)} missing episode(s)")
+        self.abbreviations(name, results, series, sindexers, "Sonarr", self.sonarr, lambda p, imdb: mapping_ok_series(series, p, imdb, wanted),
+                           lambda r, magnet, indexer: push_payload_series(r, series, lang, magnet, indexer))
         self.scout(name, results, lang, sindexers, "Sonarr", self.sonarr,
                    lambda title, imdb: mapping_ok_series(series, self.sonarr("GET", "/parse", {"title": title}), imdb, wanted),
                    lambda r, magnet, indexer: push_payload_series(r, series, lang, magnet, indexer),
@@ -368,26 +480,65 @@ class Scout:
             if not ok:
                 self.log(f"{name}: '{payload['title']}': {why} after renaming, not pushed")
                 continue
-            if self.pushes >= self.max_push:
-                self.log(f"{name}: '{r['title']}': push cap ({self.max_push}) reached, next run")
+            self.push(name, r, key, st, payload, app_name, app)
+
+    def abbreviations(self, name, results, item, app_indexers, app_name, app, mapping, payload_of):
+        original = (item.get("originalLanguage") or {}).get("name")
+        parse = lambda t: app("GET", "/parse", {"title": t})
+        for r in results:
+            if r.get("protocol") != "torrent" or not abbreviated_languages(r["title"]):
                 continue
-            self.pushes += 1
-            if self.dry_run:
-                self.log(f"{name}: dry run, would push {json.dumps(payload)}")
+            key = "abbr|" + release_key(r)
+            st = self.state.get(key, {})
+            if st.get("pushed") or st.get("verdict") in ("skip", "failed"):
                 continue
-            try:
-                answer = app("POST", "/release/push", body=payload)
-            except ApiError as e:
-                errors = st.get("errors", 0) + 1
-                self.state[key] = dict(st, errors=errors, **({"verdict": "failed"} if errors >= MAX_ERRORS else {}))
+            p = parse(r["title"])
+            if not mapping(p, r.get("imdbId") or None)[0]:
+                continue
+            res = spelled_out(r["title"], p, original, parse, lambda q: mapping(q, r.get("imdbId") or None))
+            if res is None:
+                continue
+            if "why" in res:
+                self.state[key] = {"verdict": "skip", "title": r["title"], "why": res["why"]}
                 self.save()
-                self.log(f"{name}: '{payload['title']}': push failed ({errors}/{MAX_ERRORS}): {e}")
+                self.log(f"{name}: '{r['title']}' ({r.get('indexer')}): {res['why']}, not pushed")
                 continue
-            d = (answer or [{}])[0]
-            self.state[key] = dict(st, pushed=time.strftime("%Y-%m-%dT%H:%M:%S"), approved=bool(d.get("approved")))
+            magnet = r.get("magnetUrl") or (r["guid"] if (r.get("guid") or "").startswith("magnet:") else None)
+            if (r.get("seeders") or 0) < 1:
+                self.log(f"{name}: '{r['title']}': seeders {r.get('seeders') or 0}, not pushed (dead torrent, checked again next run)")
+                continue
+            if not magnet:
+                self.log(f"{name}: '{r['title']}': no magnet link, not pushed")
+                continue
+            indexer = app_indexers.get(f"{r.get('indexer')} (Prowlarr)")
+            if not indexer:
+                self.log(f"{name}: '{r['title']}': indexer {r.get('indexer')} not in {app_name}, not pushed")
+                continue
+            st = dict(st, title=r["title"], langs=res["langs"])
+            self.push(name, r, key, st, dict(payload_of(r, magnet, indexer), title=res["title"]), app_name, app,
+                      f" ({r.get('indexer')}, audio {', '.join(res['langs'])}, {res['score']})")
+
+    def push(self, name, r, key, st, payload, app_name, app, note=""):
+        if self.pushes >= self.max_push:
+            self.log(f"{name}: '{r['title']}': push cap ({self.max_push}) reached, next run")
+            return
+        self.pushes += 1
+        if self.dry_run:
+            self.log(f"{name}: dry run, would push{note} {json.dumps(payload)}")
+            return
+        try:
+            answer = app("POST", "/release/push", body=payload)
+        except ApiError as e:
+            errors = st.get("errors", 0) + 1
+            self.state[key] = dict(st, errors=errors, **({"verdict": "failed"} if errors >= MAX_ERRORS else {}))
             self.save()
-            rej = "; ".join(x.get("reason", str(x)) if isinstance(x, dict) else str(x) for x in d.get("rejections") or [])
-            self.log(f"{name}: pushed '{payload['title']}' to {app_name}: {'approved, ' + app_name + ' grabs it' if d.get('approved') else 'rejected: ' + rej}")
+            self.log(f"{name}: '{payload['title']}': push failed ({errors}/{MAX_ERRORS}): {e}")
+            return
+        d = (answer or [{}])[0]
+        self.state[key] = dict(st, pushed=time.strftime("%Y-%m-%dT%H:%M:%S"), approved=bool(d.get("approved")))
+        self.save()
+        rej = "; ".join(x.get("reason", str(x)) if isinstance(x, dict) else str(x) for x in d.get("rejections") or [])
+        self.log(f"{name}: pushed '{payload['title']}'{note} to {app_name}: {'approved, ' + app_name + ' grabs it' if d.get('approved') else 'rejected: ' + rej}")
 
 
 def config(path):

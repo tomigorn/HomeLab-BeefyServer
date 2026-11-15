@@ -760,6 +760,7 @@ Language detection (the apps see only the release name and the indexer):
 
 - `ITALIAN.ENGLISH.GERMAN` = 3 languages; `German.DL` = German + original; `German.ML` = German + English + original.
 - `MULTi`, `Multi-Audio` or no language word = the original only: no bonus. A multi release that lists no languages ranks like an original-only one, unless the [NFO scout](#nfo-scout) pushes it with the languages from its NFO.
+- Language codes: the parser misses many (`JPN`, `CHI`, `DEU`, `Deutsch`; Sonarr also `GER`, `KOR`, `FRE`): `ITA-KOR-ENG` parses as Italian + English, the Korean original looks missing and the release is rejected. The scouts push such releases with the languages spelled out ([Language codes in the name](#language-codes-in-the-name)), only on their nightly runs, not on RSS grabs or the app's own searches.
 - `Extra audio: <original>` fires only when another language is present too: a constant +1 on every multi-language release of that title, so an original-only release gets nothing (anime has minimum 0 like the rest since 2026-11-15; bad and low-quality groups stay rejected).
 
 Change it:
@@ -1063,12 +1064,13 @@ Sonarr, verified 2026-10-23 (series added unmonitored with the tag, no search; `
 | Match | the same `languages.tsv` regex, after decoding HTML entities and broken umlauts; a match after `Subtitles`/`Untertitel` on the same line does not count |
 | Push | seeders ≥ 1 → `POST /api/v3/release/push` to Radarr (tmdb/imdb id) or Sonarr (tvdb id) with the magnet, name + `.<Language>.DESC` (`The Ring Thing (2004) [XVID].Swissgerman.DESC`; the release profile and `Audio: Swiss German` accept it, `.DESC` marks it). The app decides (profile, quality, wrong-film guard, which episodes) |
 | Limits | 2 pushes and 15 description fetches per run, both apps together (`DS_MAX_PUSH`, `DS_MAX_FETCH`); each release pushed once; a failing fetch or push is retried 3 times, then dropped; a Prowlarr API error skips the run, a Radarr or Sonarr one skips that app; seeders 0 = not pushed, checked again next run (description not fetched again). `DS_APPS=radarr` scouts one app only |
+| Language codes | in the same results, without a description fetch: a name whose codes give more languages than `/parse` → pushed with them spelled out + `.ABBR`, seeders ≥ 1, magnet only ([Language codes in the name](#language-codes-in-the-name)); counts against `DS_MAX_PUSH` |
 | Not covered | usenet (no descriptions in NZB results; MULTi releases: [NFO scout](#nfo-scout)); series names Sonarr cannot map by name |
 
 | File | |
 |---|---|
 | `~/.local/state/movie-downloads/description-scout.log` | every decision, timestamped (also `journalctl -u description-scout`) |
-| `~/.local/state/movie-downloads/description-scout.json` | per release (btih): `match`/`no`/`failed`, pushed, approved. Delete an entry to re-check it |
+| `~/.local/state/movie-downloads/description-scout.json` | per release (btih): `match`/`no`/`failed`, pushed, approved; `abbr\|<btih>`: language-code candidates (`skip` with why, pushed). Delete an entry to re-check it |
 
 ```bash
 cd ~/Projects/Docker/Movie-Downloads/systemd
@@ -1097,6 +1099,7 @@ Radarr/Sonarr read languages only from the release name, so `MULTi` = the origin
 | Parse | audio only: values of `Audio` / `Language` / `Sprache` / `Ton` / `Idioma` / … keys and their indented continuation lines, MediaInfo `Audio #n` blocks. Dropped: `Subs` / `Untertitel` / `Sous-titres` / MediaInfo `Text`, the rest of a list after a subtitle word, keys like `Audio/Subs`. Names in EN/DE/FR/ES/IT, ISO 639-2 (`ger`, `eng`, `spa`), `VFF`/`VFQ` = French, upper-case `DE`/`EN`/`FR`/`IT` |
 | Push | ≥ 2 languages incl. the original → languages + `.NFO` after the marker: `The.Secret.In.Their.Eyes.2009.MULTi.French.Spanish.NFO.1080p.BluRay.x264-FHD`. `/parse` of the new name: exactly those languages, same quality, group and title, score ≥ 0 and higher than before, else not pushed. Extras the parser cannot name (Czech, Estonian) are dropped; original/English/German not nameable = no push. Same Prowlarr download link and indexer; the app decides |
 | Dub-only | NFO / details list ≥ 2 languages but not the title's original (nameable, `Spanish (Latino)` counts as Spanish) → the release is written to `<app config dir>/dub-only.json` (`/srv/appdata/radarr`, `/srv/appdata/sonarr`; guid, exact title, indexer, languages, original, TMDB/TVDB id, time), read by the [Wrong-film guard](#wrong-film-guard). Also in a dry run; entries expire after 30 days. Never for releases without NFO data or with one language |
+| Language codes | any result of the same search (MULTi or not), no indexer call: codes give more languages than `/parse` → pushed with them spelled out + `.ABBR`, checked before the MULTi path ([Language codes in the name](#language-codes-in-the-name)); same `NS_MAX_PUSH` |
 | Not covered | NFOs without an audio list, a single listed language, Swiss German |
 | Sandbox | NFO text is untrusted: `User=buntu` but `ProtectSystem=strict`, `ProtectHome=read-only`, writes only `~/.local/state/movie-downloads`, `/srv/appdata/radarr`, `/srv/appdata/sonarr` (dub-only.json), no capabilities, `@system-service` syscalls; `systemd-analyze security nfo-scout` 1.4 (was 8.7) |
 
@@ -1118,7 +1121,7 @@ Radarr/Sonarr read languages only from the release name, so `MULTi` = the origin
 |---|---|
 | `~/.local/state/movie-downloads/nfo-scout.log` | every decision (also `journalctl -u nfo-scout`) |
 | `/srv/appdata/{radarr,sonarr}/dub-only.json` | dub-only list for the guard: in the app's `/config` (already mounted, read by the guard like `guard-events/`), no new mount, no restart; scripts/ is the git-tracked read-only code mount, not for state. Env `NS_RADARR_DUB_ONLY` / `NS_SONARR_DUB_ONLY` |
-| `~/.local/state/movie-downloads/nfo-scout.json` | per release (`<indexer>\|<id>`): `langs`/`none`/`skip`/`failed`, languages, pushed, approved; call counters, unsupported/refused indexers. Delete an entry to re-check it |
+| `~/.local/state/movie-downloads/nfo-scout.json` | per release (`<indexer>\|<id>`): `langs`/`none`/`skip`/`failed`, languages, pushed, approved; `abbr\|<indexer>\|<id>`: language-code candidates; call counters, unsupported/refused indexers. Delete an entry to re-check it |
 
 ```bash
 cd ~/Projects/Docker/Movie-Downloads/systemd
@@ -1137,6 +1140,42 @@ Verified 2026-10-26 (dry run, 16 movies + 1 series, 74 MULTi-only releases; scor
 | *The Hunt* | `Jagten.2012.MULTi.1080p.VFi…-XSHD` (NZBgeek, details) | Danish, French | −49989250 (French only = not original) → 20750 |
 | *The Rivals of Amziah King* | `…2025.MULTi.CA.HDR.2160p.WEB.H265-SUPPLY` and 4 more (Treasure Maps, getnfo) | French, English | 0 → 10000 |
 | *I'm Still Here*, *Blue Ruin*, *Kneecap*, *The Brutalist*, *Money Heist* (41 episodes) | NZBgeek / NzbPlanet | not named | not pushed |
+
+#### Language codes in the name
+
+Radarr/Sonarr miss many language codes (checked 2026-11-15 with `/parse`): Sonarr knows only `ENG ITA SPA ESP RUS HUN UKR TUR`, Radarr also `GER JAP KOR VIE FRE FRA TEL` but not `SPA ESP TUR`. Both scouts (`abbreviated_languages()` in `scripts/description-scout.py`) read these codes:
+
+| Language | Codes |
+|---|---|
+| German | `GER` `DEU` `Deutsch` |
+| Japanese | `JPN` `JAP` |
+| Korean | `KOR` |
+| Chinese | `CHI` `CHN` `ZHO` |
+| French | `FRE` `FRA` |
+| Dutch | `DUT` `NLD` |
+| Czech | `CZE` `CES` |
+| Greek | `GRE` `ELL` |
+| Spanish | `SPA` `ESP` |
+| one each | `VIE` Vietnamese, `POR` Portuguese, `POL` Polish, `SWE` Swedish, `NOR` Norwegian, `DAN` Danish, `FIN` Finnish, `ARA` Arabic, `HEB` Hebrew, `HIN` Hindi, `TAM` Tamil, `TEL` Telugu, `THA` Thai, `ENG` English, `ITA` Italian, `RUS` Russian, `HUN` Hungarian, `UKR` Ukrainian, `TUR` Turkish |
+
+| Rule | |
+|---|---|
+| Token | whole token between `.` `-` `_` `+` space or brackets, any case; only after the title (first year, `S01E01` or resolution), never the release group |
+| Left out | `CAN` `MAN` `IND` `MAL` `DE` `EN` `BRA` `TGL` and all two-letter codes: words and titles |
+| Candidate | the codes add a language `/parse` missed, and an added one is the original, English or German |
+| Push | the original must be there after adding, else not pushed (a dub; not written to dub-only). Languages spelled out + `.ABBR` after the last code: `Squid.Game.S02E01.720p.ITA-KOR-ENG.Italian.Korean.English.ABBR.MULTI.WEBRip.x265.AAC-GRP`. Then the NFO scout's guard: `/parse` gives exactly those languages, same quality, group and title, score ≥ 0 and higher than before; names the parser cannot write (Czech; Sonarr: Tamil, Telugu) are dropped, original/English/German not writable = no push |
+| Limit | only the scouts' nightly runs, on titles they search (NFO scout: missing or below cutoff; description scout: `audio-` tagged); RSS grabs and the apps' own searches still see the codes as missing |
+
+Verified 2026-11-15 (`/parse`, nothing pushed):
+
+| App, title | Release | Before | After |
+|---|---|---|---|
+| Sonarr, *Frieren* (Japanese, anime) | `…S01E01.1080p.WEB-DL.JPN.ENG.GER.AAC2.0.H.264-GRP` | English, −49999500 | Japanese, English, German, 12000501 |
+| Sonarr, *Frieren* | `…S01E01.1080p.WEB-DL.ITA-JPN-ENG.MULTI.AAC.x264-GRP` | Italian, English, −49999499 | + Japanese, 10000502 |
+| Sonarr, *Frieren* | `…S01E01.1080p.WEB-DL.ENG.GER.AAC2.0.H.264-GRP` | English | no Japanese: not pushed |
+| Radarr, *Ikiru* (Japanese) | `Ikiru.1952.1080p.BluRay.JPN.ENG.FLAC.x264-GRP` | English, −49997250 | Japanese, English, 5002751 |
+| Radarr, *Chungking Express* (Chinese) | `…1994.2160p.UHD.BluRay.CHI.ENG.GER.DTS-HD.MA.HDR.x265-GRP` | English, German, −79997250 | + Chinese, 27002751 |
+| Radarr, *Decision to Leave* (Korean) | `…2022.2160p.WEB-DL.ITA-KOR-ENG.DDP5.1.HDR.H.265-GRP` | Italian, Korean, English | Radarr reads `KOR`: no candidate |
 
 ### Subtitles (Bazarr)
 

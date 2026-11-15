@@ -41,13 +41,28 @@ def eps(*ids, series_id=9):
     return [{"id": i, "seasonNumber": 1, "episodeNumber": i - 100} for i in ids]
 
 
-def parsed_series(series_id=9, episodes=(101, 102), year=0):
+KNOWN = {"ENG": "English", "ITA": "Italian"}
+NAMED = ("German", "English", "Italian", "Korean", "Japanese", "Spanish")
+
+
+def languages_of(title):
+    """What a fake /parse reads from a name: spelled-out names and the few codes the parser knows."""
+    words = title.replace("-", ".").replace(" ", ".").split(".")
+    found = [n for n in NAMED if n in words] + [KNOWN[w] for w in words if w in KNOWN]
+    return [{"name": n} for n in dict.fromkeys(found)] or [{"name": "Unknown"}]
+
+
+def parsed_series(series_id=9, episodes=(101, 102), year=0, title=""):
+    langs = languages_of(title)
     return {"series": {"id": series_id} if series_id else None, "episodes": eps(*episodes) if series_id else [],
-            "parsedEpisodeInfo": {"seasonNumber": 1, "seriesTitleInfo": {"year": year}}}
+            "parsedEpisodeInfo": {"seasonNumber": 1, "seriesTitleInfo": {"year": year}, "quality": {"quality": {"name": "HDTV-720p"}}, "releaseGroup": "GRP"},
+            "languages": langs, "customFormatScore": 1000 * len(langs)}
 
 
-def parsed(movie_id=21, year=2004):
-    return {"movie": {"id": movie_id} if movie_id else None, "parsedMovieInfo": {"year": year}}
+def parsed(movie_id=21, year=2004, title=""):
+    langs = languages_of(title)
+    return {"movie": {"id": movie_id} if movie_id else None, "parsedMovieInfo": {"year": year, "quality": {"quality": {"name": "WEBDL-1080p"}}, "releaseGroup": "GRP"},
+            "languages": langs, "customFormatScore": 1000 * len(langs)}
 
 
 class Matching(unittest.TestCase):
@@ -140,6 +155,54 @@ class SeriesMapping(unittest.TestCase):
         self.assertNotIn("tmdbId", p)
 
 
+SQUID = "Squid.Game.S02E01.720p.ITA-KOR-ENG.MULTI.WEBRip.x265.AAC-GRP"
+ANIME = "Some.Anime.S01E01.1080p.WEB-DL.JPN.ENG.GER.AAC2.0.H.264-GRP"
+
+
+class Abbreviations(unittest.TestCase):
+    def test_codes_in_release_names(self):
+        cases = {
+            SQUID: ["Italian", "Korean", "English"],
+            ANIME: ["Japanese", "English", "German"],
+            "Parasite.2019.1080p.BluRay.HIN+KOR+TAM+TEL+MAL.x264-GRP": ["Hindi", "Korean", "Tamil", "Telugu"],
+            "Film.2020.1080p.deutsch.ENG.x264-GRP": ["German", "English"],
+            "Film 2020 1080p [jpn][eng] x264-GRP": ["Japanese", "English"],
+            "Film_2020_1080p_DEU_FRE_POR_POL_DUT_SWE_NOR_DAN_FIN-GRP": ["German", "French", "Portuguese", "Polish", "Dutch", "Swedish", "Norwegian", "Danish", "Finnish"],
+            "Film.2020.1080p.CZE.GRE.ARA.HEB.THA.VIE.CHI.ZHO.CHN.x264-GRP": ["Czech", "Greek", "Arabic", "Hebrew", "Thai", "Vietnamese", "Chinese"],
+            "Film.2020.1080p.CES.ELL.NLD.FRA.JAP.GER.DEUTSCH.x264-GRP": ["Czech", "Greek", "Dutch", "French", "Japanese", "German"],
+            "Film.2020.1080p.SPA.ESP.RUS.HUN.UKR.TUR.x264-GRP": ["Spanish", "Russian", "Hungarian", "Ukrainian", "Turkish"],
+        }
+        for title, langs in cases.items():
+            with self.subTest(title=title):
+                self.assertEqual(scout.abbreviated_languages(title), langs)
+
+    def test_ambiguous_words_titles_and_groups_do_not_count(self):
+        for title in ("Film.2020.1080p.CAN.MAN.IND.MAL.DE.EN.BRA.TGL.x264-GRP", "Film.2020.1080p.ENGLISH.Korea.Japanese.x264-GRP",
+                      "Dan.in.Real.Life.2007.1080p.BluRay.x264-GRP", "La.Vie.En.Rose.2007.1080p.BluRay.x264-GRP",
+                      "Film.2020.1080p.BluRay.x264-NOR", "Film.without.a.year.KOR.ENG", ""):
+            with self.subTest(title=title):
+                self.assertEqual(scout.abbreviated_languages(title), [])
+
+    def test_every_name_is_a_radarr_language(self):
+        names = {l["name"] for l in json.loads((ROOT / "tests" / "fixtures" / "radarr-languages.json").read_text())}
+        self.assertLessEqual(set(scout.ABBREVIATIONS.values()), names)
+
+    def test_amended_name_spells_them_out_after_the_last_code(self):
+        self.assertEqual(scout.abbr_title(SQUID, ["Italian", "Korean", "English"]),
+                         "Squid.Game.S02E01.720p.ITA-KOR-ENG.Italian.Korean.English.ABBR.MULTI.WEBRip.x265.AAC-GRP")
+        self.assertEqual(scout.abbr_title(ANIME, ["Japanese", "English", "German"]),
+                         "Some.Anime.S01E01.1080p.WEB-DL.JPN.ENG.GER.Japanese.English.German.ABBR.AAC2.0.H.264-GRP")
+
+    def test_candidate_needs_an_added_original_english_or_german(self):
+        squid = {"languages": [{"name": "Italian"}, {"name": "English"}]}
+        self.assertEqual(scout.abbreviation_languages(SQUID, squid, "Korean"), ["Italian", "Korean", "English"])
+        self.assertEqual(scout.abbreviation_languages(ANIME, {"languages": [{"name": "English"}]}, "Japanese"), ["Japanese", "English", "German"])
+        self.assertEqual(scout.abbreviation_languages(ANIME, {"languages": [{"name": "Unknown"}]}, "Korean"), ["Japanese", "English", "German"])
+        self.assertIsNone(scout.abbreviation_languages("Film.2020.1080p.ENG.VIE.x264-GRP", {"languages": [{"name": "English"}]}, "English"))
+        self.assertIsNone(scout.abbreviation_languages("Film.2020.1080p.ITA.ENG.x264-GRP", {"languages": [{"name": "Italian"}, {"name": "English"}]}, "Italian"))
+        self.assertIsNone(scout.abbreviation_languages("Film.2020.1080p.x264-GRP", {"languages": []}, "Italian"))
+
+
 class FakeApi:
     """Radarr + Sonarr + Prowlarr + FlareSolverr in one, records writes."""
 
@@ -168,7 +231,7 @@ class FakeApi:
             return self.episodes or []
         if path == "/parse":
             t = query["title"]
-            return parsed_series(episodes=(101, 102)) if t.startswith("Wilder.S01") else parsed_series(series_id=None)
+            return parsed_series(episodes=(101, 102), title=t) if t.startswith("Wilder.S01") else parsed_series(series_id=None)
         if path == "/release/push" and method == "POST":
             self.spushes.append(body)
             return [{"approved": False, "rejections": [{"reason": "test"}]}]
@@ -185,7 +248,7 @@ class FakeApi:
             return [{"id": 4, "name": "The Pirate Bay (Prowlarr)", "protocol": "torrent"}, {"id": 6, "name": "1337x (Prowlarr)", "protocol": "torrent"}]
         if path == "/parse":
             t = query["title"]
-            return parsed() if t.startswith(("The Ring Thing", "The.Ring.Thing")) and "2004" in t else parsed(movie_id=None)
+            return parsed(title=t) if t.startswith(("The Ring Thing", "The.Ring.Thing")) and "2004" in t else parsed(movie_id=None)
         if path == "/release/push" and method == "POST":
             self.pushes.append(body)
             return [{"approved": True, "rejections": []}]
@@ -320,6 +383,65 @@ class Run(unittest.TestCase):
         api = FakeApi()
         self.run_scout(api, tmdb=1)
         self.assertEqual(api.searches, [])
+
+
+RING_ABBR = dict(TPB, guid="magnet:?xt=urn:btih:DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD&dn=Ring", title="The.Ring.Thing.2004.1080p.WEB-DL.GER.ENG.x264-GRP",
+                 infoUrl=None, seeders=4)
+
+
+class RunAbbreviations(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = pathlib.Path(self.tmp.name) / "state.json"
+        self.log = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def run_scout(self, api, dry_run=False, max_push=2, series=False):
+        s = scout.Scout(None if series else api.radarr, api.prowlarr, api.fetch, self.state, self.log.append, dry_run=dry_run, max_push=max_push,
+                        max_fetch=10, sonarr=api.sonarr if series else None)
+        return s.run(LANGS)
+
+    def movie(self, original="German"):
+        return [dict(RING, originalLanguage={"name": original})]
+
+    def test_abbreviated_release_is_pushed_once_with_the_languages_spelled_out(self):
+        api = FakeApi(movies=self.movie(), results=[RING_ABBR])
+        self.assertEqual(self.run_scout(api), 0)
+        self.assertEqual([p["title"] for p in api.pushes], ["The.Ring.Thing.2004.1080p.WEB-DL.GER.ENG.German.English.ABBR.x264-GRP"])
+        p = api.pushes[0]
+        self.assertEqual((p["magnetUrl"], p["indexer"], p["tmdbId"], p["seeders"]), (RING_ABBR["guid"], "The Pirate Bay (Prowlarr)", 10248, 4))
+        self.assertEqual(api.fetches, [])
+        self.assertTrue(any("score 1000 -> 2000" in l for l in self.log))
+        self.run_scout(api)
+        self.assertEqual(len(api.pushes), 1)
+
+    def test_original_still_missing_is_not_pushed(self):
+        api = FakeApi(movies=self.movie("Japanese"), results=[RING_ABBR])
+        self.run_scout(api)
+        self.assertEqual(api.pushes, [])
+        self.assertTrue(any("no Japanese (original)" in l for l in self.log))
+
+    def test_without_seeders_or_magnet_or_in_a_dry_run_nothing_is_pushed(self):
+        for r, dry in ((dict(RING_ABBR, seeders=0), False), (dict(RING_ABBR, guid="https://example.com/t/1"), False), (RING_ABBR, True)):
+            with self.subTest(r=r["guid"], seeders=r["seeders"], dry=dry):
+                self.state.unlink(missing_ok=True)
+                api = FakeApi(movies=self.movie(), results=[r])
+                self.run_scout(api, dry_run=dry)
+                self.assertEqual(api.pushes, [])
+        self.assertTrue(any("would push" in l and "German.English.ABBR" in l for l in self.log))
+
+    def test_push_cap_is_shared_with_description_matches(self):
+        api = FakeApi(movies=self.movie(), results=[TPB, RING_ABBR])
+        self.run_scout(api, max_push=1)
+        self.assertEqual(len(api.pushes), 1)
+
+    def test_series_release_goes_to_sonarr(self):
+        r = dict(WILDER_TPB, title="Wilder.S01.720p.HDTV.GER.ENG.x264-GRP", infoUrl=None)
+        api = FakeApi(series=[dict(WILDER, originalLanguage={"name": "German"})], results=[r])
+        self.run_scout(api, series=True)
+        self.assertEqual([(p["title"], p["tvdbId"]) for p in api.spushes], [("Wilder.S01.720p.HDTV.GER.ENG.German.English.ABBR.x264-GRP", 337514)])
 
 
 class RunSeries(unittest.TestCase):
