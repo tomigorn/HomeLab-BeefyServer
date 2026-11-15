@@ -1152,7 +1152,7 @@ test("a failed refresh is not retried on every DOM change (no refetch loop)", as
 });
 
 // Resource timing as the browser reports it: the plugin's section list and section answers, with a controllable clock.
-function timedHome(meta) {
+function timedHome(meta, empty) {
   const dom = new JSDOM('<html lang="en"><body><div class="homeSectionsContainer"></div></body></html>', { url: "https://jf.example.com/web/" });
   const win = dom.window;
   const now = Date.now();
@@ -1160,7 +1160,8 @@ function timedHome(meta) {
     lang: "en",
     base: { at: now, enabled: ["NextUp", "HiddenGems"], names: { NextUp: "Next Up", HiddenGems: "Hidden Gems" }, modes: {} },
     recent: { at: now, rows: { RecentlyWatchedMovies: [], RecentlyWatchedSeries: [] } },
-    discover: { at: now, nets: es.netsKey(undefined), rows: { [STU]: [], [NET]: [], [MGEN]: [], [SGEN]: [] } }
+    discover: { at: now, nets: es.netsKey(undefined), rows: { [STU]: [], [NET]: [], [MGEN]: [], [SGEN]: [] } },
+    empty
   });
   let clock = 0;
   let notify = null;
@@ -1306,5 +1307,34 @@ test("one first draw: an old cache still draws the layout at once; watched rows 
     assert.ok(c.querySelector(".DiscoverStudios .card"));
   } finally {
     win.close();
+  }
+});
+
+test("fixed slots: a section that was empty on the last load shows its hint until it answers, instead of a skeleton that collapses", async () => {
+  const h = timedHome(undefined, { HiddenGems: true, NextUp: false });
+  try {
+    h.list(1000);
+    h.at(1200);
+    h.c.innerHTML = section("NextUp", 3, 0, true) + section("HiddenGems", 8, 0, true);
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(h.c.querySelector('[data-hss-placeholder="HiddenGems"]').hasAttribute("data-hss-loading"), false);
+    assert.ok(h.c.querySelector('[data-hss-placeholder="NextUp"][data-hss-loading]'), "had titles last time: skeleton");
+  } finally {
+    h.win.close();
+  }
+});
+
+test("fixed slots: which sections answered empty is remembered per user for the next load", async () => {
+  const h = timedHome(undefined, { HiddenGems: true });
+  try {
+    h.list(1000);
+    h.at(1200);
+    h.c.innerHTML = section("NextUp", 3, 0, true) + section("HiddenGems", 8, 0, true);
+    h.answer("NextUp", 1100, EMPTY_ANSWER);
+    h.answer("HiddenGems", 1100, FULL_ANSWER);
+    await new Promise((r) => setTimeout(r, 120));
+    assert.deepEqual(es.readCache(h.win.localStorage, "u1").empty, { HiddenGems: false, NextUp: true });
+  } finally {
+    h.win.close();
   }
 });

@@ -1003,7 +1003,7 @@
       });
       function merge(part, val) {
         var old = state(userId, lang) || {};
-        var next = { lang: lang, base: old.base, recent: old.recent, discover: old.discover };
+        var next = { lang: lang, base: old.base, recent: old.recent, discover: old.discover, empty: old.empty };
         if (part) {
           val.at = Date.now();
           next[part] = val;
@@ -1069,12 +1069,42 @@
       return seen.get(container);
     }
 
-    function loadingFor(container, st) {
+    function drain() {
       if (timing && timing.takeRecords) {
         try {
           takeEntries(timing.takeRecords());
         } catch (e) {}
       }
+    }
+
+    // Which plugin sections answered empty on this load, kept with the user's cache: on the next load they show their hint until they answer.
+    function noteEmpty(userId, lang) {
+      var raw = state(userId, lang);
+      if (!raw) return {};
+      var next = {};
+      var old = raw.empty || {};
+      for (var k in old) next[k] = old[k];
+      var changed = false;
+      if (listAt !== null) {
+        for (var id in answered) {
+          var a = answered[id];
+          if (!(a.at >= listAt) || !a.bytes) continue;
+          var e = a.bytes <= EMPTY_ANSWER_BYTES;
+          if (next[id] !== e) {
+            next[id] = e;
+            changed = true;
+          }
+        }
+      }
+      if (changed) {
+        raw.empty = next;
+        mem[userId] = raw;
+        writeCache(storage(), userId, raw);
+      }
+      return next;
+    }
+
+    function loadingFor(container, st, empty) {
       var since = firstSeen(container);
       var now = win.performance && win.performance.now ? win.performance.now() : Date.now();
       var listed = endPaging(win.HssPageMeta, container);
@@ -1086,7 +1116,7 @@
         if (listed && !realOf(container, id).length) return false;
         if (now - since > SLOT_WAIT_MS) return false;
         var a = answered[id];
-        if (!a || !(a.at >= from)) return true;
+        if (!a || !(a.at >= from)) return !(empty && empty[id] === true);
         // Answered with titles: the plugin is still drawing them, so the slot is not empty.
         return a.bytes > EMPTY_ANSWER_BYTES && realOf(container, id).length > 0;
       };
@@ -1109,10 +1139,12 @@
       for (var x = 0; x < extra.length; x++) names[extra[x].id] = (extra[x].name && extra[x].name[langOf(lang)]) || extra[x].id;
       var recent = (st.recent && st.recent.rows) || {};
       var discover = (st.discover && st.discover.rows) || {};
+      drain();
+      var empty = noteEmpty(api.getCurrentUserId(), lang);
       observer.disconnect();
       try {
         for (var j = 0; j < live.length; j++) {
-          var loading = loadingFor(live[j], st);
+          var loading = loadingFor(live[j], st, empty);
           var modes = st.base.modes || {};
           var hints = {};
           exts.forEach(function (e) {
