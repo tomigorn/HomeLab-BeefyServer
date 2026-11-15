@@ -198,3 +198,59 @@ test("kept inside the viewport: flips above near the bottom, never past the righ
   assert.equal(box(w).style.top, "734px");
   assert.equal(box(w).style.left, "182px");
 });
+
+// Seerr's box (popper: followCursor, auto placement) with our block: pinned to the element instead, not moved by popper's inline transform
+const pinPage = (rect, size = { w: 300, h: 80 }, view = { w: 1280, h: 800 }) => {
+  const w = page('<a id="a" href="/tv/1?manage=1">Available</a>');
+  const a = w.document.getElementById("a");
+  Object.defineProperty(w, "innerWidth", { value: view.w });
+  Object.defineProperty(w, "innerHeight", { value: view.h });
+  a.getBoundingClientRect = () => ({ ...rect, right: rect.left + 80, bottom: rect.top + 20, width: 80, height: 20 });
+  Object.defineProperty(w.HTMLElement.prototype, "offsetWidth", { configurable: true, get() { return /\bz-50\b/.test(this.className) || this.id === "hg-tip" ? size.w : 0; } });
+  Object.defineProperty(w.HTMLElement.prototype, "offsetHeight", { configurable: true, get() { return /\bz-50\b/.test(this.className) || this.id === "hg-tip" ? size.h : 0; } });
+  w.hgTip.set(a, { title: "✅ Everything released so far is in Jellyfin", rows: ["Next episode expected 18 Nov"] });
+  return { w, a };
+};
+const pos = (box) => [box.style.getPropertyValue("--hg-tip-x"), box.style.getPropertyValue("--hg-tip-y")];
+const popper = (w, box, x, y) => { box.style.transform = `translate(${x}px, ${y}px)`; box.style.inset = "0px auto auto 0px"; w.document.dispatchEvent(new w.MouseEvent("mousemove", { clientX: x, clientY: y })); };
+
+test("Seerr's box with our block is pinned below the element, left edges aligned, the same place across mouse moves", async () => {
+  const { w, a } = pinPage({ left: 400, top: 300 });
+  a.dispatchEvent(ev(w, "pointerenter"));
+  w.document.body.insertAdjacentHTML("beforeend", SEERR_TIP("Play on Jellyfin").replace('class="', 'style="position: absolute; inset: 0px auto auto 0px; transform: translate(520px, 330px);" class="'));
+  await tick();
+  const seerr = w.document.body.lastElementChild;
+  assert.ok(seerr.hasAttribute("data-hg-tip-pin"));
+  assert.equal(seerr.getAttribute("data-side"), "below");
+  assert.deepEqual(pos(seerr), ["400px", "326px"]);
+  popper(w, seerr, 610, 280);
+  await tick();
+  assert.deepEqual(pos(seerr), ["400px", "326px"]);
+  popper(w, seerr, 120, 340);
+  await tick();
+  assert.deepEqual(pos(seerr), ["400px", "326px"]);
+  const css = w.document.getElementById("hg-tip-style").textContent;
+  const rule = /\[data-hg-tip-pin\]\{([^}]*)\}/.exec(css)[1];
+  for (const d of ["position:fixed !important", "left:var(--hg-tip-x) !important", "top:var(--hg-tip-y) !important", "right:auto !important", "bottom:auto !important", "transform:none !important", "margin:0 !important"]) assert.ok(rule.includes(d), d);
+});
+
+test("pinned box: flips above when there is no room below, kept inside the viewport, follows scroll", async () => {
+  const { w, a } = pinPage({ left: 1200, top: 760 });
+  a.dispatchEvent(ev(w, "pointerenter"));
+  w.document.body.insertAdjacentHTML("beforeend", SEERR_TIP("Play on Jellyfin"));
+  await tick();
+  const seerr = w.document.body.lastElementChild;
+  assert.equal(seerr.getAttribute("data-side"), "above");
+  assert.deepEqual(pos(seerr), ["972px", "674px"]);
+  a.getBoundingClientRect = () => ({ left: 1200, top: 200, right: 1280, bottom: 220, width: 80, height: 20 });
+  w.dispatchEvent(new w.Event("scroll"));
+  assert.equal(seerr.getAttribute("data-side"), "below");
+  assert.deepEqual(pos(seerr), ["972px", "226px"]);
+});
+
+test("Seerr's box without our block is left to Seerr (not pinned)", async () => {
+  const w = page('<a id="a" href="/tv/1">Available</a>');
+  w.document.body.insertAdjacentHTML("beforeend", SEERR_TIP("Play on Jellyfin"));
+  await tick();
+  assert.equal(w.document.querySelector("[data-hg-tip-pin]"), null);
+});

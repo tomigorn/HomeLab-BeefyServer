@@ -10,7 +10,8 @@
     "#hg-tip .hg-tip-mono,[data-hg-tip-merged] .hg-tip-mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.75rem;line-height:1rem;color:#d1d5db;overflow-wrap:anywhere;margin:.1rem 0}" +
     "#hg-tip .hg-tip-sep,[data-hg-tip-merged] .hg-tip-sep{border-top:1px solid #374151;margin:.3rem 0}" +
     "[data-hg-tip-merged]{max-width:22rem;padding:0 0 .25rem;margin-bottom:.25rem;border-bottom:1px solid #374151;font-size:.875rem;line-height:1.25rem;white-space:normal;overflow-wrap:anywhere;text-align:left}" +
-    "[data-hg-tip-merged].hg-tip-roomy{max-width:none;padding:.75rem 1rem;margin:0}";
+    "[data-hg-tip-merged].hg-tip-roomy{max-width:none;padding:.75rem 1rem;margin:0}" +
+    "[data-hg-tip-pin]{position:fixed !important;left:var(--hg-tip-x) !important;top:var(--hg-tip-y) !important;right:auto !important;bottom:auto !important;transform:none !important;margin:0 !important}";
   var cur = null, host = null, pointer = null;
 
   function sections(c) {
@@ -97,16 +98,31 @@
     return b;
   }
 
-  function place(doc, b, el) {
+  // below el, left edges aligned; above when it does not fit below; inside the viewport
+  function spot(doc, b, el) {
     var win = doc.defaultView || window, vw = win.innerWidth || 360, vh = win.innerHeight || 640, r = el.getBoundingClientRect();
-    b.style.left = "0px";
-    b.style.top = "0px";
-    b.style.display = "block";
     var w = b.offsetWidth, h = b.offsetHeight;
     var below = r.bottom + GAP, side = below + h > vh - EDGE && r.top - h - GAP >= EDGE ? "above" : "below";
     b.setAttribute("data-side", side);
-    b.style.left = Math.max(EDGE, Math.min(Math.round(r.left), vw - w - EDGE)) + "px";
-    b.style.top = Math.round(side === "above" ? r.top - h - GAP : below) + "px";
+    return { left: Math.max(EDGE, Math.min(Math.round(r.left), vw - w - EDGE)) + "px", top: Math.round(side === "above" ? r.top - h - GAP : below) + "px" };
+  }
+
+  function place(doc, b, el) {
+    b.style.left = "0px";
+    b.style.top = "0px";
+    b.style.display = "block";
+    var p = spot(doc, b, el);
+    b.style.left = p.left;
+    b.style.top = p.top;
+  }
+
+  // Seerr's box carrying our block stays put next to the element; popper's cursor-following inline transform loses to the !important rule
+  function pin(doc, h) {
+    if (!h || !h.isConnected || !h.__hgTipFor || !h.__hgTipFor.isConnected) return;
+    h.setAttribute("data-hg-tip-pin", "");
+    var p = spot(doc, h, h.__hgTipFor);
+    h.style.setProperty("--hg-tip-x", p.left);
+    h.style.setProperty("--hg-tip-y", p.top);
   }
 
   // Seerr's Tooltip portal: a direct child of body with its classes, visible (phones hide the download popover)
@@ -139,10 +155,13 @@
     if (!h.__hgTipWatch && doc.defaultView && doc.defaultView.MutationObserver) {
       h.__hgTipWatch = new doc.defaultView.MutationObserver(function () {
         if (h.__hgTipBlock && h.firstChild !== h.__hgTipBlock) h.insertBefore(h.__hgTipBlock, h.firstChild);
+        pin(doc, h);
       });
       h.__hgTipWatch.observe(h, { childList: true });
     }
     host = h;
+    h.__hgTipFor = el;
+    pin(doc, h);
     var b = box(doc);
     if (b) b.style.display = "none";
     if (el.getAttribute("aria-describedby") === ID) el.removeAttribute("aria-describedby");
@@ -183,8 +202,8 @@
     var win = doc.defaultView || window;
     doc.addEventListener("click", function (e) { var b = box(doc); if (!b || !b.contains(e.target)) hide(doc); });
     doc.addEventListener("keydown", function (e) { if (e.key === "Escape") hide(doc); });
-    win.addEventListener("scroll", function () { hide(doc); }, true);
-    win.addEventListener("resize", function () { hide(doc); });
+    win.addEventListener("scroll", function () { pin(doc, host); hide(doc); }, true);
+    win.addEventListener("resize", function () { pin(doc, host); hide(doc); });
     if (!win.MutationObserver || !doc.body) return;
     // runs before the next paint: Seerr's box that opens for the hovered element takes our text, no second box flashes
     new win.MutationObserver(function (records) {
