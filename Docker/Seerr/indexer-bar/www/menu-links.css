@@ -2,3 +2,4 @@
 html:not([data-hg-menu]) :is(div, nav):has(> a[href="/discover/tv"]):not(main *) { visibility: hidden; animation: hg-menu-show 0s 2.5s forwards; }
 @keyframes hg-menu-show { to { visibility: visible; } }
 html[data-hg-early="manual"] main > :not(#hg-manual) { visibility: hidden; animation: hg-menu-show 0s 3s forwards; }
+html[data-hg-early="collections"] main > :not(#hg-collections) { visibility: hidden; animation: hg-menu-show 0s 3s forwards; }

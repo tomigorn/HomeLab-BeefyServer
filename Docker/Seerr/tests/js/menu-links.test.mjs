@@ -244,3 +244,34 @@ test("menu-links.css hides Seerr's 404 on a fresh /manual load until our page is
   const css = readFileSync(new URL("../../indexer-bar/www/menu-links.css", import.meta.url), "utf8");
   assert.match(css, /html\[data-hg-early="manual"\] main > :not\(#hg-manual\) \{[^}]*visibility: hidden[^}]*animation: hg-menu-show 0s 3s forwards/);
 });
+
+const coll = (w) => [...w.document.querySelectorAll('[data-hg-link="collections"]')];
+
+test("Collections: after Manual interaction, opens /collections inside Seerr, Sammlungen in German, active on its page", async () => {
+  let w = load("menu-links.js", SIDEBAR + MOBILE, null, "https://requests.example.com/collections");
+  const [side, drawer] = coll(w);
+  assert.equal(side.previousElementSibling.getAttribute("data-hg-link"), "manual");
+  assert.equal(side.getAttribute("href"), "/collections");
+  assert.equal(side.textContent.trim(), "Collections");
+  assert.equal(side.classList.contains("bg-gradient-to-br"), true);
+  assert.equal(drawer.classList.contains("text-indigo-500"), true);
+  assert.equal(manual(w)[0].classList.contains("bg-gradient-to-br"), false);
+  w = load("menu-links.js", SIDEBAR.replace(">Series<", ">Serien<"));
+  assert.equal(coll(w)[0].textContent.trim(), "Sammlungen");
+});
+
+test("phone bar: Collections only while there is room (at most 6 with it), else only in the drawer", () => {
+  const bar3 = MOBILE.replace(/<button[^]*?<\/button>/, "").replace('<a href="/" class="relative flex flex-col', '<a href="/requests" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a><a href="/" class="relative flex flex-col');
+  let w = load("menu-links.js", bar3);
+  const bar = w.document.querySelector(".flex.h-full");
+  assert.deepEqual([...bar.querySelectorAll("a")].map((a) => a.getAttribute("data-hg-link")).slice(-3), ["audiobooks", "manual", "collections"]);
+  const bar4 = MOBILE.replace(/<button[^]*?<\/button>/, "").replace('<a href="/" class="relative flex flex-col', '<a href="/discover/movies" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a><a href="/requests" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a><a href="/" class="relative flex flex-col');
+  w = load("menu-links.js", bar4);
+  assert.equal(coll(w).filter((a) => a.classList.contains("flex-col")).length, 0);
+  assert.equal(coll(w).length, 1);
+});
+
+test("menu-links.css hides Seerr's 404 on a fresh /collections load until our page is in, shown anyway after 3 s", () => {
+  const css = readFileSync(new URL("../../indexer-bar/www/menu-links.css", import.meta.url), "utf8");
+  assert.match(css, /html\[data-hg-early="collections"\] main > :not\(#hg-collections\) \{[^}]*visibility: hidden[^}]*animation: hg-menu-show 0s 3s forwards/);
+});

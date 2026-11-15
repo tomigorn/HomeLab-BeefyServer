@@ -84,3 +84,8 @@ test("a fresh load of /manual is marked so Seerr's 404 stays hidden until our pa
   assert.equal(early("https://requests.example.com/manual/").document.documentElement.getAttribute("data-hg-early"), "manual");
   assert.equal(early("https://requests.example.com/requests").document.documentElement.hasAttribute("data-hg-early"), false);
 });
+
+test("a fresh load of /collections is marked the same way", () => {
+  assert.equal(early("https://requests.example.com/collections").document.documentElement.getAttribute("data-hg-early"), "collections");
+  assert.equal(early("https://requests.example.com/collections/").document.documentElement.getAttribute("data-hg-early"), "collections");
+});
