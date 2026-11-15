@@ -176,10 +176,10 @@ test("a click on the Manual entry navigates inside Seerr when its router is ther
   assert.equal(pushed.length, 1);
 });
 
-test("menu shown only once our entries are in place: html gets data-hg-menu after the page settled", async () => {
+test("menu shown as soon as our entries are in: html gets data-hg-menu on the next frame, not after images load", async () => {
   const w = load("menu-links.js", SIDEBAR);
   assert.equal(w.document.documentElement.hasAttribute("data-hg-menu"), false);
-  await new Promise((r) => setTimeout(r, 450));
+  await new Promise((r) => setTimeout(r, 60));
   assert.equal(w.document.documentElement.hasAttribute("data-hg-menu"), true);
 });
 

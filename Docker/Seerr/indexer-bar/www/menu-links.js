@@ -85,16 +85,11 @@
     return added;
   }
 
-  // menu-links.css keeps Seerr's menu hidden until this mark: set once the page has loaded and nothing had to be put back for a moment (Seerr's first render can drop our entries)
-  var settle = null;
+  // menu-links.css keeps Seerr's menu hidden until this mark: our entries are in; later redraws get them back before the next paint (MutationObserver)
   function settled(win) {
     var root = win.document.documentElement;
     if (root.hasAttribute("data-hg-menu")) return;
-    clearTimeout(settle);
-    settle = setTimeout(function () {
-      if (win.document.readyState !== "complete") { win.addEventListener("load", function () { settled(win); }, { once: true }); return; }
-      root.setAttribute("data-hg-menu", "");
-    }, 300);
+    (win.requestAnimationFrame || function (f) { setTimeout(f, 16); })(function () { root.setAttribute("data-hg-menu", ""); });
   }
 
   // a page of ours inside Seerr (/manual): Seerr's router shows its 404 page under our path (as a direct load does), so the layout stays; Next reloads the whole page for a path it has no page for
@@ -170,7 +165,7 @@
     };
     fresh();
     new MutationObserver(function () {
-      try { if (attach(document)) settled(window); fresh(); } catch (e) { /* never break Seerr */ }
+      try { attach(document); fresh(); } catch (e) { /* never break Seerr */ }
     }).observe(document.body, { childList: true, subtree: true });
   } catch (e) { /* never break Seerr */ }
 })();
