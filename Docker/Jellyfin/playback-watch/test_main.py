@@ -163,8 +163,8 @@ class MainTest(unittest.TestCase):
         seen = []
         real = pw.record.write_prom
 
-        def spy(path, *a):
-            real(path, *a)
+        def spy(path, *a, **kw):
+            real(path, *a, **kw)
             seen.append(prom.read_text())
         pw.record.write_prom = spy
         try:
@@ -446,6 +446,47 @@ class MainTest(unittest.TestCase):
         rc = pw.main(["report", "--since", "1h"], state_dir=state, out=out.append)
         self.assertEqual(rc, 0)
         self.assertIn("silent 1", out[0])
+
+    def test_plays_recorded_and_in_prom(self):
+        clock = Clock()
+        tv = {"Id": "s1", "UserName": "jane", "Client": "Jellyfin Web", "DeviceName": "Safari iPhone",
+              "NowPlayingItem": {"Id": "i1", "Name": "Pilot", "SeriesName": "The Show", "ParentIndexNumber": 3,
+                                 "IndexNumber": 1, "MediaStreams": [{"Type": "Video", "Codec": "hevc", "VideoRangeType": "HDR10"}]},
+              "PlayState": {"PlayMethod": "Transcode"},
+              "TranscodingInfo": {"IsVideoDirect": False, "IsAudioDirect": True, "VideoCodec": "h264",
+                                  "TranscodeReasons": ["ContainerNotSupported"]}}
+        w = self.watcher(Runner(["172.28.11.3"]), Http([[tv], []]), clock=clock)
+        w.poll_once()
+        prom = (self.dir / "state" / "playback.prom").read_text()
+        self.assertIn('jellyfin_playback_plays_24h{method="video"} 1', prom)
+        self.assertIn('title="The Show S03E01",method="video",reasons="ContainerNotSupported",hdr_to_sdr="yes"', prom)
+        clock.t += 400
+        w.poll_once()
+        rows = [json.loads(x) for x in (self.dir / "state" / "plays.jsonl").read_text().splitlines()]
+        self.assertEqual(rows[0]["method"], "video")
+        self.assertIn('jellyfin_playback_plays_24h{method="video"} 1', (self.dir / "state" / "playback.prom").read_text())
+        self.assertFalse(any("jane" in m or "The Show" in m for m in self.logs))
+
+    def test_plays_error_does_not_stop_poll(self):
+        w = self.watcher(Runner(["172.28.11.3"]), Http([[session()]]))
+        w.plays.update = lambda *a: (_ for _ in ()).throw(OSError("disk full"))
+        self.assertTrue(w.poll())
+        self.assertTrue(any("plays" in m for m in self.logs))
+
+    def test_report_plays_subcommand(self):
+        state = self.dir / "state"
+        import time as _t
+        log = pw.plays.PlayLog(state)
+        log.update([session()], _t.time() - 600)
+        log.update([], _t.time())
+        out = []
+        rc = pw.main(["report", "--plays", "--since", "7d"], state_dir=state, out=out.append)
+        self.assertEqual(rc, 0)
+        self.assertIn("Pilot", out[0])
+        self.assertIn("1 playbacks", out[0])
+        out = []
+        pw.main(["report", "--plays", "--since", "1s"], state_dir=state, out=out.append)
+        self.assertIn("0 playbacks", out[0])
 
 
 if __name__ == "__main__":

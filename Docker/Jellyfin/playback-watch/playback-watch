@@ -14,6 +14,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import autofix  # noqa: E402
+import plays  # noqa: E402
 import record  # noqa: E402
 import tracker as tracker_mod  # noqa: E402
 
@@ -113,6 +114,7 @@ class Watcher:
         self.counters = record.Counters(self.state_dir / "state.json")
         self.incidents_path = self.state_dir / "incidents.jsonl"
         self.prom_path = self.state_dir / "playback.prom"
+        self.plays = plays.PlayLog(self.state_dir, now=clock())
         self.base = self.key = None
         self.stale = False
         self.next_resolve = 0.0
@@ -165,6 +167,10 @@ class Watcher:
                 self._revert(now)
             return False
         self.last_ok = now
+        try:
+            self.plays.update(sessions, now)
+        except Exception as e:
+            self.log(f"plays log failed: {e}")
         incidents = self.tracker.update(sessions, now)
         self._track_playbacks(sessions, incidents, now)
         for inc in incidents:
@@ -242,7 +248,8 @@ class Watcher:
 
     def write_prom(self):
         try:
-            record.write_prom(self.prom_path, self.counters, self.tracker.active_by_method(), self.fix.active(), self.last_ok)
+            record.write_prom(self.prom_path, self.counters, self.tracker.active_by_method(), self.fix.active(), self.last_ok,
+                              plays=self.plays.recent(self.clock()), now=self.clock())
         except Exception as e:
             self.log(f"metrics write failed: {e}")
 
@@ -261,6 +268,7 @@ class Watcher:
             self.poll_once()
             stop.wait(max(0.0, POLL - (self.clock() - start)))
         self._step("revert", self.fix.revert)
+        self._step("plays", self.plays.save_open)
         self.write_prom()
         self.log("stopped")
 
@@ -286,7 +294,9 @@ def build_fix(log):
 def main(argv=None, state_dir=STATE_DIR, out=print):
     parser = argparse.ArgumentParser(prog="playback-watch", description="Jellyfin playback stutter watch")
     sub = parser.add_subparsers(dest="cmd")
-    rep = sub.add_parser("report", help="print recorded incidents")
+    rep = sub.add_parser("report", help="print recorded incidents, or playbacks with --plays",
+                         epilog="next: playback-watch report --plays --since 7d (who got converted) | journalctl -u playback-watch -n 50")
+    rep.add_argument("--plays", action="store_true", help="list playbacks (method, reasons, HDR to SDR), conversions first")
     rep.add_argument("--since", default="24h", help="time window, e.g. 30m, 24h, 7d (default 24h)")
     args = parser.parse_args(argv)
     if args.cmd == "report":
@@ -294,6 +304,9 @@ def main(argv=None, state_dir=STATE_DIR, out=print):
             since = parse_duration(args.since)
         except ValueError as e:
             parser.error(str(e))
+        if args.plays:
+            out(plays.report(plays.read_plays(state_dir, time.time() - since)))
+            return 0
         out(record.report(Path(state_dir) / "incidents.jsonl", since))
         return 0
     stop = threading.Event()

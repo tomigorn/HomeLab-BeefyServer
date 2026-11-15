@@ -83,6 +83,51 @@ class RecordTest(unittest.TestCase):
         self.assertIn("jellyfin_playback_watch_last_poll_timestamp_seconds 99", text)
         self.assertEqual(list(self.dir.glob("*.tmp")), [])
 
+    def test_prom_plays_metrics(self):
+        c = rec.Counters(self.dir / "state.json")
+        out = self.dir / "playback.prom"
+        now = 2_000_000.0
+
+        def play(start, method, **kw):
+            return {"start": start, "user": "jane", "client": "Jellyfin Web", "device": "Safari iPhone",
+                    "title": "The Show S03E01", "method": method, "reasons": ["ContainerNotSupported", "VideoCodecTagNotSupported"],
+                    "hdr_to_sdr": "yes", **kw}
+        rows = [play(now - 100, "video"), play(now - 200, "audio", user='ja"ne'), play(now - 300, "direct"),
+                play(now - 400, "direct"), play(now - 500, "remux"), play(now - 90000, "video")]
+        rec.write_prom(out, c, {}, {}, 1.0, plays=rows, now=now)
+        text = out.read_text()
+        self.assertEqual(text.count("# TYPE jellyfin_playback_plays_24h gauge"), 1)
+        self.assertEqual(text.count("# TYPE jellyfin_playback_converted_info gauge"), 1)
+        for m, n in (("direct", 2), ("remux", 1), ("audio", 1), ("video", 1)):
+            self.assertIn(f'jellyfin_playback_plays_24h{{method="{m}"}} {n}\n', text)
+        self.assertIn('jellyfin_playback_converted_info{user="jane",client="Jellyfin Web",device="Safari iPhone",'
+                      f'title="The Show S03E01",method="video",reasons="ContainerNotSupported,VideoCodecTagNotSupported",'
+                      f'hdr_to_sdr="yes",started="{int(now - 100)}"}} 1\n', text)
+        self.assertIn('user="ja\\"ne"', text)
+        self.assertEqual(text.count("jellyfin_playback_converted_info{"), 2)
+
+    def test_prom_converted_newest_20(self):
+        c = rec.Counters(self.dir / "state.json")
+        out = self.dir / "playback.prom"
+        now = 2_000_000.0
+        rows = [{"start": now - 10 - i, "user": "jane", "client": "c", "device": "d", "title": f"T{i}", "method": "audio",
+                 "reasons": [], "hdr_to_sdr": "no"} for i in range(25)]
+        rec.write_prom(out, c, {}, {}, 1.0, plays=rows, now=now)
+        text = out.read_text()
+        self.assertEqual(text.count("jellyfin_playback_converted_info{"), 20)
+        self.assertIn('title="T19"', text)
+        self.assertNotIn('title="T20"', text)
+        self.assertIn('jellyfin_playback_plays_24h{method="audio"} 25', text)
+
+    def test_prom_plays_zero_series_without_plays(self):
+        c = rec.Counters(self.dir / "state.json")
+        out = self.dir / "playback.prom"
+        rec.write_prom(out, c, {}, {}, 1.0)
+        text = out.read_text()
+        for m in ("direct", "remux", "audio", "video"):
+            self.assertIn(f'jellyfin_playback_plays_24h{{method="{m}"}} 0\n', text)
+        self.assertNotIn("jellyfin_playback_converted_info{", text)
+
     def test_prom_empty_state_has_stable_series(self):
         c = rec.Counters(self.dir / "state.json")
         out = self.dir / "playback.prom"

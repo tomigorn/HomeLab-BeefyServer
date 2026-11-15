@@ -11,6 +11,8 @@ UNITS = ("subtitle-translate.service", "clamav-hostscan.service", "clamav-scan.s
          "beefy-mover.service", "original-audio.service", "beefy-promoter.service")
 CONTAINERS = ("subtitle-libretranslate", "subtitle-lingarr", "clamav", "clamav-queue",
               "movie-sabnzbd", "movie-qbittorrent")
+PLAY_METHODS = ("direct", "remux", "audio", "video")
+CONVERTED_MAX = 20
 DISKS = ("sda", "sdb", "sdc")
 MAX_BYTES = 5 * 1024 * 1024
 KEEP = 3
@@ -177,8 +179,10 @@ def _num(v):
     return repr(int(v)) if float(v).is_integer() else repr(float(v))
 
 
-def write_prom(path, counters, active_by_method, autofix_active, last_poll):
+def write_prom(path, counters, active_by_method, autofix_active, last_poll, plays=None, now=None):
     lines = []
+    now = time.time() if now is None else now
+    plays = [p for p in plays or [] if p.get("start", 0) >= now - 86400]
 
     def metric(name, kind, help_, samples):
         lines.append(f"# HELP {name} {help_}")
@@ -202,6 +206,13 @@ def write_prom(path, counters, active_by_method, autofix_active, last_poll):
            [([], counters.last_incident)])
     metric("jellyfin_playback_watch_last_poll_timestamp_seconds", "gauge", "Unix time of the last successful poll.",
            [([], last_poll)])
+    metric("jellyfin_playback_plays_24h", "gauge", "Playbacks started in the last 24 h by method.",
+           [([("method", m)], sum(1 for p in plays if p.get("method") == m)) for m in PLAY_METHODS])
+    converted = sorted((p for p in plays if p.get("method") in ("audio", "video")), key=lambda p: -p["start"])[:CONVERTED_MAX]
+    metric("jellyfin_playback_converted_info", "gauge", "Playbacks with converted sound or picture in the last 24 h, newest 20.",
+           [([("user", p.get("user") or ""), ("client", p.get("client") or ""), ("device", p.get("device") or ""),
+              ("title", p.get("title") or ""), ("method", p["method"]), ("reasons", ",".join(p.get("reasons") or [])),
+              ("hdr_to_sdr", p.get("hdr_to_sdr") or "no"), ("started", str(int(p["start"])))], 1) for p in converted])
     _atomic_write(path, "\n".join(lines) + "\n")
 
 
