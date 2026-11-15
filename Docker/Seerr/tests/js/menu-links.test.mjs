@@ -41,7 +41,7 @@ test("phone, bar of 4 without a more button (regular user): 5th item in the bar"
   assert.equal(inBar[0].previousElementSibling.getAttribute("href"), "/discover/tv");
   assert.equal(inBar[0].getAttribute("aria-label"), "Audiobooks");
   assert.ok(inBar[0].querySelector("path"));
-  assert.equal(inBar[0].parentElement.querySelectorAll("a").length, 5);
+  assert.equal(inBar[0].parentElement.querySelectorAll("a").length, 6);
 });
 
 test("phone, bar already full (5 links, no more button): not added", () => {
@@ -82,4 +82,68 @@ test("German UI: the entry reads Hörbücher", () => {
   const [a] = links(w);
   assert.equal(a.textContent.trim(), "Hörbücher");
   assert.equal(a.getAttribute("title"), "Hörbücher");
+});
+
+const manual = (w) => [...w.document.querySelectorAll('[data-hg-link="manual"]')];
+const counting = (status, body, calls = []) => (w) => {
+  w.fetch = (url, opts) => { calls.push({ url, opts }); return Promise.resolve({ ok: status === 200, status, json: () => Promise.resolve(body) }); };
+};
+const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
+
+test("Manual interaction: after Audiobooks, opens the page", () => {
+  const w = load("menu-links.js", SIDEBAR);
+  const [m] = manual(w);
+  assert.ok(m);
+  assert.equal(m.previousElementSibling.getAttribute("data-hg-link"), "audiobooks");
+  assert.equal(m.getAttribute("href"), "/_manual/");
+  assert.equal(m.textContent.trim(), "Manual interaction");
+  assert.ok(m.querySelector("path").getAttribute("d").length > 20);
+  assert.notEqual(m.querySelector("path").getAttribute("d"), links(w)[0].querySelector("path").getAttribute("d"));
+});
+
+test("German UI: Manuell beheben, page in German", () => {
+  const w = load("menu-links.js", SIDEBAR.replace(">Series</a>", ">Serien</a>"));
+  const [m] = manual(w);
+  assert.equal(m.textContent.trim(), "Manuell beheben");
+  assert.equal(m.getAttribute("href"), "/_manual/?lang=de");
+});
+
+test("open problems: count badge on every Manual entry, asked once", async () => {
+  const calls = [];
+  const w = load("menu-links.js", SIDEBAR + MOBILE, counting(200, { open: 3 }, calls));
+  await settle();
+  const badges = manual(w).map((m) => m.querySelector("[data-hg-count]"));
+  assert.ok(badges.length >= 2);
+  badges.forEach((b) => assert.equal(b.textContent, "3"));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/_download-now/manual/count");
+  assert.equal(manual(w)[0].getAttribute("aria-label"), null);
+  assert.match(manual(w)[0].getAttribute("title"), /3/);
+});
+
+test("no open problems or no session: no badge", async () => {
+  for (const [status, body] of [[200, { open: 0 }], [401, {}], [200, { open: "x" }]]) {
+    const w = load("menu-links.js", SIDEBAR, counting(status, body));
+    await settle();
+    assert.equal(w.document.querySelector("[data-hg-count]"), null, JSON.stringify(body));
+  }
+});
+
+test("a menu that renders later gets the badge too", async () => {
+  const w = load("menu-links.js", "<main></main>", counting(200, { open: 2 }));
+  await settle();
+  w.document.body.insertAdjacentHTML("beforeend", SIDEBAR);
+  await settle();
+  assert.equal(manual(w)[0].querySelector("[data-hg-count]").textContent, "2");
+});
+
+test("phone, bar of 4 without a more button: Audiobooks 5th, Manual 6th; a full bar of 5 still gets Manual", () => {
+  const bar4 = MOBILE.replace(/<button[^]*?<\/button>/, "").replace('<a href="/" class="relative flex flex-col', '<a href="/discover/movies" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a><a href="/requests" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a><a href="/" class="relative flex flex-col');
+  let w = load("menu-links.js", bar4);
+  const bar = w.document.querySelector(".flex.h-full");
+  assert.deepEqual([...bar.querySelectorAll("a")].map((a) => a.getAttribute("data-hg-link")).slice(-2), ["audiobooks", "manual"]);
+  const five = MOBILE.replace(/<button[^]*?<\/button>/, "").replace('<a href="/" class="relative flex flex-col', ['/a', '/b', '/c'].map((h) => `<a href="${h}" class="relative flex flex-col items-center space-y-1 "><svg class="h-6 w-6"></svg></a>`).join("") + '<a href="/" class="relative flex flex-col');
+  w = load("menu-links.js", five);
+  assert.deepEqual(manual(w).filter((a) => a.classList.contains("flex-col")).length, 1);
+  assert.equal(links(w).filter((a) => a.classList.contains("flex-col")).length, 0);
 });
