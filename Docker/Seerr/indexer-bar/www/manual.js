@@ -1,7 +1,72 @@
-// Manual interaction page /_manual/ (README "Manual interaction"): every download problem that needs a hand, for every Seerr user; data and actions from download-now's /_download-now/manual/. All text goes in as textContent, never as markup.
+// Manual interaction page /manual inside Seerr's layout (README "Manual interaction"): Seerr shows its 404 there, this script (injected by seerr-proxy) puts the page in its place. Every download problem that needs a hand, for every Seerr user; data and actions from download-now's /_download-now/manual/. All text goes in as textContent, never as markup.
 (function () {
   "use strict";
-  var API = "/_download-now/manual/";
+  var API = "/_download-now/manual/", ROUTE = "/manual", POLL = 3000;
+  var CSS = "#hg-manual { max-width: 56rem; margin: 0 auto; padding: 1rem 1rem 7rem; color: #e5e7eb; font-size: 15px; line-height: 1.5; }" +
+    "main[data-hg-manual] > :not(#hg-manual) { display: none !important; }" +
+    "#hg-manual * { box-sizing: border-box; }" +
+    "#hg-manual .hg-m-intro { margin: 0 0 1rem; color: #9ca3af; }" +
+    "#hg-manual a { color: #a5b4fc; }" +
+    "#hg-manual h1 { margin: .5rem 0 .25rem; font-size: 1.75rem; font-weight: 700; color: #fff; }" +
+    "#hg-manual h2 { margin: 0; font-size: 1.1rem; color: #fff; overflow-wrap: anywhere; }" +
+    "#hg-manual h2 a { color: #fff; text-decoration: none; }" +
+    "#hg-manual h2 a:hover { text-decoration: underline; }" +
+    ".hg-m-tabs { display: flex; gap: .5rem; margin: 1rem 0; }" +
+    ".hg-m-tab { background: #1f2937; color: #d1d5db; border: 1px solid #374151; border-radius: .5rem; padding: .4rem .9rem; font: inherit; cursor: pointer; }" +
+    ".hg-m-tab.hg-m-on { background: linear-gradient(to bottom right, #4f46e5, #9333ea); color: #fff; border-color: transparent; }" +
+    ".hg-m-card { background: #1f2937; border: 1px solid #374151; border-radius: .75rem; padding: 1rem; margin: 0 0 1rem; }" +
+    ".hg-m-item { border-top: 1px solid #374151; margin-top: .75rem; padding-top: .5rem; }" +
+    ".hg-m-type { display: inline-block; margin: .4rem 0; padding: .1rem .6rem; border-radius: 999px; background: #78350f; color: #fde68a; font-size: .85rem; }" +
+    ".hg-m-meta, .hg-m-details, .hg-m-hint, .hg-m-resolved { margin: .25rem 0; color: #d1d5db; overflow-wrap: anywhere; }" +
+    ".hg-m-hint { color: #9ca3af; font-size: .9rem; }" +
+    ".hg-m-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-top: .75rem; }" +
+    ".hg-m-actions [data-list] { flex-basis: 100%; }" +
+    ".hg-m-btn { background: #374151; color: #fff; border: 1px solid #4b5563; border-radius: .375rem; padding: .45rem .9rem; font: inherit; cursor: pointer; }" +
+    ".hg-m-btn:hover:not(:disabled) { background: #4b5563; }" +
+    ".hg-m-btn:disabled { opacity: .5; cursor: default; }" +
+    ".hg-m-primary { background: #4f46e5; border-color: #6366f1; }" +
+    ".hg-m-primary:hover:not(:disabled) { background: #6366f1; }" +
+    ".hg-m-danger, .hg-m-armed { background: #b91c1c; border-color: #dc2626; }" +
+    ".hg-m-input, select { background: #111827; color: #fff; border: 1px solid #4b5563; border-radius: .375rem; padding: .4rem .6rem; font: inherit; max-width: 100%; }" +
+    ".hg-m-input { flex: 1 1 14rem; }" +
+    ".hg-m-rows { list-style: none; margin: .5rem 0; padding: 0; }" +
+    ".hg-m-rows li { border-top: 1px solid #374151; padding: .5rem 0; display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }" +
+    ".hg-m-rows label { display: flex; flex-wrap: wrap; gap: .25rem .6rem; align-items: baseline; flex: 1 1 20rem; cursor: pointer; }" +
+    ".hg-m-name { color: #fff; overflow-wrap: anywhere; }" +
+    ".hg-m-facts { color: #9ca3af; font-size: .85rem; }" +
+    ".hg-m-why { color: #fca5a5; font-size: .85rem; flex-basis: 100%; }" +
+    ".hg-m-rejected { opacity: .6; }" +
+    ".hg-m-probable, .hg-m-suggest { color: #86efac; font-size: .85rem; }" +
+    ".hg-m-suggest { flex-basis: 100%; margin: 0; }" +
+    ".hg-m-warning { flex-basis: 100%; margin: 0; padding: .5rem .75rem; border-radius: .375rem; background: #450a0a; color: #fecaca; }" +
+    ".hg-m-msg { margin: .5rem 0 0; color: #a5b4fc; min-height: 1.2em; }" +
+    ".hg-m-bad, .hg-m-error { color: #fca5a5; }" +
+    ".hg-m-flash { padding: .6rem .9rem; border-radius: .5rem; background: #14532d; color: #bbf7d0; }" +
+    ".hg-m-empty { color: #9ca3af; }" +
+    ".hg-m-history { margin-top: .5rem; color: #9ca3af; font-size: .9rem; }" +
+    ".hg-m-history ul { margin: .25rem 0; padding-left: 1.2rem; }" +
+    ".hg-m-item > * + * { margin-top: .6rem; }" +
+    ".hg-m-section { margin: .6rem 0 0; }" +
+    ".hg-m-section p { margin: .15rem 0; }" +
+    ".hg-m-head { margin: 0 0 .15rem; font-size: .75rem; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: #9ca3af; }" +
+    ".hg-m-file { display: flex; flex-direction: column; gap: .1rem; }" +
+    ".hg-m-label { font-size: .8rem; color: #9ca3af; }" +
+    ".hg-m-filename { font-size: .8rem; color: #d1d5db; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }" +
+    ".hg-m-media, .hg-m-virus { font-size: .85rem; color: #d1d5db; }" +
+    ".hg-m-virus-infected { color: #fca5a5; font-weight: 600; }" +
+    ".hg-m-checks { list-style: none; margin: .3rem 0 0; padding: 0; font-size: .85rem; }" +
+    ".hg-m-checks li { padding: .1rem 0; border: 0; display: block; }" +
+    ".hg-m-check-bad { color: #fca5a5; }" +
+    ".hg-m-check-warn { color: #fde68a; }" +
+    ".hg-m-check-none { color: #9ca3af; }" +
+    ".hg-m-info { color: #9ca3af; }" +
+    ".hg-m-raw { font-size: .8rem; color: #9ca3af; }" +
+    ".hg-m-raw summary { cursor: pointer; }" +
+    ".hg-m-quote { font-size: .85rem; color: #d1d5db; border-left: 3px solid #4b5563; padding-left: .5rem; overflow-wrap: anywhere; }" +
+    ".hg-m-count { margin: .2rem 0; font-size: .85rem; color: #fde68a; }" +
+    ".hg-m-wide { flex-basis: 100%; }" +
+    ".hg-m-rows .hg-m-checks, .hg-m-rows .hg-m-virus { flex-basis: 100%; margin: 0; }" +
+    "#hg-manual h3 { line-height: 1.2; }";
   var TEXT = {
     en: {
       locale: "en-GB", title: "Manual interaction", intro: "Downloads that need a hand. Everyone can help, also with other people's requests.", back: "← Back to Seerr",
@@ -15,19 +80,58 @@
         failed: "Block this release and search for another one.",
         "no-release": "Pick a release by hand, or allow older versions (DVD, SD) for old or rare titles."
       },
+      reasons: {
+        "id-match": "The release name doesn't match the title (e.g. a foreign-language name), so it isn't imported automatically. Check the episode or film, then import.",
+        "no-eligible": "The download holds no file that can be imported (no video file, or only extras).",
+        "not-upgrade": "The library already has this in the same or a better quality, so it isn't imported.",
+        sample: "The file is only a sample (a short excerpt), not the full film or episode.",
+        unparsable: "Sonarr/Radarr can't tell from the file name which episode or film it is.",
+        "not-in-release": "The download holds a different episode or film than expected.",
+        "wrong-film": "The download is a different film: its year doesn't match.",
+        "dub-only": "The download has no audio in the original language (dubbed only).",
+        failed: "The download failed (broken or incomplete).",
+        "no-release": "No release has been found for days.",
+        removed: "The request is still open in Seerr, but the title is gone from Radarr/Sonarr, so nothing searches for it.",
+        unmatched: "Seerr could not hand the request over to Radarr/Sonarr (the title was not found there).",
+        unknown: "Sonarr/Radarr stopped this download for a reason this page doesn't know yet:"
+      },
+      marks: { ok: "✅", warn: "⚠️", bad: "❌", none: "–" },
+      checks: {
+        original: function (x) { return ["Original language" + (x.language ? " (" + x.language + ")" : ""), { ok: "present", bad: "missing, dubbed only", none: "unknown" }[x.mark]]; },
+        english: function (x) { return ["English audio", { ok: "present", warn: "missing", none: "unknown" }[x.mark]]; },
+        german: function (x) { return ["German audio or subtitles", { ok: "present", none: "none" }[x.mark]]; },
+        quality: function (x) { return ["Quality" + (x.quality ? " " + x.quality : ""), { ok: "allowed by the profile", bad: "not allowed by the profile", none: "unknown" }[x.mark], x.upgrade ? "may upgrade to " + x.upgrade + " later" : ""]; },
+        hdr: function (x) { return [String(x.hdr || "SDR"), { ok: "allowed by the profile", bad: "Dolby Vision without HDR fallback: the profile rejects it", none: "" }[x.mark], x.upgrade ? "may upgrade to 4K HDR later" : ""]; },
+        runtime: function (x) { return ["Running time " + x.minutes + " min (expected " + x.expected + ")", { ok: "fits", warn: "10–25 % off", bad: "more than 25 % off: wrong file, sample or extras?" }[x.mark]]; },
+        size: function (x) { return [gb(x.size) + (x.gbh ? " · " + x.gbh + " GB/h" : ""), x.mark === "warn" ? "very big (over " + x.limit + " GB/h)" : ""]; }
+      },
+      virus: { clean: "Virus scan: clean", pending: "Virus scan pending", infected: "Virus scan: malware found", unknown: "Virus scan: not scanned yet" },
+      noMatch: "No release found for this title — the indexers don't know a version yet.", olderHint: "For an old or rare title, try “Allow older versions” above.",
+      noneAllowed: "Releases were found, but none the profile allows.", notAllowed: function (n) { return n + " more, not allowed — show why"; },
+      releaseReasons: { "cf-score": "Its score by our rules is too low (e.g. wrong language, poor source).", "required-terms": "The name lacks a term the profile requires (e.g. the language).",
+        quality: "The profile doesn't allow this quality.", existing: "The library already has an equal or better version.", seeders: "Too few seeders.",
+        blocklisted: "Blocked earlier (a failed or wrong download).", size: "Too big or too small for the profile.", "wrong-title": "Another title." },
+      errorCodes: { "search queue full": "Too many searches are waiting right now: try again in a few minutes.", "too many searches": "You already have two searches waiting: this one can start when they are done.",
+        malware: "Malware found: this download is never imported.", "virus scan pending": "Wait for the virus scan (usually a few minutes); an admin can import before.",
+        "rejected file needs an admin": "Sonarr/Radarr rejected this file: only an admin can import it.", "another title needs an admin": "Another title than the requested one: only an admin can link it." },
+      whatsWrong: "What's wrong", whatToDo: "What to do", download: "Download", fileLabel: "File name of the download:", raw: "Details from Sonarr/Radarr",
+      audio: "Audio", subtitles: "Subtitles", min: "min",
+      langs: { por: "Portuguese", eng: "English", ger: "German", deu: "German", gsw: "Swiss German", fre: "French", fra: "French", ita: "Italian", spa: "Spanish", jpn: "Japanese", kor: "Korean", chi: "Chinese", zho: "Chinese", rus: "Russian", dut: "Dutch", nld: "Dutch", pol: "Polish", tur: "Turkish", swe: "Swedish", nor: "Norwegian", dan: "Danish", fin: "Finnish", hin: "Hindi", ara: "Arabic" },
       requestedBy: "Requested by", nobody: "no Seerr request", since: "Since", lastSearch: "Last search", never: "never", profile: "Profile", release: "Release",
-      years: function (a, b) { return "Release year " + a + ", film " + b; }, episodes: function (n) { return n + " episodes"; },
+      years: function (a, b) { return "Release year " + a + ", film " + b; }, episodes: function (n) { return n + (n === 1 ? " episode" : " episodes"); },
       readd: "Add again", del: "Delete request", delAgain: "Tap again to delete",
       delWarn: "Deletes only the Seerr request(s) of this title, nothing gets downloaded for it any more; the title data in Seerr and any files stay.",
       block: "Block this release and search again", blockAgain: "Tap again to block it", profile2: function (p) { return "Allow older versions (" + p + ")"; },
-      suggest: "Suggested: an old title, often only out as DVD or SD.", releases: "Show releases", hideReleases: "Hide releases", loading: "Loading…", searching: "Searching the indexers… (up to 2 min)", season: "Season",
+      suggest: "Suggested: an old title, often only out as DVD or SD.", releases: "Show releases", hideReleases: "Hide releases", loading: "Loading…", searching: "Searching the indexers… (up to 2 min)",
+      queued: function (title) { return title ? "Waiting for the search for “" + title + "” to finish, then this starts by itself." : "Waiting for other searches to finish, then this starts by itself."; }, season: "Season",
       grab: "Download", noReleases: "No releases found.", pickOne: "Pick one first.", rejected: "not allowed: ", seeders: "seeders", score: "score",
       lookup: "Search", link: "Use this one", probable: "Most likely", inLibrary: "already in the library", noResults: "Nothing found.",
       files: "Show files", hideFiles: "Hide files", "import": "Import", detected: "as detected", noEpisode: "—", needEpisode: "Pick an episode for every checked file.",
-      history: "What happened", gone: "Solved itself", fixed: "Fixed: ",
+      history: "What happened", gone: "Went away by itself", imported: "Imported", found: "Found and downloaded",
+      removedBy: function (u) { return "Removed by admin" + (u ? " (" + u + ")" : ""); }, fixedBy: function (u, a) { return "Fixed by " + (u || "someone") + " (" + a + ")"; },
       actions: { readd: "added again", "delete": "deleted", block: "blocked, searched again", profile: "older versions allowed", grab: "release picked", link: "matched", "import": "imported", reopened: "back again" },
       errors: { 429: "Too many tries — wait a moment and try again.", 403: "Not allowed — an admin can do this.", 400: "That does not fit any more — reload the page.", 404: "Already solved — reload the page.", other: "Radarr/Sonarr not reachable — try again later." },
-      ok: "Done: ", working: "Working…"
+      ok: "Done: ", working: "Working…", problems: function (n) { return n + " problems"; }
     },
     de: {
       locale: "de-CH", title: "Manuell beheben", intro: "Downloads, die Hilfe brauchen. Alle können helfen, auch bei Anfragen von anderen.", back: "← Zurück zu Seerr",
@@ -41,19 +145,58 @@
         failed: "Dieses Release sperren und ein anderes suchen.",
         "no-release": "Von Hand ein Release wählen, oder bei alten oder seltenen Titeln ältere Versionen (DVD, SD) erlauben."
       },
+      reasons: {
+        "id-match": "Der Release-Name passt nicht zum Titel (z. B. ein Name in einer anderen Sprache), darum wird er nicht automatisch importiert. Folge bzw. Film prüfen, dann importieren.",
+        "no-eligible": "Der Download enthält keine importierbare Datei (keine Videodatei oder nur Extras).",
+        "not-upgrade": "Die Bibliothek hat das schon in gleicher oder besserer Qualität, darum wird es nicht importiert.",
+        sample: "Die Datei ist nur ein Sample (kurzer Ausschnitt), nicht der ganze Film oder die ganze Folge.",
+        unparsable: "Sonarr/Radarr erkennt am Dateinamen nicht, welche Folge oder welcher Film es ist.",
+        "not-in-release": "Der Download enthält eine andere Folge bzw. einen anderen Film als erwartet.",
+        "wrong-film": "Der Download ist ein anderer Film: das Jahr passt nicht.",
+        "dub-only": "Der Download hat keine Tonspur in der Originalsprache (nur synchronisiert).",
+        failed: "Der Download ist fehlgeschlagen (defekt oder unvollständig).",
+        "no-release": "Seit Tagen wurde kein Release gefunden.",
+        removed: "Die Anfrage ist in Seerr noch offen, der Titel fehlt aber in Radarr/Sonarr, darum sucht nichts danach.",
+        unmatched: "Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben (der Titel wurde dort nicht gefunden).",
+        unknown: "Sonarr/Radarr hat diesen Download aus einem Grund angehalten, den diese Seite noch nicht kennt:"
+      },
+      marks: { ok: "✅", warn: "⚠️", bad: "❌", none: "–" },
+      checks: {
+        original: function (x) { return ["Originalsprache" + (x.language ? " (" + x.language + ")" : ""), { ok: "vorhanden", bad: "fehlt, nur synchronisiert", none: "unbekannt" }[x.mark]]; },
+        english: function (x) { return ["Englischer Ton", { ok: "vorhanden", warn: "fehlt", none: "unbekannt" }[x.mark]]; },
+        german: function (x) { return ["Deutscher Ton oder Untertitel", { ok: "vorhanden", none: "keine" }[x.mark]]; },
+        quality: function (x) { return ["Qualität" + (x.quality ? " " + x.quality : ""), { ok: "vom Profil erlaubt", bad: "vom Profil nicht erlaubt", none: "unbekannt" }[x.mark], x.upgrade ? "wird evtl. später auf " + x.upgrade + " verbessert" : ""]; },
+        hdr: function (x) { return [String(x.hdr || "SDR"), { ok: "vom Profil erlaubt", bad: "Dolby Vision ohne HDR-Rückfall: das Profil lehnt das ab", none: "" }[x.mark], x.upgrade ? "wird evtl. später auf 4K HDR verbessert" : ""]; },
+        runtime: function (x) { return ["Laufzeit " + x.minutes + " Min. (erwartet " + x.expected + ")", { ok: "passt", warn: "10–25 % daneben", bad: "mehr als 25 % daneben: falsche Datei, Sample oder Extras?" }[x.mark]]; },
+        size: function (x) { return [gb(x.size) + (x.gbh ? " · " + x.gbh + " GB/h" : ""), x.mark === "warn" ? "sehr gross (über " + x.limit + " GB/h)" : ""]; }
+      },
+      virus: { clean: "Virenscan: sauber", pending: "Virenscan läuft noch", infected: "Virenscan: Schadsoftware gefunden", unknown: "Virenscan: noch nicht geprüft" },
+      noMatch: "Kein Release für diesen Titel gefunden — die Indexer kennen noch keine Version.", olderHint: "Bei einem alten oder seltenen Titel oben «Ältere Versionen erlauben» versuchen.",
+      noneAllowed: "Es gibt Releases, aber keines, das das Profil erlaubt.", notAllowed: function (n) { return n + " weitere, nicht erlaubt — Gründe zeigen"; },
+      releaseReasons: { "cf-score": "Nach unseren Regeln zu tiefe Punktzahl (z. B. falsche Sprache, schlechte Quelle).", "required-terms": "Dem Namen fehlt ein Begriff, den das Profil verlangt (z. B. die Sprache).",
+        quality: "Das Profil erlaubt diese Qualität nicht.", existing: "Die Bibliothek hat schon eine gleich gute oder bessere Version.", seeders: "Zu wenige Seeder.",
+        blocklisted: "Früher gesperrt (fehlgeschlagener oder falscher Download).", size: "Zu gross oder zu klein für das Profil.", "wrong-title": "Ein anderer Titel." },
+      errorCodes: { "search queue full": "Gerade warten zu viele Suchen: in ein paar Minuten nochmals versuchen.", "too many searches": "Du hast schon zwei Suchen in der Warteschlange: diese kann starten, wenn sie fertig sind.",
+        malware: "Schadsoftware gefunden: dieser Download wird nie importiert.", "virus scan pending": "Auf den Virenscan warten (meist ein paar Minuten); ein Admin kann vorher importieren.",
+        "rejected file needs an admin": "Sonarr/Radarr hat diese Datei abgelehnt: nur ein Admin kann sie importieren.", "another title needs an admin": "Ein anderer Titel als der angefragte: nur ein Admin kann ihn zuordnen." },
+      whatsWrong: "Was nicht stimmt", whatToDo: "Was tun", download: "Download", fileLabel: "Dateiname des Downloads:", raw: "Details von Sonarr/Radarr",
+      audio: "Ton", subtitles: "Untertitel", min: "Min.",
+      langs: { por: "Portugiesisch", eng: "Englisch", ger: "Deutsch", deu: "Deutsch", gsw: "Schweizerdeutsch", fre: "Französisch", fra: "Französisch", ita: "Italienisch", spa: "Spanisch", jpn: "Japanisch", kor: "Koreanisch", chi: "Chinesisch", zho: "Chinesisch", rus: "Russisch", dut: "Niederländisch", nld: "Niederländisch", pol: "Polnisch", tur: "Türkisch", swe: "Schwedisch", nor: "Norwegisch", dan: "Dänisch", fin: "Finnisch", hin: "Hindi", ara: "Arabisch" },
       requestedBy: "Angefragt von", nobody: "keine Seerr-Anfrage", since: "Seit", lastSearch: "Letzte Suche", never: "nie", profile: "Profil", release: "Release",
-      years: function (a, b) { return "Release-Jahr " + a + ", Film " + b; }, episodes: function (n) { return n + " Folgen"; },
+      years: function (a, b) { return "Release-Jahr " + a + ", Film " + b; }, episodes: function (n) { return n + (n === 1 ? " Folge" : " Folgen"); },
       readd: "Wieder hinzufügen", del: "Anfrage löschen", delAgain: "Nochmals tippen zum Löschen",
       delWarn: "Löscht nur die Seerr-Anfrage(n) dieses Titels, danach wird nichts mehr dafür heruntergeladen; die Titeldaten in Seerr und allfällige Dateien bleiben.",
       block: "Release sperren und neu suchen", blockAgain: "Nochmals tippen zum Sperren", profile2: function (p) { return "Ältere Versionen erlauben (" + p + ")"; },
-      suggest: "Empfohlen: ein alter Titel, oft nur als DVD oder SD erhältlich.", releases: "Releases zeigen", hideReleases: "Releases ausblenden", loading: "Lädt…", searching: "Sucht in den Indexern… (bis 2 Min.)", season: "Staffel",
+      suggest: "Empfohlen: ein alter Titel, oft nur als DVD oder SD erhältlich.", releases: "Releases zeigen", hideReleases: "Releases ausblenden", loading: "Lädt…", searching: "Sucht in den Indexern… (bis 2 Min.)",
+      queued: function (title) { return title ? "Wartet, bis die Suche für «" + title + "» fertig ist, dann startet diese von selbst." : "Wartet, bis andere Suchen fertig sind, dann startet diese von selbst."; }, season: "Staffel",
       grab: "Herunterladen", noReleases: "Keine Releases gefunden.", pickOne: "Zuerst eines wählen.", rejected: "nicht erlaubt: ", seeders: "Seeder", score: "Punkte",
       lookup: "Suchen", link: "Diesen verwenden", probable: "Am wahrscheinlichsten", inLibrary: "schon in der Bibliothek", noResults: "Nichts gefunden.",
       files: "Dateien zeigen", hideFiles: "Dateien ausblenden", "import": "Importieren", detected: "wie erkannt", noEpisode: "—", needEpisode: "Für jede gewählte Datei eine Folge wählen.",
-      history: "Verlauf", gone: "Hat sich erledigt", fixed: "Behoben: ",
+      history: "Verlauf", gone: "Hat sich von selbst erledigt", imported: "Importiert", found: "Gefunden und heruntergeladen",
+      removedBy: function (u) { return "Von Admin entfernt" + (u ? " (" + u + ")" : ""); }, fixedBy: function (u, a) { return "Behoben von " + (u || "jemandem") + " (" + a + ")"; },
       actions: { readd: "wieder hinzugefügt", "delete": "gelöscht", block: "gesperrt, neu gesucht", profile: "ältere Versionen erlaubt", grab: "Release gewählt", link: "zugeordnet", "import": "importiert", reopened: "wieder da" },
       errors: { 429: "Zu viele Versuche — kurz warten und nochmals versuchen.", 403: "Nicht erlaubt — das kann ein Admin.", 400: "Das passt nicht mehr — Seite neu laden.", 404: "Schon gelöst — Seite neu laden.", other: "Radarr/Sonarr nicht erreichbar — später nochmals versuchen." },
-      ok: "Erledigt: ", working: "Läuft…"
+      ok: "Erledigt: ", working: "Läuft…", problems: function (n) { return n + " Probleme"; }
     }
   };
 
@@ -80,6 +223,8 @@
   function langOf(win, me) {
     var q = /[?&]lang=([a-z]+)/.exec(win.location.search || "");
     if (q) return q[1] === "de" ? "de" : "en";
+    var tv = win.document.querySelector('a[href="/discover/tv"]:not([data-hg-link])');
+    if (tv && /\bSerien\b/.test(tv.textContent)) return "de";
     var locale = me && me.settings && me.settings.locale;
     return typeof locale === "string" && /^de/.test(locale) ? "de" : "en";
   }
@@ -92,7 +237,31 @@
     }, function () { return { status: 0, body: {} }; });
   }
 
-  function errorText(t, status) { return t.errors[status] || t.errors.other; }
+  function errorText(t, status, body) {
+    var code = body && body.error;
+    return (code && t.errorCodes[code]) || t.errors[status] || t.errors.other;
+  }
+
+  // ✅ ⚠️ ❌ – per property, the reason spelled out for warnings and violations
+  function checkList(doc, t, checks) {
+    if (!Array.isArray(checks) || !checks.length) return null;
+    var ul = el(doc, "ul", { "class": "hg-m-checks" });
+    checks.forEach(function (x) {
+      var f = x && t.checks[x.rule], mark = x && t.marks[x.mark] ? x.mark : "none";
+      if (!f) return;
+      var parts = f(x), why = parts[1] || "", info = parts[2] ? el(doc, "span", { "class": "hg-m-info", "data-info": true }, " · " + parts[2]) : null;
+      ul.appendChild(el(doc, "li", { "data-check": x.rule, "data-mark": mark, "class": "hg-m-check-" + mark, title: why }, t.marks[mark] + " " + parts[0] + (why ? ": " + why : ""), info));
+    });
+    return ul;
+  }
+
+  function virusLine(doc, t, v) {
+    if (!v || typeof v !== "object") return null;
+    var icon = { clean: "✅", infected: "❌" }[v.state] || "⏳", text = t.virus[v.state] || t.virus.unknown;
+    if (v.state === "infected" && v.signature) text += " (" + String(v.signature) + ")";
+    if (v.state === "clean" && v.at) text += " (" + when(t, v.at) + ")";
+    return el(doc, "p", { "class": "hg-m-virus hg-m-virus-" + (t.virus[v.state] ? v.state : "unknown"), "data-virus": true }, icon + " " + text);
+  }
 
   function App(win, root) {
     this.win = win; this.doc = win.document; this.root = root; this.t = TEXT.en; this.tab = "open"; this.data = null;
@@ -103,7 +272,7 @@
     return Promise.all([call(this.win, "/api/v1/auth/me"), call(this.win, API + "problems")]).then(function (r) {
       self.t = TEXT[langOf(self.win, r[0].status === 200 ? r[0].body : null)];
       self.doc.documentElement.setAttribute("lang", self.t === TEXT.de ? "de" : "en");
-      self.doc.title = self.t.title + " · Seerr";
+      self.doc.title = self.t.title + " - Seerr";
       self.show(r[1]);
     });
   };
@@ -116,7 +285,6 @@
   App.prototype.show = function (r, flash) {
     var t = this.t, d = this.doc, self = this;
     while (this.root.firstChild) this.root.removeChild(this.root.firstChild);
-    this.root.appendChild(el(d, "a", { href: "/", "class": "hg-m-back" }, t.back));
     this.root.appendChild(el(d, "h1", null, t.title));
     this.root.appendChild(el(d, "p", { "class": "hg-m-intro" }, t.intro));
     if (r.status === 401 || r.status === 403) {
@@ -131,7 +299,7 @@
     if (flash) this.root.appendChild(el(d, "p", { "class": "hg-m-flash", "data-flash": true, role: "status" }, flash));
     var tabs = el(d, "div", { "class": "hg-m-tabs", role: "tablist" });
     ["open", "done"].forEach(function (name) {
-      var b = el(d, "button", { type: "button", role: "tab", "data-tab": name, "aria-selected": String(self.tab === name), "class": self.tab === name ? "hg-m-tab hg-m-on" : "hg-m-tab" }, t[name] + " (" + groups(r.body[name]).length + ")");
+      var b = el(d, "button", { type: "button", role: "tab", "data-tab": name, "aria-selected": String(self.tab === name), "class": self.tab === name ? "hg-m-tab hg-m-on" : "hg-m-tab" }, t[name] + " (" + (r.body[name] || []).length + ")");
       b.addEventListener("click", function () { self.tab = name; self.show(r); });
       tabs.appendChild(b);
     });
@@ -161,6 +329,7 @@
     var title = String(p0.title || p0.key || "") + (p0.year ? " (" + p0.year + ")" : "");
     var link = /^(movie|tv)\/\d+$/.test(g.key) ? el(d, "a", { href: "/" + g.key }, title) : title;
     c.appendChild(el(d, "h2", { "data-title": true }, link));
+    if (g.items.length > 1) c.appendChild(el(d, "p", { "class": "hg-m-count", "data-count": true }, t.problems(g.items.length)));
     var names = [], first = null;
     g.items.forEach(function (p) {
       (p.requesters || []).forEach(function (n) { if (names.indexOf(String(n)) < 0) names.push(String(n)); });
@@ -171,20 +340,72 @@
     return c;
   };
 
+  // a long release name with break points after dots, dashes and underscores (no giant unbroken run on a phone)
+  function breakable(doc, cls, name, attrs) {
+    var s = el(doc, "span", Object.assign({ "class": cls }, attrs || {}));
+    String(name || "").split(/(?<=[._-])/).forEach(function (part, i) {
+      if (i) s.appendChild(doc.createElement("wbr"));
+      s.appendChild(doc.createTextNode(part));
+    });
+    return s;
+  }
+
+  function lang(t, code) { return code ? t.langs[code] || String(code).toUpperCase() : "?"; }
+
+  // "1080p · H.264 · HDR10 · Audio: Portuguese E-AC3 5.1, English AAC 2.0 · Subtitles: Portuguese · 1.6 GB · 45 min"
+  function mediaLine(t, m) {
+    if (!m || typeof m !== "object") return null;
+    var parts = [m.resolution, m.video, m.hdr].filter(Boolean).map(String);
+    if ((m.audio || []).length) parts.push(t.audio + ": " + m.audio.map(function (a) { return [lang(t, a.language), a.codec, a.channels].filter(Boolean).join(" "); }).join(", "));
+    if ((m.subtitles || []).length) parts.push(t.subtitles + ": " + m.subtitles.map(function (x) { return lang(t, x); }).join(", "));
+    if (m.size) parts.push(gb(m.size));
+    if (m.minutes) parts.push(m.minutes + " " + t.min);
+    return parts.join(" · ");
+  }
+
+  var TYPE_REASON = { removed: "removed", unmatched: "unmatched", "no-release": "no-release", "wrong-film": "wrong-film", failed: "failed" };
+
+  App.prototype.section = function (head, attrs) {
+    var d = this.doc, s = el(d, "div", Object.assign({ "class": "hg-m-section" }, attrs || {}));
+    s.appendChild(el(d, "h3", { "class": "hg-m-head" }, head));
+    return s;
+  };
+
   App.prototype.item = function (p, open) {
-    var t = this.t, d = this.doc;
+    var t = this.t, d = this.doc, x = p.details || {};
     var c = el(d, "div", { "class": "hg-m-item", "data-problem": p.id });
     c.appendChild(el(d, "p", { "class": "hg-m-type", "data-type": true }, t.types[p.type] || String(p.type)));
+    var code = x.reason && t.reasons[x.reason] ? x.reason : TYPE_REASON[p.type] || "unknown";
+    var what = this.section(t.whatsWrong, { "data-what": true });
+    what.appendChild(el(d, "p", null, t.reasons[code]));
+    if (code === "unknown" && x.message) what.appendChild(el(d, "p", { "class": "hg-m-quote" }, String(x.message)));
+    c.appendChild(what);
     c.appendChild(this.details(p));
+    if (x.release) {
+      var dl = this.section(t.download, { "data-download": true });
+      dl.appendChild(el(d, "p", { "class": "hg-m-file" }, el(d, "span", { "class": "hg-m-label", "data-file-label": true }, t.fileLabel), breakable(d, "hg-m-filename", x.release, { "data-file-name": true })));
+      var ml = mediaLine(t, x.media);
+      if (ml) dl.appendChild(el(d, "p", { "class": "hg-m-media", "data-media": true }, ml));
+      var vl = virusLine(d, t, x.virus);
+      if (vl) dl.appendChild(vl);
+      var cl = checkList(d, t, x.checks);
+      if (cl) dl.appendChild(cl);
+      c.appendChild(dl);
+    }
+    if (x.message && code !== "unknown") c.appendChild(el(d, "details", { "class": "hg-m-raw", "data-raw": true }, el(d, "summary", null, t.raw), el(d, "p", null, String(x.message))));
     if (open) {
-      c.appendChild(el(d, "p", { "class": "hg-m-hint" }, t.hints[p.type] || ""));
+      var todo = this.section(t.whatToDo, { "data-todo": true });
+      todo.appendChild(el(d, "p", { "class": "hg-m-hint" }, t.hints[p.type] || ""));
+      c.appendChild(todo);
       var acts = el(d, "div", { "class": "hg-m-actions" });
       this.actions(p, acts);
       c.appendChild(acts);
       c.appendChild(el(d, "p", { "class": "hg-m-msg", "data-msg": true, role: "status" }));
     } else {
       var res = p.resolved || {};
-      c.appendChild(el(d, "p", { "class": "hg-m-resolved" }, (res.how === "gone" ? t.gone : t.fixed + (t.actions[res.how] || res.how)) + " · " + when(t, res.at)));
+      var by = (p.actions || []).filter(function (a) { return a.action === res.how; }).pop() || {};
+      var how = res.how === "gone" || res.how === "imported" || res.how === "found" ? t[res.how] : res.how === "delete" ? t.removedBy(by.user ? String(by.user) : null) : t.fixedBy(by.user ? String(by.user) : null, t.actions[res.how] || String(res.how));
+      c.appendChild(el(d, "p", { "class": "hg-m-resolved", "data-resolved": true }, how + " · " + when(t, res.at)));
     }
     if ((p.actions || []).length) {
       var h = el(d, "details", { "class": "hg-m-history", open: !open }, el(d, "summary", null, t.history));
@@ -200,10 +421,8 @@
 
   App.prototype.details = function (p) {
     var t = this.t, d = this.doc, x = p.details || {}, parts = [];
-    if (x.release) parts.push(t.release + ": " + String(x.release));
     if (x.releaseYear && x.year) parts.push(t.years(x.releaseYear, x.year));
     if (x.episodes) parts.push(t.episodes(x.episodes));
-    if (x.message) parts.push(String(x.message));
     if (p.type === "no-release") {
       parts.push(t.lastSearch + ": " + when(t, x.lastSearch));
       if (x.profile) parts.push(t.profile + ": " + String(x.profile));
@@ -251,7 +470,7 @@
     return call(this.win, API + "action", body).then(function (r) {
       if (r.status === 200) return self.reload(t.ok + String((r.body && r.body.result) || ""));
       card.querySelectorAll("button").forEach(function (b) { b.disabled = false; });
-      self.say(card, errorText(t, r.status), true);
+      self.say(card, errorText(t, r.status, r.body), true);
     });
   };
 
@@ -328,23 +547,49 @@
     return l;
   };
 
-  App.prototype.releases = function (card, p, season) {
+  // a search behind others is queued by the backend: ask again every POLL ms until the list is there (5 min at most)
+  App.prototype.releases = function (card, p, season, tries) {
     var self = this, t = this.t, d = this.doc;
     var l = this.list(card);
-    this.say(card, t.searching);
+    if (!tries) this.say(card, t.searching);
     return call(this.win, API + "releases?id=" + encodeURIComponent(p.id) + (season ? "&season=" + encodeURIComponent(season) : "")).then(function (r) {
-      if (r.status !== 200) return self.say(card, errorText(t, r.status), true);
+      if (r.status === 200 && r.body && (r.body.state === "queued" || r.body.state === "running")) {
+        self.say(card, r.body.state === "queued" ? t.queued(r.body.waitingFor ? String(r.body.waitingFor) : null) : t.searching);
+        if ((tries || 0) > 300000 / POLL) { self.say(card, t.errors.other, true); return false; }
+        return new Promise(function (ok) { self.win.setTimeout(ok, POLL); }).then(function () { return self.releases(card, p, season, (tries || 0) + 1); });
+      }
+      if (r.status !== 200) return self.say(card, errorText(t, r.status, r.body), true);
       self.say(card, "");
       var rel = (r.body && r.body.releases) || [];
-      if (!rel.length) { l.appendChild(el(d, "p", null, t.noReleases)); return true; }
-      var ul = el(d, "ul", { "class": "hg-m-rows" });
-      rel.forEach(function (x) {
+      if (!rel.length) {
+        var none = el(d, "p", { "data-no-releases": true }, t.noMatch);
+        if (p.details && p.details.older) none.appendChild(d.createTextNode(" " + t.olderHint));
+        l.appendChild(none);
+        return true;
+      }
+      var row = function (x) {
         var radio = el(d, "input", { type: "radio", name: "release-" + p.id, value: String(x.n), disabled: !!x.rejected });
-        var facts = [x.quality, gb(x.size), (x.languages || []).join(", "), x.protocol === "torrent" && x.seeders != null ? x.seeders + " " + t.seeders : null, x.score != null ? t.score + " " + x.score : null, x.indexer].filter(Boolean).map(String).join(" · ");
-        var why = x.rejected && (x.rejections || []).length ? el(d, "span", { "class": "hg-m-why" }, t.rejected + x.rejections.map(String).join("; ")) : null;
-        ul.appendChild(el(d, "li", { "data-release": true, "class": x.rejected ? "hg-m-rejected" : null }, el(d, "label", null, radio, el(d, "span", { "class": "hg-m-name" }, String(x.title || "")), el(d, "span", { "class": "hg-m-facts" }, facts), why)));
-      });
-      l.appendChild(ul);
+        var facts = [x.quality, gb(x.size), x.gbh ? x.gbh + " GB/h" : null, (x.languages || []).join(", "), x.protocol === "torrent" && x.seeders != null ? x.seeders + " " + t.seeders : null, x.score != null ? t.score + " " + x.score : null, x.indexer].filter(Boolean).map(String).join(" · ");
+        var reasons = (x.rejections || []).map(function (raw, k) { var c = (x.reasons || [])[k]; return c && t.releaseReasons[c] ? t.releaseReasons[c] : String(raw); });
+        var why = x.rejected && reasons.length ? el(d, "span", { "class": "hg-m-why" }, reasons.filter(function (v, k) { return reasons.indexOf(v) === k; }).join(" ")) : null;
+        return el(d, "li", { "data-release": true, "class": x.rejected ? "hg-m-rejected" : null }, el(d, "label", null, radio, breakable(d, "hg-m-name", x.title), el(d, "span", { "class": "hg-m-facts" }, facts), why));
+      };
+      var ok = rel.filter(function (x) { return !x.rejected; }), no = rel.filter(function (x) { return x.rejected; });
+      if (ok.length) {
+        var ul = el(d, "ul", { "class": "hg-m-rows" });
+        ok.forEach(function (x) { ul.appendChild(row(x)); });
+        l.appendChild(ul);
+      } else {
+        l.appendChild(el(d, "p", { "data-no-releases": true }, t.noneAllowed));
+      }
+      if (no.length) {
+        var fold = el(d, "details", { "class": "hg-m-raw", "data-not-allowed": true }, el(d, "summary", null, t.notAllowed(no.length)));
+        var ul2 = el(d, "ul", { "class": "hg-m-rows" });
+        no.forEach(function (x) { ul2.appendChild(row(x)); });
+        fold.appendChild(ul2);
+        l.appendChild(fold);
+      }
+      if (!ok.length) return true;
       var go = self.button("grab", t.grab, "hg-m-primary");
       go.addEventListener("click", function () {
         var c = l.querySelector('input[name="release-' + p.id + '"]:checked');
@@ -361,7 +606,7 @@
     var l = this.list(card);
     this.say(card, t.working);
     return call(this.win, API + "lookup?id=" + encodeURIComponent(p.id) + "&term=" + encodeURIComponent(String(term || "").trim())).then(function (r) {
-      if (r.status !== 200) return self.say(card, errorText(t, r.status), true);
+      if (r.status !== 200) return self.say(card, errorText(t, r.status, r.body), true);
       self.say(card, "");
       var res = (r.body && r.body.results) || [];
       if (!res.length) return l.appendChild(el(d, "p", null, t.noResults));
@@ -391,7 +636,7 @@
     var l = this.list(card);
     this.say(card, t.working);
     return call(this.win, API + "files?id=" + encodeURIComponent(p.id)).then(function (r) {
-      if (r.status !== 200) return self.say(card, errorText(t, r.status), true);
+      if (r.status !== 200) return self.say(card, errorText(t, r.status, r.body), true);
       self.say(card, "");
       var tv = r.body.kind === "tv", eps = r.body.episodes || [], label = {};
       eps.forEach(function (e) { label[e.id] = e.label; });
@@ -399,7 +644,13 @@
       (r.body.files || []).forEach(function (f) {
         var box = el(d, "input", { type: "checkbox", "data-file": String(f.n) });
         box.checked = !!f.probable;
-        var row = el(d, "li", null, el(d, "label", null, box, el(d, "span", { "class": "hg-m-name" }, String(f.name || "")), el(d, "span", { "class": "hg-m-facts" }, [gb(f.size), f.quality].filter(Boolean).map(String).join(" · "))));
+        var row = el(d, "li", null, el(d, "label", null, box, breakable(d, "hg-m-name", f.name), el(d, "span", { "class": "hg-m-facts" }, [gb(f.size), f.quality].filter(Boolean).map(String).join(" · "))));
+        var fm = mediaLine(t, f.media);
+        if (fm) row.appendChild(el(d, "span", { "class": "hg-m-facts hg-m-wide", "data-file-media": true }, fm));
+        var fv = virusLine(d, t, f.virus);
+        if (fv) row.appendChild(fv);
+        var fc = checkList(d, t, f.checks);
+        if (fc) row.appendChild(fc);
         if (tv) {
           var sel = el(d, "select", { "data-episode": String(f.n), "aria-label": String(f.name || "") });
           sel.appendChild(el(d, "option", { value: "" }, t.noEpisode));
@@ -409,7 +660,7 @@
           sel.value = guess;
           row.appendChild(sel);
         }
-        if ((f.rejections || []).length) row.appendChild(el(d, "span", { "class": "hg-m-why" }, f.rejections.map(String).join("; ")));
+        if ((f.rejections || []).length) row.appendChild(el(d, "span", { "class": "hg-m-why" }, f.rejections.map(function (raw, k) { var c = (f.reasons || [])[k]; return c && c !== "unknown" && t.reasons[c] ? t.reasons[c] : String(raw); }).join(" ")));
         ul.appendChild(row);
       });
       l.appendChild(ul);
@@ -433,10 +684,43 @@
     });
   };
 
+  // On /manual: our page as the first child of Seerr's <main> (its 404 hidden by CSS), the same node and state put back when React re-renders; gone again on any other route.
+  var app = null;
+  function sync(win) {
+    var doc = win.document, main = doc.querySelector("main");
+    var here = win.location.pathname.replace(/\/+$/, "") === ROUTE;
+    if (!here) {
+      if (app) { if (app.root.parentNode) app.root.parentNode.removeChild(app.root); app = null; }
+      var m = doc.querySelector("main[data-hg-manual]");
+      if (m) m.removeAttribute("data-hg-manual");
+      return;
+    }
+    if (!main || !win.fetch) return;
+    if (!doc.getElementById("hg-manual-style")) {
+      var st = doc.createElement("style");
+      st.id = "hg-manual-style";
+      st.textContent = CSS;
+      (doc.head || doc.documentElement).appendChild(st);
+    }
+    if (!main.hasAttribute("data-hg-manual")) main.setAttribute("data-hg-manual", "");
+    if (!app) {
+      var root = doc.createElement("div");
+      root.id = "hg-manual";
+      app = new App(win, root);
+      app.start();
+    }
+    if (app.root.parentNode !== main || main.firstChild !== app.root) main.insertBefore(app.root, main.firstChild);
+    var title = app.t.title + " - Seerr";
+    if (app.data && doc.title !== title) doc.title = title;
+  }
+
   if (typeof window === "undefined") return;
-  window.hgManual = { TEXT: TEXT, langOf: langOf };
+  window.hgManual = { TEXT: TEXT, langOf: langOf, setPoll: function (ms) { POLL = ms; } };
   try {
-    var root = document.getElementById("hg-manual");
-    if (root && window.fetch) new App(window, root).start();
-  } catch (e) { /* page stays as it is */ }
+    if (!window.MutationObserver) return;
+    sync(window);
+    new MutationObserver(function () {
+      try { sync(window); } catch (e) { /* never break Seerr */ }
+    }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  } catch (e) { /* never break Seerr */ }
 })();

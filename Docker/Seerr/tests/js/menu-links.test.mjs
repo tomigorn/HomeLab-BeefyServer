@@ -95,17 +95,17 @@ test("Manual interaction: after Audiobooks, opens the page", () => {
   const [m] = manual(w);
   assert.ok(m);
   assert.equal(m.previousElementSibling.getAttribute("data-hg-link"), "audiobooks");
-  assert.equal(m.getAttribute("href"), "/_manual/");
+  assert.equal(m.getAttribute("href"), "/manual");
   assert.equal(m.textContent.trim(), "Manual interaction");
   assert.ok(m.querySelector("path").getAttribute("d").length > 20);
   assert.notEqual(m.querySelector("path").getAttribute("d"), links(w)[0].querySelector("path").getAttribute("d"));
 });
 
-test("German UI: Manuell beheben, page in German", () => {
+test("German UI: Manuell beheben", () => {
   const w = load("menu-links.js", SIDEBAR.replace(">Series</a>", ">Serien</a>"));
   const [m] = manual(w);
   assert.equal(m.textContent.trim(), "Manuell beheben");
-  assert.equal(m.getAttribute("href"), "/_manual/?lang=de");
+  assert.equal(m.getAttribute("href"), "/manual");
 });
 
 test("open problems: count badge on every Manual entry, asked once", async () => {
@@ -146,4 +146,30 @@ test("phone, bar of 4 without a more button: Audiobooks 5th, Manual 6th; a full 
   w = load("menu-links.js", five);
   assert.deepEqual(manual(w).filter((a) => a.classList.contains("flex-col")).length, 1);
   assert.equal(links(w).filter((a) => a.classList.contains("flex-col")).length, 0);
+});
+
+test("on /manual the Manual entry looks active like Seerr's own, elsewhere not", async () => {
+  let w = load("menu-links.js", SIDEBAR + MOBILE, null, "https://requests.example.com/manual");
+  const [side, drawer] = manual(w);
+  assert.equal(side.classList.contains("bg-gradient-to-br"), true);
+  assert.equal(side.classList.contains("hover:bg-gray-700"), false);
+  assert.equal(drawer.classList.contains("text-indigo-500"), true);
+  w.history.pushState({}, "", "/discover/movies");
+  w.document.body.insertAdjacentHTML("beforeend", "<p>x</p>");
+  await settle();
+  assert.equal(manual(w)[0].classList.contains("bg-gradient-to-br"), false);
+  w = load("menu-links.js", SIDEBAR, null, "https://requests.example.com/discover/movies");
+  assert.equal(manual(w)[0].classList.contains("bg-gradient-to-br"), false);
+});
+
+test("a click on the Manual entry navigates inside Seerr when its router is there", () => {
+  const pushed = [];
+  const w = load("menu-links.js", SIDEBAR, (win) => { win.next = { router: { push: (u) => { pushed.push(u); return Promise.resolve(true); } } }; });
+  const ev = new w.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+  manual(w)[0].dispatchEvent(ev);
+  assert.deepEqual(pushed, ["/manual"]);
+  assert.equal(ev.defaultPrevented, true);
+  const plain = new w.MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true });
+  manual(w)[0].dispatchEvent(plain);
+  assert.equal(pushed.length, 1);
 });

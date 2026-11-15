@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { load, tick } from "./fixture.mjs";
 
-const PAGE = `<div id="hg-manual"></div>`;
+// Seerr's layout around its 404 page (an unknown route like /manual), reduced to what the script looks at
+const NOT_FOUND = `<div class="flex h-full min-w-0 min-h-full bg-gray-900"><div class="sidebar"><a href="/discover/tv" class="group flex">Series</a></div>
+<div class="relative mb-16 flex w-0 min-w-0 flex-1 flex-col lg:ml-64"><main class="relative top-16 z-0 focus:outline-none" tabindex="0"><div class="mb-6"><div class="max-w-8xl mx-auto px-4"><div class="error-message" data-seerr-404><p>Oops</p><p>404 - Page Not Found</p><a href="/">Return Home</a></div></div></div></main></div></div>`;
+const PAGE = NOT_FOUND;
 
 function problem(over) {
   return Object.assign({ id: "aaaaaaaaaaaa", type: "removed", key: "movie/10248", title: "The Ring Thing", year: 2004, requesters: ["jane"], details: {},
@@ -26,9 +29,9 @@ function world(routes) {
 
 const ME = { status: 200, body: { id: 7, displayName: "jane", settings: { locale: "" } } };
 
-async function page(routes, url = "https://requests.example.com/_manual/") {
+async function page(routes, url = "https://requests.example.com/manual", body = PAGE) {
   const s = world(Object.assign({ "/api/v1/auth/me": ME }, routes));
-  const w = load("manual.js", PAGE, s.before, url);
+  const w = load("manual.js", body, s.before, url);
   for (let i = 0; i < 10; i++) await tick();
   return { w, calls: s.calls, $: (q) => w.document.querySelector(q), $$: (q) => [...w.document.querySelectorAll(q)] };
 }
@@ -47,16 +50,17 @@ test("open problems with title, type, requesters; tab counts", async () => {
   assert.match($('[data-tab="done"]').textContent, /Done \(1\)/);
 });
 
-test("one card per title: each download inside with its own actions; tabs count titles", async () => {
+test("one card per title: each download inside with its own actions; tabs count problems", async () => {
   const a = problem({ type: "import", key: "tv/312697", title: "Company Retreat", details: { release: "Show.S01E09-GRP", episodes: 1 } });
   const b = problem({ id: "dddddddddddd", type: "import", key: "tv/312697", title: "Company Retreat", requesters: ["joe"], details: { release: "Show.S01E10-GRP", episodes: 1 } });
   const { $, $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [a, b], done: [], admin: false } } });
   assert.equal($$("[data-card]").length, 1);
   assert.equal($$('[data-card="tv/312697"] [data-problem]').length, 2);
-  assert.match($('[data-problem="dddddddddddd"] [data-details]').textContent, /S01E10/);
+  assert.match($('[data-problem="dddddddddddd"] [data-file-name]').textContent, /S01E10/);
   assert.equal($$('[data-card] [data-act="files"]').length, 2);
   assert.match($("[data-requesters]").textContent, /jane, joe/);
-  assert.match($('[data-tab="open"]').textContent, /Open \(1\)/);
+  assert.match($('[data-tab="open"]').textContent, /Open \(2\)/);
+  assert.match($('[data-card="tv/312697"] [data-count]').textContent, /2 problems/);
 });
 
 test("Show files toggles to Hide files, is disabled while loading, opens again", async () => {
@@ -84,6 +88,45 @@ test("Show files toggles to Hide files, is disabled while loading, opens again",
   assert.equal(calls.filter((c) => c.url.startsWith("/_download-now/manual/files")).length, 2);
 });
 
+test("on /manual: inside Seerr's page, Seerr's 404 hidden, a sensible title", async () => {
+  const { w, $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [problem()], done: [], admin: false } } });
+  const main = w.document.querySelector("main");
+  assert.ok(main.querySelector("#hg-manual"));
+  assert.equal(main.hasAttribute("data-hg-manual"), true);
+  assert.equal(w.getComputedStyle(w.document.querySelector("main > .mb-6")).display, "none");
+  assert.notEqual(w.getComputedStyle($("#hg-manual")).display, "none");
+  assert.equal(w.document.title, "Manual interaction - Seerr");
+});
+
+test("other pages: nothing of ours, no data asked", async () => {
+  const { w, calls } = await page({}, "https://requests.example.com/discover/movies");
+  assert.equal(w.document.querySelector("#hg-manual"), null);
+  assert.equal(calls.filter((c) => c.url.startsWith("/_download-now/manual/")).length, 0);
+});
+
+test("Seerr's in-app navigation: in to /manual and out again", async () => {
+  const { w, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [problem()], done: [], admin: false } } }, "https://requests.example.com/discover/movies");
+  w.history.pushState({}, "", "/manual");
+  w.document.querySelector("main .max-w-8xl").insertAdjacentHTML("beforeend", "<p>re-render</p>");
+  await settle();
+  assert.ok(w.document.querySelector("main #hg-manual [data-card]"));
+  w.history.pushState({}, "", "/discover/tv");
+  w.document.querySelector("main .max-w-8xl").insertAdjacentHTML("beforeend", "<p>tv</p>");
+  await settle();
+  assert.equal(w.document.querySelector("#hg-manual"), null);
+  assert.equal(w.document.querySelector("main").hasAttribute("data-hg-manual"), false);
+  assert.equal(calls.filter((c) => c.url.startsWith("/_download-now/manual/problems")).length, 1);
+});
+
+test("React replacing the page content: the UI comes back once, no duplicate", async () => {
+  const { w } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [problem()], done: [], admin: false } } });
+  const main = w.document.querySelector("main");
+  main.innerHTML = '<div class="mb-6"><div class="max-w-8xl"><div data-seerr-404><p>Oops</p></div></div></div>';
+  await settle();
+  assert.equal(w.document.querySelectorAll("#hg-manual").length, 1);
+  assert.ok(w.document.querySelector("#hg-manual [data-card]"));
+});
+
 test("no open problems: a calm empty state", async () => {
   const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [], admin: false } } });
   assert.match($("[data-empty]").textContent, /Nothing needs a hand/);
@@ -96,9 +139,9 @@ test("text from the data is never markup", async () => {
   assert.match($("[data-title]").textContent, /<img src=x/);
 });
 
-test("German: from the menu link's lang=de or the user's Seerr language", async () => {
+test("German: from Seerr's German menu or the user's Seerr language", async () => {
   const body = { status: 200, body: { open: [problem()], done: [], admin: false } };
-  let { $ } = await page({ "/_download-now/manual/problems": body }, "https://requests.example.com/_manual/?lang=de");
+  let { $ } = await page({ "/_download-now/manual/problems": body }, undefined, PAGE.replace(">Series<", ">Serien<"));
   assert.match($("h1").textContent, /Manuell beheben/);
   assert.match($('[data-tab="open"]').textContent, /Offen \(1\)/);
   assert.match($("[data-type]").textContent, /Aus Radarr\/Sonarr entfernt/);
@@ -241,7 +284,7 @@ test("a refused action shows why, nothing breaks", async () => {
 test("Show releases toggles too, German labels", async () => {
   const p = problem({ type: "no-release", details: { lastSearch: null, profile: "x", older: null, old: false, seasons: [] } });
   const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
-    "/_download-now/manual/releases": { status: 200, body: RELEASES } }, "https://requests.example.com/_manual/?lang=de");
+    "/_download-now/manual/releases": { status: 200, body: RELEASES } }, undefined, PAGE.replace(">Series<", ">Serien<"));
   const btn = $('[data-act="releases"]');
   assert.equal(btn.textContent, "Releases zeigen");
   btn.click();
@@ -249,4 +292,185 @@ test("Show releases toggles too, German labels", async () => {
   assert.equal(btn.textContent, "Releases ausblenden");
   btn.click();
   assert.equal(btn.textContent, "Releases zeigen");
+});
+
+const BY_ID = "Found matching series via grab history, but release was matched to series by ID. Automatic import is not possible. See the FAQ for details.";
+const E09 = "Na.Mira.do.Juri.Apresenta.Cenas.dos.Bastidores.de.um.Retiro.Corporativo.S01E09.1080p.AMZN.WEB-DL.DDP5.1.H.264-Full3R";
+const MEDIA = { resolution: "1080p", video: "H.264", hdr: null, audio: [{ language: "por", codec: "E-AC3", channels: "5.1" }, { language: "eng", codec: "AAC", channels: "2.0" }], subtitles: ["por", "eng"], size: 1.59e9, minutes: 45 };
+const e09 = (over) => problem(Object.assign({ type: "import", key: "tv/312697", title: "Jury Duty Presents: Behind the Scenes of Company Retreat", year: 2026,
+  details: { reason: "id-match", release: E09, message: BY_ID, episodes: 1, media: MEDIA } }, over));
+
+test("a problem reads in sections: what's wrong in plain words, what to do, the download with its media, raw details collapsed", async () => {
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [e09()], done: [], admin: false } } });
+  assert.match($("[data-what]").textContent, /release name doesn't match the title/);
+  assert.doesNotMatch($("[data-what]").textContent, /grab history/);
+  assert.ok($("[data-todo]").textContent.length > 10);
+  assert.equal($("[data-file-label]").textContent, "File name of the download:");
+  assert.equal($("[data-file-name]").textContent, E09);
+  assert.ok($("[data-file-name] wbr"));
+  const raw = $("details[data-raw]");
+  assert.equal(raw.open, false);
+  assert.equal(raw.querySelector("summary").textContent, "Details from Sonarr/Radarr");
+  assert.match(raw.textContent, /grab history/);
+  const m = $("[data-media]").textContent;
+  assert.match(m, /1080p · H\.264/);
+  assert.match(m, /Portuguese E-AC3 5\.1/);
+  assert.match(m, /Subtitles: Portuguese, English/);
+  assert.match(m, /1\.6 GB · 45 min/);
+});
+
+test("an unknown arr message: a general sentence with the message itself", async () => {
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [e09({ details: { reason: "unknown", release: E09, message: "Something new happened" } })], done: [], admin: false } } });
+  assert.match($("[data-what]").textContent, /Something new happened/);
+});
+
+test("every reason has a plain sentence in both languages", () => {
+  const w = load("manual.js", "", null, "https://requests.example.com/discover/movies");
+  const { TEXT } = w.hgManual;
+  for (const code of ["id-match", "no-eligible", "not-upgrade", "sample", "unparsable", "not-in-release", "wrong-film", "dub-only", "failed", "no-release", "removed", "unmatched", "unknown"]) {
+    assert.ok(TEXT.en.reasons[code] && TEXT.de.reasons[code], code);
+  }
+  assert.doesNotMatch(JSON.stringify(TEXT.de), /ß/);
+});
+
+test("German: labels and reason in German", async () => {
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [e09()], done: [], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
+  assert.equal($("[data-file-label]").textContent, "Dateiname des Downloads:");
+  assert.equal($("details[data-raw] summary").textContent, "Details von Sonarr/Radarr");
+  assert.match($("[data-what]").textContent, /Release-Name passt nicht/);
+  assert.match($("[data-media]").textContent, /Portugiesisch/);
+});
+
+test("file list: each file with its media and a plain reason for a rejection", async () => {
+  const files = { token: "t", kind: "tv", files: [{ n: 0, name: E09 + ".mkv", size: 1.59e9, episodeIds: [2045], probable: true, rejections: ["Not an upgrade for existing episode file(s)"], reasons: ["not-upgrade"], media: MEDIA }],
+    episodes: [{ id: 2045, label: "S01E09", title: "" }] };
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [e09()], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files } });
+  $('[data-act="files"]').click();
+  await settle();
+  assert.match($("[data-file-media]").textContent, /1080p · H\.264/);
+  assert.match($("[data-list] .hg-m-why").textContent, /already has this/);
+  assert.ok($("[data-list] .hg-m-name wbr"));
+});
+
+const CHECKS = [
+  { rule: "original", mark: "bad", language: "English" },
+  { rule: "german", mark: "none" },
+  { rule: "quality", mark: "ok", quality: "WEBDL-1080p", upgrade: "WEB 2160p" },
+  { rule: "hdr", mark: "ok", hdr: "SDR", upgrade: true },
+  { rule: "runtime", mark: "ok", minutes: 31, expected: 30 },
+  { rule: "size", mark: "none", size: 1.59e9, gbh: 3.1, limit: 20 }];
+
+test("checks against our rules: a mark per property with the reason for warnings and violations", async () => {
+  const p = e09({ details: { reason: "id-match", release: E09, message: BY_ID, episodes: 1, media: MEDIA, checks: CHECKS, virus: { state: "clean", at: "2026-11-15T04:25:00Z", signature: null } } });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } } });
+  const c = (rule) => $(`[data-check="${rule}"]`);
+  assert.equal(c("original").getAttribute("data-mark"), "bad");
+  assert.match(c("original").textContent, /^❌ Original language \(English\): missing/);
+  assert.match(c("german").textContent, /^– German/);
+  assert.match(c("quality").textContent, /^✅ Quality WEBDL-1080p: allowed by the profile/);
+  assert.match(c("quality").querySelector("[data-info]").textContent, /may upgrade to WEB 2160p later/);
+  assert.match(c("hdr").textContent, /^✅ SDR: allowed by the profile/);
+  assert.match(c("hdr").querySelector("[data-info]").textContent, /may upgrade to 4K HDR later/);
+  assert.match(c("runtime").textContent, /^✅ Running time 31 min \(expected 30\)/);
+  assert.match(c("size").textContent, /1\.6 GB · 3\.1 GB\/h/);
+  assert.match($("[data-virus]").textContent, /^✅ Virus scan: clean/);
+});
+
+test("virus scan states in both languages", async () => {
+  const states = [[{ state: "pending" }, /^⏳ Virus scan pending/, /^⏳ Virenscan läuft noch/],
+    [{ state: "infected", signature: "Win.Test.EICAR_HDB-1" }, /^❌ Virus scan: malware found \(Win\.Test\.EICAR_HDB-1\)/, /^❌ Virenscan: Schadsoftware gefunden \(Win\.Test\.EICAR_HDB-1\)/],
+    [{ state: "unknown" }, /^⏳ Virus scan: not scanned yet/, /^⏳ Virenscan: noch nicht geprüft/]];
+  for (const [virus, en, de] of states) {
+    const p = e09({ details: { reason: "id-match", release: E09, message: BY_ID, virus } });
+    let { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } } });
+    assert.match($("[data-virus]").textContent, en);
+    ({ $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<")));
+    assert.match($("[data-virus]").textContent, de);
+  }
+});
+
+test("file list: virus scan and checks per file; a refused import says why", async () => {
+  const files = { token: "t", kind: "tv", files: [{ n: 0, name: E09 + ".mkv", size: 1.59e9, episodeIds: [2045], probable: true, rejections: [], media: MEDIA, checks: CHECKS, virus: { state: "infected", signature: "Win.Test.EICAR_HDB-1" } }],
+    episodes: [{ id: 2045, label: "S01E09", title: "" }] };
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [e09()], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files },
+    "/_download-now/manual/action": { status: 403, body: { error: "malware" } } });
+  $('[data-act="files"]').click();
+  await settle();
+  assert.match($("[data-list] [data-virus]").textContent, /malware found/);
+  assert.ok($('[data-list] [data-check="runtime"]'));
+  $('[data-act="import"]').click();
+  await settle();
+  assert.match($("[data-msg]").textContent, /Malware found/);
+});
+
+test("a release search behind another one waits and arrives by itself", async () => {
+  const p = problem({ id: "eeeeeeeeeeee", title: "The Ring Thing", type: "no-release", details: { reason: "no-release", lastSearch: null, profile: "x", older: null, old: false, seasons: [] } });
+  const answers = [{ status: 200, body: { state: "queued", waitingFor: "Tied Up", ahead: 1, season: null } }, { status: 200, body: { state: "running", ahead: 0, season: null } }, { status: 200, body: Object.assign({ state: "done" }, RELEASES) }];
+  const { w, $, $$, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
+    "/_download-now/manual/releases": () => answers.length > 1 ? answers.shift() : answers[0] });
+  w.hgManual.setPoll(40);
+  $('[data-act="releases"]').click();
+  await settle();
+  assert.match($("[data-msg]").textContent, /Waiting for the search for “Tied Up” to finish, then this starts by itself/);
+  for (let i = 0; i < 100 && !$$('input[name="release-eeeeeeeeeeee"]').length; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal($$('input[name="release-eeeeeeeeeeee"]').length, 2);
+  assert.equal($('[data-act="releases"]').textContent, "Hide releases");
+  assert.equal($("[data-msg]").textContent, "");
+  assert.equal(calls.filter((c) => c.url.startsWith("/_download-now/manual/releases")).length, 3);
+});
+
+test("a full search queue is said as it is, not as too many tries", async () => {
+  const p = problem({ type: "no-release", details: { reason: "no-release", lastSearch: null, profile: "x", older: null, old: false, seasons: [] } });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
+    "/_download-now/manual/releases": { status: 429, body: { error: "search queue full" } } });
+  $('[data-act="releases"]').click();
+  await settle();
+  assert.match($("[data-msg]").textContent, /Too many searches are waiting right now/);
+  assert.doesNotMatch($("[data-msg]").textContent, /Too many tries/);
+  assert.equal($('[data-act="releases"]').textContent, "Show releases");
+});
+
+test("release list: allowed ones to pick, the not allowed ones folded with plain reasons", async () => {
+  const p = problem({ type: "no-release", details: { reason: "no-release", lastSearch: null, profile: "x", older: null, old: false, seasons: [] } });
+  const body = { state: "done", token: "t", dropped: 194, releases: [
+    Object.assign({}, RELEASES.releases[0], { gbh: 13.3 }),
+    Object.assign({}, RELEASES.releases[1], { rejections: ["Custom Formats LQ have score -29997750 below Movie's profile minimum -10000"], reasons: ["cf-score"] })] };
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } }, "/_download-now/manual/releases": { status: 200, body } });
+  $('[data-act="releases"]').click();
+  await settle();
+  const folded = $("details[data-not-allowed]");
+  assert.equal(folded.open, false);
+  assert.equal(folded.querySelector("summary").textContent, "1 more, not allowed — show why");
+  assert.match(folded.textContent, /score by our rules is too low/);
+  assert.doesNotMatch(folded.textContent, /-29997750/);
+  assert.equal($("[data-list] > ul [data-release]").textContent.includes("13.3 GB/h"), true);
+});
+
+test("release list without a match: an honest empty state and the older-versions hint", async () => {
+  const p = problem({ type: "no-release", details: { reason: "no-release", lastSearch: null, profile: "x", older: "4K preferred · older versions allowed", old: true, seasons: [] } });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } },
+    "/_download-now/manual/releases": { status: 200, body: { state: "done", token: "t", dropped: 210, releases: [] } } });
+  $('[data-act="releases"]').click();
+  await settle();
+  assert.match($("[data-no-releases]").textContent, /No release found for this title — the indexers don't know a version yet/);
+  assert.match($("[data-no-releases]").textContent, /Allow older versions/);
+  assert.equal($('[data-act="grab"]'), null);
+});
+
+test("done: how each problem ended, in words", async () => {
+  const d = (id, how, actions) => problem({ id, key: "movie/" + id.length + id[0].charCodeAt(0), resolved: { at: "2026-11-14T03:00:00Z", how }, actions: actions || [] });
+  const done = [d("a00000000001", "gone"), d("b00000000002", "imported"), d("c00000000003", "found"),
+    d("d00000000004", "delete", [{ at: "2026-11-14T03:00:00Z", user: "janedoe", action: "delete", result: "1 Seerr request(s) deleted" }]),
+    d("e00000000005", "readd", [{ at: "2026-11-14T03:00:00Z", user: "jane", action: "readd", result: "added" }])];
+  const { $, $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done, admin: false } } });
+  $('[data-tab="done"]').click();
+  await settle();
+  const how = $$("[data-resolved]").map((x) => x.textContent.split(" · ")[0]);
+  assert.deepEqual(how, ["Went away by itself", "Imported", "Found and downloaded", "Removed by admin (janedoe)", "Fixed by jane (added again)"]);
+});
+
+test("one episode is singular", () => {
+  const w = load("manual.js", "", null, "https://requests.example.com/discover/movies");
+  const { TEXT } = w.hgManual;
+  assert.deepEqual([TEXT.en.episodes(1), TEXT.en.episodes(2), TEXT.de.episodes(1), TEXT.de.episodes(2)], ["1 episode", "2 episodes", "1 Folge", "2 Folgen"]);
 });

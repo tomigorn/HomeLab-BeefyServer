@@ -6,7 +6,7 @@
   // bar: the phone bottom bar takes the entry while it has at most this many links with it
   var LINKS = [
     { id: "audiobooks", label: "Audiobooks", de: "Hörbücher", href: "https://books.holy-grail.ch/", icon: BOOK, bar: 5 },
-    { id: "manual", label: "Manual interaction", de: "Manuell beheben", href: "/_manual/", deHref: "/_manual/?lang=de", icon: WRENCH, bar: 6, count: true }
+    { id: "manual", label: "Manual interaction", de: "Manuell beheben", href: "/manual", route: true, icon: WRENCH, bar: 6, count: true }
   ];
   var COUNT_URL = "/_download-now/manual/count";
   var count = null, asked = 0;
@@ -47,7 +47,8 @@
     if (!old) return null;
     old.parentNode.replaceChild(icon(doc, cls, link.icon), old);
     var any = doc.querySelector('a[href="/discover/tv"]:not([data-hg-link])'), de = !!any && /\bSerien\b/.test(any.textContent), label = de ? link.de : link.label;
-    a.setAttribute("href", de && link.deHref ? link.deHref : link.href);
+    a.setAttribute("href", link.href);
+    if (link.route) a.addEventListener("click", function (ev) { inApp(ev, link.href); });
     a.setAttribute("data-hg-label", label);
     if (text) text.nodeValue = label;
     else a.setAttribute("aria-label", label);
@@ -79,6 +80,33 @@
       }
     }
     paint(doc);
+    mark(doc);
+  }
+
+  // a page of ours inside Seerr (/manual): Seerr's own router, so the layout stays; a full load otherwise
+  function inApp(ev, href) {
+    var w = typeof window !== "undefined" ? window : null, router = w && w.next && w.next.router;
+    if (!router || typeof router.push !== "function" || ev.defaultPrevented || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
+    ev.preventDefault();
+    try { router.push(href); } catch (e) { w.location.href = href; }
+  }
+
+  // our route entries look active on their page, like Seerr's own entries
+  function mark(doc) {
+    var path = (doc.defaultView && doc.defaultView.location.pathname || "").replace(/\/+$/, "");
+    for (var j = 0; j < LINKS.length; j++) {
+      if (!LINKS[j].route) continue;
+      var on = path === LINKS[j].href, all = doc.querySelectorAll('[data-hg-link="' + LINKS[j].id + '"]');
+      for (var i = 0; i < all.length; i++) {
+        var a = all[i], side = a.classList.contains("group");
+        if (side) {
+          if (on && !a.classList.contains("bg-gradient-to-br")) { a.classList.remove("hover:bg-gray-700", "focus:bg-gray-700"); a.classList.add("bg-gradient-to-br", "from-indigo-600", "to-purple-600", "hover:from-indigo-500", "hover:to-purple-500"); }
+          if (!on && a.classList.contains("bg-gradient-to-br")) { ACTIVE.forEach(function (c) { a.classList.remove(c); }); a.classList.add("hover:bg-gray-700", "focus:bg-gray-700"); }
+        } else if (on !== a.classList.contains("text-indigo-500")) {
+          a.classList.toggle("text-indigo-500", on);
+        }
+      }
+    }
   }
 
   // open problems on the Manual entry: a small amber count, nothing at 0 or without an answer
