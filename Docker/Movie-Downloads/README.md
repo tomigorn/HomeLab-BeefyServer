@@ -584,6 +584,8 @@ night at `RECYCLARR_CRON` (04:15, inside the nightly window beefy is woken for).
 **Edit `recyclarr/recyclarr.yml`, not the Radarr UI** — Recyclarr overwrites what
 it manages. API keys: `secrets/recyclarr.yml` (`!secret radarr_api_key` / `sonarr_api_key`, "Secrets"). Own custom formats (Swiss German, resolution, `Bad Group: BlackBit`, `Bad Group: Vyndros`, `Bad Group: CSWEB`): `recyclarr/custom-formats/radarr/*.json` and `…/sonarr/*.json` (same patterns, own ids; Sonarr has no `Resolution: DVD`, its DVD quality is 480p and counts as SD), loaded through `recyclarr/settings.yml` (local resource provider); both are mounted into the container.
 
+Quality sizes: TRaSH's tables (Radarr `movie`, Sonarr `series`), except Sonarr **Bluray-1080p minimum 15 MB/min** (TRaSH 50.4): Sonarr 4 has one size table for all profiles, and the series minimum rejected normal anime Blu-ray encodes (x265 10-bit, ~18 MB/min), so only bloated packs passed (2026-11-15: a 48 GB Eminence S2 torrent instead of a 5.4 GB pack). 15 = the WEB 1080p floor; Bluray-1080p is only allowed in the anime and older-versions profiles. Test `QualitySizes` in `tests/test_scoring_order.py`.
+
 ```bash
 docker compose run --rm recyclarr sync --preview   # what would change
 docker compose run --rm recyclarr sync             # apply now

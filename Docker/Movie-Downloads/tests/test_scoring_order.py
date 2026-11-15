@@ -986,6 +986,19 @@ class AnimeQualities(unittest.TestCase):
                     self.assertFalse([q for q in self.qualities(app, PROFILES[app][kind])[1] if "Remux" in q])
 
 
+class QualitySizes(unittest.TestCase):
+    """2026-11-15: TRaSH's series minimum for Bluray-1080p (50.4 MB/min) rejected normal anime Blu-ray encodes (x265 10-bit, ~18 MB/min),
+    so only bloated packs passed. Sonarr 4 has one size table for all profiles: Bluray-1080p gets the WEB 1080p floor (15)."""
+
+    def test_sonarr_bluray_1080p_minimum_fits_anime_encodes(self):
+        qd = CFG["sonarr"]["series"]["quality_definition"]
+        self.assertEqual(qd["type"], "series")
+        sizes = {q["name"]: q for q in qd.get("qualities") or []}
+        self.assertEqual(sizes["Bluray-1080p"]["min"], 15)
+        season_pack_mb, minutes = 5.4e3, 12 * 24
+        self.assertGreaterEqual(season_pack_mb / minutes, sizes["Bluray-1080p"]["min"], "the 5.4 GB anime BD season pack must pass")
+
+
 class SwissGerman(unittest.TestCase):
     def test_g_swiss_profile_unchanged(self):
         for app in PROFILES:
