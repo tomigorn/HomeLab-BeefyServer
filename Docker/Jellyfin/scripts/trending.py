@@ -504,6 +504,8 @@ class Collections:
     def __init__(self, io, state, admin, images, dry_run, log, save):
         self.io, self.state, self.admin, self.images, self.dry_run, self.log, self.save = io, state, admin, images, dry_run, log, save
         self.changed = 0
+        # lists.json carries a "user" key: only then may a gone own list's BoxSet be deleted
+        self.user_known = True
 
     def own_untagged(self, sid, spec):
         """A BoxSet this script created (its id is in the state file) whose tag update failed: same name, still there."""
@@ -555,6 +557,8 @@ class Collections:
     def drop_gone(self, collections, tagged, sets, arts):
         """BoxSets of own lists that are gone: deleted when they still carry both tags (never another collection); their state entry dropped either way."""
         wanted, gone = {spec["key"] for spec, _ in collections}, set()
+        if not self.user_known:
+            return gone
         for key, sid in list(sets.items()):
             if not key.startswith("user-") or key in wanted:
                 continue
@@ -879,6 +883,7 @@ def sync(io, paths, now, dry_run, log):
             log(f"sort title not applied: {folder}")
 
     cols = Collections(io, state, admin_id(io), images, dry_run, log, save)
+    cols.user_known = isinstance(lists.get("user"), list)
 
     def member_id(m):
         kind, ref = m

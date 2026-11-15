@@ -1064,6 +1064,14 @@ class UserCollections(Base):
         hide = next(x for x in self.io.injector["CustomJavaScripts"] if x["Name"] == tr.NAME)["Script"]
         self.assertNotIn(sid, hide)
 
+    def test_lists_json_without_the_user_key_deletes_nothing(self):
+        self.with_user({"id": "user-pat", "kind": "mixed", "type": "user", "name": {"en": "Pat produced"}, "owner": "jane", "query": "q", "items": [entry(1, 1, "Alpha")]})
+        self.assertEqual(self.run_sync(), 0, self.out)
+        sid = self.user_set("Pat produced")["Id"]
+        self.write_feeds(*feeds())
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertIn(sid, self.io.sets)
+
     def test_an_untagged_or_automatic_collection_is_never_deleted(self):
         self.with_user({"id": "user-pat", "kind": "mixed", "type": "user", "name": {"en": "Pat produced"}, "owner": "jane", "query": "q", "items": [entry(1, 1, "Alpha")]})
         self.assertEqual(self.run_sync(), 0, self.out)
