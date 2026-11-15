@@ -276,6 +276,7 @@ test("a plain Seerr tooltip (no hint of ours) is pinned below its pill and stays
   assert.equal(seerr.__hgTipFor, w.document.getElementById("pill"));
   assert.equal(seerr.querySelector("[data-hg-tip-merged]"), null, "nothing merged");
   assert.ok(seerr.hasAttribute("data-hg-tip-pin"));
+  assert.match(w.document.getElementById("hg-tip-style")?.textContent ?? "", /\[data-hg-tip-pin\]\{position:fixed !important/, "the pin rule is on the page without any hint of ours");
   assert.equal(seerr.getAttribute("data-side"), "below");
   assert.deepEqual(pos(seerr), ["400px", "326px"]);
   popper(w, seerr, 610, 280);

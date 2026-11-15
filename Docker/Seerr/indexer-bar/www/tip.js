@@ -158,6 +158,7 @@
   }
 
   function adopt(doc, h, el) {
+    style(doc);
     host = h;
     h.__hgTipFor = el;
     watch(doc, h);
