@@ -162,6 +162,56 @@ class HookTest(unittest.TestCase):
     def worker(self, **env):
         return self.run_hook("--worker", "--once", QUEUE=self.queue, **env)
 
+    def results(self):
+        p = os.path.join(self.textfile, "clamav-results.jsonl")
+        if not os.path.exists(p):
+            return []
+        with open(p) as f:
+            return [json.loads(l) for l in f if l.strip()]
+
+    def test_results_log_has_a_line_per_synchronously_scanned_file(self):
+        good = self.write("info.exe", b"clean bytes")
+        bad = self.write("setup.exe", EICAR)
+        self.sab()
+        got = {r["path"]: (r["verdict"], r["signature"], r["mode"]) for r in self.results()}
+        self.assertEqual(got, {good: ("clean", None, "hook"), bad: ("infected", SIG, "hook")})
+        self.assertTrue(all(r["at"].endswith("Z") and r["size"] for r in self.results()))
+
+    def test_results_log_marks_queued_media_and_the_workers_verdict(self):
+        mkv = self.write("movie.mkv", b"clean video")
+        self.queued()
+        self.assertEqual([(r["path"], r["verdict"]) for r in self.results()], [(mkv, "queued")])
+        self.worker()
+        self.assertEqual([(r["path"], r["verdict"], r["mode"]) for r in self.results()][-1], (mkv, "clean", "queue"))
+
+    def test_results_log_has_the_workers_hit_under_the_original_path(self):
+        mkv = self.write("movie.mkv", EICAR)
+        self.queued()
+        self.worker()
+        last = self.results()[-1]
+        self.assertEqual((last["path"], last["verdict"], last["signature"]), (mkv, "infected", SIG))
+
+    def test_results_log_marks_files_too_big_to_scan(self):
+        big = self.write("movie.mkv", b"x" * 64)
+        self.sab(HOOK_MAX_BYTES="10")
+        self.assertEqual([(r["path"], r["verdict"]) for r in self.results()], [(big, "skipped")])
+
+    def test_unwritable_results_log_changes_nothing_else(self):
+        os.makedirs(os.path.join(self.textfile, "clamav-results.jsonl"))
+        bad = self.write("setup.exe", EICAR)
+        r = self.sab()
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertFalse(os.path.exists(bad))
+
+    def test_results_log_is_rotated_when_big(self):
+        p = os.path.join(self.textfile, "clamav-results.jsonl")
+        with open(p, "w") as f:
+            f.write("x" * 100)
+        self.write("info.exe", b"clean bytes")
+        self.sab(RESULTS_MAX_BYTES="50")
+        self.assertTrue(os.path.exists(p + ".1"))
+        self.assertEqual(len(self.results()), 1)
+
     def test_clean_job_exits_0_and_keeps_files(self):
         p = self.write("movie.mkv", b"clean video bytes")
         r = self.sab()

@@ -76,6 +76,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | Everything else (exe, scripts, archives, multi-part, unknown or no extension) | scanned synchronously, as before |
 | Queue missing or link fails | scanned synchronously |
 
+- Results log: `/var/lib/clamav-scan/textfile/clamav-results.jsonl` (`/clamav` in the clients, `TEXTFILE` in the worker), one JSON line per file and verdict: `at`, `path` (as the apps see it), `size`, `verdict` (`clean`, `infected`, `queued`, `skipped` = over 2 GiB, `error`), `signature`, `mode` (`hook`/`queue`); over 5 MiB it moves to `.1` (`RESULTS_MAX_BYTES`). Seerr's Manual interaction reads it read-only (malware never imported, unscanned files only by admins); a write failure never stops a scan.
 - Hit (synchronous): file moved to `/data/quarantine` (name clash: `.001` suffix, as clamscan does), line in `index.txt`, exit 1. SABnzbd marks the job failed, so Radarr/Sonarr never import it and handle it as a failed download. qBittorrent: the torrent is stopped and tagged `infected`.
 - clamd unreachable (it waits 2 min, e.g. right after boot): exit 0, job goes through, `clamav_scan_errors{mode="hook"}` > 0; the nightly scan covers the files.
 - qBittorrent ignores the exit code and Radarr may import a small torrent before a synchronous scan ends; the nightly scan sees the hardlinked library file (new ctime) and quarantines it.

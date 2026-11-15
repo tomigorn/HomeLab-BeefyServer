@@ -39,6 +39,7 @@ POLL = float(os.environ.get("QUEUE_POLL", "5"))
 STALE_TMP = float(os.environ.get("QUEUE_STALE_TMP", "3600"))
 # Touched before every file; the container healthcheck reads its age.
 HEARTBEAT = os.environ.get("HEARTBEAT", "/tmp/clamav-queue-alive")
+RESULTS_MAX_BYTES = int(os.environ.get("RESULTS_MAX_BYTES", str(5 * 1024 * 1024)))
 CHUNK = 1 << 20
 
 MEDIA_EXT = {
@@ -143,6 +144,27 @@ def append_line(path, line):
         os.write(fd, line.encode())
     finally:
         os.close(fd)
+
+
+def record(path, verdict, mode, sig=None, size=None):
+    """One JSON line per file and verdict (clean, infected, queued, skipped, error) in TEXTFILE/clamav-results.jsonl, the path as the apps see it; Seerr's Manual interaction page reads it. Never stops a scan."""
+    out = os.path.join(TEXTFILE, "clamav-results.jsonl")
+    try:
+        if size is None:
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = None
+        try:
+            if os.path.getsize(out) > RESULTS_MAX_BYTES:
+                os.replace(out, out + ".1")
+        except FileNotFoundError:
+            pass
+        line = {"at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "path": path, "size": size,
+                "verdict": verdict, "signature": sig, "mode": mode}
+        append_line(out, json.dumps(line) + "\n")
+    except OSError as e:
+        print("results log not written (%s): %s %s" % (e, verdict, path))
 
 
 def quarantine(path, sig, where=None, mode="hook", title=""):
@@ -275,6 +297,7 @@ def enqueue(files, title, torrent_hash):
         try:
             os.link(p, os.path.join(tmp, link))
             entries.append({"link": link, "path": p})
+            record(p, "queued", "hook")
         except OSError as e:
             print("not queued (%s): %s" % (e, p))
             left.append(p)
@@ -313,6 +336,7 @@ def main(argv):
         try:
             if os.path.getsize(p) > MAX_BYTES:
                 skipped += 1
+                record(p, "skipped", "hook")
                 continue
         except OSError as e:
             errors += 1
@@ -324,15 +348,18 @@ def main(argv):
     sync += left
 
     for p in sync:
+        size = os.path.getsize(p) if os.path.exists(p) else None
         try:
             sig = instream(p)
             scanned += 1
         except (ScanError, OSError) as e:
             errors += 1
+            record(p, "error", "hook", size=size)
             print("ERROR: %s" % e)
             if isinstance(e, Unreachable):
                 break
             continue
+        record(p, "infected" if sig else "clean", "hook", sig or None, size)
         if sig:
             quarantine(p, sig, mode="hook", title=title)
             hits.append((p, sig))
@@ -457,6 +484,7 @@ def process_job(jobdir):
             os.unlink(link)
             continue
         scanned += 1
+        record(orig, "infected" if sig else "clean", "queue", sig or None, os.path.getsize(link) if os.path.exists(link) else None)
         if sig:
             hits += 1
             try:
