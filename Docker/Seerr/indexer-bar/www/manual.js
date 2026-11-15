@@ -134,12 +134,18 @@
       block: "Block this release and search again", blockAgain: "Tap again to block it", profile2: function (p) { return "Allow older versions (" + p + ")"; },
       suggest: "Suggested: an old title, often only out as DVD or SD.", releases: "Show releases", hideReleases: "Hide releases", loading: "Loading…", searching: "Searching the indexers… (up to 2 min)",
       queued: function (title) { return title ? "Waiting for the search for “" + title + "” to finish, then this starts by itself." : "Waiting for other searches to finish, then this starts by itself."; }, season: "Season",
+      override: "Download anyway", overrideHint: "Nothing found for a week: anyone may download a not allowed release anyway. A version the profile allows replaces it as soon as one turns up (searched every night).",
+      overriddenBy: function (u) { return "Downloaded anyway by " + (u || "someone"); },
+      overrideState: { waiting: "⬇️ Downloading anyway (0 seeders — waits for a seeder, checked every night for a better version)", seeded: function (n) { return "⬇️ Downloading anyway (" + n + " seeders — checked every night for a better version)"; },
+        downloading: "⬇️ Downloading anyway (checked every night for a better version)", finished: "✅ Downloaded anyway — checked every night for a better version",
+        replacing: "🔄 A version the profile allows was found — it downloads instead", replaced: "✅ Replaced by a version the profile allows" },
       grab: "Download", noReleases: "No releases found.", pickOne: "Pick one first.", rejected: "not allowed: ", seeders: "seeders", score: "score",
       lookup: "Search", link: "Use this one", probable: "Most likely", inLibrary: "already in the library", noResults: "Nothing found.",
       files: "Check files to finish importing", hideFiles: "Hide files", "import": "Import", detected: "as detected", noEpisode: "—", needEpisode: "Pick an episode for every checked file.",
       history: "What happened", gone: "Went away by itself", imported: "Imported", found: "Found and downloaded",
       removedBy: function (u) { return "Removed by admin" + (u ? " (" + u + ")" : ""); }, fixedBy: function (u, a) { return "Fixed by " + (u || "someone") + " (" + a + ")"; },
-      actions: { readd: "added again", "delete": "deleted", block: "blocked, searched again", profile: "older versions allowed", grab: "release picked", link: "matched", "import": "imported", reopened: "back again" },
+      actions: { readd: "added again", "delete": "deleted", block: "blocked, searched again", profile: "older versions allowed", grab: "release picked", link: "matched", "import": "imported", reopened: "back again",
+        override: "downloaded anyway", "override-downloading": "downloading", "override-finished": "download finished", "override-replacing": "better version found", "override-replaced": "replaced by a version the profile allows" },
       errors: { 429: "Too many tries — wait a moment and try again.", 403: "Not allowed — an admin can do this.", 400: "That does not fit any more — reload the page.", 404: "Already solved — reload the page.", other: "Radarr/Sonarr not reachable — try again later." },
       ok: "Done: ", working: "Working…", problems: function (n) { return n + " problems"; }
     },
@@ -207,12 +213,18 @@
       block: "Release sperren und neu suchen", blockAgain: "Nochmals tippen zum Sperren", profile2: function (p) { return "Ältere Versionen erlauben (" + p + ")"; },
       suggest: "Empfohlen: ein alter Titel, oft nur als DVD oder SD erhältlich.", releases: "Releases zeigen", hideReleases: "Releases ausblenden", loading: "Lädt…", searching: "Sucht in den Indexern… (bis 2 Min.)",
       queued: function (title) { return title ? "Wartet, bis die Suche für «" + title + "» fertig ist, dann startet diese von selbst." : "Wartet, bis andere Suchen fertig sind, dann startet diese von selbst."; }, season: "Staffel",
+      override: "Trotzdem herunterladen", overrideHint: "Seit einer Woche nichts gefunden: alle dürfen ein nicht erlaubtes Release trotzdem herunterladen. Eine vom Profil erlaubte Version ersetzt es, sobald es eine gibt (jede Nacht gesucht).",
+      overriddenBy: function (u) { return "Trotzdem heruntergeladen von " + (u || "jemandem"); },
+      overrideState: { waiting: "⬇️ Wird trotzdem heruntergeladen (0 Seeder — wartet auf einen Seeder, jede Nacht wird nach einer besseren Version gesucht)", seeded: function (n) { return "⬇️ Wird trotzdem heruntergeladen (" + n + " Seeder — jede Nacht wird nach einer besseren Version gesucht)"; },
+        downloading: "⬇️ Wird trotzdem heruntergeladen (jede Nacht wird nach einer besseren Version gesucht)", finished: "✅ Trotzdem heruntergeladen — jede Nacht wird nach einer besseren Version gesucht",
+        replacing: "🔄 Eine vom Profil erlaubte Version wurde gefunden — sie wird stattdessen heruntergeladen", replaced: "✅ Ersetzt durch eine vom Profil erlaubte Version" },
       grab: "Herunterladen", noReleases: "Keine Releases gefunden.", pickOne: "Zuerst eines wählen.", rejected: "nicht erlaubt: ", seeders: "Seeder", score: "Punkte",
       lookup: "Suchen", link: "Diesen verwenden", probable: "Am wahrscheinlichsten", inLibrary: "schon in der Bibliothek", noResults: "Nichts gefunden.",
       files: "Dateien prüfen und Import abschliessen", hideFiles: "Dateien ausblenden", "import": "Importieren", detected: "wie erkannt", noEpisode: "—", needEpisode: "Für jede gewählte Datei eine Folge wählen.",
       history: "Verlauf", gone: "Hat sich von selbst erledigt", imported: "Importiert", found: "Gefunden und heruntergeladen",
       removedBy: function (u) { return "Von Admin entfernt" + (u ? " (" + u + ")" : ""); }, fixedBy: function (u, a) { return "Behoben von " + (u || "jemandem") + " (" + a + ")"; },
-      actions: { readd: "wieder hinzugefügt", "delete": "gelöscht", block: "gesperrt, neu gesucht", profile: "ältere Versionen erlaubt", grab: "Release gewählt", link: "zugeordnet", "import": "importiert", reopened: "wieder da" },
+      actions: { readd: "wieder hinzugefügt", "delete": "gelöscht", block: "gesperrt, neu gesucht", profile: "ältere Versionen erlaubt", grab: "Release gewählt", link: "zugeordnet", "import": "importiert", reopened: "wieder da",
+        override: "trotzdem heruntergeladen", "override-downloading": "lädt herunter", "override-finished": "Download fertig", "override-replacing": "bessere Version gefunden", "override-replaced": "ersetzt durch eine vom Profil erlaubte Version" },
       errors: { 429: "Zu viele Versuche — kurz warten und nochmals versuchen.", 403: "Nicht erlaubt — das kann ein Admin.", 400: "Das passt nicht mehr — Seite neu laden.", 404: "Schon gelöst — Seite neu laden.", other: "Radarr/Sonarr nicht erreichbar — später nochmals versuchen." },
       ok: "Erledigt: ", working: "Läuft…", problems: function (n) { return n + " Probleme"; }
     }
@@ -234,6 +246,14 @@
     var d = new Date(iso);
     if (isNaN(d.getTime())) return String(iso);
     try { return d.toLocaleString(t.locale, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); } catch (e) { return String(iso); }
+  }
+
+  function overrideState(t, o) {
+    var s = t.overrideState;
+    if (o.state === "finished" || o.state === "replacing" || o.state === "replaced") return s[o.state];
+    var n = o.seeds != null ? o.seeds : o.seeders;
+    if (o.protocol !== "torrent" || n == null) return s.downloading;
+    return Number(n) > 0 ? s.seeded(Number(n)) : s.waiting;
   }
 
   function gb(n) { return (Number(n || 0) / 1e9).toFixed(1) + " GB"; }
@@ -453,9 +473,11 @@
     } else {
       var res = p.resolved || {};
       var by = (p.actions || []).filter(function (a) { return a.action === res.how; }).pop() || {};
-      var how = res.how === "gone" || res.how === "imported" || res.how === "found" ? t[res.how] : res.how === "delete" ? t.removedBy(by.user ? String(by.user) : null) : t.fixedBy(by.user ? String(by.user) : null, t.actions[res.how] || String(res.how));
+      var how = res.how === "gone" || res.how === "imported" || res.how === "found" ? t[res.how] : res.how === "delete" ? t.removedBy(by.user ? String(by.user) : null)
+        : res.how === "override" ? t.overriddenBy(by.user ? String(by.user) : null) : t.fixedBy(by.user ? String(by.user) : null, t.actions[res.how] || String(res.how));
       c.appendChild(el(d, "p", { "class": "hg-m-resolved", "data-resolved": true }, how + " · " + when(t, res.at)));
     }
+    if (p.override && typeof p.override === "object") c.appendChild(el(d, "p", { "class": "hg-m-media", "data-override": true }, overrideState(t, p.override)));
     if ((p.actions || []).length) {
       var h = el(d, "details", { "class": "hg-m-history", open: !open }, el(d, "summary", null, t.history));
       var ul = el(d, "ul");
@@ -628,7 +650,12 @@
           extra.appendChild(el(d, "a", { href: x.link, target: "_blank", rel: "noopener noreferrer", "data-details-link": true }, t.detailsLink));
           if (x.private) extra.appendChild(d.createTextNode(" · " + t.account));
         }
-        return el(d, "li", { "data-release": true, "class": x.rejected ? "hg-m-rejected" : null }, el(d, "label", null, radio, breakable(d, "hg-m-name", x.title), el(d, "span", { "class": "hg-m-facts" }, facts), why), extra, scoutBlock(x));
+        var anyway = null;
+        if (x.rejected && r.body.override) {
+          anyway = self.button("override", t.override);
+          anyway.addEventListener("click", function () { self.act(card, p, { action: "override", release: x.n, token: r.body.token }); });
+        }
+        return el(d, "li", { "data-release": true, "class": x.rejected && !anyway ? "hg-m-rejected" : null }, el(d, "label", null, radio, breakable(d, "hg-m-name", x.title), el(d, "span", { "class": "hg-m-facts" }, facts), why), extra, scoutBlock(x), anyway);
       };
       // what the NFO / description scout read, or the button to have it read now (beefy-side, within the scouts' limits)
       var scoutBlock = function (x) {
@@ -671,7 +698,8 @@
         l.appendChild(el(d, "p", { "data-no-releases": true }, t.noneAllowed));
       }
       if (no.length) {
-        var fold = el(d, "details", { "class": "hg-m-raw", "data-not-allowed": true }, el(d, "summary", null, t.notAllowed(no.length)));
+        var fold = el(d, "details", { "class": "hg-m-raw", "data-not-allowed": true, open: !!r.body.override }, el(d, "summary", null, t.notAllowed(no.length)));
+        if (r.body.override) fold.appendChild(el(d, "p", { "class": "hg-m-hint", "data-override-hint": true }, t.overrideHint));
         var ul2 = el(d, "ul", { "class": "hg-m-rows" });
         no.forEach(function (x) { ul2.appendChild(row(x)); });
         fold.appendChild(ul2);
@@ -815,7 +843,7 @@
   }
 
   if (typeof window === "undefined") return;
-  window.hgManual = { TEXT: TEXT, langOf: langOf, setPoll: function (ms) { POLL = ms; } };
+  window.hgManual = { TEXT: TEXT, langOf: langOf, overrideState: overrideState, setPoll: function (ms) { POLL = ms; } };
   try {
     if (!window.MutationObserver) return;
     sync(window);

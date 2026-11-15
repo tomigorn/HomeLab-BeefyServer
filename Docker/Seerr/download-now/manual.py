@@ -30,6 +30,13 @@ SLOTS = threading.BoundedSemaphore(4)
 DAY = 86400
 KEEP_DAYS = 180
 NO_RELEASE_DAYS = 3
+OVERRIDE_DAYS = 7
+OVERRIDE_TAG = "override"
+NIGHT_CHECK = (4 * 60, 4 * 60 + 40)
+LOCAL = time.localtime
+OVERRIDE_SETTLE = 1800
+# rejections caused only by the override download itself (in the queue or as the file): the release is fine for the profile on its own
+SELF_CAUSED = re.compile(r"\bqueue\b|existing (movie |episode )?file|not an upgrade|meets cutoff", re.I)
 OLD_YEARS = 12
 STALE = 600
 SCAN_TTL = 60
@@ -54,8 +61,8 @@ DECLINED, FAILED_REQUEST = 3, 4
 PROBLEM_STATES = {"importBlocked", "importFailed", "failedPending", "failed"}
 FAILED_STATES = {"failedPending", "failed"}
 PID = re.compile(r"^[0-9a-f]{12}$")
-ACTIONS = {"unmatched": {"link"}, "import": {"import"}, "wrong-film": {"block"}, "failed": {"block"}, "no-release": {"profile", "grab"}, "removed": {"readd", "delete"}}
-RESOLVING = {"link", "import", "block", "grab", "readd", "delete"}
+ACTIONS = {"unmatched": {"link"}, "import": {"import"}, "wrong-film": {"block"}, "failed": {"block"}, "no-release": {"profile", "grab", "override"}, "removed": {"readd", "delete"}}
+RESOLVING = {"link", "import", "block", "grab", "override", "readd", "delete"}
 OLDER = "older versions allowed"
 DEFAULT_OLDER = "4K preferred · older versions allowed"
 # Radarr/Sonarr status messages → a reason code the page words in EN/DE (first match wins)
@@ -537,7 +544,7 @@ def scan(dn, deps, known):
         if b is None or key in unreleased or not rq or None in created or now - min(created) < NO_RELEASE_DAYS * DAY:
             continue
         title, year = title_of(key)
-        details = {"reason": "no-release", "lastSearch": last, "profile": None, "older": None, "old": False, "seasons": b["seasons"]}
+        details = {"reason": "no-release", "lastSearch": last, "profile": None, "older": None, "old": False, "seasons": b["seasons"], "overrideFrom": ts(min(created) + OVERRIDE_DAYS * DAY)}
         try:
             t = dn.find_title(b["kind"], arr(b["app"]), {"mediaInfo": b["media"]}, b["tmdb"])
             if t:
@@ -559,6 +566,7 @@ def scan(dn, deps, known):
         if not isinstance(q, dict) or not isinstance(q.get("records"), list):
             complete = False
             continue
+        CACHE[("queue", app)] = [r for r in q["records"] if isinstance(r, dict)]
         groups = {}
         for r in q["records"]:
             if not isinstance(r, dict) or not (r.get("trackedDownloadState") in PROBLEM_STATES or r.get("trackedDownloadStatus") == "error" or r.get("status") == "failed"):
@@ -676,8 +684,49 @@ def merge(records, found, complete, now):
         if complete and r.get("resolved") is None and pid not in found:
             r["resolved"] = {"at": ts(now), "how": GONE.get(r.get("type"), "gone")}
         res = r.get("resolved")
-        if res and now - (epoch(res.get("at")) or now) > KEEP_DAYS * DAY:
+        if res and now - (epoch(res.get("at")) or now) > KEEP_DAYS * DAY and not open_override(r):
             del records[pid]
+
+
+def open_override(r):
+    o = r.get("override") if isinstance(r, dict) else None
+    return isinstance(o, dict) and o.get("state") != "replaced"
+
+
+def seeds_of(deps, ids):
+    """Swarm seeds per torrent hash from qBittorrent (None when unreadable)."""
+    if not ids or not getattr(deps, "qbit", None):
+        return {}
+    try:
+        got = deps.qbit("/torrents/info?hashes=" + "|".join(ids))
+    except Exception:
+        return {}
+    return {str(t.get("hash")).lower(): max(t.get("num_seeds") or 0, t.get("num_complete") or 0) for t in got if isinstance(t, dict)} if isinstance(got, list) else {}
+
+
+def track(deps, records, now):
+    """Where each override download stands: its download ids learned from the queue, downloading (with seeds), or finished."""
+    for r in records.values():
+        if not open_override(r):
+            continue
+        o = r["override"]
+        queue = CACHE.get(("queue", o.get("app")))
+        if queue is None:
+            continue
+        ids = set(o.get("downloadIds") or [])
+        own = [q for q in queue if q.get("movieId" if o.get("kind") == "movie" else "seriesId") == o.get("arrId") and q.get("downloadId")
+               and (str(q["downloadId"]).lower() in ids or not ids and str(q.get("title") or "").lower() == str(o.get("release") or "").lower())]
+        if own:
+            o["downloadIds"] = sorted(ids | {str(q["downloadId"]).lower() for q in own})
+            o["episodeIds"] = sorted(set(o.get("episodeIds") or []) | {q["episodeId"] for q in own if is_int(q.get("episodeId"))})
+            if o.get("state") in ("grabbed", "downloading", "finished"):
+                o["state"] = "downloading"
+            if o.get("protocol") == "torrent":
+                seeds = seeds_of(deps, o["downloadIds"])
+                if seeds:
+                    o["seeds"] = max(seeds.values())
+        elif o.get("state") == "downloading" or o.get("state") == "grabbed" and now - (epoch(o.get("at")) or now) > OVERRIDE_SETTLE:
+            o["state"] = "finished"
 
 
 def refresh(dn, deps, force=False):
@@ -703,6 +752,7 @@ def refresh(dn, deps, force=False):
         found, complete, pending = scan(dn, deps, {r.get("key"): (r.get("title"), r.get("year")) for r in records.values() if isinstance(r, dict)})
         if readable:
             merge(records, found, complete, now)
+            track(deps, records, now)
             save(deps, records)
         CACHE["scan"] = (now, found)
     # ffprobe outside the lock (it may take seconds per file); the next scan shows what it found
@@ -717,7 +767,7 @@ def refresh(dn, deps, force=False):
     return found
 
 
-def record(deps, pid, me, action, result, resolve):
+def record(deps, pid, me, action, result, resolve, override=None):
     now = NOW()
     with STORE_LOCK:
         try:
@@ -731,6 +781,8 @@ def record(deps, pid, me, action, result, resolve):
         r.setdefault("actions", []).append({"at": ts(now), "user": person(me), "userId": me.get("id"), "action": action, "result": result})
         if resolve:
             r["resolved"] = {"at": ts(now), "how": action}
+        if override:
+            r["override"] = override
         save(deps, records)
     return r
 
@@ -875,7 +927,17 @@ def files(dn, deps, me, p, q):
     return dict(public, token=token)
 
 
+def may_override(p):
+    return NOW() >= (epoch((p.get("details") or {}).get("overrideFrom")) or float("inf"))
+
+
 def releases(dn, deps, me, p, q):
+    out = release_list(dn, deps, me, p, q)
+    out["override"] = may_override(p)
+    return out
+
+
+def release_list(dn, deps, me, p, q):
     if p["type"] != "no-release" or not p["_"].get("arrId"):
         raise Refused(400, "bad request")
     i = p["_"]
@@ -1129,7 +1191,7 @@ def release_data(got, job):
                "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "age": x.get("age"),
                "link": safe_link(x.get("infoUrl")), "private": private_indexer(x)} for n, x in enumerate(items)]
     return {"season": season, "at": NOW(), "public": public, "dropped": dropped, "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": bool(x.get("rejected")), "title": str(x.get("title") or "")[:200],
-                                                                             "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "infoUrl": x.get("infoUrl")} for x in items]}
+                                                                             "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "infoUrl": x.get("infoUrl"), "seeders": x.get("seeders")} for x in items]}
 
 
 def expire():
@@ -1337,6 +1399,109 @@ def do_grab(deps, me, admin, p, req):
     return f"grabbed {x['title']}"
 
 
+def tag_id(arr):
+    got = arr("/tag")
+    tid = next((t.get("id") for t in got if isinstance(t, dict) and t.get("label") == OVERRIDE_TAG), None) if isinstance(got, list) else None
+    return tid if tid is not None else arr("/tag", "POST", {"label": OVERRIDE_TAG})["id"]
+
+
+def set_tag(arr, kind, arr_id, how):
+    tid = tag_id(arr)
+    if kind == "movie":
+        arr("/movie/editor", "PUT", {"movieIds": [arr_id], "tags": [tid], "applyTags": how})
+    else:
+        arr("/series/editor", "PUT", {"seriesIds": [arr_id], "tags": [tid], "applyTags": how})
+
+
+def do_override(deps, me, admin, p, req):
+    """A release the profile rejected, downloaded anyway after OVERRIDE_DAYS of nothing found; the title gets the override tag (nightly search, no wake for a seedless torrent)."""
+    o = offer(p["id"], "releases", me, req)
+    n = req.get("release")
+    if o is None or not is_int(n) or not 0 <= n < len(o["items"]) or not o["items"][n]["rejected"]:
+        raise Refused(400, "bad request")
+    if not may_override(p):
+        raise Refused(403, "too early")
+    i, x = p["_"], o["items"][n]
+    arr = deps.arr(i["app"])
+    set_tag(arr, i["kind"], i["arrId"], "add")
+    arr("/release", "POST", {"guid": x["guid"], "indexerId": x["indexerId"]})
+    i["override"] = {"at": ts(NOW()), "user": person(me), "userId": me.get("id"), "release": x["title"], "seeders": x.get("seeders"), "protocol": x.get("protocol"),
+                     "indexer": x.get("indexer"), "app": i["app"], "kind": i["kind"], "arrId": i["arrId"], "season": o.get("season"), "state": "grabbed",
+                     "downloadIds": [], "episodeIds": [], "seeds": None, "lastCheck": None, "lastResult": None}
+    return f"downloaded anyway: {x['title']}"
+
+
+def replaced(history, o):
+    """Another download than the override was imported after it: for a series every episode the override brought."""
+    ids, since = set(o.get("downloadIds") or []), epoch(o.get("at")) or 0
+    others = [h for h in history if isinstance(h, dict) and h.get("eventType") == "downloadFolderImported" and (epoch(h.get("date")) or 0) > since
+              and str(h.get("downloadId") or "").lower() not in ids]
+    if o.get("kind") == "movie" or not o.get("episodeIds"):
+        return others[-1] if others else None
+    done = {h.get("episodeId") for h in others}
+    return others[-1] if all(e in done for e in o["episodeIds"]) else None
+
+
+def check_override(deps, o):
+    """One nightly check: (new state, result). A waiting override makes way for a release the profile allows on its own; a finished one gets a normal search."""
+    arr = deps.arr(o["app"])
+    i = {"kind": o["kind"], "arrId": o["arrId"]}
+    ids = set(o.get("downloadIds") or [])
+    q = arr(f"/queue?page=1&pageSize=1000{'&includeMovie=true' if o['kind'] == 'movie' else '&includeSeries=true'}")
+    queued = [r for r in (q.get("records") or [] if isinstance(q, dict) else []) if isinstance(r, dict) and str(r.get("downloadId") or "").lower() in ids]
+    if queued:
+        path = f"/release?movieId={o['arrId']}" if o["kind"] == "movie" else f"/release?seriesId={o['arrId']}" + (f"&seasonNumber={o['season']}" if o.get("season") is not None else "")
+        got = arr(path, timeout=RELEASE_TIMEOUT)
+        job = {"kind": o["kind"], "arrId": o["arrId"], "season": o.get("season")}
+        better = [x for x in got if isinstance(x, dict) and matched(x, job) and all(SELF_CAUSED.search(str(r.get("reason") if isinstance(r, dict) else r)) for r in x.get("rejections") or [])] if isinstance(got, list) else []
+        if not better:
+            return o["state"], "no better version yet"
+        arr("/queue/bulk?removeFromClient=true&blocklist=false", "DELETE", {"ids": [r["id"] for r in queued if is_int(r.get("id"))]})
+        search(arr, i, o.get("episodeIds") or None)
+        return "replacing", f"better version found ({str(better[0].get('title') or '')[:120]}), override download removed, searching"
+    path = f"/history/movie?movieId={o['arrId']}" if o["kind"] == "movie" else f"/history/series?seriesId={o['arrId']}"
+    got = arr(path)
+    hit = replaced(got if isinstance(got, list) else [], o)
+    if hit:
+        set_tag(arr, o["kind"], o["arrId"], "remove")
+        return "replaced", f"replaced by {str(hit.get('sourceTitle') or 'another download')[:120]}"
+    search(arr, i, o.get("episodeIds") or None)
+    return o["state"], "searched"
+
+
+def nightly(dn, deps):
+    """Inside the maintenance window, once a night: every override not yet replaced by a release the profile allows is checked (never given up)."""
+    now = NOW()
+    lt = LOCAL(now)
+    if not NIGHT_CHECK[0] <= lt.tm_hour * 60 + lt.tm_min < NIGHT_CHECK[1]:
+        return
+    today = time.strftime("%Y-%m-%d", lt)
+    with STORE_LOCK:
+        try:
+            todo = {pid: dict(r["override"]) for pid, r in load(deps).items() if open_override(r) and (r["override"].get("lastNight") or "") != today}
+        except StoreUnreadable:
+            return
+    for pid, o in todo.items():
+        try:
+            state, result = check_override(deps, o)
+        except Exception as e:
+            state, result = o.get("state"), f"check failed: {type(e).__name__}"
+        print(f"manual override {pid}: {result}", flush=True)
+        with STORE_LOCK:
+            try:
+                records = load(deps)
+            except StoreUnreadable:
+                return
+            r = records.get(pid)
+            if not r or not isinstance(r.get("override"), dict):
+                continue
+            changed = state != r["override"].get("state")
+            r["override"].update(state=state, lastCheck=ts(now), lastNight=today, lastResult=result)
+            if changed:
+                r.setdefault("actions", []).append({"at": ts(now), "user": None, "userId": None, "action": "override-" + state, "result": result})
+            save(deps, records)
+
+
 def do_readd(deps, me, admin, p, req):
     i = p["_"]
     arr = deps.arr(i["app"])
@@ -1373,7 +1538,7 @@ def do_delete(deps, me, admin, p, req):
     return f"{len(ids)} Seerr request(s) deleted, title data and files kept"
 
 
-DO = {"link": do_link, "import": do_import, "block": do_block, "profile": do_profile, "grab": do_grab, "readd": do_readd, "delete": do_delete}
+DO = {"link": do_link, "import": do_import, "block": do_block, "profile": do_profile, "grab": do_grab, "override": do_override, "readd": do_readd, "delete": do_delete}
 
 
 def problem(dn, deps, raw, force=False):
@@ -1404,7 +1569,7 @@ def act(dn, deps, me, req):
     p = problem(dn, deps, p["id"], force=True)
     result = DO[action](deps, me, admin, p, req)
     print(f"manual: user {me.get('id')} {action} {p['type']} {p['key']} ({p['title']}): {result}", flush=True)
-    rec = record(deps, p["id"], me, action, result, action in RESOLVING)
+    rec = record(deps, p["id"], me, action, result, action in RESOLVING, p["_"].get("override") if action == "override" else None)
     CACHE.pop("scan", None)
     return {"ok": True, "result": result, "problem": rec}
 
@@ -1490,6 +1655,7 @@ def loop(dn, deps, every=600):
     while True:
         try:
             refresh(dn, deps, force=True)
+            nightly(dn, deps)
         except Exception as e:
             print(f"manual scan: {type(e).__name__} {dn.redact(e)}", flush=True)
         time.sleep(every)

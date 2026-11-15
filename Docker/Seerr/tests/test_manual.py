@@ -74,6 +74,7 @@ class World:
         self.store = pathlib.Path(self.tmp.name, "state", "manual.json")
         self.lookups = {"radarr": [], "sonarr": []}
         self.releases, self.proposals, self.episodes = [], [], []
+        self.tags, self.history = [], []
         self.seerr_media = {}
         self.profiles = {"radarr": R_PROFILES, "sonarr": S_PROFILES}
         self.request_calls, self.slow, self.odd_queue, self.token = 0, 0, False, None
@@ -110,6 +111,8 @@ class World:
         def call(path, method="GET", body=None, timeout=None):
             if method != "GET":
                 self.writes.append((app, method, path, body))
+                if path == "/tag":
+                    return {"id": 901, "label": body["label"]}
                 return {"id": 900} if path in ("/movie", "/series") else {}
             self.gets.append((app, path))
             if path.startswith("/queue"):
@@ -122,6 +125,10 @@ class World:
                 return self.lookups[app]
             if path.startswith("/release?"):
                 return self.releases
+            if path == "/tag":
+                return self.tags
+            if path.startswith("/history/"):
+                return self.history
             if path.startswith("/manualimport?"):
                 return self.proposals
             if path.startswith("/episode?seriesId="):
@@ -1602,6 +1609,174 @@ class Scouts(unittest.TestCase):
         manual.SEARCHES.clear()
         out, rel = self.releases()
         self.assertEqual(self.call("POST", "action", {"id": self.pid, "action": "describe", "release": rel["Third.MULTi"]["n"], "token": out["token"]}), (429, {"error": "too many reads"}))
+
+
+SEEDLESS = {"guid": "https://tracker.example.com/dl?apikey=secret&id=7", "indexerId": 3, "title": "The Ring Thing (2004) [XVID]", "size": 700_000_000, "quality": {"quality": {"name": "DVD"}},
+            "languages": [{"name": "German"}], "seeders": 0, "leechers": 0, "customFormatScore": 0, "rejected": True,
+            "rejections": ["Does not contain one of the required terms: Mundart", "Not enough seeders: 0. Minimum seeders: 1"], "indexer": "Tracker", "protocol": "torrent", "age": 900, "mappedMovieId": 21}
+STANDARD = dict(SEEDLESS, guid="https://tracker.example.com/dl?apikey=secret&id=8", title="The.Ring.Thing.2004.Mundart.DVDRip", seeders=5, rejected=True,
+                rejections=["Release in queue already meets cutoff: DVD"])
+LOCAL_4AM = lambda t: time.gmtime(t + 3600)
+
+
+class Override(unittest.TestCase):
+    """Nothing found for 7 days: rejected releases may be downloaded anyway by every requester; a nightly search then looks for a version the profile allows."""
+
+    def world(self, days=10, me=USER):
+        w = World(me=me, rs=state(noRelease={"movie/10248": "2026-11-14T04:17:00Z"}), requests=[request(11, "movie", 10248, ext=21, created=T - days * DAY)],
+                  titles={"/movie/21": {"id": 21, "title": "The Ring Thing", "year": 2004, "tmdbId": 10248, "qualityProfileId": 13}})
+        w.releases = [SEEDLESS]
+        return w, one(w, "no-release")["id"]
+
+    def setUp(self):
+        reset()
+        manual.LOCAL = LOCAL_4AM
+
+    def override(self, w, pid, **extra):
+        out = get(w, f"releases?id={pid}")[1]
+        return post(w, dict({"id": pid, "action": "override", "release": out["releases"][0]["n"], "token": out["token"]}, **extra))
+
+    def test_release_list_offers_the_override_only_after_seven_days(self):
+        w, pid = self.world(days=5)
+        self.assertFalse(get(w, f"releases?id={pid}")[1]["override"])
+        reset()
+        w, pid = self.world(days=8)
+        self.assertTrue(get(w, f"releases?id={pid}")[1]["override"])
+
+    def test_override_before_seven_days_is_refused(self):
+        w, pid = self.world(days=5)
+        self.assertEqual(self.override(w, pid), (403, {"error": "too early"}))
+        self.assertEqual(w.writes, [])
+
+    def test_every_requester_may_download_a_rejected_release_anyway(self):
+        w, pid = self.world(me=OTHER)
+        w.tags = [{"id": 4, "label": "download-now"}]
+        status, out = self.override(w, pid)
+        self.assertEqual(status, 200, out)
+        self.assertEqual(w.writes, [("radarr", "POST", "/tag", {"label": "override"}),
+                                    ("radarr", "PUT", "/movie/editor", {"movieIds": [21], "tags": [901], "applyTags": "add"}),
+                                    ("radarr", "POST", "/release", {"guid": SEEDLESS["guid"], "indexerId": 3})])
+
+    def test_existing_override_tag_is_reused(self):
+        w, pid = self.world()
+        w.tags = [{"id": 6, "label": "override"}]
+        self.assertEqual(self.override(w, pid)[0], 200)
+        self.assertEqual(w.writes[0], ("radarr", "PUT", "/movie/editor", {"movieIds": [21], "tags": [6], "applyTags": "add"}))
+
+    def test_override_is_logged_with_the_user_in_the_lasting_list(self):
+        w, pid = self.world()
+        out = self.override(w, pid)[1]
+        rec = out["problem"]
+        self.assertEqual(rec["resolved"]["how"], "override")
+        self.assertEqual((rec["actions"][-1]["user"], rec["actions"][-1]["action"]), ("jane", "override"))
+        o = rec["override"]
+        self.assertEqual((o["release"], o["seeders"], o["protocol"], o["user"], o["state"]), ("The Ring Thing (2004) [XVID]", 0, "torrent", "jane", "grabbed"))
+        self.assertNotIn("apikey", json.dumps(problems(w)))
+        stored = json.loads(w.store.read_text())["problems"][pid]
+        self.assertEqual(stored["override"]["state"], "grabbed")
+
+    def test_allowed_release_is_no_override(self):
+        w, pid = self.world()
+        w.releases = [RELEASES[1]]
+        self.assertEqual(self.override(w, pid)[0], 400)
+        self.assertEqual(w.writes, [])
+
+    def test_override_needs_the_users_own_fresh_list(self):
+        w, pid = self.world()
+        out = get(w, f"releases?id={pid}")[1]
+        self.assertEqual(post(w, {"id": pid, "action": "override", "release": 0, "token": "nope"})[0], 400)
+        w.me = OTHER
+        manual.THROTTLE.clear()
+        self.assertEqual(post(w, {"id": pid, "action": "override", "release": 0, "token": out["token"]})[0], 400)
+        self.assertEqual(w.writes, [])
+
+    def overridden(self):
+        w, pid = self.world()
+        self.override(w, pid)
+        w.writes.clear()
+        w.gets.clear()
+        w.rs_file.write_text(json.dumps(state()))
+        os.utime(w.rs_file, (T, T))
+        w.queues["radarr"] = [dict(qrec(31, kind="movie", dl="HASH1", tds="downloading", status="queued", tid=21, tmdb=10248, title="The Ring Thing (2004) [XVID]", msgs=()), trackedDownloadStatus="ok")]
+        manual.CACHE.clear()
+        return w, pid
+
+    def stored(self, w, pid):
+        return json.loads(w.store.read_text())["problems"][pid]
+
+    def test_override_download_is_tracked_in_the_queue(self):
+        w, pid = self.overridden()
+        problems(w)
+        o = self.stored(w, pid)["override"]
+        self.assertEqual((o["state"], o["downloadIds"]), ("downloading", ["hash1"]))
+
+    def test_nightly_search_replaces_a_waiting_override_by_a_version_the_profile_allows(self):
+        w, pid = self.overridden()
+        problems(w)
+        w.releases = [SEEDLESS, STANDARD]
+        manual.nightly(dn, w.deps())
+        self.assertEqual(w.writes, [("radarr", "DELETE", "/queue/bulk?removeFromClient=true&blocklist=false", {"ids": [31]}),
+                                    ("radarr", "POST", "/command", {"name": "MoviesSearch", "movieIds": [21]})])
+        o = self.stored(w, pid)["override"]
+        self.assertEqual((o["state"], o["lastCheck"]), ("replacing", manual.ts(T)))
+
+    def test_nightly_search_keeps_the_override_while_nothing_better_exists(self):
+        w, pid = self.overridden()
+        problems(w)
+        w.releases = [SEEDLESS, dict(STANDARD, rejections=["Release in queue already meets cutoff: DVD", "Not enough seeders: 0. Minimum seeders: 1"])]
+        manual.nightly(dn, w.deps())
+        self.assertEqual(w.writes, [])
+        self.assertIn(("radarr", "/release?movieId=21"), w.gets)
+        self.assertEqual(self.stored(w, pid)["override"]["lastCheck"], manual.ts(T))
+
+    def test_nightly_search_runs_once_a_night_inside_the_window(self):
+        w, pid = self.overridden()
+        problems(w)
+        manual.LOCAL = lambda t: time.gmtime(t + 7 * 3600)
+        manual.nightly(dn, w.deps())
+        self.assertFalse(any(g[1].startswith("/release") for g in w.gets))
+        manual.LOCAL = LOCAL_4AM
+        manual.nightly(dn, w.deps())
+        manual.nightly(dn, w.deps())
+        self.assertEqual(sum(1 for g in w.gets if g[1].startswith("/release")), 1)
+
+    def test_finished_override_gets_a_normal_search_every_night(self):
+        w, pid = self.overridden()
+        problems(w)
+        w.queues["radarr"] = []
+        manual.CACHE.clear()
+        manual.NOW = lambda: T + 2000
+        os.utime(w.rs_file, (T + 2000, T + 2000))
+        problems(w)
+        self.assertEqual(self.stored(w, pid)["override"]["state"], "finished")
+        w.history = [{"eventType": "downloadFolderImported", "downloadId": "HASH1", "date": iso(T + 1000), "movieId": 21}]
+        manual.nightly(dn, w.deps())
+        self.assertEqual(w.writes, [("radarr", "POST", "/command", {"name": "MoviesSearch", "movieIds": [21]})])
+
+    def test_import_of_another_download_ends_the_nightly_search(self):
+        w, pid = self.overridden()
+        problems(w)
+        w.queues["radarr"] = []
+        w.tags = [{"id": 6, "label": "override"}]
+        manual.CACHE.clear()
+        manual.NOW = lambda: T + 2000
+        os.utime(w.rs_file, (T + 2000, T + 2000))
+        problems(w)
+        w.history = [{"eventType": "downloadFolderImported", "downloadId": "HASH1", "date": iso(T + 1000), "movieId": 21},
+                     {"eventType": "downloadFolderImported", "downloadId": "HASH2", "date": iso(T + 1500), "movieId": 21, "sourceTitle": "The.Ring.Thing.2004.Mundart.DVDRip"}]
+        manual.nightly(dn, w.deps())
+        self.assertEqual(w.writes, [("radarr", "PUT", "/movie/editor", {"movieIds": [21], "tags": [6], "applyTags": "remove"})])
+        self.assertEqual(self.stored(w, pid)["override"]["state"], "replaced")
+
+    def test_an_open_override_is_never_dropped_from_the_list(self):
+        w, pid = self.overridden()
+        problems(w)
+        later = T + 200 * DAY
+        manual.NOW = lambda: later
+        manual.CACHE.clear()
+        os.utime(w.rs_file, (later, later))
+        problems(w)
+        self.assertIn(pid, json.loads(w.store.read_text())["problems"])
 
 
 if __name__ == "__main__":

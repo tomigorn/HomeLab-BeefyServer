@@ -566,3 +566,72 @@ test("too big for the full virus scan: a clean parts scan of a genuine video pas
     }
   }
 });
+
+const SEEDLESS = { n: 0, title: "The Ring Thing (2004) [XVID]", size: 7e8, quality: "DVD", languages: ["German"], seeders: 0, score: 0, rejected: true,
+  rejections: ["Does not contain one of the required terms: Mundart", "Not enough seeders: 0. Minimum seeders: 1"], reasons: ["required-terms", "seeders"], indexer: "Tracker", protocol: "torrent", age: 900 };
+const NOTHING = () => problem({ type: "no-release", details: { reason: "no-release", lastSearch: null, profile: "Swiss German (Mundart) only - any quality", older: null, old: true, seasons: [] } });
+
+test("after a week of nothing found: every rejected release has Download anyway with its reasons in plain words", async () => {
+  const { $, $$, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [NOTHING()], done: [], admin: false } },
+    "/_download-now/manual/releases": { status: 200, body: { state: "done", token: "t-ov", override: true, releases: [SEEDLESS] } },
+    "/_download-now/manual/action": { status: 200, body: { ok: true, result: "downloaded anyway" } } });
+  $('[data-act="releases"]').click();
+  await settle();
+  const fold = $("details[data-not-allowed]");
+  assert.equal(fold.open, true);
+  assert.match($("[data-override-hint]").textContent, /Nothing found for a week/);
+  const row = $$("[data-release]")[0];
+  assert.match(row.textContent, /lacks a term the profile requires/);
+  assert.match(row.textContent, /Too few seeders/);
+  const btn = row.querySelector('[data-act="override"]');
+  assert.equal(btn.textContent, "Download anyway");
+  btn.click();
+  await settle();
+  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "override", release: 0, token: "t-ov" });
+});
+
+test("before a week: rejected releases stay unpickable, no override", async () => {
+  const { $, $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [NOTHING()], done: [], admin: false } },
+    "/_download-now/manual/releases": { status: 200, body: { state: "done", token: "t", override: false, releases: [SEEDLESS] } } });
+  $('[data-act="releases"]').click();
+  await settle();
+  assert.equal($$('[data-act="override"]').length, 0);
+  assert.equal($("[data-override-hint]"), null);
+});
+
+test("German: Trotzdem herunterladen", async () => {
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [NOTHING()], done: [], admin: false } },
+    "/_download-now/manual/releases": { status: 200, body: { state: "done", token: "t", override: true, releases: [SEEDLESS] } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
+  $('[data-act="releases"]').click();
+  await settle();
+  assert.equal($('[data-act="override"]').textContent, "Trotzdem herunterladen");
+  assert.match($("[data-override-hint]").textContent, /Seit einer Woche nichts gefunden/);
+});
+
+const overridden = (o) => problem({ type: "no-release", resolved: { at: "2026-11-14T03:00:00Z", how: "override" },
+  actions: [{ at: "2026-11-14T03:00:00Z", user: "jane", action: "override", result: "downloaded anyway: The Ring Thing (2004) [XVID]" }],
+  override: Object.assign({ at: "2026-11-14T03:00:00Z", user: "jane", release: "The Ring Thing (2004) [XVID]", seeders: 0, protocol: "torrent", state: "downloading", seeds: 0 }, o) });
+
+test("done: downloaded anyway by whom, and where the download stands", async () => {
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [overridden()], admin: false } } });
+  $('[data-tab="done"]').click();
+  await settle();
+  assert.match($("[data-resolved]").textContent, /^Downloaded anyway by jane · /);
+  assert.equal($("[data-override]").textContent, "⬇️ Downloading anyway (0 seeders — waits for a seeder, checked every night for a better version)");
+});
+
+test("override states in both languages", () => {
+  const states = [[{}, "⬇️ Downloading anyway (0 seeders — waits for a seeder, checked every night for a better version)", "⬇️ Wird trotzdem heruntergeladen (0 Seeder — wartet auf einen Seeder, jede Nacht wird nach einer besseren Version gesucht)"],
+    [{ seeds: 3 }, "⬇️ Downloading anyway (3 seeders — checked every night for a better version)", "⬇️ Wird trotzdem heruntergeladen (3 Seeder — jede Nacht wird nach einer besseren Version gesucht)"],
+    [{ protocol: "usenet", seeds: null, seeders: null }, "⬇️ Downloading anyway (checked every night for a better version)", "⬇️ Wird trotzdem heruntergeladen (jede Nacht wird nach einer besseren Version gesucht)"],
+    [{ state: "finished" }, "✅ Downloaded anyway — checked every night for a better version", "✅ Trotzdem heruntergeladen — jede Nacht wird nach einer besseren Version gesucht"],
+    [{ state: "replacing" }, "🔄 A version the profile allows was found — it downloads instead", "🔄 Eine vom Profil erlaubte Version wurde gefunden — sie wird stattdessen heruntergeladen"],
+    [{ state: "replaced" }, "✅ Replaced by a version the profile allows", "✅ Ersetzt durch eine vom Profil erlaubte Version"]];
+  const w = load("manual.js", "", null, "https://requests.example.com/discover/movies");
+  for (const [o, en, de] of states) {
+    const x = Object.assign({ state: "downloading", seeds: 0, seeders: 0, protocol: "torrent" }, o);
+    assert.equal(w.hgManual.overrideState(w.hgManual.TEXT.en, x), en);
+    assert.equal(w.hgManual.overrideState(w.hgManual.TEXT.de, x), de);
+  }
+  assert.equal(w.hgManual.TEXT.de.overriddenBy("jane"), "Trotzdem heruntergeladen von jane");
+});
