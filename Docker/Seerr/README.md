@@ -321,7 +321,7 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 
 `indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds two entries after Series in the desktop sidebar, the phone drawer and the phone bottom bar:
 
-`indexer-bar/www/menu-links.css` (linked before `</head>`) keeps Seerr's sidebar and phone bar invisible until the script marks `html[data-hg-menu]` (on the frame after our entries are in, not waiting for images), so a fresh load (e.g. coming from books.holy-grail.ch) shows the menu once, complete, instead of entries jumping in; shown anyway after 2.5 s.
+`indexer-bar/www/menu-links.css` (linked before `</head>`) keeps Seerr's sidebar and phone bar invisible until the script marks `html[data-hg-menu]` (on the frame after our entries are in, not waiting for images), so a fresh load (e.g. coming from books.holy-grail.ch) shows the menu once, complete, instead of entries jumping in; shown anyway after 2.5 s. `menu-links.js` is the first deferred script after `tip.js`.
 
 | Entry | Opens | Phone bottom bar (no "more" button; with one: in the "more" list) |
 |---|---|---|

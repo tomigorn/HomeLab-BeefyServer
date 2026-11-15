@@ -14,3 +14,8 @@ test("bar-early.js comes first, render-blocking (no defer), versioned, with the 
   assert.equal(noBar(scripts[0]), noBar(scripts.find((s) => name(s) === "bar.js")));
 });
 
+test("deferred scripts: tip.js first, then menu-links.js (the hidden menu waits for it), then the rest", () => {
+  const deferred = scripts.filter((s) => /\bdefer\b/.test(s)).map(name);
+  assert.deepEqual(deferred.slice(0, 3), ["tip.js", "menu-links.js", "bar.js"]);
+  assert.equal(deferred.length, 11);
+});
