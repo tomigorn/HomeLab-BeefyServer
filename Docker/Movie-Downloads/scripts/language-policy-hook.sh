@@ -7,6 +7,8 @@ set -euo pipefail
 
 ENG_SUFFIX=" - English original"
 ANY="4K preferred · older versions allowed"
+# Anime (owner 2026-11-15): its own family with the same old/niche rule, twin "<anime> · older versions allowed", no English-original twin.
+ANIME_ANY_SUFFIX=" · older versions allowed"
 SILENT_SUFFIX=" - silent film"
 SILENT_BEFORE=${LP_SILENT_BEFORE:-1930}
 SWISS="Swiss German (Mundart) only - any quality"
@@ -18,10 +20,12 @@ NICHE_MIN_AGE=2
 if [ -n "${radarr_eventtype:-}" ]; then
   event=$radarr_eventtype; want=MovieAdded; id=${radarr_movie_id:-}; kind=movie; ids=movieIds
   MAIN="4K HDR - UHD Bluray + WEB (1080p fallback)"
+  ANIME="Anime - 4K HDR (1080p fallback)"; ANIME_ANY="Anime - 4K HDR$ANIME_ANY_SUFFIX"
   VOTES='.ratings.tmdb.votes'; NICHE_VOTES=${LP_NICHE_VOTES:-100}
 elif [ -n "${sonarr_eventtype:-}" ]; then
   event=$sonarr_eventtype; want=SeriesAdd; id=${sonarr_series_id:-}; kind=series; ids=seriesIds
   MAIN="4K HDR - WEB-2160p (1080p fallback)"
+  ANIME="Anime - Bluray + WEB 1080p"; ANIME_ANY="$ANIME$ANIME_ANY_SUFFIX"
   VOTES='.ratings.votes'; NICHE_VOTES=${LP_NICHE_VOTES:-1000}
 else
   echo "no radarr_eventtype/sonarr_eventtype: not called by Radarr or Sonarr" >&2; exit 1
@@ -43,16 +47,37 @@ api() { local path=$1; shift; curl -sf -m 10 -H @<(printf 'X-Api-Key: %s\n' "$KE
 title=$(api "/$kind/$id")
 read -r MID MEN AID AEN SID TID < <(api /qualityprofile | jq -r --arg m "$MAIN" --arg a "$ANY" --arg s "$ENG_SUFFIX" --arg w "$SWISS" --arg q "$SILENT_SUFFIX" \
   'map({(.name): .id}) | add | "\(.[$m] // 0) \(.[$m + $s] // 0) \(.[$a] // 0) \(.[$a + $s] // 0) \(.[$w] // 0) \(.[$a + $q] // 0)"')
+read -r NID NAID < <(api /qualityprofile | jq -r --arg n "$ANIME" --arg na "$ANIME_ANY" 'map({(.name): .id}) | add | "\(.[$n] // 0) \(.[$na] // 0)"')
 read -r current english year votes < <(jq -r \
   "\"\(.qualityProfileId) \(.originalLanguage.name == \"English\") \(.year // 0) \($VOTES // 0)\"" <<<"$title")
 now=${LP_YEAR:-$(date +%Y)}
 # Radarr's own `Language: Not Original (sound film)` reads the year itself; Sonarr has no year condition, so silent series get their own profile.
 [ "$kind" = series ] || TID=0
 silent() { [ "$TID" != 0 ] && [ "$year" -gt 0 ] && [ "$year" -lt "$SILENT_BEFORE" ]; }
+anime() { [ "$NID" != 0 ] && { [ "$current" = "$NID" ] || [ "$current" = "$NAID" ]; }; }
+# old_or_niche: sets reason when the title is old (OLD_YEARS) or niche (few votes, at least NICHE_MIN_AGE years old).
+old_or_niche() {
+  reason=
+  [ "$year" -gt 0 ] || return 1
+  if [ "$year" -le $((now - OLD_YEARS)) ]; then reason="old: $year"
+  elif [ "$year" -le $((now - NICHE_MIN_AGE)) ] && [ "$votes" -lt "$NICHE_VOTES" ]; then reason="niche: $votes votes"
+  else return 1; fi
+}
+# anime_profile: the anime family's target for this title (twin when old/niche and the twin exists).
+anime_target() {
+  local reason
+  if [ "$NAID" != 0 ] && old_or_niche; then ANIME_TARGET=$NAID; ANIME_REASON=$reason; else ANIME_TARGET=$NID; ANIME_REASON="anime"; fi
+}
 
 set_profile() {
   local family reason= target
   if pinned; then echo "$kind $id: profile $current kept ($PIN_TAG)"; return; fi
+  if anime; then
+    if [ "$current" = "$NAID" ]; then echo "$kind $id: profile $current kept"; return; fi
+    anime_target
+    if [ "$ANIME_TARGET" != "$current" ]; then move "$ANIME_TARGET" "$ANIME_REASON"; else echo "$kind $id: profile $current kept"; fi
+    return
+  fi
   case $current in
     "$MID"|"$MEN") family=main;;
     "$AID"|"$AEN"|"$TID") family=any;;
@@ -144,6 +169,7 @@ unpin() {
 # default_profile: sets DEF / DEF_REASON from the rules alone (main 4K, old/niche -> Any quality, English original -> twin).
 default_profile() {
   local family=main reason=
+  if anime; then anime_target; DEF=$ANIME_TARGET; DEF_REASON=$ANIME_REASON; return; fi
   if [ "$AID" != 0 ] && [ "$year" -gt 0 ]; then
     if [ "$year" -le $((now - OLD_YEARS)) ]; then family=any; reason="old: $year"
     elif [ "$year" -le $((now - NICHE_MIN_AGE)) ] && [ "$votes" -lt "$NICHE_VOTES" ]; then family=any; reason="niche: $votes votes"
@@ -193,7 +219,7 @@ recompute() {
   fi
   if pinned; then echo "$kind $id: profile $current kept ($PIN_TAG)"; return; fi
   case $current in
-    "$MID"|"$MEN"|"$AID"|"$AEN"|"$SID"|"$TID") ;;
+    "$MID"|"$MEN"|"$AID"|"$AEN"|"$SID"|"$TID"|"$NID"|"$NAID") ;;
     *) echo "$kind $id: profile $current kept"; return;;
   esac
   if [ "$DEF" != "$current" ]; then move "$DEF" "default: $DEF_REASON"; else echo "$kind $id: profile $current kept"; fi
@@ -268,6 +294,7 @@ old_rare_tag() {
   if [ "$AID" != 0 ] && [ "$current" = "$AID" ]; then on_any=true; fi
   if [ "$AEN" != 0 ] && [ "$current" = "$AEN" ]; then on_any=true; fi
   if [ "$TID" != 0 ] && [ "$current" = "$TID" ]; then on_any=true; fi
+  if [ "$NAID" != 0 ] && [ "$current" = "$NAID" ]; then on_any=true; fi
   tid=$(api /tag | jq -r --arg l "$OLD_RARE_TAG" '.[] | select(.label == $l) | .id')
   if [ -n "$tid" ] && jq -e --argjson t "$tid" '(.tags // []) | index($t)' <<<"$title" >/dev/null; then has=true; fi
   if [ "$on_any" = true ] && [ "$has" = false ]; then

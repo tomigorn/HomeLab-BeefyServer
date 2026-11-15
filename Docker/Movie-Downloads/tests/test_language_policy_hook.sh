@@ -15,6 +15,9 @@ cat > "$T/fake.py" <<'PY'
 import http.server, json, os, sys, urllib.parse
 T = sys.argv[1]
 PROFILES = [{"id": 3, "name": "Anime - Bluray + WEB 1080p"},
+            {"id": 4, "name": "Anime - Bluray + WEB 1080p · older versions allowed"},
+            {"id": 5, "name": "Anime - 4K HDR (1080p fallback)"},
+            {"id": 6, "name": "Anime - 4K HDR · older versions allowed"},
             {"id": 7, "name": "4K HDR - UHD Bluray + WEB (1080p fallback)"},
             {"id": 10, "name": "4K HDR - UHD Bluray + WEB (1080p fallback) - English original"},
             {"id": 11, "name": "4K preferred · older versions allowed"},
@@ -56,8 +59,8 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.reply(200, state.get("profiles", PROFILES))
         if self.command == "GET" and p == "/qualityprofile/13":
             if state.get("swiss_no_language"):
-                return self.reply(200, {"id": 13, "name": PROFILES[5]["name"]})
-            return self.reply(200, {"id": 13, "name": PROFILES[5]["name"], "language": state.get("swiss_language", {"id": -1, "name": "Any"})})
+                return self.reply(200, {"id": 13, "name": next(p["name"] for p in PROFILES if p["id"] == 13)})
+            return self.reply(200, {"id": 13, "name": next(p["name"] for p in PROFILES if p["id"] == 13), "language": state.get("swiss_language", {"id": -1, "name": "Any"})})
         if self.command == "PUT" and p == "/qualityprofile/13":
             return self.reply(202, json.loads(body))
         if self.command == "GET" and p == "/tag":
@@ -148,7 +151,21 @@ assert_eq "unknown year (0) stays on main" "" "$(cat "$T/puts")"
 run "{\"5\": {\"id\": 5, \"qualityProfileId\": 7, \"originalLanguage\": $ES, \"year\": 2020, \"ratings\": {}}}" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "no TMDB rating on an older film counts as niche" "$(moved movie movieIds 5 11)" "$(cat "$T/puts")"
 run "$(film 5 3 "$ES" 1968 5)" radarr_eventtype=MovieAdded radarr_movie_id=5
-assert_eq "old niche film on another profile (anime) stays" "" "$(cat "$T/puts")"
+assert_eq "old niche film on another profile (Sonarr's anime name) stays" "" "$(cat "$T/puts")"
+
+echo "Radarr: anime films (owner 2026-11-15: old/niche go to the anime twin, no English-original twin)"
+run "$(film 5 5 "$ES" 1968 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "old anime film moves to the anime twin, gets old-rare" "$(moved movie movieIds 5 6)" "$(cat "$T/puts")"
+assert_eq "  the log line names the reason" "movie 5: profile 5 -> 6 (old: 1968)
+movie 5: tag old-rare added (Any quality)" "$(cat "$T/out")"
+run "$(film 5 5 "$ES" 2024 10)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "niche anime film moves to the anime twin" "$(moved movie movieIds 5 6)" "$(cat "$T/puts")"
+run "$(film 5 5 "$EN" 2025 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "new English-original anime film stays on anime" "" "$(cat "$T/puts")"
+run "$(film 5 5 "$EN" 1968 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "old English-original anime film goes to the anime twin, never the 4K twins" "$(moved movie movieIds 5 6)" "$(cat "$T/puts")"
+run "$(film 5 6 "$ES" 2025 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
+assert_eq "new anime film put on the anime twin stays, gets old-rare" "$(tagput movie movieIds 5 60 add)" "$(cat "$T/puts")"
 run "$(film 5 11 "$ES" 2025 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
 assert_eq "new popular film put on Any quality by the requester stays, gets the old-rare tag" "$(tagput movie movieIds 5 60 add)" "$(cat "$T/puts")"
 run "$(film 5 7 "$EN" 1968 5000)" radarr_eventtype=MovieAdded radarr_movie_id=5
@@ -185,7 +202,13 @@ assert_eq "niche English series (999 votes) moves to the Any twin" "$(moved seri
 run "$(show 8 17 "$ES" 2018 1000)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "1000 votes is not niche" "" "$(cat "$T/puts")"
 run "$(show 8 3 "$ES" 1990 5)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
-assert_eq "old niche anime-profile series stays" "" "$(cat "$T/puts")"
+assert_eq "old niche anime series moves to the anime twin" "$(moved series seriesIds 8 4)" "$(cat "$T/puts")"
+run "$(show 8 3 "$ES" 2024 500000)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "new popular anime series stays" "" "$(cat "$T/puts")"
+run "$(show 8 3 "$ES" 2024 999)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "niche anime series (999 votes) moves to the anime twin" "$(moved series seriesIds 8 4)" "$(cat "$T/puts")"
+run "$(show 8 4 "$ES" 2024 500000)" LP_RECOMPUTE=1 sonarr_eventtype=SeriesAdd sonarr_series_id=8
+assert_eq "recompute: new popular anime series on the twin goes back to anime" "$(put series seriesIds 8 3)" "$(cat "$T/puts")"
 run "{}" sonarr_eventtype=Test
 assert_eq "Test event exits 0 and calls nothing" "0|" "$RC|$(cat "$T/requests")"
 
@@ -206,7 +229,7 @@ assert_eq "silent series already on the silent profile stays, gets old-rare" "$(
 run "$(show 8 14 "$FR" 1990 500)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "sound series on the silent profile moves to Any quality" "$(moved series seriesIds 8 11)" "$(cat "$T/puts")"
 run "$(show 8 3 "$ES" 1915 500)" sonarr_eventtype=SeriesAdd sonarr_series_id=8
-assert_eq "silent series on another profile (anime) stays" "" "$(cat "$T/puts")"
+assert_eq "silent-era anime series goes to the anime twin, not the silent profile" "$(moved series seriesIds 8 4)" "$(cat "$T/puts")"
 run "$(tagged 8 17 "$FR" 1915 "61")" sonarr_eventtype=SeriesAdd sonarr_series_id=8
 assert_eq "pinned silent series stays" "" "$(cat "$T/puts")"
 run "$(tagged 8 17 "$FR" 1915 "")" sonarr_eventtype=SeriesAdd sonarr_series_id=8 LP_RECOMPUTE=1
