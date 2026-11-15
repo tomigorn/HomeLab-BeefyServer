@@ -93,6 +93,13 @@ class Art(unittest.TestCase):
         self.assertTrue(any(bb > 150 and bb > rr + 40 for rr, gg, bb in rgb_pixels(m.convert("RGB").crop((30, 30, 100, 100)))))
         self.assertEqual(load(ta.collection_backdrop("gems", "Hidden Gems", None, None, [img()])).size, (1920, 1080))
 
+    def test_own_lists_have_their_own_colour_a_clapper_mark_and_the_creator_line(self):
+        self.assertNotIn(ta.palette("user-pat"), {ta.palette(k) for k in ("home-movies", "coming", "gems", "service-8-movie", "genre-drama-movie", "other")})
+        self.assertIsNotNone(ta.mark("user-pat", None, 132))
+        self.assertEqual(ta.headline("user-pat", "Pat produced · by jane"), ("Pat produced", "BY JANE"))
+        im = Image.open(io.BytesIO(ta.collection_poster("user-pat", "Pat produced · by jane", None, [])))
+        self.assertEqual(im.size, (600, 900))
+
     def test_collection_poster_fans_the_member_posters(self):
         im = load(ta.collection_poster("coming", "Coming soon", None, [img((250, 250, 250))]))
         self.assertGreater(min(mean(im, (270, 720, 330, 780))), 200)
