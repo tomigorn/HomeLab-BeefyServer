@@ -617,6 +617,8 @@ A title with nothing found for **7 days** (oldest request, `OVERRIDE_DAYS`; same
 
 Sidebar → **Collections** (German **Sammlungen**) opens `/collections` inside Seerr's page: the household builds its own Jellyfin collections from a search (owner 2026-11-15), e.g. `producer:Adam Sandler`. A saved list appears in Jellyfin under **Collections & Trending** (Jellyfin README "Native TV: Collections & Trending"): owned titles as the real items, missing ones as placeholders with the "⬇ Not downloaded yet" band and the download versions, like Top 10.
 
+Owner decision (2026-11-15, security review M4): titles in own lists are requestable from their Jellyfin placeholders by every Jellyfin user, like Top 10, within the Popular limits (10 per user per 7 days, 30 per day); no kids' filter.
+
 | Search term | Matches |
 |---|---|
 | `actor:` / `director:` / `producer:` / `writer:` | a person's credits (producer = Producer or Executive Producer; writer = Writing department; actor without talk/news/reality shows and roles as themselves) |
