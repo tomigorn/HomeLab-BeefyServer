@@ -24,7 +24,7 @@ Rule: change the bar only here (beefy), run both test suites, then `sync-bar.sh`
 
 Language: hook, else probe text contains `data-ib-lang-de`, else browser language (`de*` = German).
 
-Auth: the bar exists only after a 200 from `data-ib-data`; 401, 403 or a redirect (fetch with `redirect: "manual"`) hides it (and the strip `bar-early.js` reserved) and retries every 4 s; while the first answer is pending the strip stays; never on `data-ib-no-bar` paths. The data paths need an app session (proxy `auth_request`).
+Auth: the bar exists only after a 200 from `data-ib-data`; 401, 403 or a redirect (fetch with `redirect: "manual"`) hides it (and the strip `bar-early.js` reserved) and retries every 4 s; while the first answer is pending nothing is drawn and the strip stays; never on `data-ib-no-bar` paths. The data paths need an app session (proxy `auth_request`).
 
 ## usage.json
 

@@ -374,14 +374,19 @@
       get(DATA)
         .then(function (r) {
           if (r.status === 401 || r.status === 403 || r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400)) { authed = false; data = null; return null; }
-          if (r.ok) authed = true;
-          else if (authed === null) authed = false;
-          return r.ok ? r.json() : null;
+          if (r.ok) return r.json().then(function (j) { return { j: j }; });
+          if (authed) return { j: null };
+          authed = false;
+          return null;
         })
-        .then(function (j) {
-          data = j && Array.isArray(j.indexers) ? j : null;
-          if (!QUOTA || !authed) { quota = null; return sync(); }
+        .then(function (got) {
+          if (!got) return sync();
+          var j = got.j;
+          // authed only together with the data: a navigation during the first load must not draw "usage unavailable"
+          if (!QUOTA) { data = j && Array.isArray(j.indexers) ? j : null; authed = true; quota = null; return sync(); }
           return get(QUOTA).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }).then(function (q) {
+            data = j && Array.isArray(j.indexers) ? j : null;
+            authed = true;
             quota = q && typeof q.used === "number" && typeof q.limit === "number" ? q : null;
             sync();
           });

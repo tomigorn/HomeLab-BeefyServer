@@ -198,3 +198,19 @@ test("panel note comes from the data", async () => {
   w.document.querySelector("#indexer-bar .ib-more").click();
   assert.match(w.document.querySelector("#indexer-bar .ib-panel").textContent, /requests may wait until it resets/);
 });
+
+test("first load in flight: a client-side navigation draws nothing, never 'usage unavailable'", async () => {
+  let release;
+  const body = new Promise((r) => { release = r; });
+  const w = load("bar.js", "", (win) => { win.fetch = () => Promise.resolve({ ok: true, status: 200, json: () => body }); });
+  open.push(w);
+  await tick(); await tick();
+  w.history.pushState({}, "", "/discover/movies");
+  await new Promise((r) => setTimeout(r, 20));
+  const b = w.document.getElementById("indexer-bar");
+  assert.ok(!b || !/unavailable/.test(b.textContent), b && b.textContent);
+  release(usage([SSD]));
+  await tick(); await tick(); await tick();
+  assert.match(chip(w, "SSD").textContent, /^SSD/);
+  assert.doesNotMatch(w.document.getElementById("indexer-bar").textContent, /unavailable/);
+});
