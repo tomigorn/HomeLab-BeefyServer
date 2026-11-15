@@ -68,6 +68,40 @@ class CollectionSpecs(unittest.TestCase):
         self.assertEqual(sorted(specs, key=lambda s: s["sort"])[-1]["name"], "Coming soon")
 
 
+def user_row(rid, name, items, owner="jane", query="producer:Pat Example"):
+    return {"id": rid, "kind": "mixed", "type": "user", "name": {"en": name, "de": name}, "logo": None, "owner": owner, "query": query, "items": items}
+
+
+class UserLists(unittest.TestCase):
+    """Own lists of the Seerr Collections page (lists.json "user")."""
+
+    def test_after_every_automatic_list_and_hidden_gems_sorted_by_name(self):
+        l = lists(rows=[row("service-8-movie", "movie", "Netflix", [])])
+        l["user"] = [user_row("user-zed", "Zed films", []), user_row("user-pat", "Pat produced", [], owner="joe")]
+        specs = tm.collection_specs(l)
+        self.assertEqual([s["key"] for s in specs][-2:], ["user-zed", "user-pat"])
+        pat = specs[-1]
+        self.assertEqual((pat["name"], pat["sort"], pat["user"], pat["art"]), ("Pat produced", "92 Pat produced", True, "Pat produced · by joe"))
+        self.assertEqual(pat["overview"], "List by joe: producer:Pat Example")
+        self.assertEqual(specs[3]["sort"], "03 Netflix · Movies")
+        self.assertFalse(specs[3].get("user"))
+        self.assertGreater("92 Pat produced", f"{tm.COMING_SORT + 1} Hidden Gems")
+
+    def test_members_in_list_order_owned_titles_real_missing_ones_placeholders_without_marks(self):
+        l = lists(movies=[item("movie", 101, 1, "Shared", f="1080p", x="t101")])
+        l["user"] = [user_row("user-pat", "Pat produced", [item("movie", 121, 1, "Owned", o=True), item("movie", 101, 2, "Shared", f="1080p", x="t101"),
+                                                           item("tv", 202, 3, "Only Here", season=1), item("movie", 103, 4, "No Release")])]
+        p = tm.plan(l, coming(), {}, {"movie/121": "jf121"}, {})
+        members = dict((s["key"], m) for s, m in p.collections)
+        self.assertEqual(members["user-pat"], [("real", "jf121"), ("ph", "Shared (2026)"), ("ph", "Only Here (2026)"), ("ph", "No Release (2026)")])
+        self.assertEqual(p.placeholders["Only Here (2026)"].kind, "tv")
+        self.assertEqual(p.placeholders["Only Here (2026)"].marks, [])
+        self.assertEqual(p.placeholders["Shared (2026)"].marks, [("home-movies", 1)])
+        self.assertEqual((p.placeholders["Shared (2026)"].state, p.placeholders["No Release (2026)"].state), ("found", "none"))
+        self.assertNotIn("jf121", p.real_marks)
+        self.assertEqual(len(p.art["user-pat"]), 4)
+
+
 class Plan(unittest.TestCase):
     def test_owned_title_is_real_member(self):
         l = lists(movies=[item("movie", 121, 1, "Owned Film", o=True)])

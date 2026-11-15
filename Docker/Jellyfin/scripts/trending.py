@@ -43,6 +43,8 @@ TMDB = "https://image.tmdb.org/t/p/"
 MAX_AGE = datetime.timedelta(days=9)
 INDEX_MAX_AGE = datetime.timedelta(days=1)
 LOCK_WAIT = 600
+# second tag of the own lists' BoxSets (Seerr Collections page): only these are ever deleted, when their list is gone
+USER_TAG = "hss-user-list"
 POLL_EVERY = 5
 POLL_TIMEOUT = 600
 TICKS = 10 * 10_000_000
@@ -489,9 +491,13 @@ RANKED = {key for key, _, _ in tm.HOME} | {tm.COMING[0]}
 gems = _load("hidden_gems", HERE / "hidden-gems.py")
 
 
+def ranked(spec):
+    return spec["key"] in RANKED or bool(spec.get("user"))
+
+
 def display_order(spec):
-    """Top 10 and Coming soon keep their members in rank order (owned titles at their rank), every other list sorts by sort title."""
-    return "Default" if spec["key"] in RANKED else "SortName"
+    """Top 10, Coming soon and the own lists keep their members in list order (owned titles at their rank), every other list sorts by sort title."""
+    return "Default" if ranked(spec) else "SortName"
 
 
 class Collections:
@@ -542,15 +548,39 @@ class Collections:
             sets[key] = sid
             self.metadata(sid, spec, created or own)
             if not created:
-                self.members(sid, want, spec["key"] in RANKED)
+                self.members(sid, want, ranked(spec))
             self.artwork(sid, spec, arts, (art_refs or {}).get(key) or [])
-        return sorted(set(tagged) | used)
+        return sorted((set(tagged) | used) - self.drop_gone(collections, tagged, sets, arts))
+
+    def drop_gone(self, collections, tagged, sets, arts):
+        """BoxSets of own lists that are gone: deleted when they still carry both tags (never another collection); their state entry dropped either way."""
+        wanted, gone = {spec["key"] for spec, _ in collections}, set()
+        for key, sid in list(sets.items()):
+            if not key.startswith("user-") or key in wanted:
+                continue
+            item = tagged.get(sid)
+            if item and USER_TAG in (item.get("Tags") or []):
+                self.changed += 1
+                if self.dry_run:
+                    self.log(f"would delete collection {item.get('Name')}")
+                    continue
+                self.io.jf("DELETE", f"/Items/{sid}")
+                gone.add(sid)
+                self.log(f"deleted collection {item.get('Name')}")
+            if not self.dry_run:
+                sets.pop(key, None)
+                arts.pop(key, None)
+                self.save()
+        return gone
 
     def metadata(self, sid, spec, untagged_ok):
         item = self.io.jf("GET", f"/Items/{sid}?userId={self.admin}")
         tags = list(item.get("Tags") or [])
         order = display_order(spec)
-        if tm.TAG in tags and item.get("ForcedSortName") == spec["sort"] and item.get("DisplayOrder") == order and item.get("LockData") is True and item.get("Name") == spec["name"]:
+        want_tags = [tm.TAG] + ([USER_TAG] if spec.get("user") else [])
+        overview = spec.get("overview", item.get("Overview"))
+        if (all(t in tags for t in want_tags) and item.get("ForcedSortName") == spec["sort"] and item.get("DisplayOrder") == order and item.get("LockData") is True
+                and item.get("Name") == spec["name"] and item.get("Overview") == overview):
             return
         if not untagged_ok and tm.TAG not in tags:
             raise JellyfinError(f"collection {sid} lost its tag")
@@ -558,9 +588,8 @@ class Collections:
         if self.dry_run:
             self.log(f"would update collection {spec['name']}")
             return
-        if tm.TAG not in tags:
-            tags.append(tm.TAG)
-        self.io.jf("POST", f"/Items/{sid}", {**item, "Name": spec["name"], "Tags": tags, "ForcedSortName": spec["sort"], "DisplayOrder": order, "LockData": True})
+        tags += [t for t in want_tags if t not in tags]
+        self.io.jf("POST", f"/Items/{sid}", {**item, "Name": spec["name"], "Tags": tags, "ForcedSortName": spec["sort"], "DisplayOrder": order, "LockData": True, "Overview": overview})
 
     def members(self, sid, want, ordered=False):
         """Ranked lists (ordered) keep their members when want is empty, so a list never goes empty."""
@@ -597,8 +626,9 @@ class Collections:
         if any(x is Images.FAILED for x in (logo, back, *posters)):
             return
         posters = [x for x in posters if x]
-        data = art.collection_poster(spec["key"], spec["name"], logo, posters)
-        backdrop = art.collection_backdrop(spec["key"], spec["name"], logo, back, posters)
+        name = spec.get("art") or spec["name"]
+        data = art.collection_poster(spec["key"], name, logo, posters)
+        backdrop = art.collection_backdrop(spec["key"], name, logo, back, posters)
         digest = hashlib.sha256(data + backdrop).hexdigest()
         if arts.get(spec["key"]) == digest:
             return

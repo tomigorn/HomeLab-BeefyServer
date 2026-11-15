@@ -192,8 +192,11 @@ class FakeIo:
         if m and m.group(1) in self.sets:
             s = self.sets[m.group(1)]
             if method == "GET":
-                return {k: v for k, v in s.items() if k != "children"} | {"Overview": None}
-            s.update({k: v for k, v in body.items() if k in ("Name", "Tags", "ForcedSortName", "DisplayOrder", "LockData")})
+                return {k: v for k, v in s.items() if k != "children"} | {"Overview": s.get("Overview")}
+            if method == "DELETE":
+                del self.sets[m.group(1)]
+                return None
+            s.update({k: v for k, v in body.items() if k in ("Name", "Tags", "ForcedSortName", "DisplayOrder", "LockData", "Overview")})
             return None
         if m and method == "GET":
             raise urllib.error.HTTPError(path, 404, "not found", {}, None)
@@ -1021,6 +1024,55 @@ class BandCheck(Base):
         out = io.StringIO()
         self.assertEqual(tr.main(["--check-band", "--sample", "2"], io=self.io, paths=self.paths, now=NOW, out=out), 0, out.getvalue())
         self.assertIn("placeholders 4/4", out.getvalue())
+
+
+class UserCollections(Base):
+    """Own lists of the Seerr Collections page: tagged twice, members in list order, deleted with their list."""
+
+    def with_user(self, *rows):
+        lists, coming, details, comingd = feeds()
+        lists["user"] = list(rows)
+        details["entries"]["d3"] = {"t": {"en": "Zeta"}, "p": {"en": "/p3.jpg"}, "b": "/b3.jpg", "ref": "movie/3", "y": 2026}
+        self.write_feeds(lists, coming, details, comingd)
+
+    def user_set(self, name):
+        return next((s for s in self.io.sets.values() if s["Name"] == name), None)
+
+    def test_user_list_collection_in_list_order_with_overview_and_both_tags(self):
+        self.with_user({"id": "user-pat", "kind": "mixed", "type": "user", "name": {"en": "Pat produced"}, "owner": "jane", "query": "producer:Pat Example",
+                        "items": [entry(3, 1, "Zeta", d="d3"), entry(9, 2, "Owned"), entry(1, 3, "Alpha")]})
+        self.assertEqual(self.run_sync(), 0, self.out)
+        s = self.user_set("Pat produced")
+        self.assertEqual((s["Tags"], s["ForcedSortName"], s["DisplayOrder"], s["Overview"]), ([tm.TAG, tr.USER_TAG], "92 Pat produced", "Default", "List by jane: producer:Pat Example"))
+        self.assertEqual(s["children"], [self.item("Zeta")["Id"], "real9", self.item("Alpha")["Id"]])
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertIn("nothing changed", self.out)
+
+    def test_deleted_list_takes_its_collection_and_only_its_own_placeholders(self):
+        self.with_user({"id": "user-pat", "kind": "mixed", "type": "user", "name": {"en": "Pat produced"}, "owner": "jane", "query": "q",
+                        "items": [entry(3, 1, "Zeta", d="d3"), entry(1, 2, "Alpha")]})
+        self.assertEqual(self.run_sync(), 0, self.out)
+        sid = self.user_set("Pat produced")["Id"]
+        self.with_user()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertNotIn(sid, self.io.sets)
+        self.assertIn(("DELETE", f"/Items/{sid}"), self.io.calls)
+        self.assertFalse(self.folder("Zeta").exists())
+        self.assertTrue(self.folder("Alpha").exists())
+        self.assertIn("hp", self.io.sets)
+        self.assertNotIn(sid, json.loads(self.paths.state.read_text())["sets"].values())
+        hide = next(x for x in self.io.injector["CustomJavaScripts"] if x["Name"] == tr.NAME)["Script"]
+        self.assertNotIn(sid, hide)
+
+    def test_an_untagged_or_automatic_collection_is_never_deleted(self):
+        self.with_user({"id": "user-pat", "kind": "mixed", "type": "user", "name": {"en": "Pat produced"}, "owner": "jane", "query": "q", "items": [entry(1, 1, "Alpha")]})
+        self.assertEqual(self.run_sync(), 0, self.out)
+        s = self.user_set("Pat produced")
+        s["Tags"] = [tm.TAG]
+        self.with_user()
+        self.assertEqual(self.run_sync(), 0, self.out)
+        self.assertIn(s["Id"], self.io.sets)
+        self.assertFalse(any(c[0] == "DELETE" and c[1].startswith("/Items/") and "/Images" not in c[1] for c in self.io.calls))
 
 
 class MoonfinOrder(Base):

@@ -29,8 +29,9 @@ CLIPS = ("now", "night", "unavailable", "requested", "coming")
 HOME = (("home-movies", "movies", "Top 10 Switzerland · Movies"), ("home-shows", "shows", "Top 10 Switzerland · Shows"))
 HOME_KIND = {"home-movies": "movie", "home-shows": "tv"}
 COMING = ("coming", "Coming soon")
-# Grid position after every list; Hidden Gems (hidden-gems.py) follows with 91, the real collections after.
+# Grid position after every list; Hidden Gems (hidden-gems.py) follows with 91, the own lists (Seerr Collections page) with 92, the real collections after.
 COMING_SORT = 90
+USER_SORT = 92
 UNMATCHED = "u"
 KIND_NAME = {"movie": "Movies", "tv": "Shows"}
 ART_MEMBERS = 4
@@ -76,7 +77,8 @@ class Plan:
 
 
 def collection_specs(lists):
-    """[{key, name, sort "NN <name>", logo}]: the two Top 10 home lists, Coming soon, then every row of lists.json in its order; Coming soon sorts last in the grid."""
+    """[{key, name, sort "NN <name>", logo}]: the two Top 10 home lists, Coming soon, then every row of lists.json in its order; Coming soon sorts last in the grid.
+    The own lists (lists.json "user") follow with "92 <name>", "user": True, the creator in the art line and the overview."""
     out = [{"key": key, "name": name, "logo": None} for key, _, name in HOME]
     out.append({"key": COMING[0], "name": COMING[1], "logo": None})
     for r in lists.get("rows") or []:
@@ -85,6 +87,10 @@ def collection_specs(lists):
     for i, s in enumerate(listed, 1):
         s["sort"] = f"{i:02d} {s['name']}"
     out[len(HOME)]["sort"] = f"{COMING_SORT} {COMING[1]}"
+    for r in lists.get("user") or []:
+        name, owner = r["name"]["en"], r.get("owner") or "someone"
+        out.append({"key": r["id"], "name": name, "logo": None, "sort": f"{USER_SORT} {name}", "user": True, "art": f"{name} · by {owner}",
+                    "overview": f"List by {owner}: {r.get('query') or ''}".strip()})
     return out
 
 
@@ -183,7 +189,7 @@ def plan(lists, coming, details, owned, states):
     entries = {s["key"]: [] for s in specs}
     for key, home_key, _ in HOME:
         entries[key] = [e for e in (lists.get("home") or {}).get(home_key) or [] if entry_key(e)]
-    for r in lists.get("rows") or []:
+    for r in (lists.get("rows") or []) + (lists.get("user") or []):
         entries[r["id"]] = [e for e in r.get("items") or [] if entry_key(e)]
 
     titles, found = {}, {}
@@ -209,7 +215,7 @@ def plan(lists, coming, details, owned, states):
             if t["entry"] is None or (e.get("x") and not t["entry"].get("x")):
                 t["entry"] = e
             t["info"] = t["info"] or details.get(e.get("d")) or by_ref.get(key)
-            if e.get("r") and not any(k == spec["key"] for k, _ in found.get(key, ())):
+            if e.get("r") and not spec.get("user") and not any(k == spec["key"] for k, _ in found.get(key, ())):
                 found.setdefault(key, []).append((spec["key"], int(e["r"])))
 
     real = {key: owned[key] for key, t in titles.items() if key in owned}
