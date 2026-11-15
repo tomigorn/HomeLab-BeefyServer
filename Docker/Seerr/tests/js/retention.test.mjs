@@ -33,13 +33,14 @@ const TEMP = { key: "movie/1", known: true, state: "temporary", keep: false, sou
   imported: "2026-11-17", ssdUntil: "2026-12-17", hddFrom: "2026-12-17", tier: "ssd", canKeep: true, canUnkeep: true, deleteEnabled: false };
 const OLD = { ...TEMP, state: "keep", keep: true, default: true, reasons: ["old"], deleteOn: null };
 const T = (q) => "/_download-now/retention/title?" + q;
+const D = (q) => T(q) + "&default=1";
 const FACTS = `<div class="media-page"><div class="media-overview-right"><div class="media-facts">
   <div class="media-fact"><span>Status</span><span class="media-fact-value">Released</span></div>
   <div class="media-fact"><span>Runtime</span><span class="media-fact-value">2h</span></div></div></div></div>`;
 
 test("request dialog: the box sits right below Can wait, preset from the title's state", async () => {
   const sent = [];
-  const w = load("retention.js", `<div id="hg-can-wait"></div>` + modal("Request Movie"), fakeXHR({ [T("type=movie&tmdb=1")]: OLD }, sent));
+  const w = load("retention.js", `<div id="hg-can-wait"></div>` + modal("Request Movie"), fakeXHR({ [D("type=movie&tmdb=1")]: OLD }, sent));
   await settle();
   const d = w.document.querySelector('[role="dialog"]');
   const can = d.querySelector("#hg-can-wait") || null;
@@ -54,7 +55,7 @@ test("request dialog: the box sits right below Can wait, preset from the title's
 });
 
 test("dialog box follows the Can wait box when that comes later", async () => {
-  const w = load("retention.js", modal("Request Movie"), fakeXHR({ [T("type=movie&tmdb=1")]: TEMP }, []));
+  const w = load("retention.js", modal("Request Movie"), fakeXHR({ [D("type=movie&tmdb=1")]: TEMP }, []));
   await settle();
   const box = w.document.querySelector("#hg-keep-forever");
   const cw = w.document.createElement("div");
@@ -65,7 +66,7 @@ test("dialog box follows the Can wait box when that comes later", async () => {
 });
 
 test("German dialog and other dialogs", async () => {
-  const w = load("retention.js", `<a href="/discover/tv">Serien</a>` + modal("Film anfragen"), fakeXHR({ [T("type=movie&tmdb=1")]: TEMP }, []));
+  const w = load("retention.js", `<a href="/discover/tv">Serien</a>` + modal("Film anfragen"), fakeXHR({ [D("type=movie&tmdb=1")]: TEMP }, []));
   await settle();
   assert.match(w.document.querySelector("#hg-keep-forever").textContent, /♾️ Für immer behalten/);
   assert.equal(load("retention.js", modal("Report an Issue"), fakeXHR({}, [])).document.querySelector("#hg-keep-forever"), null);
@@ -73,7 +74,7 @@ test("German dialog and other dialogs", async () => {
 
 test("submit: a changed box is stored after the request was created, an unchanged one is not", async () => {
   const sent = [];
-  const w = load("retention.js", modal("Request Movie"), fakeXHR({ [T("type=movie&tmdb=1")]: TEMP }, sent, { "/_download-now/retention/keep": [200, OLD] }));
+  const w = load("retention.js", modal("Request Movie"), fakeXHR({ [D("type=movie&tmdb=1")]: TEMP }, sent, { "/_download-now/retention/keep": [200, OLD] }));
   await settle();
   const post = (body) => { const x = new w.XMLHttpRequest(); x.open("POST", "/api/v1/request"); x.send(JSON.stringify(body)); };
   post({ mediaId: 1, mediaType: "movie" });
@@ -89,7 +90,7 @@ test("submit: a changed box is stored after the request was created, an unchange
 
 test("submit for another title than the dialog's state is left alone", async () => {
   const sent = [];
-  const w = load("retention.js", modal("Request Movie"), fakeXHR({ [T("type=movie&tmdb=1")]: TEMP }, sent));
+  const w = load("retention.js", modal("Request Movie"), fakeXHR({ [D("type=movie&tmdb=1")]: TEMP }, sent));
   await settle();
   w.document.querySelector("#hg-keep-forever input").checked = true;
   const x = new w.XMLHttpRequest();

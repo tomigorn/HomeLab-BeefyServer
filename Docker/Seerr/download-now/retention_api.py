@@ -18,6 +18,9 @@ BATCH_MAX = 100
 MIN_GAP = 3
 PER_HOUR = 30
 RECENT = {}
+LOOKUPS = {}
+LOOKUP_TTL = 600
+LOOKUP_MAX = 500
 LOCK = threading.Lock()
 now_ts = time.time
 
@@ -100,7 +103,20 @@ def year_of(media, kind):
 
 
 def lookup_default(dn, deps, kind, tmdb, media, today):
-    """reasons for a title not in the library yet: Radarr/Sonarr lookup (IMDb rating, votes, year), else the year from Seerr."""
+    """reasons for a title not in the library yet: Radarr/Sonarr lookup (IMDb rating, votes, year; cached 10 min), else the year from Seerr."""
+    k, t = rr.key(kind, tmdb), now_ts()
+    hit = LOOKUPS.get(k)
+    if hit and t - hit[0] < LOOKUP_TTL:
+        return hit[1]
+    why = _lookup(dn, deps, kind, tmdb, media, today)
+    with LOCK:
+        if len(LOOKUPS) >= LOOKUP_MAX:
+            LOOKUPS.clear()
+        LOOKUPS[k] = (t, why)
+    return why
+
+
+def _lookup(dn, deps, kind, tmdb, media, today):
     year = year_of(media, kind)
     try:
         if kind == "movie":
@@ -119,7 +135,7 @@ def lookup_default(dn, deps, kind, tmdb, media, today):
         return rr.reasons(kind, year, today.year)
 
 
-def title_state(dn, deps, me, kind, tmdb, media, today):
+def title_state(dn, deps, me, kind, tmdb, media, today, lookup=True):
     doc = read_doc(deps.retention_file)
     k = rr.key(kind, tmdb)
     ov = overrides(deps.retention_keep).get(k)
@@ -129,7 +145,7 @@ def title_state(dn, deps, me, kind, tmdb, media, today):
         out.update({f: entry.get(f) for f in ("imported", "ssdUntil", "hddFrom", "tier", "reasons", "default")})
         out.update(card(entry, ov, today, enabled_on(doc)))
     else:
-        why = lookup_default(dn, deps, kind, tmdb, media, today)
+        why = lookup_default(dn, deps, kind, tmdb, media, today) if lookup else rr.reasons(kind, year_of(media, kind), today.year)
         out.update(reasons=why, default=bool(why))
         out.update(card({"default": bool(why), "due": None, "protected": rr.protected(k, [])}, ov, today, None))
     locked = out["source"] == "protected"
@@ -259,4 +275,5 @@ def handle(dn, method, path, headers, body, deps, today=None):
         media = deps.seerr(f"/{w[0]}/{w[1]}", auth)
     except dn.ApiError:
         media = None
-    return 200, title_state(dn, deps, me, w[0], w[1], media, today)
+    wants_default = (urllib.parse.parse_qs(url.query).get("default") or [""])[0] == "1"
+    return 200, title_state(dn, deps, me, w[0], w[1], media, today, lookup=wants_default)

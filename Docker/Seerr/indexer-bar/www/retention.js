@@ -154,7 +154,7 @@
       if (!key) { fillBox(box, null, null, l); continue; }
       (function (box, key, l) {
         box.__hg = { key: key, initial: null };
-        title_state(key).then(function (st) { fillBox(box, key, st, l); }, function () { fillBox(box, null, null, l); });
+        title_state(key, true).then(function (st) { fillBox(box, key, st, l); }, function () { fillBox(box, null, null, l); });
       })(box, key, l);
     }
   }
@@ -200,22 +200,23 @@
   }
 
   // ---- title page ----
-  function title_state(key) {
-    var c = state.titles[key];
-    if (c && c.st && Date.now() - c.at < 30000) return Promise.resolve(c.st);
-    if (state.loading[key]) return state.loading[key];
+  // dflt: the request dialog asks for the category default of a title not in the library yet (a Radarr/Sonarr lookup); the title page does not need it
+  function title_state(key, dflt) {
+    var c = state.titles[key], slot = key + (dflt ? "|d" : "");
+    if (c && c.st && Date.now() - c.at < 30000 && (!dflt || c.st.known || c.d)) return Promise.resolve(c.st);
+    if (state.loading[slot]) return state.loading[slot];
     var kt = key.split("/");
-    state.loading[key] = request("GET", API + "title?type=" + kt[0] + "&tmdb=" + kt[1]).then(function (st) {
-      state.titles[key] = { at: Date.now(), st: st };
-      state.loading[key] = null;
+    state.loading[slot] = request("GET", API + "title?type=" + kt[0] + "&tmdb=" + kt[1] + (dflt ? "&default=1" : "")).then(function (st) {
+      state.titles[key] = { at: Date.now(), st: st, d: !!dflt };
+      state.loading[slot] = null;
       run();
       return st;
     }, function (e) {
       state.titles[key] = { at: Date.now(), st: null };
-      state.loading[key] = null;
+      state.loading[slot] = null;
       throw e;
     });
-    return state.loading[key];
+    return state.loading[slot];
   }
 
   function hintRows(st, l, observe) {

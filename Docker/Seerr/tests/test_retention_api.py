@@ -95,6 +95,7 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.w = World(self.tmp.name)
         ra.RECENT.clear()
+        ra.LOOKUPS.clear()
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -130,16 +131,23 @@ class Title(Base):
         self.assertEqual((r["postponed"], r["deleteOn"], r["why"]), ("in-progress", "2027-03-31", "postponed"))
 
     def test_not_in_the_library_yet_default_from_radarr_lookup(self):
-        code, r = self.w.get("jane", "title?type=movie&tmdb=30")
+        code, r = self.w.get("jane", "title?type=movie&tmdb=30&default=1")
         self.assertEqual((code, r["known"], r["default"], r["reasons"], r["keep"], r["deleteOn"]), (200, False, True, ["old"], True, None))
 
     def test_not_in_the_library_series_default_from_sonarr_lookup(self):
-        r = self.w.get("jane", "title?type=tv&tmdb=40")[1]
+        r = self.w.get("jane", "title?type=tv&tmdb=40&default=1")[1]
         self.assertEqual((r["known"], r["reasons"], r["keep"]), (False, ["goated"], True))
+
+    def test_title_page_never_asks_radarr_and_lookups_are_cached(self):
+        r = self.w.get("jane", "title?type=movie&tmdb=30")[1]
+        self.assertEqual((r["known"], r["reasons"], self.w.arr_calls), (False, ["old"], []))
+        self.w.get("jane", "title?type=movie&tmdb=30&default=1")
+        self.w.get("joe", "title?type=movie&tmdb=30&default=1")
+        self.assertEqual(len(self.w.arr_calls), 1)
 
     def test_lookup_failure_is_temporary_by_default(self):
         self.w.media["movie/31"] = media("movie", 31, [], "2025-01-01")
-        r = self.w.get("jane", "title?type=movie&tmdb=31")[1]
+        r = self.w.get("jane", "title?type=movie&tmdb=31&default=1")[1]
         self.assertEqual((r["known"], r["default"], r["keep"]), (False, False, False))
 
     def test_unreadable_data_file(self):
