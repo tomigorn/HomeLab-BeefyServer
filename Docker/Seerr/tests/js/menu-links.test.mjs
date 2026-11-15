@@ -164,10 +164,11 @@ test("on /manual the Manual entry looks active like Seerr's own, elsewhere not",
 
 test("a click on the Manual entry navigates inside Seerr when its router is there", () => {
   const pushed = [];
-  const w = load("menu-links.js", SIDEBAR, (win) => { win.next = { router: { push: (u) => { pushed.push(u); return Promise.resolve(true); } } }; });
+  const w = load("menu-links.js", SIDEBAR, (win) => { win.next = { router: { push: (u, as) => { pushed.push([u, as]); return Promise.resolve(true); } } }; });
   const ev = new w.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
   manual(w)[0].dispatchEvent(ev);
-  assert.deepEqual(pushed, ["/manual"]);
+  // Seerr has no /manual page: Next would reload the whole page (menu flashes), so its 404 page is shown under /manual, as on a direct load
+  assert.deepEqual(pushed, [["/404", "/manual"]]);
   assert.equal(ev.defaultPrevented, true);
   const plain = new w.MouseEvent("click", { bubbles: true, cancelable: true, button: 0, ctrlKey: true });
   manual(w)[0].dispatchEvent(plain);

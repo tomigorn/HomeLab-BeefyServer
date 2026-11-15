@@ -293,7 +293,7 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 | Entry | Opens | Phone bottom bar (no "more" button; with one: in the "more" list) |
 |---|---|---|
 | **Audiobooks** (German UI: **Hörbücher**) | `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, public via Cloudflare, Holy Grail login, group `streaming-requesters`), same tab | while the bar has at most 5 items with it |
-| **Manual interaction** (**Manuell beheben**) + amber count of open problems (none at 0); active look on its page | `/manual` inside Seerr ([Manual interaction](#manual-interaction)), with Seerr's own router (no reload) | while the bar has at most 6 items with it (so phones without a "more" list still reach it) |
+| **Manual interaction** (**Manuell beheben**) + amber count of open problems (none at 0); active look on its page | `/manual` inside Seerr ([Manual interaction](#manual-interaction)), with Seerr's own router showing its 404 page under `/manual` (no reload: Next reloads the whole page for a path it has no page for, the menu flashed) | while the bar has at most 6 items with it (so phones without a "more" list still reach it) |
 
 Count: `GET /_download-now/manual/count` once per page load, again on Seerr navigation at most every 5 min; no session or an error = no badge. Links and URL: `LINKS` at the top of the file. Seerr without a `/discover/tv` link: no entry, nothing breaks. Only menu links count: `/discover/tv` links inside `<main>` (Discover's **Popular Series** row title) are skipped, otherwise an "Audiobooks" title lands squeezed beside it (fixed 2026-10-28; Discover gets no own Audiobooks row, the menu entry covers it).
 

@@ -83,12 +83,12 @@
     mark(doc);
   }
 
-  // a page of ours inside Seerr (/manual): Seerr's own router, so the layout stays; a full load otherwise
+  // a page of ours inside Seerr (/manual): Seerr's router shows its 404 page under our path (as a direct load does), so the layout stays; Next reloads the whole page for a path it has no page for
   function inApp(ev, href) {
     var w = typeof window !== "undefined" ? window : null, router = w && w.next && w.next.router;
     if (!router || typeof router.push !== "function" || ev.defaultPrevented || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey || ev.altKey) return;
     ev.preventDefault();
-    try { router.push(href); } catch (e) { w.location.href = href; }
+    try { router.push("/404", href); } catch (e) { w.location.href = href; }
   }
 
   // our route entries look active on their page, like Seerr's own entries
