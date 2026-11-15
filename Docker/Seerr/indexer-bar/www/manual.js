@@ -109,7 +109,9 @@
       },
       checksOk: "checks", problemsShort: function (n) { return n + (n === 1 ? " problem" : " problems"); }, notesShort: function (n) { return n + (n === 1 ? " note" : " notes"); },
       virusShort: { clean: "virus scan clean", pending: "virus scan pending", infected: "malware found", unknown: "not virus-scanned yet", "parts-clean": "parts scanned clean", "parts-error": "only partly scannable" },
-      tooBig: "Too big for the full virus scan", partsClean: "attachments and subtitles scanned clean", genuine: "genuine video",
+      tooBig: "Too big for the full virus scan",
+      bigPassed: "Virus check passed (large file: attachments and subtitles scanned, genuine video)", bigHead: "Large file",
+      bigWhy: "ClamAV scans at most 2 GiB, so the video stream itself is not scanned.", bigParts: "Attachments and subtitles:", bigClean: "scanned clean", bigVideo: "Video:", bigGenuine: "genuine video stream",
       partsError: function (why) { return "parts scan not possible" + (why ? " (" + why + ")" : "") + ": admins only"; },
       virus: { clean: "Virus scan: clean", pending: "Virus scan pending", infected: "Virus scan: malware found", unknown: "Virus scan: not scanned yet" },
       detailsLink: "Details ↗", account: "🔒 account needed", scoutNfo: "NFO", scoutDesc: "Description", scoutNone: "no language named",
@@ -180,7 +182,9 @@
       },
       checksOk: "Prüfungen", problemsShort: function (n) { return n + (n === 1 ? " Problem" : " Probleme"); }, notesShort: function (n) { return n + (n === 1 ? " Hinweis" : " Hinweise"); },
       virusShort: { clean: "Virenscan sauber", pending: "Virenscan läuft", infected: "Schadsoftware gefunden", unknown: "noch nicht auf Viren geprüft", "parts-clean": "Teile sauber", "parts-error": "nur teilweise prüfbar" },
-      tooBig: "Zu gross für den vollen Virenscan", partsClean: "Anhänge und Untertitel sauber", genuine: "echtes Video",
+      tooBig: "Zu gross für den vollen Virenscan",
+      bigPassed: "Virenprüfung bestanden (grosse Datei: Anhänge und Untertitel geprüft, echtes Video)", bigHead: "Grosse Datei",
+      bigWhy: "ClamAV prüft höchstens 2 GiB, darum wird der Videostrom selbst nicht gescannt.", bigParts: "Anhänge und Untertitel:", bigClean: "sauber", bigVideo: "Video:", bigGenuine: "echter Videostrom",
       partsError: function (why) { return "Teil-Scan nicht möglich" + (why ? " (" + why + ")" : "") + ": nur Admins"; },
       virus: { clean: "Virenscan: sauber", pending: "Virenscan läuft noch", infected: "Virenscan: Schadsoftware gefunden", unknown: "Virenscan: noch nicht geprüft" },
       detailsLink: "Details ↗", account: "🔒 Konto nötig", scoutNfo: "NFO", scoutDesc: "Beschreibung", scoutNone: "keine Sprache genannt",
@@ -300,8 +304,11 @@
   function virusLine(doc, t, v) {
     if (!v || typeof v !== "object") return null;
     if (v.state === "parts-clean" || v.state === "parts-error") {
-      var txt = "⚪ " + t.tooBig + " · " + (v.state === "parts-clean" ? "✅ " + t.partsClean + " · ✅ " + t.genuine : "⚠️ " + t.partsError(v.why ? String(v.why) : null));
-      return el(doc, "p", { "class": "hg-m-virus hg-m-virus-" + v.state, "data-virus": true }, txt);
+      var ok = v.state === "parts-clean";
+      var txt = ok ? "✅ " + t.bigPassed : "⚪ " + t.tooBig + " · ⚠️ " + t.partsError(v.why ? String(v.why) : null);
+      var line = el(doc, "p", { "class": "hg-m-virus hg-m-virus-" + v.state, "data-virus": true }, txt);
+      tip(line, { title: ok ? "✅ " + t.bigHead : "⚪ " + t.tooBig, rows: [t.bigWhy].concat(ok ? [[t.bigParts, t.bigClean], [t.bigVideo, t.bigGenuine + (v.minutes ? " (" + v.minutes + " " + t.min + ")" : "")]] : []) });
+      return line;
     }
     var icon = { clean: "✅", infected: "❌" }[v.state] || "⏳", text = t.virus[v.state] || t.virus.unknown;
     if (v.state === "infected" && v.signature) text += " (" + String(v.signature) + ")";
