@@ -238,6 +238,18 @@ class Scan(unittest.TestCase):
         self.assertEqual(p["requesters"], ["user 5", "plexjoe"])
         self.assertNotIn("@", w.store.read_text())
 
+    def test_queue_problem_finds_its_seerr_request_by_the_arr_id_or_tvdb(self):
+        for req in (request(167, "tv", 312697, name="joe", ext=54), request(167, "tv", 312697, name="joe", tvdb=9090)):
+            reset()
+            w = World(squeue=[qrec(1, ep=501)], requests=[req])
+            p = one(w, "import")
+            self.assertEqual((p["key"], p["requesters"]), ("tv/312697", ["joe"]))
+
+    def test_open_count_counts_titles(self):
+        w = World(squeue=[qrec(1, dl="A", ep=501), qrec(2, dl="B", ep=502)])
+        self.assertEqual(len(problems(w)["open"]), 2)
+        self.assertEqual(get(w, "count"), (200, {"open": 1}))
+
     def test_failed_download_is_a_problem(self):
         w = World(rqueue=[qrec(1, kind="movie", tds="failed", status="failed", tid=43, tmdb=673, msgs=("Download failed",))])
         self.assertEqual(one(w, "failed")["details"]["message"], "Download failed")
@@ -541,7 +553,37 @@ class Import(unittest.TestCase):
                          [(0, "Company.Retreat.S01E01.mkv", [501], True), (1, "Company.Retreat.1x02.mkv", [502], True)])
         self.assertEqual([e["label"] for e in out["episodes"]], ["S01E01", "S01E02"])
         self.assertNotIn("/data", json.dumps(out))
-        self.assertIn(("sonarr", "/manualimport?downloadId=DL1&seriesId=54&filterExistingFiles=false"), self.w.gets)
+        self.assertIn(("sonarr", "/manualimport?downloadId=DL1&filterExistingFiles=true"), self.w.gets)
+        self.assertFalse(any("folder=" in g[1] or "seriesId=" in g[1] for g in self.w.gets if g[1].startswith("/manualimport")))
+
+    def test_only_the_downloads_own_files_are_listed_and_importable(self):
+        library = {"path": "/data/media/tv/CR/Season 01/CR - S01E06.mkv", "relativePath": "Season 01/CR - S01E06.mkv", "size": 5, "quality": {}, "languages": [],
+                   "episodes": [{"id": 506, "seasonNumber": 1, "episodeNumber": 6}], "rejections": [], "downloadId": None}
+        other = dict(library, path="/data/usenet/complete/tv/X/x.mkv", relativePath="x.mkv", downloadId="OTHER")
+        self.w.proposals = [library, other] + self.w.proposals
+        out = get(self.w, f"files?id={self.pid}")[1]
+        self.assertEqual([f["name"] for f in out["files"]], ["Company.Retreat.S01E01.mkv", "Company.Retreat.1x02.mkv"])
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "import", "files": [{"n": 2, "episodeIds": [501]}]})[0], 400)
+        self.assertEqual(self.w.writes, [])
+
+    def test_every_episode_is_offered_specials_last(self):
+        self.w.episodes = [{"id": 900, "seasonNumber": 0, "episodeNumber": 1}, {"id": 610, "seasonNumber": 2, "episodeNumber": 1}] + EPISODES
+        out = get(self.w, f"files?id={self.pid}")[1]
+        self.assertEqual([e["label"] for e in out["episodes"]], ["S01E01", "S01E02", "S02E01", "S00E01"])
+
+    def test_a_file_without_an_episode_in_its_name_gets_the_queue_records_episode(self):
+        reset()
+        w = World(squeue=[qrec(1, dl="DL9", ep=502)])
+        w.episodes = EPISODES
+        w.proposals = [{"path": "/data/usenet/complete/tv/x/abc123.mkv", "relativePath": "abc123.mkv", "size": 9, "quality": {}, "languages": [], "episodes": [], "rejections": [], "downloadId": "dl9"}]
+        pid = one(w, "import")["id"]
+        self.assertEqual(get(w, f"files?id={pid}")[1]["files"][0]["episodeIds"], [502])
+
+    def test_opening_the_list_again_reuses_it(self):
+        first = get(self.w, f"files?id={self.pid}")[1]
+        again = get(self.w, f"files?id={self.pid}")
+        self.assertEqual((again[0], again[1]["token"], again[1]["files"]), (200, first["token"], first["files"]))
+        self.assertEqual(sum(1 for g in self.w.gets if g[1].startswith("/manualimport")), 1)
 
     def test_import_sends_the_server_side_paths_with_the_picked_episodes(self):
         get(self.w, f"files?id={self.pid}")
@@ -561,7 +603,7 @@ class Import(unittest.TestCase):
 
     def test_file_lists_are_rate_limited(self):
         self.assertEqual(get(self.w, f"files?id={self.pid}")[0], 200)
-        self.assertEqual(get(self.w, f"files?id={self.pid}")[0], 429)
+        self.assertEqual(get(self.w, f"files?id={self.pid}&refresh=1")[0], 429)
 
     def test_a_file_the_arr_rejected_needs_an_admin(self):
         self.w.proposals[1]["rejections"] = [{"reason": "Not an upgrade for existing episode file(s)"}]
@@ -597,8 +639,8 @@ class Import(unittest.TestCase):
     def test_movie_import_uses_the_problems_movie(self):
         reset()
         w = World(rqueue=[qrec(1, kind="movie", tid=43, tmdb=673, year=2024, title="Some.Film.2024.1080p-GRP", msgs=("matched to movie by ID",))])
-        w.proposals = [{"path": "/data/torrents/radarr/a/small.mkv", "relativePath": "a/small.mkv", "size": 10, "quality": {}, "languages": [], "movie": None, "rejections": []},
-                       {"path": "/data/torrents/radarr/a/film.mkv", "relativePath": "a/film.mkv", "size": 9_000_000_000, "quality": {}, "languages": [], "movie": None, "rejections": []}]
+        w.proposals = [{"path": "/data/torrents/radarr/a/small.mkv", "relativePath": "a/small.mkv", "size": 10, "quality": {}, "languages": [], "movie": None, "rejections": [], "downloadId": "DL1"},
+                       {"path": "/data/torrents/radarr/a/film.mkv", "relativePath": "a/film.mkv", "size": 9_000_000_000, "quality": {}, "languages": [], "movie": None, "rejections": [], "downloadId": "DL1"}]
         pid = one(w, "import")["id"]
         out = get(w, f"files?id={pid}")[1]
         self.assertEqual([(f["name"], f["probable"]) for f in out["files"]], [("small.mkv", False), ("film.mkv", True)])
@@ -652,6 +694,16 @@ class NoRelease(unittest.TestCase):
         get(self.w, f"releases?id={self.pid}")
         get(self.w, f"releases?id={self.pid}")
         self.assertEqual(sum(1 for g in self.w.gets if g[1].startswith("/release")), 1)
+
+    def test_reopening_the_release_list_reuses_it(self):
+        first = get(self.w, f"releases?id={self.pid}")[1]
+        manual.NOW = lambda: T + 300
+        os.utime(self.w.rs_file, (T + 300, T + 300))
+        again = get(self.w, f"releases?id={self.pid}")[1]
+        self.assertEqual(again["token"], first["token"])
+        self.assertEqual(sum(1 for g in self.w.gets if g[1].startswith("/release")), 1)
+        get(self.w, f"releases?id={self.pid}&refresh=1")
+        self.assertEqual(sum(1 for g in self.w.gets if g[1].startswith("/release")), 2)
 
     def test_rejected_or_unknown_release_cannot_be_grabbed(self):
         out = get(self.w, f"releases?id={self.pid}")[1]

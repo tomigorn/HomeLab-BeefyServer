@@ -155,11 +155,19 @@ def scan(dn, deps, known):
         complete, reqs = False, []
     elif len(reqs) >= SEERR_TAKE:
         complete = False
-    by_key = {}
+    by_key, seerr_key = {}, {}
     for r in reqs:
         m = r.get("media") if isinstance(r, dict) else None
         if isinstance(m, dict) and m.get("tmdbId") and r.get("type") in dn.APP and r.get("status") != DECLINED and isinstance(r.get("requestedBy"), dict):
-            by_key.setdefault(f"{r['type']}/{m['tmdbId']}", []).append(r)
+            key = f"{r['type']}/{m['tmdbId']}"
+            by_key.setdefault(key, []).append(r)
+            # Radarr/Sonarr may know the title under another TMDB id than Seerr: their own id (and the TVDB id) find the request too
+            app = dn.APP[r["type"]]
+            for ext in (m.get("externalServiceId"), m.get("externalServiceId4k")):
+                if is_int(ext):
+                    seerr_key.setdefault((app, "id", ext), key)
+            if r["type"] == "tv" and is_int(m.get("tvdbId")):
+                seerr_key.setdefault((app, "tvdb", m["tvdbId"]), key)
 
     def arr(app):
         if app not in arrs:
@@ -242,6 +250,8 @@ def scan(dn, deps, known):
             t = recs[0].get("movie" if kind == "movie" else "series") or {}
             tid = recs[0].get("movieId" if kind == "movie" else "seriesId")
             key = f"{kind}/{t['tmdbId']}" if t.get("tmdbId") else f"{app}:{tid}"
+            if key not in by_key:
+                key = seerr_key.get((app, "id", tid)) or seerr_key.get((app, "tvdb", t.get("tvdbId"))) or key
             ptype, more = queue_kind(recs, t.get("year"), kind)
             msg = next((m for r in recs for sm in r.get("statusMessages") or [] for m in sm.get("messages") or [] if m), None) or recs[0].get("errorMessage")
             details = {"release": str(recs[0].get("title") or "")[:200], "message": brief(msg), **more}
@@ -372,6 +382,13 @@ def keep(pid, kind, me, data):
     return token
 
 
+def mine(pid, kind, me):
+    """The caller's own still valid list (re-opening it is no new arr call): (token, data) or None."""
+    with OFFERS_LOCK:
+        o = OFFERS.get((pid, kind, me.get("id")))
+    return (o[1], o[2]) if o and NOW() - o[0] <= OFFER_TTL else None
+
+
 def offer(pid, kind, me, req):
     with OFFERS_LOCK:
         o = OFFERS.get((pid, kind, me.get("id")))
@@ -423,34 +440,43 @@ def episode_guess(name, by_number):
     return []
 
 
-def files(dn, deps, me, p):
+def files(dn, deps, me, p, q):
     if p["type"] != "import":
         raise Refused(400, "bad request")
+    had = mine(p["id"], "files", me)
+    if had and not q.get("refresh"):
+        return dict(had[1]["public"], token=had[0])
     if not throttle(("files", me.get("id")), LOOKUP_GAP, mark=False) or not throttle(("files", p["id"]), FILES_GAP, mark=False):
         raise Refused(429, "slow down")
     throttle(("files", me.get("id")), LOOKUP_GAP)
     throttle(("files", p["id"]), FILES_GAP)
     i = p["_"]
     arr = deps.arr(i["app"])
-    owner = "movieId" if i["kind"] == "movie" else "seriesId"
-    got = arr(f"/manualimport?downloadId={urllib.parse.quote(str(i['downloadId']), safe='')}&{owner}={i['arrId']}&filterExistingFiles=false")
-    props = [x for x in got if isinstance(x, dict) and x.get("path")] if isinstance(got, list) else []
+    dl = str(i.get("downloadId") or "")
+    if not dl:
+        raise Refused(400, "no download")
+    # downloadId alone: with seriesId/movieId Sonarr lists the title's library folder instead
+    got = arr(f"/manualimport?downloadId={urllib.parse.quote(dl, safe='')}&filterExistingFiles=true")
+    props = [x for x in got if isinstance(x, dict) and x.get("path") and str(x.get("downloadId") or "").lower() == dl.lower()] if isinstance(got, list) else []
     episodes = []
     if i["kind"] == "tv":
         eps = arr(f"/episode?seriesId={i['arrId']}")
-        episodes = sorted([e for e in eps if isinstance(e, dict) and is_int(e.get("id"))] if isinstance(eps, list) else [], key=lambda e: (e.get("seasonNumber") or 0, e.get("episodeNumber") or 0))
+        episodes = sorted([e for e in eps if isinstance(e, dict) and is_int(e.get("id"))] if isinstance(eps, list) else [], key=lambda e: ((e.get("seasonNumber") or 0) == 0, e.get("seasonNumber") or 0, e.get("episodeNumber") or 0))
     by_number = {(e.get("seasonNumber"), e.get("episodeNumber")): e["id"] for e in episodes}
     out = []
     biggest = max(range(len(props)), key=lambda n: props[n].get("size") or 0) if props else None
     for n, x in enumerate(props):
         name = str(x.get("relativePath") or x.get("name") or x["path"]).replace("\\", "/").rsplit("/", 1)[-1]
-        guess = [e.get("id") for e in x.get("episodes") or [] if isinstance(e, dict) and is_int(e.get("id"))] or episode_guess(name, by_number) if i["kind"] == "tv" else []
+        queued = i.get("episodeIds") or []
+        guess = ([e.get("id") for e in x.get("episodes") or [] if isinstance(e, dict) and is_int(e.get("id"))] or episode_guess(name, by_number)
+                 or (queued if len(queued) == 1 else [])) if i["kind"] == "tv" else []
         out.append({"n": n, "name": name, "size": x.get("size") or 0, "quality": ((x.get("quality") or {}).get("quality") or {}).get("name") or (x.get("quality") or {}).get("name"),
                     "languages": [str(lang.get("name")) for lang in x.get("languages") or [] if isinstance(lang, dict) and lang.get("name")],
                     "rejections": [brief(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
                     "episodeIds": guess, "probable": bool(guess) if i["kind"] == "tv" else n == biggest})
-    token = keep(p["id"], "files", me, {"props": props, "episodes": {e["id"]: bool(e.get("hasFile")) for e in episodes}})
-    return {"token": token, "kind": i["kind"], "files": out, "episodes": [{"id": e["id"], "label": f"S{e.get('seasonNumber') or 0:02d}E{e.get('episodeNumber') or 0:02d}", "title": str(e.get("title") or "")[:80]} for e in episodes]}
+    public = {"kind": i["kind"], "files": out, "episodes": [{"id": e["id"], "label": f"S{e.get('seasonNumber') or 0:02d}E{e.get('episodeNumber') or 0:02d}", "title": str(e.get("title") or "")[:80]} for e in episodes]}
+    token = keep(p["id"], "files", me, {"props": props, "episodes": {e["id"]: bool(e.get("hasFile")) for e in episodes}, "public": public})
+    return dict(public, token=token)
 
 
 def releases(dn, deps, me, p, q):
@@ -463,6 +489,9 @@ def releases(dn, deps, me, p, q):
         season = int(raw) if raw.isdigit() else None
         if season not in i["seasons"]:
             raise Refused(400, "bad request")
+    had = mine(p["id"], "releases", me)
+    if had and had[1]["season"] == season and not q.get("refresh"):
+        return {"token": had[0], "releases": had[1]["public"], "season": season, "cached": True}
     cached = CACHE.get(("releases", p["id"]))
     if not throttle(("releases", p["id"]), RELEASE_GAP, mark=False):
         if cached and cached["season"] == season:
@@ -753,7 +782,7 @@ def work(dn, deps, me, method, sub, url, req):
             return 200, view(deps, admin)
         if sub == "count":
             refresh(dn, deps)
-            return 200, {"open": len(view(deps, admin)["open"])}
+            return 200, {"open": len({r.get("key") for r in view(deps, admin)["open"]})}
         if sub == "history":
             if not admin:
                 return 403, {"error": "forbidden"}
@@ -764,7 +793,7 @@ def work(dn, deps, me, method, sub, url, req):
         if sub == "lookup":
             return 200, lookup(dn, deps, me, p, q)
         if sub == "files":
-            return 200, files(dn, deps, me, p)
+            return 200, files(dn, deps, me, p, q)
         return 200, releases(dn, deps, me, p, q)
     except Refused as e:
         return e.status, {"error": e.error}
