@@ -68,6 +68,8 @@ class Deps:
     collections_file: object = None
     night_waiting: object = None
     night_downloads: object = None
+    retention_file: object = None
+    retention_keep: object = None
 
 
 def redact(text):
@@ -362,6 +364,9 @@ def handle(method, path, headers, body, deps):
     if url.path.startswith("/_download-now/collections/"):
         import collections_page
         return collections_page.handle(sys.modules[__name__], method, path, headers, body, deps)
+    if url.path.startswith("/_download-now/retention/"):
+        import retention_api
+        return retention_api.handle(sys.modules[__name__], method, path, headers, body, deps)
     if url.path.startswith("/_download-now/manual/"):
         import manual
         return manual.handle(sys.modules[__name__], method, path, headers, body, deps)
@@ -502,6 +507,8 @@ def deps_from_env(env):
         collections_file=env.get("DN_COLLECTIONS") or None,
         night_waiting=env.get("DN_NIGHT_WAITING") or (str(pathlib.Path(env["DN_REQUEST_STATE"]).with_name("night-waiting.json")) if env.get("DN_REQUEST_STATE") else None),
         night_downloads=env.get("DN_NIGHT_DOWNLOADS") or (str(pathlib.Path(env["DN_SCOUT_DIR"], "night-downloads.json")) if env.get("DN_SCOUT_DIR") else None),
+        retention_file=env.get("DN_RETENTION") or (str(pathlib.Path(env["DN_REQUEST_STATE"]).with_name("retention.json")) if env.get("DN_REQUEST_STATE") else None),
+        retention_keep=env.get("DN_RETENTION_KEEP") or None,
         seerr_admin=seerr_admin_client(env.get("DN_SEERR", "http://seerr:5055"), secret("seerr.apikey")) if pathlib.Path(env.get("DN_SECRETS", "/run/secrets/download-now"), "seerr.apikey").is_file() else None,
     )
 
