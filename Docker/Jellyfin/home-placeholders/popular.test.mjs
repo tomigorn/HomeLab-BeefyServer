@@ -125,7 +125,7 @@ test("poster paths are checked before they reach CSS", () => {
 });
 
 test("home rows: Top 10 sections built inside the home container, empty ones removed", () => {
-  const d = doc('<div class="homeSectionsContainer"><div class="verticalSection RecentlyAddedShows" data-page="1" style="order: 4"></div></div>');
+  const d = doc('<div class="homeSectionsContainer"><div class="verticalSection RecentlyAddedShows" data-page="1" style="order: 4"></div><div class="verticalSection hssEmptySection" data-hss-placeholder="RecentlyWatchedSeries" style="order: 4"></div></div>');
   const c = d.querySelector(".homeSectionsContainer");
   pp.syncHome(c, DATA, LIB, "en", null);
   const shows = c.querySelector(".verticalSection.Top10Shows[data-hss-client]");
@@ -139,6 +139,19 @@ test("home rows: Top 10 sections built inside the home container, empty ones rem
   assert.equal(shows.getAttribute("data-hss-client"), key);
   pp.syncHome(c, { home: { shows: [], movies: [] }, rows: [] }, LIB, "de", null);
   assert.equal(c.querySelector(".verticalSection.Top10Shows"), null);
+});
+
+test("home rows: a Top 10 row waits for its slot instead of landing at the top of the home", () => {
+  const d = doc('<div class="homeSectionsContainer"><div class="verticalSection RecentlyAddedShows" data-page="1" style="order: 4"></div></div>');
+  const c = d.querySelector(".homeSectionsContainer");
+  pp.syncHome(c, DATA, LIB, "en", null);
+  assert.equal(c.querySelector(".verticalSection.Top10Movies"), null, "its anchor (Recently Watched TV Series) is not there yet");
+  assert.ok(c.querySelector(".verticalSection.Top10Shows[data-hss-client]"));
+  c.insertAdjacentHTML("beforeend", '<div class="verticalSection hssEmptySection" data-hss-placeholder="RecentlyWatchedSeries" style="order: 4"></div><div class="verticalSection hssEmptySection" data-hss-placeholder="Top10Movies" style="order: 4"></div>');
+  pp.syncHome(c, DATA, LIB, "en", null);
+  const movies = c.querySelector(".verticalSection.Top10Movies[data-hss-client]");
+  assert.equal(movies.nextElementSibling, c.querySelector('[data-hss-placeholder="Top10Movies"]'), "built in the slot the home layout keeps for it");
+  assert.equal(movies.style.order, "4");
 });
 
 test("extra rows are registered for the home layout only when there is data", () => {

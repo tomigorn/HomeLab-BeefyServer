@@ -277,11 +277,14 @@
       var key = rowKey(entries, lang, states, doc);
       if (sec && sec.getAttribute("data-hss-client") === key) continue;
       if (!sec) {
+        // Its slot from empty-sections.js, else right after its anchor; neither yet = wait (appended it would show at the top).
+        var slot = container.querySelector('[data-hss-placeholder="' + h.id + '"]');
+        var anchor = slot ? null : container.querySelector(".verticalSection." + h.after + ', [data-hss-placeholder="' + h.after + '"]');
+        if (!slot && !anchor) continue;
         sec = el(doc, "div", "verticalSection hssTopRow " + h.id);
         sec.innerHTML = ROW;
-        var anchor = container.querySelector(".verticalSection." + h.after);
-        if (anchor) sec.style.order = anchor.style.order;
-        container.insertBefore(sec, anchor ? anchor.nextSibling : null);
+        sec.style.order = (slot || anchor).style.order;
+        container.insertBefore(sec, slot || anchor.nextSibling);
       }
       sec.setAttribute("data-hss-client", key);
       sec.querySelector("h2").textContent = tr(lang, h.id);
