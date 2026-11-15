@@ -100,7 +100,8 @@ services:
 # Backend of the "Download now" button on the title page (README "Download now"). seerr-proxy sends
 # /_download-now/ here; every call is checked against Seerr (admin / manage-requests, or the caller's own request).
 # Holds the Radarr/Sonarr/SABnzbd keys (secrets/download-now, scripts/download-now-setup.sh); qBittorrent
-# lets 172.28.10.205 in without a password. Publishes nothing.
+# lets 172.28.10.205 in without a password. Publishes nothing. Also the Manual interaction backend
+# (README "Manual interaction"): reads request-state.json, keeps its problem list in the state volume.
   download-now:
     image: python:3.15.2-alpine3.24
     container_name: seerr-download-now
@@ -117,11 +118,17 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
       - DN_ORIGINS=https://requests.holy-grail.ch
       - DN_ORIGINS_FILE=/run/origins/origins.json
+      - DN_REQUEST_STATE=/run/indexer-bar/request-state.json
+      - DN_MANUAL_STATE=/state/manual.json
     volumes:
       - ./download-now:/app:ro
       - ./secrets/download-now:/run/secrets/download-now:ro
       # origins.json of Jellyfin's popular backend (README "Request origin")
       - ${APPDATA_ROOT}/jellyfin-popular-export:/run/origins:ro
+      # request-state.json of Movie-Downloads' night-downloads.py
+      - ${APPDATA_ROOT}/indexer-bar:/run/indexer-bar:ro
+      # Manual interaction problem list (manual.json), the only writable path: 65127:65127 0700
+      - ${APPDATA_ROOT}/seerr-download-now:/state
     networks:
       seerr-front: {}
       movie-downloads:

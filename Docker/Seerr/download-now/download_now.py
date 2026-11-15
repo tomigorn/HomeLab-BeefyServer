@@ -47,6 +47,8 @@ class Deps:
     origins: set = field(default_factory=set)
     seerr_admin: object = None
     origins_file: object = None
+    manual_file: object = None
+    request_state_file: object = None
 
 
 def redact(text):
@@ -243,6 +245,9 @@ def handle(method, path, headers, body, deps):
     if url.path == "/_download-now/request":
         import my_request
         return my_request.handle(sys.modules[__name__], method, path, headers, body, deps)
+    if url.path.startswith("/_download-now/manual/"):
+        import manual
+        return manual.handle(sys.modules[__name__], method, path, headers, body, deps)
     if url.path != "/_download-now/api" or method not in ("GET", "POST"):
         return 404, {"error": "not found"}
     h = {k.lower(): v for k, v in headers.items()}
@@ -320,10 +325,10 @@ def seerr_client(base):
 
 def arr_client(bases, keys):
     def make(app):
-        def call(path, method="GET", body=None):
+        def call(path, method="GET", body=None, timeout=15):
             data = json.dumps(body).encode() if body is not None else None
             return _open(urllib.request.Request(f"{bases[app]}/api/v3{path}", data=data, method=method,
-                                                headers={"X-Api-Key": keys[app], "Content-Type": "application/json"}))
+                                                headers={"X-Api-Key": keys[app], "Content-Type": "application/json"}), timeout)
         return call
     return make
 
@@ -371,6 +376,8 @@ def deps_from_env(env):
         sab=sab_client(env.get("DN_SAB", "http://gluetun:8081"), secret("sabnzbd.apikey")),
         origins={o.strip() for o in env.get("DN_ORIGINS", "https://requests.holy-grail.ch").split(",") if o.strip()},
         origins_file=env.get("DN_ORIGINS_FILE") or None,
+        manual_file=env.get("DN_MANUAL_STATE") or None,
+        request_state_file=env.get("DN_REQUEST_STATE") or None,
         seerr_admin=seerr_admin_client(env.get("DN_SEERR", "http://seerr:5055"), secret("seerr.apikey")) if pathlib.Path(env.get("DN_SECRETS", "/run/secrets/download-now"), "seerr.apikey").is_file() else None,
     )
 
@@ -383,7 +390,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _serve(self, method):
         try:
-            n = max(0, min(int(self.headers.get("Content-Length") or 0), 4096))
+            n = max(0, min(int(self.headers.get("Content-Length") or 0), 16384))
         except ValueError:
             n = 0
         body = self.rfile.read(n) if n else b""
@@ -408,6 +415,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 def main():
     Handler.deps = deps_from_env(os.environ)
+    if Handler.deps.manual_file:
+        import manual
+        threading.Thread(target=manual.loop, args=(sys.modules[__name__], Handler.deps), daemon=True).start()
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("DN_PORT", "8090"))), Handler)
     print(f"download-now listening on {srv.server_address[1]}", flush=True)
     srv.serve_forever()
