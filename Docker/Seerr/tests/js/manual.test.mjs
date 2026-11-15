@@ -385,7 +385,8 @@ test("checks against our rules: one line on the card, a mark per property in the
   assert.match(c("hdr").querySelector("[data-info]").textContent, /may upgrade to 4K HDR later/);
   assert.match(c("runtime").textContent, /^✅ Running time 31 min \(expected 30\)/);
   assert.match(c("size").textContent, /1\.6 GB · 3\.1 GB\/h/);
-  assert.match($("[data-list] [data-virus]").textContent, /^✅ Virus scan: clean/);
+  assert.equal($("[data-list] [data-virus-verdict]").textContent, "✅ No virus found");
+  assert.match($('[data-list] [data-virus-src="clamav"]').textContent, /^ClamAV: clean/);
 });
 
 test("virus scan states in both languages", async () => {
@@ -549,10 +550,10 @@ test("a refused read says why", async () => {
 });
 
 test("too big for the full virus scan: a clean parts scan of a genuine video passes, the rest shown as it is; the 2 GiB limit in the hint box", async () => {
-  const cases = [[{ state: "parts-clean", minutes: 34, parts: 1 }, "✅ Virus check passed (large file: attachments and subtitles scanned, genuine video)", "✅ parts scanned clean",
-    "✅ Virenprüfung bestanden (grosse Datei: Anhänge und Untertitel geprüft, echtes Video)", "✅ Teile sauber"],
-    [{ state: "parts-error", why: "no video stream" }, "⚪ Too big for the full virus scan · ⚠️ parts scan not possible (no video stream): admins only", "⚠️ only partly scannable",
-    "⚪ Zu gross für den vollen Virenscan · ⚠️ Teil-Scan nicht möglich (no video stream): nur Admins", "⚠️ nur teilweise prüfbar"]];
+  const cases = [[{ state: "parts-clean", minutes: 34, parts: 1 }, "✅ No virus found|ClamAV: clean (large file: attachments and subtitles scanned, genuine video)", "✅ parts scanned clean",
+    "✅ Kein Virus gefunden|ClamAV: sauber (grosse Datei: Anhänge und Untertitel geprüft, echtes Video)", "✅ Teile sauber"],
+    [{ state: "parts-error", why: "no video stream" }, "⚠️ Not fully scannable — admins only|ClamAV: too big for the full scan, parts scan not possible (no video stream)", "⚠️ only partly scannable",
+    "⚠️ Nicht vollständig prüfbar — nur Admins|ClamAV: zu gross für den vollen Scan, Teil-Scan nicht möglich (no video stream)", "⚠️ nur teilweise prüfbar"]];
   for (const [virus, full, short, fullDe, shortDe] of cases) {
     const p = e09({ details: { reason: "id-match", release: E09, message: BY_ID, virus } });
     const files = { token: "t", kind: "tv", files: [{ n: 0, name: E09 + ".mkv", size: 2.48e9, episodeIds: [2045], probable: true, rejections: [], virus }], episodes: [{ id: 2045, label: "S01E09", title: "" }] };
@@ -561,8 +562,8 @@ test("too big for the full virus scan: a clean parts scan of a genuine video pas
       assert.equal($("[data-summary]").textContent, sh);
       $('[data-act="files"]').click();
       await settle();
-      assert.equal($("[data-list] [data-virus]").textContent, f);
-      assert.match(w.hgTip.text(w.hgTip.get($("[data-list] [data-virus]"))), body === PAGE ? /ClamAV scans at most 2 GiB, so the video stream itself is not scanned/ : /ClamAV prüft höchstens 2 GiB, darum wird der Videostrom selbst nicht gescannt/);
+      assert.equal(virusRows($), f);
+      assert.match(w.hgTip.text(w.hgTip.get($('[data-list] [data-virus-src="clamav"]'))), body === PAGE ? /ClamAV scans at most 2 GiB, so the video stream itself is not scanned/ : /ClamAV prüft höchstens 2 GiB, darum wird der Videostrom selbst nicht gescannt/);
     }
   }
 });
@@ -638,13 +639,13 @@ test("override states in both languages", () => {
 
 test("VirusTotal fingerprint per file in both languages: line, hint box, card summary only for malware and flagged", async () => {
   const at = "2026-11-15T04:25:00Z";
-  const cases = [[{ state: "queued" }, "⏳ VirusTotal: fingerprint check queued", "⏳ VirusTotal: Fingerabdruck-Prüfung in der Warteschlange", null, null],
-    [{ state: "unchecked" }, "⚪ VirusTotal: not checked yet", "⚪ VirusTotal: noch nicht geprüft", null, null],
-    [{ state: "unknown", checked: at }, "⚪ Unknown to VirusTotal", "⚪ VirusTotal unbekannt", null, null],
-    [{ state: "clean", malicious: 0, engines: 70, checked: at }, "✅ VirusTotal: known file, clean", "✅ VirusTotal: bekannte Datei, sauber", null, null],
-    [{ state: "flagged", malicious: 1, engines: 70, checked: at }, "⚠️ VirusTotal: flagged by 1 scanner", "⚠️ VirusTotal: von 1 Scanner gemeldet", "⚠️ flagged by VirusTotal", "⚠️ von VirusTotal gemeldet"],
-    [{ state: "flagged", malicious: 2, engines: 70, checked: at }, "⚠️ VirusTotal: flagged by 2 scanners", "⚠️ VirusTotal: von 2 Scannern gemeldet", "⚠️ flagged by VirusTotal", "⚠️ von VirusTotal gemeldet"],
-    [{ state: "malware", malicious: 41, engines: 70, checked: at }, "❌ VirusTotal: known malware (41 of 70 scanners)", "❌ VirusTotal: bekannte Schadsoftware (41 von 70 Scannern)", "❌ known malware", "❌ bekannte Schadsoftware"]];
+  const cases = [[{ state: "queued" }, "VirusTotal: lookup queued, a few minutes", "VirusTotal: Abfrage in der Warteschlange, ein paar Minuten", null, null],
+    [{ state: "unchecked" }, "VirusTotal: not checked yet (retried later), no effect on the import", "VirusTotal: noch nicht geprüft (wird wiederholt), kein Einfluss auf den Import", null, null],
+    [{ state: "unknown", checked: at }, "VirusTotal: no reports — this exact file isn't known there yet, normal for new downloads, not a warning", "VirusTotal: keine Meldungen — diese genaue Datei ist dort noch nicht bekannt, normal bei neuen Downloads, keine Warnung", null, null],
+    [{ state: "clean", malicious: 0, engines: 70, checked: at }, "VirusTotal: known file, no scanner flags it", "VirusTotal: bekannte Datei, kein Scanner meldet sie", null, null],
+    [{ state: "flagged", malicious: 1, engines: 70, checked: at }, "VirusTotal: flagged by 1 scanner, often a false alarm", "VirusTotal: von 1 Scanner gemeldet, oft ein Fehlalarm", "⚠️ flagged by VirusTotal", "⚠️ von VirusTotal gemeldet"],
+    [{ state: "flagged", malicious: 2, engines: 70, checked: at }, "VirusTotal: flagged by 2 scanners, often a false alarm", "VirusTotal: von 2 Scannern gemeldet, oft ein Fehlalarm", "⚠️ flagged by VirusTotal", "⚠️ von VirusTotal gemeldet"],
+    [{ state: "malware", malicious: 41, engines: 70, checked: at }, "VirusTotal: known malware (41 of 70 scanners)", "VirusTotal: bekannte Schadsoftware (41 von 70 Scannern)", "❌ known malware", "❌ bekannte Schadsoftware"]];
   for (const [vt, en, de, shortEn, shortDe] of cases) {
     const virus = { state: "clean", at, vt };
     const p = e09({ details: { reason: "id-match", release: E09, message: BY_ID, virus } });
@@ -678,4 +679,45 @@ test("no fingerprint verdict, no VirusTotal line; a flagged file refused for a u
   $('[data-act="import"]').click();
   await settle();
   assert.match($("[data-msg]").textContent, /only an admin can import it/);
+});
+
+// the virus block of the first file: verdict, then each source row, joined by |
+const virusRows = ($) => [...$("[data-list] [data-virus]").children].map((e) => e.textContent).join("|");
+
+test("virus block per file: one overall verdict first, then ClamAV and VirusTotal in plain words, both languages", async () => {
+  const cases = [
+    [{ state: "clean", vt: { state: "unknown" } }, "clean",
+      "✅ No virus found|ClamAV: clean|VirusTotal: no reports — this exact file isn't known there yet, normal for new downloads, not a warning",
+      "✅ Kein Virus gefunden|ClamAV: sauber|VirusTotal: keine Meldungen — diese genaue Datei ist dort noch nicht bekannt, normal bei neuen Downloads, keine Warnung"],
+    [{ state: "parts-clean", minutes: 34, vt: { state: "unknown" } }, "clean",
+      "✅ No virus found|ClamAV: clean (large file: attachments and subtitles scanned, genuine video)|VirusTotal: no reports — this exact file isn't known there yet, normal for new downloads, not a warning",
+      "✅ Kein Virus gefunden|ClamAV: sauber (grosse Datei: Anhänge und Untertitel geprüft, echtes Video)|VirusTotal: keine Meldungen — diese genaue Datei ist dort noch nicht bekannt, normal bei neuen Downloads, keine Warnung"],
+    [{ state: "clean", vt: { state: "clean", malicious: 0, engines: 70 } }, "clean",
+      "✅ No virus found|ClamAV: clean|VirusTotal: known file, no scanner flags it", "✅ Kein Virus gefunden|ClamAV: sauber|VirusTotal: bekannte Datei, kein Scanner meldet sie"],
+    [{ state: "clean" }, "clean", "✅ No virus found|ClamAV: clean", "✅ Kein Virus gefunden|ClamAV: sauber"],
+    [{ state: "infected", signature: "Win.Test.EICAR_HDB-1", vt: { state: "unknown" } }, "malware",
+      "❌ Malware — import blocked|ClamAV: malware found (Win.Test.EICAR_HDB-1)|VirusTotal: no reports — this exact file isn't known there yet, normal for new downloads, not a warning",
+      "❌ Schadsoftware — Import gesperrt|ClamAV: Schadsoftware gefunden (Win.Test.EICAR_HDB-1)|VirusTotal: keine Meldungen — diese genaue Datei ist dort noch nicht bekannt, normal bei neuen Downloads, keine Warnung"],
+    [{ state: "clean", vt: { state: "flagged", malicious: 2, engines: 70 } }, "flagged",
+      "⚠️ Flagged — admins only|ClamAV: clean|VirusTotal: flagged by 2 scanners, often a false alarm", "⚠️ Gemeldet — nur Admins|ClamAV: sauber|VirusTotal: von 2 Scannern gemeldet, oft ein Fehlalarm"],
+    [{ state: "clean", vt: { state: "malware", malicious: 41, engines: 70 } }, "malware",
+      "❌ Malware — import blocked|ClamAV: clean|VirusTotal: known malware (41 of 70 scanners)", "❌ Schadsoftware — Import gesperrt|ClamAV: sauber|VirusTotal: bekannte Schadsoftware (41 von 70 Scannern)"],
+    [{ state: "pending", vt: { state: "queued" } }, "checking",
+      "⏳ Still being checked|ClamAV: scan queued, usually a few minutes|VirusTotal: lookup queued, a few minutes", "⏳ Wird noch geprüft|ClamAV: Scan in der Warteschlange, meist ein paar Minuten|VirusTotal: Abfrage in der Warteschlange, ein paar Minuten"],
+    [{ state: "unknown" }, "checking", "⏳ Still being checked|ClamAV: not scanned yet", "⏳ Wird noch geprüft|ClamAV: noch nicht geprüft"],
+    [{ state: "parts-error", why: "no video stream", vt: { state: "unknown" } }, "partial",
+      "⚠️ Not fully scannable — admins only|ClamAV: too big for the full scan, parts scan not possible (no video stream)|VirusTotal: no reports — this exact file isn't known there yet, normal for new downloads, not a warning",
+      "⚠️ Nicht vollständig prüfbar — nur Admins|ClamAV: zu gross für den vollen Scan, Teil-Scan nicht möglich (no video stream)|VirusTotal: keine Meldungen — diese genaue Datei ist dort noch nicht bekannt, normal bei neuen Downloads, keine Warnung"],
+  ];
+  for (const [virus, verdict, en, de] of cases) {
+    const files = { token: "t", kind: "tv", files: [{ n: 0, name: E09 + ".mkv", size: 1.59e9, episodeIds: [2045], probable: true, rejections: [], virus }], episodes: [{ id: 2045, label: "S01E09", title: "" }] };
+    for (const [body, want] of [[PAGE, en], [PAGE.replace(">Series<", ">Serien<"), de]]) {
+      const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [e09()], done: [], admin: false } }, "/_download-now/manual/files": { status: 200, body: files } }, undefined, body);
+      $('[data-act="files"]').click();
+      await settle();
+      assert.equal(virusRows($), want);
+      assert.equal($("[data-list] [data-virus]").getAttribute("data-verdict"), verdict);
+      assert.equal($("[data-list] [data-virus]").firstElementChild.hasAttribute("data-virus-verdict"), true);
+    }
+  }
 });

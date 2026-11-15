@@ -53,7 +53,10 @@
     ".hg-m-label { font-size: .8rem; color: #9ca3af; }" +
     ".hg-m-filename { font-size: .8rem; color: #d1d5db; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }" +
     ".hg-m-media, .hg-m-virus { font-size: .85rem; color: #d1d5db; }" +
-    ".hg-m-virus-infected { color: #fca5a5; font-weight: 600; }" +
+    ".hg-m-virus-malware { color: #fca5a5; font-weight: 600; }" +
+    ".hg-m-virus-flagged, .hg-m-virus-partial { color: #fde68a; font-weight: 600; }" +
+    ".hg-m-virus-clean { font-weight: 600; }" +
+    ".hg-m-virus-src { margin: 0; padding-left: 1.5rem; font-size: .8rem; color: #9ca3af; }" +
     ".hg-m-checks { list-style: none; margin: .3rem 0 0; padding: 0; font-size: .85rem; }" +
     ".hg-m-checks li { padding: .1rem 0; border: 0; display: block; }" +
     ".hg-m-check-bad { color: #fca5a5; }" +
@@ -67,7 +70,7 @@
     ".hg-m-quote { font-size: .85rem; color: #d1d5db; border-left: 3px solid #4b5563; padding-left: .5rem; overflow-wrap: anywhere; }" +
     ".hg-m-count { margin: .2rem 0; font-size: .85rem; color: #fde68a; }" +
     ".hg-m-wide { flex-basis: 100%; }" +
-    ".hg-m-rows .hg-m-checks, .hg-m-rows .hg-m-virus { flex-basis: 100%; margin: 0; }" +
+    ".hg-m-rows .hg-m-checks, .hg-m-rows .hg-m-virus-block, .hg-m-virus-block .hg-m-virus { flex-basis: 100%; margin: 0; }" +
     "#hg-manual h3 { line-height: 1.2; }";
   var TEXT = {
     en: {
@@ -110,14 +113,16 @@
       checksOk: "checks", problemsShort: function (n) { return n + (n === 1 ? " problem" : " problems"); }, notesShort: function (n) { return n + (n === 1 ? " note" : " notes"); },
       virusShort: { clean: "virus scan clean", pending: "virus scan pending", infected: "malware found", unknown: "not virus-scanned yet", "parts-clean": "parts scanned clean", "parts-error": "only partly scannable" },
       tooBig: "Too big for the full virus scan",
-      bigPassed: "Virus check passed (large file: attachments and subtitles scanned, genuine video)", bigHead: "Large file",
+      bigHead: "Large file",
       bigWhy: "ClamAV scans at most 2 GiB, so the video stream itself is not scanned.", bigParts: "Attachments and subtitles:", bigClean: "scanned clean", bigVideo: "Video:", bigGenuine: "genuine video stream",
       partsError: function (why) { return "parts scan not possible" + (why ? " (" + why + ")" : "") + ": admins only"; },
-      virus: { clean: "Virus scan: clean", pending: "Virus scan pending", infected: "Virus scan: malware found", unknown: "Virus scan: not scanned yet" },
+      verdict: { clean: "✅ No virus found", malware: "❌ Malware — import blocked", flagged: "⚠️ Flagged — admins only", partial: "⚠️ Not fully scannable — admins only", checking: "⏳ Still being checked" },
+      clam: { clean: "ClamAV: clean", "parts-clean": "ClamAV: clean (large file: attachments and subtitles scanned, genuine video)", pending: "ClamAV: scan queued, usually a few minutes",
+        infected: "ClamAV: malware found", unknown: "ClamAV: not scanned yet", "parts-error": "ClamAV: too big for the full scan, parts scan not possible" },
       vt: {
-        queued: function () { return "VirusTotal: fingerprint check queued"; }, unchecked: function () { return "VirusTotal: not checked yet"; },
-        unknown: function () { return "Unknown to VirusTotal"; }, clean: function () { return "VirusTotal: known file, clean"; },
-        flagged: function (v) { return "VirusTotal: flagged by " + v.malicious + (v.malicious === 1 ? " scanner" : " scanners"); },
+        queued: function () { return "VirusTotal: lookup queued, a few minutes"; }, unchecked: function () { return "VirusTotal: not checked yet (retried later), no effect on the import"; },
+        unknown: function () { return "VirusTotal: no reports — this exact file isn't known there yet, normal for new downloads, not a warning"; }, clean: function () { return "VirusTotal: known file, no scanner flags it"; },
+        flagged: function (v) { return "VirusTotal: flagged by " + v.malicious + (v.malicious === 1 ? " scanner" : " scanners") + ", often a false alarm"; },
         malware: function (v) { return "VirusTotal: known malware (" + v.malicious + " of " + v.engines + " scanners)"; }
       },
       vtShort: { flagged: "flagged by VirusTotal", malware: "known malware" },
@@ -201,14 +206,16 @@
       checksOk: "Prüfungen", problemsShort: function (n) { return n + (n === 1 ? " Problem" : " Probleme"); }, notesShort: function (n) { return n + (n === 1 ? " Hinweis" : " Hinweise"); },
       virusShort: { clean: "Virenscan sauber", pending: "Virenscan läuft", infected: "Schadsoftware gefunden", unknown: "noch nicht auf Viren geprüft", "parts-clean": "Teile sauber", "parts-error": "nur teilweise prüfbar" },
       tooBig: "Zu gross für den vollen Virenscan",
-      bigPassed: "Virenprüfung bestanden (grosse Datei: Anhänge und Untertitel geprüft, echtes Video)", bigHead: "Grosse Datei",
+      bigHead: "Grosse Datei",
       bigWhy: "ClamAV prüft höchstens 2 GiB, darum wird der Videostrom selbst nicht gescannt.", bigParts: "Anhänge und Untertitel:", bigClean: "sauber", bigVideo: "Video:", bigGenuine: "echter Videostrom",
       partsError: function (why) { return "Teil-Scan nicht möglich" + (why ? " (" + why + ")" : "") + ": nur Admins"; },
-      virus: { clean: "Virenscan: sauber", pending: "Virenscan läuft noch", infected: "Virenscan: Schadsoftware gefunden", unknown: "Virenscan: noch nicht geprüft" },
+      verdict: { clean: "✅ Kein Virus gefunden", malware: "❌ Schadsoftware — Import gesperrt", flagged: "⚠️ Gemeldet — nur Admins", partial: "⚠️ Nicht vollständig prüfbar — nur Admins", checking: "⏳ Wird noch geprüft" },
+      clam: { clean: "ClamAV: sauber", "parts-clean": "ClamAV: sauber (grosse Datei: Anhänge und Untertitel geprüft, echtes Video)", pending: "ClamAV: Scan in der Warteschlange, meist ein paar Minuten",
+        infected: "ClamAV: Schadsoftware gefunden", unknown: "ClamAV: noch nicht geprüft", "parts-error": "ClamAV: zu gross für den vollen Scan, Teil-Scan nicht möglich" },
       vt: {
-        queued: function () { return "VirusTotal: Fingerabdruck-Prüfung in der Warteschlange"; }, unchecked: function () { return "VirusTotal: noch nicht geprüft"; },
-        unknown: function () { return "VirusTotal unbekannt"; }, clean: function () { return "VirusTotal: bekannte Datei, sauber"; },
-        flagged: function (v) { return "VirusTotal: von " + v.malicious + (v.malicious === 1 ? " Scanner" : " Scannern") + " gemeldet"; },
+        queued: function () { return "VirusTotal: Abfrage in der Warteschlange, ein paar Minuten"; }, unchecked: function () { return "VirusTotal: noch nicht geprüft (wird wiederholt), kein Einfluss auf den Import"; },
+        unknown: function () { return "VirusTotal: keine Meldungen — diese genaue Datei ist dort noch nicht bekannt, normal bei neuen Downloads, keine Warnung"; }, clean: function () { return "VirusTotal: bekannte Datei, kein Scanner meldet sie"; },
+        flagged: function (v) { return "VirusTotal: von " + v.malicious + (v.malicious === 1 ? " Scanner" : " Scannern") + " gemeldet, oft ein Fehlalarm"; },
         malware: function (v) { return "VirusTotal: bekannte Schadsoftware (" + v.malicious + " von " + v.engines + " Scannern)"; }
       },
       vtShort: { flagged: "von VirusTotal gemeldet", malware: "bekannte Schadsoftware" },
@@ -348,32 +355,43 @@
     if (h) h.set(e, content);
   }
 
-  function virusLine(doc, t, v) {
-    if (!v || typeof v !== "object") return null;
-    if (v.state === "parts-clean" || v.state === "parts-error") {
-      var ok = v.state === "parts-clean";
-      var txt = ok ? "✅ " + t.bigPassed : "⚪ " + t.tooBig + " · ⚠️ " + t.partsError(v.why ? String(v.why) : null);
-      var line = el(doc, "p", { "class": "hg-m-virus hg-m-virus-" + v.state, "data-virus": true }, txt);
-      tip(line, { title: ok ? "✅ " + t.bigHead : "⚪ " + t.tooBig, rows: [t.bigWhy].concat(ok ? [[t.bigParts, t.bigClean], [t.bigVideo, t.bigGenuine + (v.minutes ? " (" + v.minutes + " " + t.min + ")" : "")]] : []) });
-      return line;
-    }
-    var icon = { clean: "✅", infected: "❌" }[v.state] || "⏳", text = t.virus[v.state] || t.virus.unknown;
-    if (v.state === "infected" && v.signature) text += " (" + String(v.signature) + ")";
-    if (v.state === "clean" && v.at) text += " (" + when(t, v.at) + ")";
-    return el(doc, "p", { "class": "hg-m-virus hg-m-virus-" + (t.virus[v.state] ? v.state : "unknown"), "data-virus": true }, icon + " " + text);
+  // overall verdict of one file, the same order the import gates use: malware blocks, flagged and a partial scan need an admin, a running scan waits
+  function verdictOf(v) {
+    var vs = v.vt && typeof v.vt === "object" ? v.vt.state : null;
+    if (v.state === "infected" || vs === "malware") return "malware";
+    if (vs === "flagged") return "flagged";
+    if (v.state === "parts-error") return "partial";
+    if (v.state === "clean" || v.state === "parts-clean") return "clean";
+    return "checking";
   }
 
-  // VirusTotal fingerprint verdict of one file (../Antivirus virustotal.py, hash lookups only)
-  function vtLine(doc, t, v) {
-    var x = v && typeof v === "object" && v.vt && typeof v.vt === "object" ? v.vt : null;
-    if (!x || !t.vt[x.state]) return null;
-    var icon = { queued: "⏳", unchecked: "⚪", unknown: "⚪", clean: "✅", flagged: "⚠️", malware: "❌" }[x.state];
-    var n = { malicious: Number(x.malicious) || 0, engines: Number(x.engines) || 0 };
-    var line = el(doc, "p", { "class": "hg-m-virus hg-m-virus-" + (x.state === "malware" ? "infected" : x.state), "data-vt": x.state }, icon + " " + t.vt[x.state](n));
-    var rows = [t.vtWhy[x.state], t.vtHow];
-    if (x.checked) rows.push([t.vtChecked, when(t, x.checked)]);
-    tip(line, { title: icon + " " + t.vtHead, rows: rows });
-    return line;
+  // ClamAV (../Antivirus) and the VirusTotal fingerprint (virustotal.py, hash lookups only) of one file: verdict first, then each source in plain words
+  function virusBlock(doc, t, v) {
+    if (!v || typeof v !== "object") return null;
+    var verdict = verdictOf(v);
+    var block = el(doc, "div", { "class": "hg-m-virus-block", "data-virus": true, "data-verdict": verdict },
+      el(doc, "p", { "class": "hg-m-virus hg-m-virus-" + verdict, "data-virus-verdict": true }, t.verdict[verdict]));
+    var state = t.clam[v.state] ? v.state : "unknown", clam = t.clam[state];
+    if (state === "infected" && v.signature) clam += " (" + String(v.signature) + ")";
+    if (state === "clean" && v.at) clam += " (" + when(t, v.at) + ")";
+    if (state === "parts-error" && v.why) clam += " (" + String(v.why) + ")";
+    var c = el(doc, "p", { "class": "hg-m-virus-src", "data-virus-src": "clamav", "data-clam": state }, clam);
+    if (state === "parts-clean" || state === "parts-error") {
+      var ok = state === "parts-clean";
+      tip(c, { title: ok ? "✅ " + t.bigHead : "⚪ " + t.tooBig, rows: [t.bigWhy].concat(ok ? [[t.bigParts, t.bigClean], [t.bigVideo, t.bigGenuine + (v.minutes ? " (" + v.minutes + " " + t.min + ")" : "")]] : [t.partsError(v.why ? String(v.why) : null)]) });
+    }
+    block.appendChild(c);
+    var x = v.vt && typeof v.vt === "object" && t.vt[v.vt.state] ? v.vt : null;
+    if (x) {
+      var icon = { queued: "⏳", unchecked: "⚪", unknown: "⚪", clean: "✅", flagged: "⚠️", malware: "❌" }[x.state];
+      var n = { malicious: Number(x.malicious) || 0, engines: Number(x.engines) || 0 };
+      var line = el(doc, "p", { "class": "hg-m-virus-src", "data-virus-src": "vt", "data-vt": x.state }, t.vt[x.state](n));
+      var rows = [t.vtWhy[x.state], t.vtHow];
+      if (x.checked) rows.push([t.vtChecked, when(t, x.checked)]);
+      tip(line, { title: icon + " " + t.vtHead, rows: rows });
+      block.appendChild(line);
+    }
+    return block;
   }
 
   function App(win, root) {
@@ -815,10 +833,8 @@
         var row = el(d, "li", null, el(d, "label", null, box, breakable(d, "hg-m-name", f.name), el(d, "span", { "class": "hg-m-facts" }, [gb(f.size), f.quality].filter(Boolean).map(String).join(" · "))));
         var fm = mediaLine(t, f.media);
         if (fm) row.appendChild(el(d, "span", { "class": "hg-m-facts hg-m-wide", "data-file-media": true }, fm));
-        var fv = virusLine(d, t, f.virus);
+        var fv = virusBlock(d, t, f.virus);
         if (fv) row.appendChild(fv);
-        var fvt = vtLine(d, t, f.virus);
-        if (fvt) row.appendChild(fvt);
         var fc = checkList(d, t, f.checks);
         if (fc) row.appendChild(fc);
         if (tv) {
