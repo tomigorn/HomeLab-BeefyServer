@@ -1,4 +1,4 @@
-// Request sizes (README "Request sizes"): a "Size" row after Status in a title page's facts panel, a "Size" line under Profile on every Requests row (bytes on disk from request-state.json "sizes", by Seerr request id) and our own "Largest / Smallest first" control beside Seerr's sort. Sorting moves rows with CSS order only (no DOM moves) and turns 100 rows per page on, so every request is sorted. Missing or unmatched data = Seerr unchanged.
+// Request sizes (README "Request sizes"): a "Size" row after Status in a title page's facts panel, a "Size" line under Profile on every Requests row (bytes on disk from request-state.json "sizes", by Seerr request id, with GB/h and Remux / very big warnings), the episode count beside a series' season badges, and our own "Largest / Smallest first" control beside Seerr's sort. Sorting moves rows with CSS order only (no DOM moves) and turns 100 rows per page on, so every request is sorted. Missing or unmatched data = Seerr unchanged.
 (function () {
   "use strict";
   var DATA_URL = "/_indexer-bar/request-state.json";
@@ -14,10 +14,12 @@
   var PREV_KEY = "hg-size-sort-page-size";
   var ALL_ROWS = "100";
   var TEXT = {
-    en: { size: "Size", season: "Season", of: "{a} of {b} episodes", queued: "in queue", problem: "problem", off: "Off", desc: "Largest", asc: "Smallest", aria: "Sort by size", page: "Sorted within this page ({a} of {b})", locale: "en-GB" },
-    de: { size: "Grösse", season: "Staffel", of: "{a} von {b} Episoden", queued: "in der Warteschlange", problem: "Problem", off: "Aus", desc: "Grösste", asc: "Kleinste", aria: "Nach Grösse sortieren", page: "Innerhalb dieser Seite sortiert ({a} von {b})", locale: "de-CH" },
+    en: { size: "Size", season: "Season", specials: "Specials", of: "{a} of {b} episodes", episodes: ["{a} episode", "{a} episodes"], avg: "⌀ {a}/ep", remux: "⚠️ Remux", big: "⚠️ very big", remuxHint: "Remux: the untouched disc copy, far bigger than a normal release", bigHint: "Over {a} GB per hour of running time", queued: "in queue", problem: "problem", off: "Off", modes: { desc: "Largest total", asc: "Smallest total", "file-desc": "Largest per file", "file-asc": "Smallest per file", "hour-desc": "Largest per hour", "hour-asc": "Smallest per hour" }, aria: "Sort by size", page: "Sorted within this page ({a} of {b})", locale: "en-GB" },
+    de: { size: "Grösse", season: "Staffel", specials: "Specials", of: "{a} von {b} Episoden", episodes: ["{a} Episode", "{a} Episoden"], avg: "⌀ {a}/Ep.", remux: "⚠️ Remux", big: "⚠️ sehr gross", remuxHint: "Remux: unveränderte Kopie der Disc, viel grösser als ein normales Release", bigHint: "Über {a} GB pro Stunde Laufzeit", queued: "in der Warteschlange", problem: "Problem", off: "Aus", modes: { desc: "Grösste gesamt", asc: "Kleinste gesamt", "file-desc": "Grösste pro Datei", "file-asc": "Kleinste pro Datei", "hour-desc": "Grösste pro Stunde", "hour-asc": "Kleinste pro Stunde" }, aria: "Nach Grösse sortieren", page: "Innerhalb dieser Seite sortiert ({a} von {b})", locale: "de-CH" },
   };
   var RESTORE_WAIT = 2000;
+  // GB per hour of running time above which a file is "very big" (owner's limits)
+  var BIG = { movie: 30, episode: 20 };
   var state = { sizes: null, at: 0, loading: null, lists: [], mode: "", fetched: {}, restore: null, media: null, queue: null, requested: {} };
 
   function store(key, value) {
@@ -38,9 +40,46 @@
     try { return v.toLocaleString(TEXT[l].locale, { minimumFractionDigits: unit[2], maximumFractionDigits: unit[2] }) + " " + unit[0]; } catch (e) { return v.toFixed(unit[2]) + " " + unit[0]; }
   }
 
+  function series(entry) { return entry.of > 0 || entry.files > 0; }
+
+  // bytes per hour of running time (a series: its episode files), null without a runtime
+  function perHour(entry) {
+    if (!entry || !(entry.size > 0) || !(entry.runtime > 0)) return null;
+    return entry.size / ((series(entry) ? entry.files || 0 : 1) * entry.runtime / 60) || null;
+  }
+
+  function rate(entry, l) {
+    var r = perHour(entry);
+    return r === null || !isFinite(r) ? "" : " · " + bytes(r, l) + "/h";
+  }
+
+  function warnings(entry) {
+    if (!entry || typeof entry !== "object" || !(entry.size > 0)) return [];
+    var r = perHour(entry), out = entry.remux ? ["remux"] : [];
+    if (r !== null && isFinite(r) && r > (series(entry) ? BIG.episode : BIG.movie) * 1e9) out.push("big");
+    return out;
+  }
+
+  // the warning pills at the end of el (Size line or title page value)
+  function pills(doc, el, entry, l) {
+    var kinds = warnings(entry), key = kinds.join() + "|" + l;
+    if (el.__hgWarn === key) return;
+    el.__hgWarn = key;
+    var old = el.querySelectorAll(":scope > [data-hg-size-warn]");
+    for (var i = 0; i < old.length; i++) el.removeChild(old[i]);
+    kinds.forEach(function (k) {
+      var p = doc.createElement("span");
+      p.className = "hg-size-warn";
+      p.setAttribute("data-hg-size-warn", k);
+      p.textContent = k === "remux" ? TEXT[l].remux : TEXT[l].big;
+      p.setAttribute("title", k === "remux" ? TEXT[l].remuxHint : fill(TEXT[l].bigHint, series(entry) ? BIG.episode : BIG.movie, ""));
+      el.appendChild(p);
+    });
+  }
+
   function sizeText(entry, l, problem) {
     if (!entry || typeof entry !== "object") return "—";
-    if (entry.size > 0) return bytes(entry.size, l) + (entry.of > entry.files ? " · " + fill(TEXT[l].of, entry.files, entry.of) : "");
+    if (entry.size > 0) return bytes(entry.size, l) + (entry.of > entry.files ? " · " + fill(TEXT[l].of, entry.files, entry.of) : "") + (entry.files > 0 ? " · " + fill(TEXT[l].avg, bytes(entry.size / entry.files, l)) : "") + rate(entry, l);
     if (entry.queued > 0) return "≈ " + bytes(entry.queued, l) + " · " + (problem ? TEXT[l].problem : TEXT[l].queued);
     return "—";
   }
@@ -50,19 +89,29 @@
     return !!q && q.state === "problem";
   }
 
-  function sortValue(entry) {
+  var MODES = ["desc", "asc", "file-desc", "file-asc", "hour-desc", "hour-asc"];
+
+  // total: bytes on disk (else queued); file: per file (a film is one file); hour: per hour of running time
+  function sortValue(entry, mode) {
     if (!entry || typeof entry !== "object") return null;
-    return entry.size > 0 ? entry.size : entry.queued > 0 ? entry.queued : null;
+    var metric = (mode || "").split("-")[0];
+    if (metric !== "file" && metric !== "hour") return entry.size > 0 ? entry.size : entry.queued > 0 ? entry.queued : null;
+    if (!(entry.size > 0)) return null;
+    var files = entry.files > 0 ? entry.files : entry.of === undefined ? 1 : 0;
+    if (!files) return null;
+    if (metric === "file") return entry.size / files;
+    return entry.runtime > 0 ? entry.size / (files * entry.runtime) : null;
   }
 
   // indexes of rows in display order; titles without a size last, Seerr's order among equals
   function ranking(values, mode) {
     var idx = values.map(function (v, i) { return i; });
-    if (mode !== "desc" && mode !== "asc") return idx;
+    if (MODES.indexOf(mode) < 0) return idx;
+    var desc = /desc$/.test(mode);
     return idx.sort(function (a, b) {
       var x = values[a], y = values[b];
       if (x === null || y === null) return x === null && y === null ? a - b : x === null ? 1 : -1;
-      return x === y ? a - b : mode === "desc" ? y - x : x - y;
+      return x === y ? a - b : desc ? y - x : x - y;
     });
   }
 
@@ -157,7 +206,7 @@
     return null;
   }
 
-  function sizeLine(doc, row, text, l) {
+  function sizeLine(doc, row, entry, text, l) {
     var line = row.querySelector("[data-hg-size]");
     var fields = row.querySelectorAll(".card-field:not([data-hg-size])");
     var last = fields.length ? fields[fields.length - 1] : null;
@@ -173,9 +222,60 @@
       line.appendChild(name);
       line.appendChild(value);
     }
+    var value = line.children[1];
     if (line.firstChild.textContent !== TEXT[l].size) line.firstChild.textContent = TEXT[l].size;
-    if (line.lastChild.textContent !== text) line.lastChild.textContent = text;
+    if (value.textContent !== text) value.textContent = text;
+    pills(doc, line, entry, l);
     if (line.parentElement !== col || line.nextElementSibling) col.appendChild(line);
+    ellipsis(value);
+  }
+
+  function ellipsis(value) {
+    if (!value.hasAttribute("data-hg-ellipsis")) value.setAttribute("data-hg-ellipsis", "");
+    if (value.getAttribute("title") !== value.textContent) value.setAttribute("title", value.textContent);
+  }
+
+  // the facts column (Status ... Size) of a row: room before the buttons, text-only values cut with an ellipsis and the full text as tooltip
+  function factsColumn(row) {
+    var fields = row.querySelectorAll(".card-field:not([data-hg-size])");
+    var col = fields.length ? fields[fields.length - 1].parentElement : null;
+    if (!col) return;
+    if (!col.hasAttribute("data-hg-facts")) col.setAttribute("data-hg-facts", "");
+    // no buttons (normal users): hide the empty buttons column, the facts get its width
+    var actions = col.parentElement && col.parentElement.nextElementSibling;
+    var empty = !!actions && !actions.firstElementChild;
+    if (actions && empty !== actions.hasAttribute("data-hg-actions-empty")) {
+      if (empty) actions.setAttribute("data-hg-actions-empty", ""); else actions.removeAttribute("data-hg-actions-empty");
+    }
+    var own = col.querySelectorAll(":scope > .card-field > span.truncate:nth-child(2)");
+    for (var i = 0; i < own.length; i++) if (!own[i].firstElementChild) ellipsis(own[i]);
+  }
+
+  function setHint(el, hint) {
+    if (el.__hgHint === hint) return;
+    el.__hgHint = hint;
+    if (window.hgNightLabel && window.hgNightLabel.hint) window.hgNightLabel.hint(el, hint);
+    else if (hint) el.setAttribute("title", hint); else el.removeAttribute("title");
+  }
+
+  function seasonName(n, l) { return n === "0" ? TEXT[l].specials : TEXT[l].season + " " + n; }
+
+  function episodeCount(n, l) { return fill(TEXT[l].episodes[Number(n) === 1 ? 0 : 1], n, ""); }
+
+  // "· 36 episodes" after a series row's season badges, per season on hover / tap
+  function episodesBadge(doc, row, entry, l) {
+    var badges = row.querySelector(".card-field > .hide-scrollbar"), field = badges && badges.parentElement;
+    var el = row.querySelector("[data-hg-episodes]");
+    if (!field || !entry || !(entry.of > 0)) { if (el) el.parentNode.removeChild(el); return; }
+    if (!el) {
+      el = doc.createElement("span");
+      el.setAttribute("data-hg-episodes", "");
+    }
+    var text = "· " + episodeCount(entry.of, l);
+    if (el.textContent !== text) el.textContent = text;
+    if (el.parentElement !== field || el.nextElementSibling) field.appendChild(el);
+    var eps = entry.episodes && typeof entry.episodes === "object" ? entry.episodes : {};
+    setHint(el, Object.keys(eps).sort(function (a, b) { return a - b; }).map(function (n) { return seasonName(n, l) + ": " + episodeCount(eps[n], l); }).join("\n"));
   }
 
   // one more line: every row of the list (placeholders too) one line taller on wide screens, so nothing jumps when a row loads
@@ -267,7 +367,7 @@
       icon.textContent = "GB";
       var sel = doc.createElement("select");
       sel.className = "rounded-r-only";
-      ["", "desc", "asc"].forEach(function (v) {
+      [""].concat(MODES).forEach(function (v) {
         var o = doc.createElement("option");
         o.value = v;
         sel.appendChild(o);
@@ -278,7 +378,7 @@
     }
     if (box.previousElementSibling !== list.group) list.group.after(box);
     if (!list.controls.hasAttribute("data-hg-size-controls")) list.controls.setAttribute("data-hg-size-controls", "");
-    var select = box.querySelector("select"), names = [TEXT[l].off, TEXT[l].desc, TEXT[l].asc];
+    var select = box.querySelector("select"), names = [TEXT[l].off].concat(MODES.map(function (m) { return TEXT[l].modes[m]; }));
     for (var i = 0; i < select.options.length; i++) if (select.options[i].textContent !== names[i]) select.options[i].textContent = names[i];
     if (select.getAttribute("aria-label") !== TEXT[l].aria) select.setAttribute("aria-label", TEXT[l].aria);
     if (select.value !== state.mode) select.value = state.mode;
@@ -290,18 +390,21 @@
     if (!list) return;
     var l = lang(doc), select = control(doc, list, l);
     if (!state.at && !state.loading) load(false);
+    list.rows.forEach(factsColumn);
     var current = match(list.rows);
     if (!current && list.rows.length) refetch();
     if (!current || !state.sizes) {
       unsort(list);
       if (!state.sizes) dropLines(list.rows);
+      list.rows.forEach(function (row) { episodesBadge(doc, row, null, l); });
       return;
     }
     var values = list.rows.map(function (row, i) {
       var entry = state.sizes[current.rows[i].id];
       tall(row);
-      sizeLine(doc, row, sizeText(entry, l, hasProblem(current.rows[i].key)), l);
-      return sortValue(entry);
+      sizeLine(doc, row, entry, sizeText(entry, l, hasProblem(current.rows[i].key)), l);
+      episodesBadge(doc, row, entry, l);
+      return sortValue(entry, state.mode);
     });
     if (state.mode) sortRows(list, values); else unsort(list);
     var hint = state.mode && current.total > list.rows.length ? fill(TEXT[l].page, list.rows.length, current.total) : "";
@@ -315,7 +418,7 @@
   }
 
   function titleText(entry, l, problem) {
-    if (entry && entry.size > 0) return bytes(entry.size, l) + (entry.quality ? " · " + entry.quality : "") + (entry.of > 0 ? " · " + fill(TEXT[l].of, entry.files || 0, entry.of) : "");
+    if (entry && entry.size > 0) return bytes(entry.size, l) + (entry.quality ? " · " + entry.quality : "") + (entry.of > 0 ? " · " + fill(TEXT[l].of, entry.files || 0, entry.of) : "") + rate(entry, l);
     return sizeText(entry, l, problem);
   }
 
@@ -347,22 +450,20 @@
       row.appendChild(name);
       row.appendChild(value);
     }
+    var value = row.lastChild;
+    if (!value.firstChild || value.firstChild.nodeType !== 3) value.insertBefore(doc.createTextNode(""), value.firstChild);
     if (row.firstChild.textContent !== TEXT[l].size) row.firstChild.textContent = TEXT[l].size;
-    if (row.lastChild.textContent !== text) row.lastChild.textContent = text;
+    if (value.firstChild.data !== text) value.firstChild.data = text;
+    pills(doc, value, entry, l);
     if (status.nextElementSibling !== row) status.after(row);
-    var hint = seasonHint(entry, l);
-    if (row.__hgHint !== hint) {
-      row.__hgHint = hint;
-      if (window.hgNightLabel && window.hgNightLabel.hint) window.hgNightLabel.hint(row, hint);
-      else if (hint) row.setAttribute("title", hint); else row.removeAttribute("title");
-    }
+    setHint(row, seasonHint(entry, l));
   }
 
   function style(doc) {
     if (doc.getElementById("hg-size-style")) return;
     var s = doc.createElement("style");
     s.id = "hg-size-style";
-    s.textContent = "[data-hg-size-sorted]{display:flex;flex-direction:column}[data-hg-size-sorted]>*{order:-1}[data-hg-size-sorted]>[data-hg-size-row]~:not([data-hg-size-row]){order:100000}[data-hg-size-overridden]{opacity:.55}[data-hg-size-controls]{flex-wrap:wrap;row-gap:.5rem;justify-content:flex-end}[data-hg-size-sort] select{min-width:8.25rem}@media (min-width:1280px){[data-hg-size-tall]{height:8.5rem !important}}";
+    s.textContent = "[data-hg-size-sorted]{display:flex;flex-direction:column}[data-hg-size-sorted]>*{order:-1}[data-hg-size-sorted]>[data-hg-size-row]~:not([data-hg-size-row]){order:100000}[data-hg-size-overridden]{opacity:.55}[data-hg-size-controls]{flex-wrap:wrap;row-gap:.5rem;justify-content:flex-end}[data-hg-size-sort] select{min-width:11rem}@media (min-width:1280px){[data-hg-facts]{padding-right:1rem !important}[data-hg-size-tall]{height:8.5rem !important}}[data-hg-facts]>.card-field{min-width:0}[data-hg-actions-empty]{display:none !important}@media (max-width:639px){[data-hg-facts]{width:auto !important}}[data-hg-facts]>.card-field>[data-hg-ellipsis]{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}[data-hg-episodes]{flex-shrink:0;white-space:nowrap;margin-left:.125rem;color:#d1d5db;cursor:default}.hg-size-warn{display:inline-flex;flex-shrink:0;align-items:center;margin-left:.375rem;padding:0 .5rem;border-radius:9999px;font-size:.75rem;line-height:1.25rem;font-weight:400;white-space:nowrap;cursor:default;background:rgba(217,119,6,.25);color:#fde68a;border:1px solid rgba(251,191,36,.5)}";
     (doc.head || doc.documentElement).appendChild(s);
   }
 
@@ -409,7 +510,7 @@
   window.hgRequestSizes = api;
   try {
     hookXHR(window.XMLHttpRequest);
-    state.mode = /^(desc|asc)$/.test(stored(MODE_KEY)) ? stored(MODE_KEY) : "";
+    state.mode = MODES.indexOf(stored(MODE_KEY)) >= 0 ? stored(MODE_KEY) : "";
     if (REQUEST_PAGE.test(window.location.pathname) || TITLE_PAGE.test(window.location.pathname)) load(false);
     // a Seerr sort or direction chosen again: Seerr's order back
     document.addEventListener("change", function (e) { if (e.target && e.target.id === "sort") setMode(document, "", false); });
@@ -425,7 +526,7 @@
         var added = records[i].addedNodes;
         for (var n = 0; n < added.length; n++) {
           var a = added[n];
-          if (a.nodeType === 1 && !a.hasAttribute("data-hg-size") && !a.hasAttribute("data-hg-size-sort") && !a.hasAttribute("data-hg-origin") && !a.hasAttribute("data-hg-origin-fact")) { run(); return; }
+          if (a.nodeType === 1 && !a.hasAttribute("data-hg-size") && !a.hasAttribute("data-hg-size-sort") && !a.hasAttribute("data-hg-size-warn") && !a.hasAttribute("data-hg-episodes") && !a.hasAttribute("data-hg-origin") && !a.hasAttribute("data-hg-origin-fact")) { run(); return; }
         }
       }
     }).observe(document.body, { childList: true, subtree: true });

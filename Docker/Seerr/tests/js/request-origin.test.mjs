@@ -92,7 +92,7 @@ test("Requests: a pill per Jellyfin-made request, the person for service-user on
 
 test("Requests: every visible row gets its size, also other users' requests", async () => {
   const w = await requests();
-  assert.deepEqual(sizes(w), ["≈ 5.4 GB · in queue", "45.3 GB", "22.9 GB · 5 of 6 episodes", "1.0 GB"]);
+  assert.deepEqual(sizes(w), ["≈ 5.4 GB · in queue", "45.3 GB", "22.9 GB · 5 of 6 episodes · ⌀ 4.6 GB/ep", "1.0 GB"]);
 });
 
 test("Requests: German labels; hint through the night label's hint box", async () => {
@@ -108,9 +108,11 @@ test("Requests: no origin data (no session, backend down) = Seerr unchanged; siz
   assert.equal(sizes(w)[1], "45.3 GB");
 });
 
-test("Requests: the Requested line wraps the pill under the name at every width", async () => {
+test("Requests: the pill stays on the Requested line, never shrinks; the date and name give way first", async () => {
   const css = (await requests()).document.getElementById("hg-origin-style").textContent;
-  assert.match(css, /\.card-field:has\(>\[data-hg-origin\]\)\{flex-wrap:wrap;row-gap:\.25rem\}/);
+  assert.doesNotMatch(css, /flex-wrap:wrap/);
+  assert.match(css, /\.card-field:has\(>\[data-hg-origin\]\)>span\.truncate\{flex-shrink:1;min-width:0\}/);
+  assert.match(css, /\.hg-origin\{[^}]*flex-shrink:0/);
   assert.doesNotMatch(css, /@media/);
 });
 

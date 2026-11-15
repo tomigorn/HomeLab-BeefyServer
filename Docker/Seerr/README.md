@@ -431,36 +431,39 @@ Title page → card **My request** under the title header (German **Meine Anfrag
 
 ## Request sizes
 
-Requests page → every row gets a **Size** line under Profile (German **Grösse**), and a **GB** sort control right of Seerr's sort. Title page (movie, series) → a **Size** row after Status in the facts panel.
+Requests page → every row gets a **Size** line under Profile (German **Grösse**), series rows the episode count after their season badges, and a **GB** sort control right of Seerr's sort. Title page (movie, series) → a **Size** row after Status in the facts panel.
 
 | Row shows | When |
 |---|---|
-| `45.3 GB` | movie file on disk (Radarr `movieFile.size`) |
-| `22.9 GB · 5 of 6 episodes` | series: the requested seasons' files (Sonarr season `sizeOnDisk`), episodes while some are missing |
-| `≈ 5.4 GB · in queue` | nothing on disk yet, download in the Radarr/Sonarr queue (each download counted once) |
+| `45.3 GB · 15.3 GB/h` | movie file on disk (Radarr `movieFile.size`), per hour of Radarr `runtime` (no runtime: no GB/h) |
+| `22.9 GB · 5 of 6 episodes · ⌀ 4.6 GB/ep · 6.1 GB/h` | series: the requested seasons' files (Sonarr season `sizeOnDisk`), episodes while some are missing, size / episode files (DE `⌀ 4.6 GB/Ep.`), size / (episode files × Sonarr `runtime`) |
+| `⚠️ Remux` pill | the movie file or an episode file of the requested seasons is a remux (quality name contains "Remux"); also on the title page |
+| `⚠️ very big` pill | over 30 GB/h (film) or 20 GB/h (episodes), DE `⚠️ sehr gross`; also on the title page |
+| `≈ 5.4 GB · in queue` | nothing on disk yet, download in the Radarr/Sonarr queue (each download counted once); no GB/h, no pills |
 | `—` | nothing on disk or queued, title not in Radarr/Sonarr, 4K requests |
+| `Seasons ① ② ③ · 36 episodes` | series row: monitored aired episodes of the requested seasons (Sonarr `episodeCount`), DE `· 36 Episoden`; hover / tap: `Season 1: 10 episodes` (`Staffel 1: 10 Episoden`) |
 
 | Title page shows | When |
 |---|---|
-| `45.3 GB · 2160p HDR10` | movie file on disk, resolution + Radarr `videoDynamicRangeType` |
-| `143.7 GB · 16 of 16 episodes` | series: every season on disk, monitored aired episodes (Sonarr `episodeCount`); hover / tap: per season (`Season 1: 82.0 GB · 8 of 8 episodes`) |
+| `45.3 GB · 2160p HDR10 · 15.3 GB/h` | movie file on disk, resolution + Radarr `videoDynamicRangeType`, GB/h + pills as in the rows |
+| `143.7 GB · 16 of 16 episodes · 9.8 GB/h` | series: every season on disk, monitored aired episodes (Sonarr `episodeCount`); hover / tap: per season (`Season 1: 82.0 GB · 8 of 8 episodes`) |
 | `≈ 5.4 GB · in queue` | nothing on disk, downloads queued |
 | `—` | nothing known but the title has a request (Seerr `mediaInfo.requests`) |
 | no row | nothing known, no request; no **Status** row found (Seerr in another language than EN/DE) |
 
 | Part | What |
 |---|---|
-| Sort | **GB** select: Off / Largest / Smallest (Aus / Grösste / Kleinste). Rows without a size last. Moves rows with CSS `order` only (React's DOM untouched); Seerr's sort group dimmed while active. Turning it on with more requests than shown switches Seerr's own page size to 100 (all requests on one page; above 100: sorted within the page, hint on the select); Off restores the old page size. Picking a Seerr sort or direction = Off (page size restored after Seerr's new list loaded). Choice kept per browser (`localStorage`) |
+| Sort | **GB** select: Off, Largest / Smallest **total**, **per file** (a film is one file, a series size ÷ episode files), **per hour** (size ÷ running time) (Aus, Grösste / Kleinste gesamt, pro Datei, pro Stunde; owner 2026-11-15). Titles without that value last. Rows without a size last. Moves rows with CSS `order` only (React's DOM untouched); Seerr's sort group dimmed while active. Turning it on with more requests than shown switches Seerr's own page size to 100 (all requests on one page; above 100: sorted within the page, hint on the select); Off restores the old page size. Picking a Seerr sort or direction = Off (page size restored after Seerr's new list loaded). Choice kept per browser (`localStorage`) |
 | Problem | a queued size of a title whose queue state is `problem` reads `≈ 58.8 GB · problem` (DE `Problem`) instead of `· in queue` (needs `request-state.json` `queue`) |
-| Data | `request-state.json` `sizes`: Seerr request id → `{size}` / `{size, files, of}` / `{queued}`, and `media`: `movie\|tv/<tmdb id>` → `{size, quality}` / `{size, files, of, seasons}` / `{queued}` for every Radarr/Sonarr title (bytes, ids only, no paths; behind the Seerr session like the rest of the file), written by `../Movie-Downloads/scripts/night-downloads.py` in the 2-min run (one `/movie` + one `/series` call); the 15 s run keeps them. Arrs unreadable: last sizes kept |
+| Data | `request-state.json` `sizes`: Seerr request id → `{size, runtime, remux}` / `{size, files, of, episodes, runtime, remux}` (`episodes`: per requested season; a known series keeps `files, of, episodes` also with nothing on disk) / `{queued}`, and `media`: `movie\|tv/<tmdb id>` → `{size, quality, runtime, remux}` / `{size, files, of, seasons, runtime, remux}` / `{queued}` for every Radarr/Sonarr title (bytes, minutes per film or episode, `remux` only when true; ids only, no paths, no titles; behind the Seerr session like the rest of the file), written by `../Movie-Downloads/scripts/night-downloads.py` in the 2-min run (one `/movie` + one `/series` call, plus `/episodefile?seriesId=` per series with files, for remux); the 15 s run keeps them. Arrs unreadable: last sizes kept |
 | Match | rows ↔ Seerr's own `/api/v1/request?take=…` answer (XHR, read-only; missed: re-read once from resource timing), checked by each loaded row's title link; mismatch or no `sizes` = Seerr unchanged |
-| Layout | line / row added inside the MutationObserver callback (before paint; title page: in the first frame the facts panel exists, measured); on wide screens (≥1280 px) every row, placeholders too, is 8.5rem instead of 7rem so the fifth line fits and nothing jumps; the controls wrap to a second line when there is no room |
+| Layout | line / row added inside the MutationObserver callback (before paint; title page: in the first frame the facts panel exists, measured); on wide screens (≥1280 px) every row, placeholders too, is 8.5rem instead of 7rem so the fifth line fits and nothing jumps, and the facts column (`data-hg-facts`) ends 1rem before the buttons; without buttons (normal users) the empty buttons column is hidden and the facts take its width; on phones (<640 px) the facts column fits inside the card; its text-only values (Profile, Size, …) end in `…` with the full text as tooltip, the pills always stay visible; the controls wrap to a second line when there is no room |
 | Script | `indexer-bar/www/request-sizes.js` (injected by `seerr-proxy`) |
 | Tests | `python3 -m unittest tests.test_night_downloads` (Movie-Downloads, class `Sizes`); JS `node --test` in `tests/js` (`request-sizes.test.mjs`) |
 
 ## Request origin
 
-Requests made with Jellyfin's Popular buttons get a pill in the **Requested** line of the Requests list (wrapped under the name at every width) and a **Requested via** row (German **Angefragt über**) after Size on the title page. Requests made in Seerr itself: no pill.
+Requests made with Jellyfin's Popular buttons get a pill in the **Requested** line of the Requests list (on the same line, never shrinks: the date and name are cut first) and a **Requested via** row (German **Angefragt über**) after Size on the title page. Requests made in Seerr itself: no pill.
 
 | Pill | Made with |
 |---|---|
