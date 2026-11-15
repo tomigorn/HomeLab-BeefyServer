@@ -73,6 +73,8 @@ class World:
         self.rs_file.write_text(json.dumps(rs if rs is not None else state()))
         os.utime(self.rs_file, (T - rs_age, T - rs_age))
         self.store = pathlib.Path(self.tmp.name, "state", "manual.json")
+        self.retention = pathlib.Path(self.tmp.name, "retention.json")
+        self.retention_keep = pathlib.Path(self.tmp.name, "keep.json")
         self.lookups = {"radarr": [], "sonarr": []}
         self.releases, self.proposals, self.episodes = [], [], []
         self.tags, self.history = [], []
@@ -149,7 +151,11 @@ class World:
 
     def deps(self):
         return dn.Deps(seerr=self.seerr, arr=self.arr, qbit=None, sab=None, origins={ORIGIN}, seerr_admin=self.admin,
-                       manual_file=str(self.store), request_state_file=str(self.rs_file), clamav_results=str(self.clamav))
+                       manual_file=str(self.store), request_state_file=str(self.rs_file), clamav_results=str(self.clamav),
+                       retention_file=str(self.retention), retention_keep=str(self.retention_keep))
+
+    def retained(self, key, default):
+        self.retention.write_text(json.dumps({"titles": {key: {"kind": key.split("/")[0], "due": "2027-03-01", "default": default, "reasons": ["old"] if default else [], "protected": key == "movie/653"}}}))
 
     def scanned(self, path, verdict="clean", sig=None, at="2026-11-15T02:00:00Z", size=None, **extra):
         if size is None:
@@ -2303,10 +2309,29 @@ class ReleaseActions(unittest.TestCase):
 
     def test_block_may_delete_the_current_file_when_asked(self):
         w, pid = tank_done()
+        w.retained("movie/1252037", False)
         self.assertEqual(self.reject(w, pid, keep=False)[0], 200)
         self.assertEqual(w.writes, [("radarr", "POST", "/history/failed/400", None), ("radarr", "DELETE", "/moviefile/159", None),
                                     ("radarr", "POST", "/command", {"name": "MoviesSearch", "movieIds": [43]})])
         self.assertFalse(open_rec(w, pid)["replace"]["keep"])
+
+    def test_block_never_deletes_the_file_of_a_kept_forever_title(self):
+        for default, keep in ((True, None), (False, True)):
+            manual.THROTTLE.clear()
+            w, pid = tank_done()
+            w.retained("movie/1252037", default)
+            if keep:
+                w.retention_keep.write_text(json.dumps({"titles": {"movie/1252037": {"keep": True}}}))
+            self.assertEqual(self.reject(w, pid, keep=False), (403, {"error": "kept forever"}))
+            self.assertEqual(w.writes, [])
+            manual.THROTTLE.clear()
+            self.assertEqual(self.reject(w, pid)[0], 200)
+            self.assertNotIn(("radarr", "DELETE", "/moviefile/159", None), w.writes)
+
+    def test_block_deletes_no_file_without_retention_data(self):
+        w, pid = tank_done()
+        self.assertEqual(self.reject(w, pid, keep=False), (403, {"error": "kept forever"}))
+        self.assertEqual(w.writes, [])
 
     def test_block_needs_the_confirmation_the_release_seen_and_not_twice_in_a_row(self):
         w, pid = tank_done()
@@ -2339,6 +2364,7 @@ class ReleaseActions(unittest.TestCase):
         manual.CACHE.clear()
         r = done_rec(w, pid)
         self.assertEqual((r["offers"], r["current"]["season"]), (["reject", "replace"], 1))
+        w.retained(r["key"], False)
         self.assertEqual(post(w, {"id": pid, "action": "reject", "confirm": "reject", "ref": r["current"]["ref"], "keep": False})[0], 200)
         self.assertEqual(w.writes, [("sonarr", "POST", "/history/failed/3241", None), ("sonarr", "DELETE", "/episodefile/1166", None),
                                     ("sonarr", "POST", "/command", {"name": "EpisodeSearch", "episodeIds": [2045]})])

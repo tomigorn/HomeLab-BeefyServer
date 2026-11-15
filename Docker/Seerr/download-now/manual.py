@@ -1984,6 +1984,14 @@ def replace_problem(deps, pid):
             "_": {"kind": c["kind"], "app": c["app"], "arrId": c["arrId"], "seasons": [c["season"]] if c.get("season") is not None else [], "runtime": c.get("runtime"), "current": c["release"]}}
 
 
+def kept_forever(deps, key):
+    """Storage retention (README "Storage retention"): Keep forever titles, the test film, unknown titles and missing retention data never lose their file here."""
+    if not getattr(deps, "retention_file", None) or not getattr(deps, "retention_keep", None):
+        return True
+    import retention_api
+    return retention_api.is_kept(deps, key)
+
+
 def release_action(dn, deps, me, req):
     """Pick another release for a Done entry (grabbed, imported over the current file) or block its release (markAsFailed of its grab: blocklisted, searched again)."""
     pid, action = req.get("id"), req.get("action")
@@ -2002,6 +2010,8 @@ def release_action(dn, deps, me, req):
     cur = current_release(dn, deps, r)
     if cur is None or cur["ref"] != r["current"]["ref"] or action == "reject" and req.get("ref") != cur["ref"]:
         raise Refused(409, "release changed")
+    if action == "reject" and req.get("keep") is False and kept_forever(deps, r.get("key")):
+        raise Refused(403, "kept forever")
     arr = deps.arr(cur["app"])
     base = {"at": ts(NOW()), "user": person(me), "userId": me.get("id"), "app": cur["app"], "kind": cur["kind"], "arrId": cur["arrId"], "from": cur["release"],
             "downloadId": cur["downloadId"], "episodeIds": cur["episodeIds"], "season": cur["season"], "runtime": cur.get("runtime"), "downloadIds": [], "lastResult": None}

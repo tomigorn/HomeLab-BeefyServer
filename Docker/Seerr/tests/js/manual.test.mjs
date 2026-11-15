@@ -969,3 +969,10 @@ test("done after a replacement: in words, EN and DE", async () => {
     assert.equal($('[data-problem="ffffffffffff"] [data-resolved]').textContent.split(" · ")[0], b);
   }
 });
+
+test("a refused file delete of a Keep forever title says why, EN and DE", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../indexer-bar/www/manual.js", import.meta.url), "utf8");
+  assert.match(src, /"kept forever": "Kept forever \(storage retention\): the file stays/);
+  assert.match(src, /"kept forever": "Für immer behalten \(Speicher-Aufräumung\): die Datei bleibt/);
+});
