@@ -8,6 +8,8 @@ import os
 import pathlib
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -21,7 +23,8 @@ import manual  # noqa: E402
 ORIGIN = "https://requests.example.com"
 T = datetime.datetime(2026, 11, 15, 3, 0, tzinfo=datetime.timezone.utc).timestamp()
 DAY = 86400
-USER, ADMIN = {"id": 7, "displayName": "jane", "permissions": 8352}, {"id": 1, "displayName": "Jane Doe", "permissions": 2}
+USER, ADMIN = {"id": 7, "displayName": "jane", "jellyfinUsername": "jane", "permissions": 8352}, {"id": 1, "displayName": "Jane Doe", "username": "janedoe", "permissions": 2}
+OTHER = {"id": 5, "displayName": "joe", "jellyfinUsername": "joe", "permissions": 8352}
 R_PROFILES = [{"id": 7, "name": "4K HDR - UHD Bluray + WEB (1080p fallback)"}, {"id": 10, "name": "4K HDR - UHD Bluray + WEB (1080p fallback) - English original"},
               {"id": 11, "name": "4K preferred · older versions allowed"}, {"id": 12, "name": "4K preferred · older versions allowed - English original"},
               {"id": 13, "name": "Swiss German (Mundart) only - any quality"}, {"id": 14, "name": "Anime - 4K HDR (1080p fallback)"}, {"id": 15, "name": "Anime - 4K HDR · older versions allowed"}]
@@ -36,7 +39,7 @@ def iso(t):
 
 def request(rid, kind, tmdb, uid=7, name="jane", status=2, ext=None, tvdb=None, created=T - 10 * DAY, seasons=(), media_id=None, profile=None):
     return {"id": rid, "type": kind, "status": status, "createdAt": iso(created), "profileId": profile, "rootFolder": None, "is4k": False,
-            "seasons": [{"seasonNumber": n} for n in seasons], "requestedBy": {"id": uid, "displayName": name},
+            "seasons": [{"seasonNumber": n} for n in seasons], "requestedBy": {"id": uid, "displayName": name, "jellyfinUsername": name},
             "media": {"id": media_id or rid + 100, "tmdbId": tmdb, "tvdbId": tvdb, "externalServiceId": ext, "status": 3}}
 
 
@@ -71,6 +74,7 @@ class World:
         self.lookups = {"radarr": [], "sonarr": []}
         self.releases, self.proposals, self.episodes = [], [], []
         self.seerr_media = {}
+        self.request_calls, self.slow, self.odd_queue, self.token = 0, 0, False, None
 
     def seerr(self, path, auth):
         if path == "/auth/me":
@@ -84,6 +88,8 @@ class World:
             self.admin_calls.append((method, path, body))
             return {}
         if path.startswith("/request?"):
+            self.request_calls += 1
+            time.sleep(self.slow)
             return {"results": self.requests}
         if path == "/settings/radarr":
             return [{"id": 0, "isDefault": True, "is4k": False, "activeProfileId": 7, "activeDirectory": "/data/media/movies"}]
@@ -104,7 +110,7 @@ class World:
                 return {"id": 900} if path in ("/movie", "/series") else {}
             self.gets.append((app, path))
             if path.startswith("/queue"):
-                return {"records": self.queues[app]}
+                return None if self.odd_queue else {"records": self.queues[app]}
             if path == "/qualityprofile":
                 return R_PROFILES if app == "radarr" else S_PROFILES
             if path == "/rootfolder":
@@ -137,12 +143,17 @@ def reset():
 
 
 def get(w, path, me=None):
-    return dn.handle("GET", "/_download-now/manual/" + path, {"Cookie": "connect.sid=s%3Aabc"}, b"", w.deps())
+    status, out = dn.handle("GET", "/_download-now/manual/" + path, {"Cookie": "connect.sid=s%3Aabc"}, b"", w.deps())
+    if isinstance(out, dict) and out.get("token"):
+        w.token = out["token"]
+    return status, out
 
 
 def post(w, body, headers=None):
     h = {"Content-Type": "application/json", "Origin": ORIGIN, "Cookie": "connect.sid=s%3Aabc"}
     h.update(headers or {})
+    if w.token and "token" not in body:
+        body = dict(body, token=w.token)
     return dn.handle("POST", "/_download-now/manual/action", h, json.dumps(body).encode(), w.deps())
 
 
@@ -212,6 +223,20 @@ class Scan(unittest.TestCase):
                                msgs=("Found matching movie via grab history, but release was matched to movie by ID.",))])
         p = one(w, "wrong-film")
         self.assertEqual((p["details"]["releaseYear"], p["details"]["year"]), (1987, 2024))
+
+    def test_series_year_in_the_release_is_no_wrong_film(self):
+        w = World(squeue=[qrec(1, title="Some.Show.2005.S10E01.1080p-GRP", year=2019, ep=501)])
+        self.assertEqual(one(w, "import")["type"], "import")
+
+    def test_requesters_never_show_an_email(self):
+        odd = request(11, "movie", 10248, ext=21)
+        odd["requestedBy"] = {"id": 5, "displayName": "joe@example.com", "email": "joe@example.com", "username": None, "plexUsername": None, "jellyfinUsername": None}
+        named = request(12, "movie", 10248, uid=6, ext=21)
+        named["requestedBy"] = {"id": 6, "displayName": "x@example.com", "email": "x@example.com", "username": "", "plexUsername": "plexjoe"}
+        w = World(rs=state(removed=["movie/10248"]), requests=[odd, named])
+        p = one(w, "removed")
+        self.assertEqual(p["requesters"], ["user 5", "plexjoe"])
+        self.assertNotIn("@", w.store.read_text())
 
     def test_failed_download_is_a_problem(self):
         w = World(rqueue=[qrec(1, kind="movie", tds="failed", status="failed", tid=43, tmdb=673, msgs=("Download failed",))])
@@ -298,6 +323,48 @@ class Tracking(unittest.TestCase):
         self.assertIsNone(p["resolved"])
         self.assertEqual(p["actions"][-1]["action"], "reopened")
 
+    def test_empty_arr_answer_resolves_nothing(self):
+        w = World(rqueue=[qrec(1, kind="movie", tid=43, tmdb=673, msgs=("No files found",))])
+        one(w, "import")
+        w.odd_queue = True
+        manual.CACHE.clear()
+        self.assertEqual(len(problems(w)["open"]), 1)
+
+    def test_full_seerr_page_resolves_nothing(self):
+        w = self.removed_world()
+        one(w, "removed")
+        w.rs_file.write_text(json.dumps(state()))
+        os.utime(w.rs_file, (T, T))
+        w.requests = [request(1000 + n, "movie", 5000 + n) for n in range(1000)]
+        manual.CACHE.clear()
+        self.assertEqual(len(problems(w)["open"]), 1)
+
+    def test_unreadable_store_is_never_overwritten(self):
+        w = self.removed_world()
+        w.store.parent.mkdir(parents=True)
+        w.store.write_text('{"problems": {"old": ')
+        problems(w)
+        self.assertEqual(w.store.read_text(), '{"problems": {"old": ')
+
+    def test_save_keeps_a_backup_of_the_last_list(self):
+        w = self.removed_world()
+        one(w, "removed")
+        before = w.store.read_text()
+        manual.CACHE.clear()
+        problems(w)
+        self.assertEqual(w.store.with_name("manual.json.bak").read_text(), before)
+
+    def test_concurrent_refreshes_share_one_scan(self):
+        w = self.removed_world()
+        w.slow = 0.2
+        deps = w.deps()
+        threads = [threading.Thread(target=manual.refresh, args=(dn, deps, True)) for _ in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(w.request_calls, 1)
+
     def test_count_is_the_number_of_open_problems(self):
         w = self.removed_world()
         self.assertEqual(get(w, "count"), (200, {"open": 1}))
@@ -345,6 +412,32 @@ class Gate(unittest.TestCase):
         self.assertEqual(post(w, {"id": pid, "action": "rm -rf"})[0], 400)
         self.assertEqual(w.writes + w.admin_calls, [])
 
+    def test_refused_actions_never_force_a_scan(self):
+        w = World(rs=state(removed=["movie/10248"]), requests=[request(11, "movie", 10248, ext=21)])
+        pid = one(w, "removed")["id"]
+        manual.NOW = lambda: T + 10
+        os.utime(w.rs_file, (T + 10, T + 10))
+        calls = w.request_calls
+        for body in ({"id": pid, "action": "grab"}, {"id": pid, "action": "delete", "confirm": "delete"}):
+            self.assertIn(post(w, body)[0], (400, 403))
+        self.assertEqual(w.request_calls, calls)
+        manual.THROTTLE[("act", pid)] = T + 5
+        self.assertEqual(post(w, {"id": pid, "action": "readd"})[0], 429)
+        self.assertEqual(w.request_calls, calls)
+
+    def test_too_many_parallel_calls_are_turned_away(self):
+        w = World()
+        taken = 0
+        while manual.SLOTS.acquire(blocking=False):
+            taken += 1
+        try:
+            self.assertEqual(get(w, "problems")[0], 429)
+        finally:
+            for _ in range(taken):
+                manual.SLOTS.release()
+        self.assertGreater(taken, 0)
+        self.assertEqual(get(w, "problems")[0], 200)
+
     def test_unknown_path_is_404(self):
         self.assertEqual(get(World(), "nothing")[0], 404)
 
@@ -374,6 +467,7 @@ class Unmatched(unittest.TestCase):
     def test_link_needs_a_pick_from_the_lookup(self):
         self.assertEqual(post(self.w, {"id": self.pid, "action": "link", "pick": 1})[0], 400)
         get(self.w, f"lookup?id={self.pid}")
+        manual.THROTTLE.pop(("act", self.pid), None)
         self.assertEqual(post(self.w, {"id": self.pid, "action": "link", "pick": 9})[0], 400)
         self.assertEqual(self.w.writes, [])
 
@@ -391,14 +485,37 @@ class Unmatched(unittest.TestCase):
         self.assertEqual((out["problem"]["actions"][-1]["user"], out["problem"]["actions"][-1]["action"]), ("jane", "link"))
 
     def test_a_series_already_in_sonarr_is_not_added_again(self):
+        self.w.me = ADMIN
         get(self.w, f"lookup?id={self.pid}")
         self.assertEqual(post(self.w, {"id": self.pid, "action": "link", "pick": 2})[0], 200)
         self.assertEqual(self.w.writes, [])
 
+    def test_a_requester_cannot_link_another_title(self):
+        get(self.w, f"lookup?id={self.pid}&term=Other")
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "link", "pick": 0})[0], 403)
+        self.assertEqual(self.w.writes, [])
+
+    def test_an_admin_may_link_another_title(self):
+        self.w.me = ADMIN
+        get(self.w, f"lookup?id={self.pid}&term=Other")
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "link", "pick": 0})[0], 200)
+        self.assertEqual(self.w.writes[0][3]["tvdbId"], 1111)
+
+    def test_link_needs_the_token_of_the_callers_own_list(self):
+        mine = get(self.w, f"lookup?id={self.pid}")[1]["token"]
+        self.w.me = OTHER
+        theirs = get(self.w, f"lookup?id={self.pid}&term=Other")[1]["token"]
+        self.assertNotEqual(mine, theirs)
+        self.w.me = USER
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "link", "pick": 1, "token": theirs})[0], 400)
+        manual.THROTTLE.pop(("act", self.pid), None)
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "link", "pick": 1, "token": mine})[0], 200)
+        self.assertEqual(self.w.writes[0][3]["tvdbId"], 9090)
+
     def test_actions_are_rate_limited_per_problem(self):
         get(self.w, f"lookup?id={self.pid}")
-        post(self.w, {"id": self.pid, "action": "link", "pick": 2})
-        self.assertEqual(post(self.w, {"id": self.pid, "action": "link", "pick": 2})[0], 429)
+        post(self.w, {"id": self.pid, "action": "link", "pick": 1})
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "link", "pick": 1})[0], 429)
 
 
 EPISODES = [{"id": 501, "seasonNumber": 1, "episodeNumber": 1, "title": "Pilot"}, {"id": 502, "seasonNumber": 1, "episodeNumber": 2, "title": "Two"}]
@@ -438,7 +555,34 @@ class Import(unittest.TestCase):
     def test_import_refuses_episodes_of_another_series_and_unknown_files(self):
         get(self.w, f"files?id={self.pid}")
         for files in ([{"n": 0, "episodeIds": [999]}], [{"n": 5, "episodeIds": [501]}], [], [{"n": 0, "episodeIds": []}], "x", [{"n": 0, "episodeIds": [501]}, {"n": 0, "episodeIds": [502]}]):
+            manual.THROTTLE.pop(("act", self.pid), None)
             self.assertEqual(post(self.w, {"id": self.pid, "action": "import", "files": files})[0], 400, files)
+        self.assertEqual(self.w.writes, [])
+
+    def test_file_lists_are_rate_limited(self):
+        self.assertEqual(get(self.w, f"files?id={self.pid}")[0], 200)
+        self.assertEqual(get(self.w, f"files?id={self.pid}")[0], 429)
+
+    def test_a_file_the_arr_rejected_needs_an_admin(self):
+        self.w.proposals[1]["rejections"] = [{"reason": "Not an upgrade for existing episode file(s)"}]
+        get(self.w, f"files?id={self.pid}")
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "import", "files": [{"n": 1, "episodeIds": [502]}]})[0], 403)
+        self.assertEqual(self.w.writes, [])
+        self.w.me = ADMIN
+        manual.THROTTLE.clear()
+        get(self.w, f"files?id={self.pid}")
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "import", "files": [{"n": 1, "episodeIds": [502]}]})[0], 200)
+
+    def test_an_unmatched_file_may_be_mapped_by_anyone(self):
+        self.w.proposals[0]["rejections"] = [{"reason": "Unable to determine if file is a sample"}, {"reason": "Episode not found"}]
+        self.w.proposals[1]["rejections"] = [{"reason": "Unable to parse file"}]
+        get(self.w, f"files?id={self.pid}")
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "import", "files": [{"n": 1, "episodeIds": [502]}]})[0], 200)
+
+    def test_an_episode_with_a_file_needs_an_admin(self):
+        self.w.episodes = [dict(EPISODES[0], hasFile=True), EPISODES[1]]
+        get(self.w, f"files?id={self.pid}")
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "import", "files": [{"n": 0, "episodeIds": [501]}]})[0], 403)
         self.assertEqual(self.w.writes, [])
 
     def test_import_without_the_file_list_first_is_refused(self):
@@ -506,9 +650,9 @@ class NoRelease(unittest.TestCase):
     def test_rejected_or_unknown_release_cannot_be_grabbed(self):
         out = get(self.w, f"releases?id={self.pid}")[1]
         bad = next(r["n"] for r in out["releases"] if r["rejected"])
-        self.assertEqual(post(self.w, {"id": self.pid, "action": "grab", "release": bad})[0], 400)
-        self.assertEqual(post(self.w, {"id": self.pid, "action": "grab", "release": 99})[0], 400)
-        self.assertEqual(post(self.w, {"id": self.pid, "action": "grab", "release": "0"})[0], 400)
+        for n in (bad, 99, "0"):
+            manual.THROTTLE.pop(("act", self.pid), None)
+            self.assertEqual(post(self.w, {"id": self.pid, "action": "grab", "release": n})[0], 400)
         self.assertEqual(self.w.writes, [])
 
     def test_grab_sends_the_arr_its_own_release(self):
@@ -578,7 +722,7 @@ class Removed(unittest.TestCase):
         self.assertEqual(self.w.admin_calls, [])
         status, out = post(self.w, {"id": self.pid, "action": "delete", "confirm": "delete"})
         self.assertEqual(status, 200, out)
-        self.assertEqual(self.w.admin_calls, [("DELETE", "/media/16", None)])
+        self.assertEqual(self.w.admin_calls, [("DELETE", "/request/11", None)])
         self.assertEqual(out["problem"]["resolved"]["how"], "delete")
 
 
@@ -598,6 +742,21 @@ class Backend(unittest.TestCase):
         status, out = post(w, {"id": pid, "action": "readd"})
         self.assertEqual(status, 502)
         self.assertNotIn("radarr:7878", json.dumps(out))
+
+    def test_a_failed_action_still_counts_for_the_throttle(self):
+        w = World(rs=state(removed=["movie/10248"]), requests=[request(11, "movie", 10248, ext=21)])
+        pid = one(w, "removed")["id"]
+        good = w.arr
+
+        def broken(app):
+            def call(path, method="GET", body=None, timeout=None):
+                if "lookup" in path:
+                    raise dn.ApiError("radarr: 500")
+                return good(app)(path, method, body)
+            return call
+        w.arr = broken
+        self.assertEqual(post(w, {"id": pid, "action": "readd"})[0], 502)
+        self.assertEqual(post(w, {"id": pid, "action": "readd"})[0], 429)
 
     def test_env_wires_the_state_files(self):
         d = dn.Deps(seerr=None, arr=None, qbit=None, sab=None)

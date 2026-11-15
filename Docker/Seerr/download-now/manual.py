@@ -9,6 +9,8 @@ import json
 import os
 import pathlib
 import re
+import secrets
+import shutil
 import threading
 import time
 import urllib.parse
@@ -20,6 +22,8 @@ THROTTLE = {}
 MEM = {}
 STORE_LOCK = threading.Lock()
 SEARCH_LOCK = threading.Lock()
+THROTTLE_LOCK = threading.Lock()
+SLOTS = threading.BoundedSemaphore(4)
 DAY = 86400
 KEEP_DAYS = 180
 NO_RELEASE_DAYS = 3
@@ -29,6 +33,8 @@ SCAN_TTL = 60
 OFFER_TTL = 600
 RELEASE_GAP = 120
 LOOKUP_GAP = 2
+FILES_GAP = 10
+SEERR_TAKE = 1000
 ACTION_GAP = 20
 GRACE = 1800
 RELEASE_TIMEOUT = 120
@@ -46,6 +52,12 @@ YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 YEAR_SLACK = 2
 EPISODE = (re.compile(r"[Ss](\d{1,2})[ ._-]?[Ee](\d{1,3})(?:[ ._-]?[Ee-](\d{1,3}))?"), re.compile(r"(?<![\dx])(\d{1,2})x(\d{2,3})(?!\d)"))
 NAMES = {"radarr": "Radarr", "sonarr": "Sonarr"}
+# rejections a manual pick fixes (the arr could not tell which title or episode it is); any other one needs an admin
+UNMATCHED = re.compile(r"unable to (parse|determine|identify|find)|not found|unknown (series|movie|episode)|matched to (series|movie) by id|no (series|movie|episode)s? (found|matched)", re.I)
+
+
+class StoreUnreadable(Exception):
+    pass
 
 
 class Refused(Exception):
@@ -97,13 +109,23 @@ def older_profile(name, profiles):
     return want if want in names else None
 
 
-def queue_kind(recs, year):
+def person(u):
+    """A user's name for the page: Seerr's username / Jellyfin / Plex name, never the email Seerr falls back to."""
+    u = u if isinstance(u, dict) else {}
+    for k in ("username", "jellyfinUsername", "plexUsername"):
+        v = u.get(k)
+        if isinstance(v, str) and v.strip() and "@" not in v:
+            return v.strip()[:60]
+    return f"user {u.get('id')}"
+
+
+def queue_kind(recs, year, kind):
     msgs = [str(m) for r in recs for sm in r.get("statusMessages") or [] for m in sm.get("messages") or []]
     if any(r.get("status") == "failed" or r.get("trackedDownloadState") in FAILED_STATES for r in recs):
         return "failed", {}
     if any(ID_MATCHED.search(m) for m in msgs):
         years = [int(y.group()) for y in YEAR.finditer(str(recs[0].get("title") or ""))]
-        if year and years and not any(abs(year - y) <= YEAR_SLACK for y in years):
+        if kind == "movie" and year and years and not any(abs(year - y) <= YEAR_SLACK for y in years):
             return "wrong-film", {"releaseYear": years[-1], "year": year}
     return "import", {}
 
@@ -124,6 +146,8 @@ def scan(dn, deps, known):
         reqs = None
     if not isinstance(reqs, list):
         complete, reqs = False, []
+    elif len(reqs) >= SEERR_TAKE:
+        complete = False
     by_key = {}
     for r in reqs:
         m = r.get("media") if isinstance(r, dict) else None
@@ -155,7 +179,7 @@ def scan(dn, deps, known):
 
     def add(ptype, key, title, year, details, extra="", **internal):
         rq = by_key.get(key) or []
-        names = list(dict.fromkeys(str(r["requestedBy"].get("displayName") or "?") for r in rq))
+        names = list(dict.fromkeys(person(r["requestedBy"]) for r in rq))
         pid = pid_of(ptype, key, extra)
         internal.setdefault("requests", rq)
         found[pid] = {"id": pid, "type": ptype, "key": key, "title": title, "year": year, "requesters": names, "details": details, "_": internal}
@@ -199,8 +223,11 @@ def scan(dn, deps, known):
         except dn.ApiError:
             complete = False
             continue
+        if not isinstance(q, dict) or not isinstance(q.get("records"), list):
+            complete = False
+            continue
         groups = {}
-        for r in (q.get("records") if isinstance(q, dict) else None) or []:
+        for r in q["records"]:
             if not isinstance(r, dict) or not (r.get("trackedDownloadState") in PROBLEM_STATES or r.get("trackedDownloadStatus") == "error" or r.get("status") == "failed"):
                 continue
             groups.setdefault(r.get("downloadId") or f"q{r.get('id')}", []).append(r)
@@ -208,7 +235,7 @@ def scan(dn, deps, known):
             t = recs[0].get("movie" if kind == "movie" else "series") or {}
             tid = recs[0].get("movieId" if kind == "movie" else "seriesId")
             key = f"{kind}/{t['tmdbId']}" if t.get("tmdbId") else f"{app}:{tid}"
-            ptype, more = queue_kind(recs, t.get("year"))
+            ptype, more = queue_kind(recs, t.get("year"), kind)
             msg = next((m for r in recs for sm in r.get("statusMessages") or [] for m in sm.get("messages") or [] if m), None) or recs[0].get("errorMessage")
             details = {"release": str(recs[0].get("title") or "")[:200], "message": brief(msg), **more}
             eps = sorted({r.get("episodeId") for r in recs if isinstance(r.get("episodeId"), int)})
@@ -220,14 +247,20 @@ def scan(dn, deps, known):
 
 
 def load(deps):
+    """The stored problem list; a missing file is an empty list, an unreadable one raises (it must never be overwritten)."""
     if not deps.manual_file:
         return MEM.setdefault("problems", {})
-    try:
-        data = json.loads(pathlib.Path(deps.manual_file).read_text())
-    except (OSError, ValueError):
+    path = pathlib.Path(deps.manual_file)
+    if not path.exists():
         return {}
-    p = data.get("problems") if isinstance(data, dict) else None
-    return p if isinstance(p, dict) else {}
+    try:
+        data = json.loads(path.read_text())
+        p = data["problems"]
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise StoreUnreadable(f"{path.name}: {type(e).__name__}") from None
+    if not isinstance(p, dict):
+        raise StoreUnreadable(f"{path.name}: no problem list")
+    return p
 
 
 def save(deps, records):
@@ -236,8 +269,13 @@ def save(deps, records):
         return
     path = pathlib.Path(deps.manual_file)
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        shutil.copyfile(path, path.with_name(path.name + ".bak"))
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps({"problems": records}, ensure_ascii=False, separators=(",", ":")))
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"problems": records}, ensure_ascii=False, separators=(",", ":")))
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, path)
 
 
@@ -262,27 +300,45 @@ def merge(records, found, complete, now):
 
 
 def refresh(dn, deps, force=False):
-    now = NOW()
-    c = CACHE.get("scan")
-    if c and not force and now - c[0] < SCAN_TTL:
-        return c[1]
+    """The current problems; force = a scan that started no earlier than this call. One scan at a time, callers waiting for it share its result."""
+    start = NOW()
+
+    def cached():
+        c = CACHE.get("scan")
+        return c[1] if c and (c[0] >= start or not force and NOW() - c[0] < SCAN_TTL) else None
+    hit = cached()
+    if hit is not None:
+        return hit
     with STORE_LOCK:
-        records = load(deps)
+        hit = cached()
+        if hit is not None:
+            return hit
+        now = NOW()
+        try:
+            records, readable = load(deps), True
+        except StoreUnreadable as e:
+            print(f"manual: problem list unreadable, not saving until fixed: {e}", flush=True)
+            records, readable = {}, False
         found, complete = scan(dn, deps, {r.get("key"): (r.get("title"), r.get("year")) for r in records.values() if isinstance(r, dict)})
-        merge(records, found, complete, now)
-        save(deps, records)
-    CACHE["scan"] = (now, found)
+        if readable:
+            merge(records, found, complete, now)
+            save(deps, records)
+        CACHE["scan"] = (now, found)
     return found
 
 
 def record(deps, pid, me, action, result, resolve):
     now = NOW()
     with STORE_LOCK:
-        records = load(deps)
+        try:
+            records = load(deps)
+        except StoreUnreadable as e:
+            print(f"manual: problem list unreadable, action not recorded: {e}", flush=True)
+            return None
         r = records.get(pid)
         if r is None:
             return None
-        r.setdefault("actions", []).append({"at": ts(now), "user": str(me.get("displayName") or me.get("id"))[:60], "userId": me.get("id"), "action": action, "result": result})
+        r.setdefault("actions", []).append({"at": ts(now), "user": person(me), "userId": me.get("id"), "action": action, "result": result})
         if resolve:
             r["resolved"] = {"at": ts(now), "how": action}
         save(deps, records)
@@ -290,17 +346,29 @@ def record(deps, pid, me, action, result, resolve):
 
 
 def throttle(key, gap, mark=True):
-    now = NOW()
-    if now - THROTTLE.get(key, -gap - 1) < gap:
-        return False
-    if mark:
-        THROTTLE[key] = now
-    return True
+    with THROTTLE_LOCK:
+        now = NOW()
+        if now - THROTTLE.get(key, -gap - 1) < gap:
+            return False
+        if mark:
+            THROTTLE[key] = now
+        return True
 
 
-def offer(pid, kind):
-    o = OFFERS.get((pid, kind))
-    return o[1] if o and NOW() - o[0] <= OFFER_TTL else None
+def keep(pid, kind, me, data):
+    """A list shown to one user, picked from by index: stored per user with a token the POST must send back."""
+    token, now = secrets.token_hex(8), NOW()
+    for k in [k for k, o in OFFERS.items() if now - o[0] > OFFER_TTL]:
+        OFFERS.pop(k, None)
+    OFFERS[(pid, kind, me.get("id"))] = (now, token, data)
+    return token
+
+
+def offer(pid, kind, me, req):
+    o = OFFERS.get((pid, kind, me.get("id")))
+    if not o or NOW() - o[0] > OFFER_TTL or not isinstance(req.get("token"), str) or not secrets.compare_digest(o[1], req["token"]):
+        return None
+    return o[2]
 
 
 def is_int(v):
@@ -329,9 +397,9 @@ def lookup(dn, deps, me, p, q):
         return s + (0.3 if y and py and y == py else 0.1 if y and py and abs(y - py) <= 1 else 0)
     scores = [score(x) for x in items]
     best = max(range(len(items)), key=lambda n: scores[n]) if items and max(scores) >= 0.6 else None
-    OFFERS[(p["id"], "lookup")] = (NOW(), items)
+    token = keep(p["id"], "lookup", me, items)
     field = "tmdbId" if i["kind"] == "movie" else "tvdbId"
-    return {"results": [{"n": n, "title": str(x.get("title") or ""), "year": x.get("year"), "overview": str(x.get("overview") or "")[:200], field: x.get(field),
+    return {"token": token, "results": [{"n": n, "title": str(x.get("title") or ""), "year": x.get("year"), "overview": str(x.get("overview") or "")[:200], field: x.get(field),
                          "inLibrary": bool(x.get("id")), "probable": n == best} for n, x in enumerate(items)]}
 
 
@@ -346,9 +414,13 @@ def episode_guess(name, by_number):
     return []
 
 
-def files(dn, deps, p):
+def files(dn, deps, me, p):
     if p["type"] != "import":
         raise Refused(400, "bad request")
+    if not throttle(("files", me.get("id")), LOOKUP_GAP, mark=False) or not throttle(("files", p["id"]), FILES_GAP, mark=False):
+        raise Refused(429, "slow down")
+    throttle(("files", me.get("id")), LOOKUP_GAP)
+    throttle(("files", p["id"]), FILES_GAP)
     i = p["_"]
     arr = deps.arr(i["app"])
     owner = "movieId" if i["kind"] == "movie" else "seriesId"
@@ -368,11 +440,11 @@ def files(dn, deps, p):
                     "languages": [str(lang.get("name")) for lang in x.get("languages") or [] if isinstance(lang, dict) and lang.get("name")],
                     "rejections": [brief(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
                     "episodeIds": guess, "probable": bool(guess) if i["kind"] == "tv" else n == biggest})
-    OFFERS[(p["id"], "files")] = (NOW(), {"props": props, "episodes": {e["id"] for e in episodes}})
-    return {"kind": i["kind"], "files": out, "episodes": [{"id": e["id"], "label": f"S{e.get('seasonNumber') or 0:02d}E{e.get('episodeNumber') or 0:02d}", "title": str(e.get("title") or "")[:80]} for e in episodes]}
+    token = keep(p["id"], "files", me, {"props": props, "episodes": {e["id"]: bool(e.get("hasFile")) for e in episodes}})
+    return {"token": token, "kind": i["kind"], "files": out, "episodes": [{"id": e["id"], "label": f"S{e.get('seasonNumber') or 0:02d}E{e.get('episodeNumber') or 0:02d}", "title": str(e.get("title") or "")[:80]} for e in episodes]}
 
 
-def releases(dn, deps, p, q):
+def releases(dn, deps, me, p, q):
     if p["type"] != "no-release" or not p["_"].get("arrId"):
         raise Refused(400, "bad request")
     i = p["_"]
@@ -382,10 +454,10 @@ def releases(dn, deps, p, q):
         season = int(raw) if raw.isdigit() else None
         if season not in i["seasons"]:
             raise Refused(400, "bad request")
-    cached = OFFERS.get((p["id"], "releases"))
+    cached = CACHE.get(("releases", p["id"]))
     if not throttle(("releases", p["id"]), RELEASE_GAP, mark=False):
-        if cached and cached[1]["season"] == season:
-            return {"releases": cached[1]["public"], "season": season, "cached": True}
+        if cached and cached["season"] == season:
+            return {"token": keep(p["id"], "releases", me, cached), "releases": cached["public"], "season": season, "cached": True}
         raise Refused(429, "slow down")
     if not SEARCH_LOCK.acquire(blocking=False):
         raise Refused(429, "busy")
@@ -403,8 +475,9 @@ def releases(dn, deps, p, q):
                "seeders": x.get("seeders"), "leechers": x.get("leechers"), "score": x.get("customFormatScore"), "rejected": bool(x.get("rejected")),
                "rejections": [brief(r.get("reason") if isinstance(r, dict) else r) for r in x.get("rejections") or []][:5],
                "indexer": str(x.get("indexer") or "")[:60], "protocol": x.get("protocol"), "age": x.get("age")} for n, x in enumerate(items)]
-    OFFERS[(p["id"], "releases")] = (NOW(), {"season": season, "public": public, "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": bool(x.get("rejected")), "title": str(x.get("title") or "")[:200]} for x in items]})
-    return {"releases": public, "season": season, "cached": False}
+    data = {"season": season, "public": public, "items": [{"guid": x["guid"], "indexerId": x["indexerId"], "rejected": bool(x.get("rejected")), "title": str(x.get("title") or "")[:200]} for x in items]}
+    CACHE[("releases", p["id"])] = data
+    return {"token": keep(p["id"], "releases", me, data), "releases": public, "season": season, "cached": False}
 
 
 def search(arr, i, episode_ids=None):
@@ -450,8 +523,8 @@ def add_title(deps, i, obj):
         arr("/series", "POST", body)
 
 
-def do_link(deps, p, req):
-    items = offer(p["id"], "lookup")
+def do_link(deps, me, admin, p, req):
+    items = offer(p["id"], "lookup", me, req)
     n = req.get("pick")
     if items is None or not is_int(n) or not 0 <= n < len(items):
         raise Refused(400, "bad request")
@@ -459,6 +532,12 @@ def do_link(deps, p, req):
     field = "tmdbId" if i["kind"] == "movie" else "tvdbId"
     if not is_int(obj.get(field)):
         raise Refused(400, "bad request")
+    media = i.get("media") or {}
+    same = obj.get("tmdbId") == i["tmdb"] if i["kind"] == "movie" else (is_int(media.get("tvdbId")) and obj.get("tvdbId") == media["tvdbId"]) or (is_int(obj.get("tmdbId")) and obj.get("tmdbId") == i["tmdb"])
+    if not same and not admin:
+        raise Refused(403, "another title needs an admin")
+    if not same:
+        print(f"manual: admin {me.get('id')} links {p['key']} to {field} {obj[field]}", flush=True)
     arr = deps.arr(i["app"])
     if obj.get("id") or existing(arr, i["kind"], obj):
         result = f"already in {NAMES[i['app']]}"
@@ -474,8 +553,8 @@ def do_link(deps, p, req):
     return result
 
 
-def do_import(deps, p, req):
-    o = offer(p["id"], "files")
+def do_import(deps, me, admin, p, req):
+    o = offer(p["id"], "files", me, req)
     want = req.get("files")
     i = p["_"]
     if o is None or not isinstance(want, list) or not 0 < len(want) <= 200:
@@ -487,6 +566,7 @@ def do_import(deps, p, req):
             raise Refused(400, "bad request")
         seen.add(n)
         x = o["props"][n]
+        hard = [str(rj.get("reason") if isinstance(rj, dict) else rj) for rj in x.get("rejections") or [] if not UNMATCHED.search(str(rj.get("reason") if isinstance(rj, dict) else rj))]
         entry = {"path": x["path"], "quality": x.get("quality"), "languages": x.get("languages") or [], "releaseGroup": x.get("releaseGroup"),
                  "downloadId": x.get("downloadId") or i["downloadId"], "indexerFlags": x.get("indexerFlags") or 0}
         if i["kind"] == "movie":
@@ -495,13 +575,19 @@ def do_import(deps, p, req):
             eps = f.get("episodeIds")
             if not isinstance(eps, list) or not 0 < len(eps) <= 50 or not all(is_int(e) and e in o["episodes"] for e in eps):
                 raise Refused(400, "bad request")
+            if any(o["episodes"][e] for e in eps):
+                hard.append("episode already has a file")
             entry.update(seriesId=i["arrId"], episodeIds=eps, releaseType=x.get("releaseType") or "singleEpisode")
+        if hard and not admin:
+            raise Refused(403, "rejected file needs an admin")
+        if hard:
+            print(f"manual: admin {me.get('id')} overrides for {p['key']}: {'; '.join(brief(h) for h in hard)}", flush=True)
         out.append(entry)
     deps.arr(i["app"])("/command", "POST", {"name": "ManualImport", "files": out, "importMode": "auto"})
     return f"import of {len(out)} file(s) started"
 
 
-def do_block(deps, p, req):
+def do_block(deps, me, admin, p, req):
     i = p["_"]
     if not i.get("queueIds"):
         raise Refused(400, "bad request")
@@ -511,7 +597,7 @@ def do_block(deps, p, req):
     return "release removed and blocked, searching again"
 
 
-def do_profile(deps, p, req):
+def do_profile(deps, me, admin, p, req):
     i, name = p["_"], p["details"].get("older")
     arr = deps.arr(i["app"])
     target = next((x.get("id") for x in arr("/qualityprofile") or [] if isinstance(x, dict) and x.get("name") == name), None) if name else None
@@ -525,8 +611,8 @@ def do_profile(deps, p, req):
     return f"profile {name}, searching again"
 
 
-def do_grab(deps, p, req):
-    o = offer(p["id"], "releases")
+def do_grab(deps, me, admin, p, req):
+    o = offer(p["id"], "releases", me, req)
     n = req.get("release")
     if o is None or not is_int(n) or not 0 <= n < len(o["items"]) or o["items"][n]["rejected"]:
         raise Refused(400, "bad request")
@@ -535,7 +621,7 @@ def do_grab(deps, p, req):
     return f"grabbed {x['title']}"
 
 
-def do_readd(deps, p, req):
+def do_readd(deps, me, admin, p, req):
     i = p["_"]
     arr = deps.arr(i["app"])
     if i["kind"] == "movie":
@@ -554,14 +640,15 @@ def do_readd(deps, p, req):
     return f"added to {NAMES[i['app']]} again, searching"
 
 
-def do_delete(deps, p, req):
+def do_delete(deps, me, admin, p, req):
     if req.get("confirm") != "delete":
         raise Refused(400, "confirm")
-    media = (p["_"].get("media") or {}).get("id")
-    if not is_int(media) or not deps.seerr_admin:
+    ids = [r.get("id") for r in p["_"].get("requests") or [] if is_int(r.get("id"))]
+    if not ids or not deps.seerr_admin:
         raise Refused(400, "bad request")
-    deps.seerr_admin(f"/media/{media}", "DELETE")
-    return "request and title data deleted in Seerr"
+    for rid in ids:
+        deps.seerr_admin(f"/request/{rid}", "DELETE")
+    return f"{len(ids)} Seerr request(s) deleted, title data and files kept"
 
 
 DO = {"link": do_link, "import": do_import, "block": do_block, "profile": do_profile, "grab": do_grab, "readd": do_readd, "delete": do_delete}
@@ -577,16 +664,19 @@ def problem(dn, deps, raw, force=False):
 
 
 def act(dn, deps, me, req):
-    p = problem(dn, deps, req.get("id"), force=True)
+    p = problem(dn, deps, req.get("id"))
     action = req.get("action")
+    admin = dn.allowed(me)
     if not isinstance(action, str) or action not in ACTIONS[p["type"]]:
         raise Refused(400, "bad request")
-    if action == "delete" and not dn.allowed(me):
+    if action == "delete" and not admin:
         raise Refused(403, "forbidden")
-    if not throttle(("act", p["id"]), ACTION_GAP, mark=False):
+    if action == "delete" and req.get("confirm") != "delete":
+        raise Refused(400, "confirm")
+    if not throttle(("act", p["id"]), ACTION_GAP):
         raise Refused(429, "slow down")
-    result = DO[action](deps, p, req)
-    THROTTLE[("act", p["id"])] = NOW()
+    p = problem(dn, deps, p["id"], force=True)
+    result = DO[action](deps, me, admin, p, req)
     print(f"manual: user {me.get('id')} {action} {p['type']} {p['key']} ({p['title']}): {result}", flush=True)
     rec = record(deps, p["id"], me, action, result, action in RESOLVING)
     CACHE.pop("scan", None)
@@ -595,7 +685,10 @@ def act(dn, deps, me, req):
 
 def view(deps, admin):
     with STORE_LOCK:
-        records = list(load(deps).values())
+        try:
+            records = list(load(deps).values())
+        except StoreUnreadable:
+            records = []
     open_ = sorted((r for r in records if r.get("resolved") is None), key=lambda r: r.get("firstSeen") or "")
     done = sorted((r for r in records if r.get("resolved")), key=lambda r: r["resolved"].get("at") or "", reverse=True)[:200]
     return {"open": open_, "done": done, "admin": admin, "updated": ts(CACHE.get("scan", (NOW(),))[0])}
@@ -626,6 +719,15 @@ def handle(dn, method, path, headers, body, deps):
         me = None
     if not isinstance(me, dict) or not is_int(me.get("id")):
         return 403, {"error": "forbidden"}
+    if not SLOTS.acquire(blocking=False):
+        return 429, {"error": "busy"}
+    try:
+        return work(dn, deps, me, method, sub, url, req)
+    finally:
+        SLOTS.release()
+
+
+def work(dn, deps, me, method, sub, url, req):
     admin = dn.allowed(me)
     q = urllib.parse.parse_qs(url.query)
     try:
@@ -647,8 +749,8 @@ def handle(dn, method, path, headers, body, deps):
         if sub == "lookup":
             return 200, lookup(dn, deps, me, p, q)
         if sub == "files":
-            return 200, files(dn, deps, p)
-        return 200, releases(dn, deps, p, q)
+            return 200, files(dn, deps, me, p)
+        return 200, releases(dn, deps, me, p, q)
     except Refused as e:
         return e.status, {"error": e.error}
     except Exception as e:
