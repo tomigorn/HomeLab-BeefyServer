@@ -58,6 +58,9 @@ ACTION_GAP = 20
 GRACE = 1800
 RELEASE_TIMEOUT = 120
 DECLINED, FAILED_REQUEST = 3, 4
+IMPORT_EVENTS = {"downloadFolderImported", "movieFileImported", "episodeFileImported"}
+# a leftover queue entry of a download imported by hand: gone from the queue only, never blocklisted, the client's copy left to the usual cleanup
+STALE_QUEUE = "removeFromClient=false&blocklist=false&skipRedownload=true"
 PROBLEM_STATES = {"importBlocked", "importFailed", "failedPending", "failed"}
 FAILED_STATES = {"failedPending", "failed"}
 PID = re.compile(r"^[0-9a-f]{12}$")
@@ -541,9 +544,32 @@ def own_main_file(deps, arr, dl):
     return MAIN_FILE[dl]
 
 
-def scan(dn, deps, known):
-    """Every open problem now: (problems by id, complete, files still to probe). Incomplete (a source unreadable) = nothing may be called gone."""
-    now, complete, found, arrs, profiles, pending = NOW(), True, {}, {}, {}, []
+def imported_by_hand(dn, arr, kind, recs, tid, since):
+    """Radarr/Sonarr imported this download (history, after the problem began) and the title has its file(s), though the queue still says importBlocked."""
+    dl = recs[0].get("downloadId")
+    if not dl:
+        return False
+    try:
+        got = arr(f"/history?page=1&pageSize=50&downloadId={urllib.parse.quote(str(dl), safe='')}")
+        rows = got.get("records") if isinstance(got, dict) else got
+        if not any(isinstance(h, dict) and h.get("eventType") in IMPORT_EVENTS and str(h.get("downloadId") or "").lower() == str(dl).lower()
+                   and (epoch(h.get("date")) or 0) >= (since or 0) for h in rows or []):
+            return False
+        if kind == "movie":
+            m = arr(f"/movie/{int(tid)}")
+            return isinstance(m, dict) and bool(m.get("hasFile"))
+        eps = sorted({r.get("episodeId") for r in recs if is_int(r.get("episodeId"))})
+        got = arr("/episode?" + urllib.parse.urlencode([("episodeIds", e) for e in eps])) if eps else None
+        have = {e.get("id") for e in got if isinstance(e, dict) and e.get("hasFile")} if isinstance(got, list) else set()
+        return bool(eps) and set(eps) <= have
+    except (dn.ApiError, TypeError, ValueError):
+        return False
+
+
+def scan(dn, deps, known, started=None):
+    """Every open problem now: (problems by id, complete, files still to probe, problems imported by hand). Incomplete (a source unreadable) = nothing may be called gone."""
+    now, complete, found, arrs, profiles, pending, imported = NOW(), True, {}, {}, {}, [], {}
+    started = started or {}
     rs = read_state(deps.request_state_file, now) if deps.request_state_file else None
     if rs is None:
         complete, rs = False, {}
@@ -656,6 +682,16 @@ def scan(dn, deps, known):
             if key not in by_key:
                 key = seerr_key.get((app, "id", tid)) or seerr_key.get((app, "tvdb", t.get("tvdbId"))) or key
             ptype, more = queue_kind(recs, t.get("year"), kind)
+            pid = pid_of(ptype, key, dl)
+            if imported_by_hand(dn, arr(app), kind, recs, tid, epoch(started.get(pid) or recs[0].get("added"))):
+                for qid in [r.get("id") for r in recs if is_int(r.get("id"))]:
+                    try:
+                        arr(app)(f"/queue/{qid}?{STALE_QUEUE}", "DELETE")
+                    except dn.ApiError as e:
+                        print(f"manual: leftover queue entry {qid} not removed: {dn.redact(e)}", flush=True)
+                print(f"manual: {key} ({t.get('title')}) imported by hand, leftover queue entry removed", flush=True)
+                imported[pid] = ts(now)
+                continue
             msg = next((m for r in recs for sm in r.get("statusMessages") or [] for m in sm.get("messages") or [] if m), None) or recs[0].get("errorMessage")
             msgs = [m for r in recs for sm in r.get("statusMessages") or [] for m in sm.get("messages") or [] if m] + [recs[0].get("errorMessage") or ""]
             code = ptype if ptype in ("wrong-film", "failed") else next((c for c in map(reason_code, msgs) if c != "unknown"), "unknown")
@@ -681,7 +717,7 @@ def scan(dn, deps, known):
                 details["episodes"] = len(recs)
             add(ptype, key, t.get("title") or key, t.get("year"), details, dl, kind=kind, app=app, arrId=tid, downloadId=recs[0].get("downloadId"),
                 queueIds=[r.get("id") for r in recs if isinstance(r.get("id"), int)], episodeIds=eps, tmdb=t.get("tmdbId"), media={}, seasons=[])
-    return found, complete, pending
+    return found, complete, pending, imported
 
 
 def load(deps):
@@ -745,7 +781,11 @@ def migrate(records, pid, p):
         target["actions"] = sorted((old.get("actions") or []) + (target.get("actions") or []), key=lambda a: a.get("at") or "")
 
 
-def merge(records, found, complete, now):
+def merge(records, found, complete, now, imported=()):
+    for pid in imported:
+        r = records.get(pid)
+        if isinstance(r, dict) and r.get("resolved") is None:
+            r["resolved"] = {"at": ts(now), "how": "imported"}
     for pid, p in found.items():
         migrate(records, pid, p)
         pub = {k: v for k, v in p.items() if k != "_"}
@@ -837,9 +877,10 @@ def refresh(dn, deps, force=False):
         except StoreUnreadable as e:
             print(f"manual: problem list unreadable, not saving until fixed: {e}", flush=True)
             records, readable = {}, False
-        found, complete, pending = scan(dn, deps, {r.get("key"): (r.get("title"), r.get("year")) for r in records.values() if isinstance(r, dict)})
+        found, complete, pending, imported = scan(dn, deps, {r.get("key"): (r.get("title"), r.get("year")) for r in records.values() if isinstance(r, dict)},
+                                                  {pid: r.get("firstSeen") for pid, r in records.items() if isinstance(r, dict)})
         if readable:
-            merge(records, found, complete, now)
+            merge(records, found, complete, now, imported)
             track(deps, records, now)
             save(deps, records)
         CACHE["scan"] = (now, found)

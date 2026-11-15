@@ -12,6 +12,7 @@ import threading
 import time
 import types
 import unittest
+import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "download-now"))
@@ -129,6 +130,12 @@ class World:
                 return self.tags
             if path.startswith("/history/"):
                 return self.history
+            if path.startswith("/history?"):
+                dl = urllib.parse.parse_qs(path.partition("?")[2]).get("downloadId", [""])[0]
+                return {"records": [h for h in self.history if h.get("downloadId") == dl]}
+            if path.startswith("/episode?episodeIds="):
+                ids = {int(x) for x in urllib.parse.parse_qs(path.partition("?")[2]).get("episodeIds", [])}
+                return [e for e in self.episodes if e.get("id") in ids]
             if path.startswith("/manualimport?"):
                 return self.proposals
             if path.startswith("/episode?seriesId="):
@@ -2008,6 +2015,88 @@ class OtherNames(unittest.TestCase):
         w = tank_world()
         pid = one(w, "import")["id"]
         self.assertEqual(json.loads(w.store.read_text())["problems"][pid]["details"]["names"][0], "Der Tiger")
+
+
+class ImportedByHand(unittest.TestCase):
+    """Radarr/Sonarr keep a queue entry imported by hand as importBlocked: the problem is solved, the leftover entry goes (never blocklisted, client files left)."""
+
+    def setUp(self):
+        reset()
+        self.w = World(rqueue=[qrec(31, kind="movie", title="The.Tiger.2025.2160p-FLUX", year=2025, tid=43, tmdb=1252037, msgs=(BY_ID,))],
+                       titles={"/movie/43": {"id": 43, "title": "The Tank", "hasFile": False}})
+        self.pid = one(self.w, "import")["id"]
+
+    def later(self, s):
+        manual.NOW = lambda: T + s
+        os.utime(self.w.rs_file, (T + s, T + s))
+        manual.CACHE.clear()
+
+    def imported(self, at=T + 30, event="downloadFolderImported"):
+        self.w.titles["/movie/43"]["hasFile"] = True
+        self.w.history = [{"eventType": "grabbed", "downloadId": "DL1", "date": iso(T - DAY)}, {"eventType": event, "downloadId": "DL1", "date": iso(at)}]
+
+    def stored(self):
+        return json.loads(self.w.store.read_text())["problems"][self.pid]
+
+    def test_imported_then_queue_still_import_blocked_is_resolved_and_never_reopens(self):
+        self.imported()
+        self.later(60)
+        problems(self.w)
+        self.assertEqual(self.stored()["resolved"]["how"], "imported")
+        self.assertEqual(self.w.writes, [("radarr", "DELETE", "/queue/31?removeFromClient=false&blocklist=false&skipRedownload=true", None)])
+        self.later(3 * 3600)
+        out = problems(self.w)
+        self.assertEqual(out["open"], [])
+        r = self.stored()
+        self.assertEqual((r["resolved"]["how"], [a["action"] for a in r["actions"]]), ("imported", []))
+
+    def test_import_from_the_page_stays_done_after_the_grace_time(self):
+        self.w.proposals = [{"path": "/data/torrents/radarr/a/film.mkv", "relativePath": "film.mkv", "size": 9, "quality": {}, "languages": [], "episodes": [],
+                             "rejections": [{"reason": "matched to movie by ID"}], "downloadId": "DL1", "movieId": 43}]
+        self.w.scanned("/data/torrents/radarr/a/film.mkv")
+        get(self.w, f"files?id={self.pid}")
+        self.assertEqual(post(self.w, {"id": self.pid, "action": "import", "files": [{"n": 0, "episodeIds": []}]})[0], 200)
+        self.imported()
+        self.later(3 * 3600)
+        problems(self.w)
+        r = self.stored()
+        self.assertEqual((r["resolved"]["how"], [a["action"] for a in r["actions"]]), ("import", ["import"]))
+        self.assertIn(("radarr", "DELETE", "/queue/31?removeFromClient=false&blocklist=false&skipRedownload=true", None), self.w.writes)
+
+    def test_movie_file_imported_counts_too(self):
+        self.imported(event="movieFileImported")
+        self.later(60)
+        problems(self.w)
+        self.assertEqual(self.stored()["resolved"]["how"], "imported")
+
+    def test_an_import_from_before_the_problem_does_not_count(self):
+        self.imported(at=T - 3600)
+        self.later(60)
+        self.assertEqual(one(self.w, "import")["id"], self.pid)
+        self.assertEqual(self.w.writes, [])
+
+    def test_without_the_file_in_the_library_it_stays_open(self):
+        self.imported()
+        self.w.titles["/movie/43"]["hasFile"] = False
+        self.later(60)
+        self.assertEqual(one(self.w, "import")["id"], self.pid)
+        self.assertEqual(self.w.writes, [])
+
+    def test_series_needs_every_episode_of_the_download_on_disk(self):
+        reset()
+        w = World(squeue=[qrec(1, ep=501), qrec(2, ep=502)])
+        pid = one(w, "import")["id"]
+        w.history = [{"eventType": "downloadFolderImported", "downloadId": "DL1", "date": iso(T + 30)}]
+        w.episodes = [{"id": 501, "hasFile": True}, {"id": 502, "hasFile": False}]
+        manual.NOW = lambda: T + 60
+        manual.CACHE.clear()
+        self.assertEqual(one(w, "import")["id"], pid)
+        self.assertEqual(w.writes, [])
+        w.episodes[1]["hasFile"] = True
+        manual.CACHE.clear()
+        self.assertEqual(problems(w)["open"], [])
+        self.assertEqual(w.writes, [("sonarr", "DELETE", "/queue/1?removeFromClient=false&blocklist=false&skipRedownload=true", None),
+                                    ("sonarr", "DELETE", "/queue/2?removeFromClient=false&blocklist=false&skipRedownload=true", None)])
 
 
 if __name__ == "__main__":
