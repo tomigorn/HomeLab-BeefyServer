@@ -368,7 +368,8 @@ def storage(disks, statvfs=os.statvfs):
         ratio = used / total if total else 0
         lvl = "full" if ratio >= d["red"] else "yellow" if ratio >= d["yellow"] else "ok"
         out.append({"name": d["name"], "id": d["id"], "total": total, "used": used, "free": free, "pct": round(100 * ratio, 1),
-                    "level": lvl, "yellow": round(100 * d["yellow"]), "red": round(100 * d["red"])})
+                    "level": lvl, "yellow": round(100 * d["yellow"]), "red": round(100 * d["red"]),
+                    "freeToLimit": max(0, round(total * d["red"]) - used)})
         if len(d["paths"]) > 1:
             out[-1]["parts"] = [round(100 * (t - f) / t, 1) if t else 0 for t, f in sizes]
     return out

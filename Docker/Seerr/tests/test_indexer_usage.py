@@ -285,6 +285,12 @@ class Storage(unittest.TestCase):
                 st = fake_statvfs({disk["paths"][0]: FakeStat(total, round(total * (1 - ratio) / 4096) * 4096)})
                 self.assertEqual(iu.storage([disk], st)[0]["level"], level, (disk["name"], ratio))
 
+    def test_free_until_the_limit_never_negative(self):
+        st = fake_statvfs({"/hot": FakeStat(8 * TIB, 5 * TIB), "/cold": FakeStat(10 * TIB, TIB // 2)})
+        ssd, hdd = iu.storage(DISKS, st)
+        self.assertEqual(ssd["freeToLimit"], round(8 * TIB * 0.80) - 3 * TIB)
+        self.assertEqual(hdd["freeToLimit"], 0)
+
     def test_unreadable_disk_is_left_out(self):
         st = fake_statvfs({"/hot": FakeStat(8 * TIB, 5 * TIB)})
         self.assertEqual([d["name"] for d in iu.storage(DISKS, st)], ["SSD"])
