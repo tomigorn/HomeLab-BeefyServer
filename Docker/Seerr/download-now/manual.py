@@ -9,6 +9,7 @@ import ipaddress
 import json
 import os
 import pathlib
+import posixpath
 import re
 import secrets
 import shutil
@@ -64,7 +65,10 @@ STALE_QUEUE = "removeFromClient=true&blocklist=false&skipRedownload=true"
 PROBLEM_STATES = {"importBlocked", "importFailed", "failedPending", "failed"}
 FAILED_STATES = {"failedPending", "failed"}
 PID = re.compile(r"^[0-9a-f]{12}$")
-ACTIONS = {"unmatched": {"link"}, "import": {"import", "block"}, "wrong-film": {"block"}, "failed": {"block"}, "no-release": {"profile", "grab", "override"}, "removed": {"readd", "delete"}}
+ACTIONS = {"unmatched": {"link"}, "import": {"import", "block"}, "wrong-film": {"block"}, "failed": {"block"}, "no-release": {"profile", "grab", "override"}, "removed": {"readd", "delete"},
+           "mismatch": {"link", "delete"}, "duplicate": set()}
+LIBRARY_TTL = 600
+DUP_MIN_SIZE = 50 * 2 ** 20
 RESOLVING = {"link", "import", "block", "grab", "override", "readd", "delete"}
 OLDER = "older versions allowed"
 NAMES_MAX = 6
@@ -575,10 +579,110 @@ def imported_by_hand(dn, arr, kind, recs, tid, since):
         return False
 
 
+def library(dn, deps, app, with_files=False):
+    """Radarr's films / Sonarr's series: {"titles": {id: title}}, with_files also {"files": {id: [file]}}; read at most every LIBRARY_TTL; None when unreadable."""
+    ckey = ("library", app, with_files)
+    hit = CACHE.get(ckey)
+    if hit and NOW() - hit[0] < LIBRARY_TTL:
+        return hit[1]
+    arr = deps.arr(app)
+    try:
+        base = CACHE.get(("library", app, False))
+        if base and NOW() - base[0] < LIBRARY_TTL:
+            titles = base[1]["titles"]
+        else:
+            got = arr("/movie" if app == "radarr" else "/series")
+            if not isinstance(got, list):
+                return None
+            titles = {t["id"]: t for t in got if isinstance(t, dict) and is_int(t.get("id"))}
+            CACHE[("library", app, False)] = (NOW(), {"titles": titles})
+        if not with_files:
+            return {"titles": titles}
+        files = {}
+        for tid, t in titles.items():
+            if app == "radarr":
+                files[tid] = [t["movieFile"]] if isinstance(t.get("movieFile"), dict) else []
+                continue
+            if (t.get("statistics") or {}).get("episodeFileCount") == 0:
+                files[tid] = []
+                continue
+            fs = arr(f"/episodefile?seriesId={tid}")
+            if not isinstance(fs, list):
+                return None
+            files[tid] = [f for f in fs if isinstance(f, dict)]
+    except dn.ApiError:
+        return None
+    out = {"titles": titles, "files": files}
+    CACHE[ckey] = (NOW(), out)
+    return out
+
+
+def other_title(kind, media, t, seerr_title=None):
+    """Seerr's title (media) and the Radarr/Sonarr title it links to are different titles: TMDB id (films), TVDB id or else TMDB id (series), without ids name and year."""
+    def given(v):
+        return is_int(v) and v > 0
+    if kind == "movie" and given(t.get("tmdbId")):
+        return t["tmdbId"] != media.get("tmdbId")
+    if kind == "tv" and given(media.get("tvdbId")) and given(t.get("tvdbId")):
+        return t["tvdbId"] != media["tvdbId"]
+    if kind == "tv" and given(t.get("tmdbId")):
+        return t["tmdbId"] != media.get("tmdbId")
+    if not seerr_title or not seerr_title[0]:
+        return False
+    alike = difflib.SequenceMatcher(None, norm(t.get("title")), norm(seerr_title[0])).ratio() >= 0.6
+    y1, y2 = t.get("year"), seerr_title[1]
+    return not alike and not (y1 and y2 and abs(int(y1) - int(y2)) <= 1)
+
+
+def file_keys(f):
+    """What makes two library files the same release: size + release group + quality, the release name, size + the original file name."""
+    size = f.get("size")
+    if not is_int(size) or size < DUP_MIN_SIZE:
+        return []
+    quality = ((f.get("quality") or {}).get("quality") or {}).get("name")
+    keys = [("size", size, str(f.get("releaseGroup") or "").lower(), quality)]
+    scene = str(f.get("sceneName") or "").strip().lower()
+    if len(scene) >= 10:
+        keys.append(("release", scene))
+    orig = posixpath.basename(str(f.get("originalFilePath") or "")).lower()
+    if orig:
+        keys.append(("orig", size, orig))
+    return keys
+
+
+def duplicates(libs):
+    """Groups of library files that are one release imported into more than one title: lists of (app, title id, file)."""
+    parent, first, nodes = {}, {}, {}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for app, lib in sorted(libs.items()):
+        for tid, fs in lib["files"].items():
+            for n, f in enumerate(fs):
+                keys = file_keys(f)
+                if not keys:
+                    continue
+                node = (app, tid, n)
+                nodes[node] = f
+                parent[node] = node
+                for k in keys:
+                    if k in first:
+                        parent[find(node)] = find(first[k])
+                    else:
+                        first[k] = node
+    groups = {}
+    for node in nodes:
+        groups.setdefault(find(node), []).append(node)
+    return [[(a, t, nodes[(a, t, n)]) for a, t, n in sorted(g)] for g in groups.values() if len({(a, t) for a, t, _ in g}) > 1]
+
+
 def scan(dn, deps, known, started=None, own=frozenset()):
-    """Every open problem now: (problems by id, complete, files still to probe, problems imported by hand). Incomplete (a source unreadable) = nothing may be called gone.
+    """Every open problem now: (problems by id, complete, files still to probe, problems imported by hand, problem types not checked this time). Incomplete (a source unreadable) = nothing may be called gone.
     own: downloads of a release picked to replace a file; their held-back import is handled by the replacement, not shown as a problem."""
-    now, complete, found, arrs, profiles, pending, imported = NOW(), True, {}, {}, {}, [], {}
+    now, complete, found, arrs, profiles, pending, imported, unsure = NOW(), True, {}, {}, {}, [], {}, set()
     started = started or {}
     rs = read_state(deps.request_state_file, now) if deps.request_state_file else None
     if rs is None:
@@ -633,7 +737,7 @@ def scan(dn, deps, known, started=None, own=frozenset()):
         names = list(dict.fromkeys(person(r["requestedBy"]) for r in rq))
         pid = pid_of(ptype, key, extra)
         internal.setdefault("requests", rq)
-        ident = f"{ptype}|{internal['app']}|{internal['downloadId']}" if internal.get("downloadId") else f"{ptype}|{key}"
+        ident = internal.pop("ident", None) or (f"{ptype}|{internal['app']}|{internal['downloadId']}" if internal.get("downloadId") else f"{ptype}|{key}")
         found[pid] = {"id": pid, "type": ptype, "key": key, "ident": ident, "title": title, "year": year, "requesters": names, "details": details, "_": internal}
 
     def base(key):
@@ -643,6 +747,62 @@ def scan(dn, deps, known, started=None, own=frozenset()):
         return {"kind": kind, "app": dn.APP.get(kind), "tmdb": int(tmdb) if tmdb.isdigit() else None, "media": media,
                 "seasons": sorted({s.get("seasonNumber") for r in rq for s in r.get("seasons") or [] if isinstance(s, dict) and isinstance(s.get("seasonNumber"), int)})}
 
+    libs = {}
+
+    def lib(app):
+        if app not in libs:
+            libs[app] = library(dn, deps, app)
+        return libs[app]
+    for key, rq in by_key.items():
+        kind = key.partition("/")[0]
+        media = rq[0]["media"]
+        ext = next((r["media"]["externalServiceId"] for r in rq if is_int(r["media"].get("externalServiceId"))), None)
+        if ext is None:
+            continue
+        got = lib(dn.APP[kind])
+        if got is None:
+            unsure.add("mismatch")
+            continue
+        t = got["titles"].get(ext)
+        if not t:
+            continue
+        ids_known = (kind == "movie" and is_int(t.get("tmdbId")) and t["tmdbId"] > 0) or (kind == "tv" and any(is_int(t.get(f)) and t[f] > 0 for f in ("tmdbId", "tvdbId")))
+        seerr_title = None if ids_known else title_of(key)
+        if not other_title(kind, media, t, seerr_title):
+            continue
+        title, year = seerr_title or title_of(key)
+        details = {"reason": "mismatch", "seerr": {"title": title, "year": year, "tmdb": media.get("tmdbId"), "tvdb": media.get("tvdbId") if is_int(media.get("tvdbId")) else None},
+                   "arr": {"app": dn.APP[kind], "title": t.get("title"), "year": t.get("year"), "tmdb": t.get("tmdbId") or None, "tvdb": (t.get("tvdbId") or None) if kind == "tv" else None}}
+        add("mismatch", key, title, year, details, **base(key))
+    readable = {app: library(dn, deps, app, with_files=True) for app in ("radarr", "sonarr")}
+    if None in readable.values():
+        unsure.add("duplicate")
+    same_titles = {}
+    for group in duplicates({a: v for a, v in readable.items() if v}):
+        same_titles.setdefault(frozenset((a, t) for a, t, _ in group), []).extend(group)
+    for group in same_titles.values():
+        copies = {}
+        for app, tid, f in group:
+            c = copies.setdefault((app, tid), {"files": [], "added": ""})
+            c["files"].append(f)
+            c["added"] = max(c["added"], str(f.get("dateAdded") or ""))
+        order = sorted(copies, key=lambda k: (copies[k]["added"], k))
+        app, tid = order[-1]
+        t = readable[app]["titles"][tid]
+        kind = "movie" if app == "radarr" else "tv"
+        key = f"{kind}/{t['tmdbId']}" if t.get("tmdbId") else f"{app}:{tid}"
+        if key not in by_key:
+            key = seerr_key.get((app, "id", tid)) or seerr_key.get((app, "tvdb", t.get("tvdbId"))) or key
+        last = max(copies[(app, tid)]["files"], key=lambda f: str(f.get("dateAdded") or ""))
+        release = str(last.get("sceneName") or "").strip() or posixpath.basename(str(last.get("originalFilePath") or "")) or posixpath.basename(str(last.get("relativePath") or ""))
+        out = []
+        for a, i in order:
+            ct = readable[a]["titles"][i]
+            out.append({"app": a, "title": ct.get("title"), "year": ct.get("year"), "tmdb": ct.get("tmdbId") or None, "tvdb": (ct.get("tvdbId") or None) if a == "sonarr" else None,
+                        "files": len(copies[(a, i)]["files"]), "size": sum(f["size"] for f in copies[(a, i)]["files"]), "added": copies[(a, i)]["added"] or None})
+        sig = ",".join(f"{a}:{i}" for a, i in sorted(copies))
+        add("duplicate", key, t.get("title") or key, t.get("year"), {"reason": "duplicate", "release": release[:200], "copies": out}, f"duplicate|{sig}",
+            kind=kind, app=app, arrId=tid, tmdb=t.get("tmdbId"), media={}, seasons=[], ident=f"duplicate|{sig}")
     for key in rs.get("removed") or []:
         if isinstance(key, str) and key.partition("/")[0] in dn.APP:
             add("removed", key, *title_of(key), {"reason": "removed"}, **base(key))
@@ -729,7 +889,7 @@ def scan(dn, deps, known, started=None, own=frozenset()):
                 details["episodes"] = len(recs)
             add(ptype, key, t.get("title") or key, t.get("year"), details, dl, kind=kind, app=app, arrId=tid, downloadId=recs[0].get("downloadId"),
                 queueIds=[r.get("id") for r in recs if isinstance(r.get("id"), int)], episodeIds=eps, tmdb=t.get("tmdbId"), media={}, seasons=[])
-    return found, complete, pending, imported
+    return found, complete, pending, imported, unsure
 
 
 def load(deps):
@@ -811,7 +971,7 @@ def auto_blocks(deps, records, now):
             r["details"] = details
 
 
-def merge(records, found, complete, now, imported=()):
+def merge(records, found, complete, now, imported=(), unsure=()):
     for pid in imported:
         r = records.get(pid)
         if isinstance(r, dict) and r.get("resolved") is None:
@@ -829,7 +989,7 @@ def merge(records, found, complete, now, imported=()):
             r["resolved"] = None
             r.setdefault("actions", []).append({"at": ts(now), "user": None, "userId": None, "action": "reopened", "result": None})
     for pid, r in list(records.items()):
-        if complete and r.get("resolved") is None and pid not in found and not replacing(r):
+        if complete and r.get("resolved") is None and pid not in found and not replacing(r) and r.get("type") not in unsure:
             r["resolved"] = {"at": ts(now), "how": GONE.get(r.get("type"), "gone")}
         res = r.get("resolved")
         if res and now - (epoch(res.get("at")) or now) > KEEP_DAYS * DAY and not open_override(r):
@@ -942,7 +1102,7 @@ def releases_known(dn, deps, records, now):
     """Which Done entries' files came from a known release (offers: pick another, block it); rechecked at most hourly, CURRENT_MAX per scan."""
     n = 0
     for pid, r in records.items():
-        if not isinstance(r, dict) or not r.get("resolved") or r["resolved"].get("how") == "delete" or open_override(r) or replacing(r):
+        if not isinstance(r, dict) or not r.get("resolved") or r["resolved"].get("how") == "delete" or open_override(r) or replacing(r) or r.get("type") in ("mismatch", "duplicate"):
             continue
         if now - (epoch(r.get("currentChecked")) or 0) < CURRENT_TTL:
             continue
@@ -1133,10 +1293,10 @@ def refresh(dn, deps, force=False):
         except StoreUnreadable as e:
             print(f"manual: problem list unreadable, not saving until fixed: {e}", flush=True)
             records, readable = {}, False
-        found, complete, pending, imported = scan(dn, deps, {r.get("key"): (r.get("title"), r.get("year")) for r in records.values() if isinstance(r, dict)},
+        found, complete, pending, imported, unsure = scan(dn, deps, {r.get("key"): (r.get("title"), r.get("year")) for r in records.values() if isinstance(r, dict)},
                                                   {pid: r.get("firstSeen") for pid, r in records.items() if isinstance(r, dict)}, replacement_downloads(records))
         if readable:
-            merge(records, found, complete, now, imported)
+            merge(records, found, complete, now, imported, unsure)
             auto_blocks(deps, records, now)
             track(deps, records, now)
             track_replacements(dn, deps, records, now)
@@ -1223,7 +1383,7 @@ def norm(s):
 
 
 def lookup(dn, deps, me, p, q):
-    if p["type"] != "unmatched":
+    if p["type"] not in ("unmatched", "mismatch"):
         raise Refused(400, "bad request")
     term = (q.get("term") or [p["title"] or ""])[0].strip()
     if not term or len(term) > 100:

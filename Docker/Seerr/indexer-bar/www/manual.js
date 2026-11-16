@@ -76,14 +76,17 @@
     en: {
       locale: "en-GB", title: "Manual interaction", intro: "Downloads that need a hand. Everyone can help, also with other people's requests.", back: "← Back to Seerr",
       open: "Open", done: "Done", empty: "Nothing needs a hand right now.", emptyDone: "Nothing done yet.", signin: "Sign in to Seerr first", loadError: "Could not load the list. Try again later.",
-      types: { removed: "Removed from Radarr/Sonarr", unmatched: "Not matched — Seerr could not hand it over", "import": "Downloaded, but not importable", "wrong-film": "Wrong film downloaded", failed: "Download failed", "no-release": "Nothing found for days", "auto-block": "Blocked automatically" },
+      types: { removed: "Removed from Radarr/Sonarr", unmatched: "Not matched — Seerr could not hand it over", "import": "Downloaded, but not importable", "wrong-film": "Wrong film downloaded", failed: "Download failed", "no-release": "Nothing found for days", "auto-block": "Blocked automatically",
+        mismatch: "Linked to a different show in Sonarr/Radarr", duplicate: "Imported twice" },
       hints: {
         removed: "The request is still open in Seerr, but the title is gone from Radarr/Sonarr, so nothing searches for it.",
         unmatched: "Pick the right title; it is added to Radarr/Sonarr with the usual quality rules.",
         "import": "Check which file is which episode or film, then import.",
         "wrong-film": "The download is a different film (other year). Block it and search again.",
         failed: "Block this release and search for another one.",
-        "no-release": "Pick a release by hand, or allow older versions (DVD, SD) for old or rare titles."
+        "no-release": "Pick a release by hand, or allow older versions (DVD, SD) for old or rare titles.",
+        mismatch: "Compare both titles below. Pick the right title in Sonarr/Radarr (another title: admins only), or delete the request. Remove the wrong title in Sonarr/Radarr by hand if nobody wants it — nothing is deleted automatically.",
+        duplicate: "Check which title the files belong to and delete the wrong copy in Sonarr/Radarr by hand — nothing is deleted automatically."
       },
       reasons: {
         "id-match": "The release name doesn't match the title (e.g. a foreign-language name), so it isn't imported automatically. Check the episode or film, then import.",
@@ -99,6 +102,8 @@
         removed: "The request is still open in Seerr, but the title is gone from Radarr/Sonarr, so nothing searches for it.",
         unmatched: "Seerr could not hand the request over to Radarr/Sonarr (the title was not found there).",
         "no-language-audio": "Blocked automatically: no German, English or original-language audio — searching again.",
+        mismatch: "The Seerr request points to another title in Sonarr/Radarr, so downloads land there and not under the requested title.",
+        duplicate: "The same release was imported into more than one title, so the same files are in the library several times.",
         unknown: "Sonarr/Radarr stopped this download for a reason this page doesn't know yet:"
       },
       marks: { ok: "✅", warn: "⚠️", bad: "❌", none: "–" },
@@ -184,19 +189,23 @@
       replacedBy: function (u) { return "Release replaced (picked by " + (u || "someone") + ")"; }, replacedAfterBlock: function (u) { return "Another release replaced the blocked one (blocked by " + (u || "someone") + ")"; },
       replaceFailed: "Replacement failed — the current file stays",
       autoBlocked: "Blocked automatically, searching again", originalIs: "original language ",
-      autoFile: { removed: "the file was removed", "previous restored": "the previous file is back", kept: "the file stays until a better one arrives" }
+      autoFile: { removed: "the file was removed", "previous restored": "the previous file is back", kept: "the file stays until a better one arrives" },
+      fileCount: function (n) { return n + (n === 1 ? " file" : " files"); }
     },
     de: {
       locale: "de-CH", title: "Manuell beheben", intro: "Downloads, die Hilfe brauchen. Alle können helfen, auch bei Anfragen von anderen.", back: "← Zurück zu Seerr",
       open: "Offen", done: "Erledigt", empty: "Gerade braucht nichts Hilfe.", emptyDone: "Noch nichts erledigt.", signin: "Zuerst bei Seerr anmelden", loadError: "Liste nicht ladbar. Später nochmals versuchen.",
-      types: { removed: "Aus Radarr/Sonarr entfernt", unmatched: "Nicht zugeordnet — Seerr konnte es nicht übergeben", "import": "Heruntergeladen, aber nicht importierbar", "wrong-film": "Falscher Film heruntergeladen", failed: "Download fehlgeschlagen", "no-release": "Seit Tagen nichts gefunden", "auto-block": "Automatisch gesperrt" },
+      types: { removed: "Aus Radarr/Sonarr entfernt", unmatched: "Nicht zugeordnet — Seerr konnte es nicht übergeben", "import": "Heruntergeladen, aber nicht importierbar", "wrong-film": "Falscher Film heruntergeladen", failed: "Download fehlgeschlagen", "no-release": "Seit Tagen nichts gefunden", "auto-block": "Automatisch gesperrt",
+        mismatch: "Mit einem anderen Titel in Sonarr/Radarr verknüpft", duplicate: "Doppelt importiert" },
       hints: {
         removed: "Die Anfrage ist in Seerr noch offen, der Titel fehlt aber in Radarr/Sonarr, darum sucht nichts danach.",
         unmatched: "Den richtigen Titel wählen; er kommt mit den üblichen Qualitätsregeln in Radarr/Sonarr.",
         "import": "Prüfen, welche Datei welche Folge oder welcher Film ist, dann importieren.",
         "wrong-film": "Der Download ist ein anderer Film (anderes Jahr). Sperren und neu suchen.",
         failed: "Dieses Release sperren und ein anderes suchen.",
-        "no-release": "Von Hand ein Release wählen, oder bei alten oder seltenen Titeln ältere Versionen (DVD, SD) erlauben."
+        "no-release": "Von Hand ein Release wählen, oder bei alten oder seltenen Titeln ältere Versionen (DVD, SD) erlauben.",
+        mismatch: "Beide Titel unten vergleichen. Den richtigen Titel in Sonarr/Radarr wählen (ein anderer Titel: nur Admins) oder die Anfrage löschen. Den falschen Titel in Sonarr/Radarr von Hand entfernen, wenn ihn niemand will — automatisch wird nichts gelöscht.",
+        duplicate: "Prüfen, zu welchem Titel die Dateien gehören, und die falsche Kopie in Sonarr/Radarr von Hand löschen — automatisch wird nichts gelöscht."
       },
       reasons: {
         "id-match": "Der Release-Name passt nicht zum Titel (z. B. ein Name in einer anderen Sprache), darum wird er nicht automatisch importiert. Folge bzw. Film prüfen, dann importieren.",
@@ -212,6 +221,8 @@
         removed: "Die Anfrage ist in Seerr noch offen, der Titel fehlt aber in Radarr/Sonarr, darum sucht nichts danach.",
         unmatched: "Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben (der Titel wurde dort nicht gefunden).",
         "no-language-audio": "Automatisch gesperrt: kein Deutsch, Englisch oder Ton in der Originalsprache — wird neu gesucht.",
+        mismatch: "Die Seerr-Anfrage zeigt auf einen anderen Titel in Sonarr/Radarr, darum landen Downloads dort und nicht beim angefragten Titel.",
+        duplicate: "Dasselbe Release wurde in mehr als einen Titel importiert, darum liegen dieselben Dateien mehrfach in der Bibliothek.",
         unknown: "Sonarr/Radarr hat diesen Download aus einem Grund angehalten, den diese Seite noch nicht kennt:"
       },
       marks: { ok: "✅", warn: "⚠️", bad: "❌", none: "–" },
@@ -297,7 +308,8 @@
       replacedBy: function (u) { return "Release ersetzt (gewählt von " + (u || "jemandem") + ")"; }, replacedAfterBlock: function (u) { return "Ein anderes Release ersetzte das gesperrte (gesperrt von " + (u || "jemandem") + ")"; },
       replaceFailed: "Ersetzen fehlgeschlagen — die aktuelle Datei bleibt",
       autoBlocked: "Automatisch gesperrt, wird neu gesucht", originalIs: "Originalsprache ",
-      autoFile: { removed: "die Datei wurde entfernt", "previous restored": "die vorherige Datei ist wieder da", kept: "die Datei bleibt, bis eine bessere da ist" }
+      autoFile: { removed: "die Datei wurde entfernt", "previous restored": "die vorherige Datei ist wieder da", kept: "die Datei bleibt, bis eine bessere da ist" },
+      fileCount: function (n) { return n + (n === 1 ? " Datei" : " Dateien"); }
     }
   };
 
@@ -540,7 +552,14 @@
     return parts.join(" · ");
   }
 
-  var TYPE_REASON = { removed: "removed", unmatched: "unmatched", "no-release": "no-release", "wrong-film": "wrong-film", failed: "failed", "auto-block": "no-language-audio" };
+  var TYPE_REASON = { removed: "removed", unmatched: "unmatched", "no-release": "no-release", "wrong-film": "wrong-film", failed: "failed", "auto-block": "no-language-audio", mismatch: "mismatch", duplicate: "duplicate" };
+  var APP_NAMES = { radarr: "Radarr", sonarr: "Sonarr" };
+
+  function titleFacts(label, x, ids) {
+    var parts = [label + ": " + String(x.title || "") + (x.year ? " (" + x.year + ")" : "")];
+    if (ids) parts.push("TMDB " + (x.tmdb ? String(x.tmdb) : "–"), "TVDB " + (x.tvdb ? String(x.tvdb) : "–"));
+    return parts.join(" · ");
+  }
 
   function autoBlockLine(t, x) {
     var parts = [];
@@ -581,6 +600,17 @@
       c.appendChild(dl);
     }
     if (p.type === "auto-block") c.appendChild(el(d, "p", { "class": "hg-m-media", "data-auto-block": true }, autoBlockLine(t, x)));
+    if (p.type === "mismatch" && x.seerr && x.arr) {
+      var mm = el(d, "div", { "class": "hg-m-media", "data-mismatch": true });
+      mm.appendChild(el(d, "p", null, titleFacts("Seerr", x.seerr, true)));
+      mm.appendChild(el(d, "p", null, titleFacts(APP_NAMES[x.arr.app] || String(x.arr.app), x.arr, true)));
+      c.appendChild(mm);
+    }
+    if (p.type === "duplicate" && Array.isArray(x.copies)) {
+      var dup = el(d, "div", { "class": "hg-m-media", "data-duplicate": true });
+      x.copies.forEach(function (k) { dup.appendChild(el(d, "p", null, titleFacts(APP_NAMES[k.app] || String(k.app), k, false) + " · " + t.fileCount(Number(k.files) || 0) + " · " + gb(k.size))); });
+      c.appendChild(dup);
+    }
     if (x.message && code !== "unknown") c.appendChild(el(d, "details", { "class": "hg-m-raw", "data-raw": true }, el(d, "summary", null, t.raw), el(d, "p", null, String(x.message))));
     if (open && !rp) {
       var todo = this.section(t.whatToDo, { "data-todo": true });
@@ -767,7 +797,7 @@
       this.toggle(rl, t.releases, t.hideReleases, box, function () { return self.releases(card(), p, pick ? pick.value : seasons.length ? String(seasons[0]) : null); });
       box.appendChild(rl);
       box.appendChild(el(d, "div", { "data-list": true }));
-    } else if (p.type === "unmatched") {
+    } else if (p.type === "unmatched" || p.type === "mismatch") {
       var term = el(d, "input", { type: "search", "data-term": true, "class": "hg-m-input", "aria-label": t.lookup, maxlength: "100" });
       term.value = String(p.title || "");
       var lk = this.button("lookup", t.lookup);
@@ -779,6 +809,11 @@
       });
       box.appendChild(term);
       box.appendChild(lk);
+      if (p.type === "mismatch" && this.data && this.data.admin) {
+        var mdel = this.button("delete", t.del, "hg-m-danger");
+        this.twice(mdel, t.delAgain, t.delWarn, box, function () { self.act(card(), p, { action: "delete", confirm: "delete" }); });
+        box.appendChild(mdel);
+      }
       box.appendChild(el(d, "div", { "data-list": true }));
     } else if (p.type === "import") {
       var fl = this.button("files", t.files);

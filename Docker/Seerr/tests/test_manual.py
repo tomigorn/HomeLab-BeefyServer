@@ -2430,5 +2430,167 @@ class AutoBlock(unittest.TestCase):
         self.assertEqual(self.done(), [])
 
 
+WRONG_SHOW = {"id": 61, "title": "Behind the Scenes of Company Retreat", "year": 2025, "tmdbId": 319013, "tvdbId": 476659}
+RIGHT_SHOW = {"id": 34, "title": "Jury Duty", "year": 2023, "tmdbId": 222023, "tvdbId": 432093}
+
+
+class Mismatch(unittest.TestCase):
+    """A Seerr request whose Radarr/Sonarr title (Seerr's externalServiceId) is another title: TMDB id or, for series, TVDB id differs."""
+
+    def setUp(self):
+        reset()
+
+    def world(self, series=(WRONG_SHOW,), movies=(), requests=None):
+        w = World(requests=requests if requests is not None else [request(31, "tv", 312697, ext=61, seasons=(1,))])
+        w.titles["/series"] = list(series)
+        w.titles["/movie"] = list(movies)
+        return w
+
+    def test_series_linked_to_another_show_is_a_problem_with_the_facts(self):
+        w = self.world()
+        w.seerr_media["/tv/312697"] = {"id": 312697, "name": "Jury Duty Presents: Company Retreat", "firstAirDate": "2025-03-20"}
+        p = one(w, "mismatch")
+        self.assertEqual((p["key"], p["title"], p["year"], p["requesters"]), ("tv/312697", "Jury Duty Presents: Company Retreat", 2025, ["jane"]))
+        self.assertEqual(p["details"], {"reason": "mismatch", "seerr": {"title": "Jury Duty Presents: Company Retreat", "year": 2025, "tmdb": 312697, "tvdb": None},
+                                        "arr": {"app": "sonarr", "title": "Behind the Scenes of Company Retreat", "year": 2025, "tmdb": 319013, "tvdb": 476659}})
+        self.assertEqual(p["offers"], ["link"])
+        w.me = ADMIN
+        self.assertEqual(one(w, "mismatch")["offers"], ["delete", "link"])
+
+    def test_same_tvdb_id_is_the_same_show_even_with_another_tmdb_id(self):
+        w = self.world(series=[dict(RIGHT_SHOW, id=61, tmdbId=999)], requests=[request(31, "tv", 222023, ext=61, tvdb=432093)])
+        self.assertEqual([p for p in problems(w)["open"] if p["type"] == "mismatch"], [])
+
+    def test_series_without_seerr_tvdb_id_compares_tmdb_ids(self):
+        w = self.world(series=[dict(RIGHT_SHOW, id=61, tmdbId=312697)])
+        self.assertEqual([p for p in problems(w)["open"] if p["type"] == "mismatch"], [])
+
+    def test_other_tvdb_id_is_another_show(self):
+        w = self.world(series=[dict(RIGHT_SHOW, id=61, tmdbId=222023, tvdbId=5)], requests=[request(31, "tv", 222023, ext=61, tvdb=432093)])
+        self.assertEqual(one(w, "mismatch")["details"]["arr"]["tvdb"], 5)
+
+    def test_film_linked_to_another_film(self):
+        w = self.world(movies=[{"id": 21, "title": "Other Film", "year": 1999, "tmdbId": 5555}], requests=[request(11, "movie", 10248, ext=21)])
+        p = one(w, "mismatch")
+        self.assertEqual((p["key"], p["details"]["arr"]), ("movie/10248", {"app": "radarr", "title": "Other Film", "year": 1999, "tmdb": 5555, "tvdb": None}))
+        w2 = self.world(movies=[{"id": 21, "title": "Seerr Film", "year": 2004, "tmdbId": 10248}], requests=[request(11, "movie", 10248, ext=21)])
+        manual.CACHE.clear()
+        self.assertEqual([p for p in problems(w2)["open"] if p["type"] == "mismatch"], [])
+
+    def test_titles_without_ids_compare_name_and_year(self):
+        w = self.world(series=[{"id": 61, "title": "Something Else Entirely", "year": 1990, "tmdbId": 0, "tvdbId": 0}])
+        self.assertEqual(one(w, "mismatch")["key"], "tv/312697")
+        w2 = self.world(series=[{"id": 61, "title": "Seerr Series", "year": 2019, "tmdbId": 0, "tvdbId": 0}])
+        manual.CACHE.clear()
+        self.assertEqual([p for p in problems(w2)["open"] if p["type"] == "mismatch"], [])
+
+    def test_arr_title_gone_is_no_mismatch(self):
+        w = self.world(series=[RIGHT_SHOW])
+        self.assertEqual([p for p in problems(w)["open"] if p["type"] == "mismatch"], [])
+
+    def test_unreadable_title_list_keeps_the_problem_open_fixed_link_resolves_it(self):
+        w = self.world()
+        pid = one(w, "mismatch")["id"]
+        del w.titles["/series"]
+        manual.CACHE.clear()
+        self.assertEqual(one(w, "mismatch")["id"], pid)
+        w.titles["/series"] = [dict(WRONG_SHOW, tmdbId=312697, tvdbId=0)]
+        manual.CACHE.clear()
+        out = problems(w)
+        self.assertEqual([p["id"] for p in out["done"] if p["type"] == "mismatch"], [pid])
+        self.assertEqual(out["done"][0]["resolved"]["how"], "gone")
+
+    def test_lookup_and_link_work_on_a_mismatch(self):
+        w = self.world()
+        pid = one(w, "mismatch")["id"]
+        w.lookups["sonarr"] = [dict({k: v for k, v in RIGHT_SHOW.items() if k != "id"}, seasons=[{"seasonNumber": 1}, {"seasonNumber": 2}])]
+        status, out = get(w, f"lookup?id={pid}&term=Jury%20Duty")
+        self.assertEqual(status, 200, out)
+        self.assertEqual(post(w, {"id": pid, "action": "link", "pick": 0})[0], 403)
+        manual.THROTTLE.pop(("act", pid), None)
+        w.me = ADMIN
+        get(w, f"lookup?id={pid}&term=Jury%20Duty")
+        status, out = post(w, {"id": pid, "action": "link", "pick": 0})
+        self.assertEqual(status, 200, out)
+        self.assertEqual(out["problem"]["resolved"]["how"], "link")
+        self.assertEqual([x[:3] for x in w.writes], [("sonarr", "POST", "/series")])
+
+
+def efile(fid, size, group="UBWEB", quality="WEBDL-2160p", added="2026-11-09T22:03:46Z", scene=None, orig=None, rel="x.mkv"):
+    return {"id": fid, "size": size, "releaseGroup": group, "quality": {"quality": {"name": quality}}, "dateAdded": added, "sceneName": scene, "originalFilePath": orig, "relativePath": rel}
+
+
+class ImportedTwice(unittest.TestCase):
+    """The same release imported into more than one Radarr/Sonarr title (same size + group + quality, same release name, or same size + original file name)."""
+
+    def setUp(self):
+        reset()
+        self.w = World(requests=[request(31, "tv", 222023, ext=34, tvdb=432093)])
+        self.w.titles["/series"] = [RIGHT_SHOW, WRONG_SHOW]
+        self.w.titles["/movie"] = []
+        self.w.titles["/episodefile?seriesId=34"] = [efile(1, 3957578587), efile(2, 3462053551), efile(3, 1234567890)]
+        self.w.titles["/episodefile?seriesId=61"] = [efile(11, 3957578587, added="2026-11-10T01:00:00Z"), efile(12, 3462053551, added="2026-11-10T01:00:00Z")]
+
+    def dups(self, kind="open"):
+        return [p for p in problems(self.w)[kind] if p["type"] == "duplicate"]
+
+    def test_same_files_in_two_series_is_one_problem_on_the_later_copy(self):
+        [p] = self.dups()
+        self.assertEqual((p["key"], p["title"], p["year"], p["offers"]), ("tv/319013", "Behind the Scenes of Company Retreat", 2025, []))
+        self.assertEqual(p["details"]["reason"], "duplicate")
+        self.assertEqual(p["details"]["copies"], [
+            {"app": "sonarr", "title": "Jury Duty", "year": 2023, "tmdb": 222023, "tvdb": 432093, "files": 2, "size": 3957578587 + 3462053551, "added": "2026-11-09T22:03:46Z"},
+            {"app": "sonarr", "title": "Behind the Scenes of Company Retreat", "year": 2025, "tmdb": 319013, "tvdb": 476659, "files": 2, "size": 3957578587 + 3462053551, "added": "2026-11-10T01:00:00Z"}])
+        self.w.me = ADMIN
+        self.assertEqual(self.dups()[0]["offers"], [])
+
+    def test_other_group_or_quality_with_the_same_size_is_no_duplicate(self):
+        self.w.titles["/episodefile?seriesId=61"] = [efile(11, 3957578587, group="OTHER"), efile(12, 3462053551, quality="WEBDL-1080p")]
+        self.assertEqual(self.dups(), [])
+
+    def test_same_size_within_one_series_is_no_duplicate(self):
+        self.w.titles["/episodefile?seriesId=61"] = []
+        self.w.titles["/episodefile?seriesId=34"] = [efile(1, 3957578587), efile(2, 3957578587)]
+        self.assertEqual(self.dups(), [])
+
+    def test_small_files_are_ignored(self):
+        self.w.titles["/episodefile?seriesId=34"] = [efile(1, 1000)]
+        self.w.titles["/episodefile?seriesId=61"] = [efile(11, 1000)]
+        self.assertEqual(self.dups(), [])
+
+    def test_same_release_name_in_two_films(self):
+        self.w.titles["/series"] = []
+        self.w.titles["/movie"] = [{"id": 21, "title": "A", "year": 2001, "tmdbId": 1, "movieFile": efile(5, 900000000, scene="Some.Film.2001.1080p.BluRay-GRP")},
+                                   {"id": 22, "title": "B", "year": 2001, "tmdbId": 2, "movieFile": efile(6, 800000000, group="X", scene="Some.Film.2001.1080p.BluRay-GRP", added="2026-11-11T00:00:00Z")}]
+        [p] = self.dups()
+        self.assertEqual((p["key"], p["details"]["release"]), ("movie/2", "Some.Film.2001.1080p.BluRay-GRP"))
+
+    def test_same_size_and_original_name(self):
+        self.w.titles["/episodefile?seriesId=34"] = [efile(1, 700000000, group="A", orig="Pack/Show.S02E01.mkv")]
+        self.w.titles["/episodefile?seriesId=61"] = [efile(11, 700000000, group="B", orig="Other/Show.S02E01.mkv")]
+        [p] = self.dups()
+        self.assertEqual(p["details"]["release"], "Show.S02E01.mkv")
+
+    def test_key_follows_seerr_when_it_knows_the_title_under_its_own_id(self):
+        self.w.requests = [request(32, "tv", 312697, ext=61)]
+        self.assertEqual(self.dups()[0]["key"], "tv/312697")
+
+    def test_unreadable_library_keeps_the_problem_gone_copy_resolves_it(self):
+        [p] = self.dups()
+        del self.w.titles["/episodefile?seriesId=61"]
+        manual.CACHE.clear()
+        self.assertEqual([d["id"] for d in self.dups()], [p["id"]])
+        self.w.titles["/episodefile?seriesId=61"] = []
+        manual.CACHE.clear()
+        self.assertEqual([(d["id"], d["resolved"]["how"]) for d in self.dups("done")], [(p["id"], "gone")])
+
+    def test_library_is_read_at_most_every_ten_minutes(self):
+        self.dups()
+        n = self.w.gets.count(("sonarr", "/series"))
+        manual.CACHE.pop("scan", None)
+        self.dups()
+        self.assertEqual(self.w.gets.count(("sonarr", "/series")), n)
+
+
 if __name__ == "__main__":
     unittest.main()

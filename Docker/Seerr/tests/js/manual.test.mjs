@@ -114,6 +114,60 @@ test("German: automatisch gesperrt, previous file put back", async () => {
   assert.match($("[data-problem] [data-auto-block]").textContent, /Ton: Russian · die vorherige Datei ist wieder da/);
 });
 
+const MISMATCH = { reason: "mismatch", seerr: { title: "Jury Duty Presents: Company Retreat", year: 2025, tmdb: 312697, tvdb: null },
+  arr: { app: "sonarr", title: "Behind the Scenes of Company Retreat", year: 2025, tmdb: 319013, tvdb: 476659 } };
+
+test("linked to a different show: both sides with their ids, lookup to pick the right one, delete only for admins", async () => {
+  const p = problem({ type: "mismatch", key: "tv/312697", title: "Jury Duty Presents: Company Retreat", year: 2025, offers: ["link"], details: MISMATCH });
+  const routes = (admin) => ({ "/_download-now/manual/problems": { status: 200, body: { open: [admin ? Object.assign({}, p, { offers: ["delete", "link"] }) : p], done: [], admin } },
+    "/_download-now/manual/lookup": { status: 200, body: { token: "t-look", results: [{ n: 0, title: "Jury Duty", year: 2023, overview: "", tvdbId: 432093, inLibrary: true, probable: true }] } },
+    "/_download-now/manual/action": { status: 200, body: { ok: true, result: "already in Sonarr" } } });
+  let { $, calls } = await page(routes(false));
+  assert.match($("[data-problem] [data-type]").textContent, /Linked to a different show in Sonarr\/Radarr/);
+  assert.match($("[data-what]").textContent, /points to another title/);
+  const facts = $("[data-mismatch]").textContent;
+  assert.match(facts, /Seerr: Jury Duty Presents: Company Retreat \(2025\) · TMDB 312697 · TVDB –/);
+  assert.match(facts, /Sonarr: Behind the Scenes of Company Retreat \(2025\) · TMDB 319013 · TVDB 476659/);
+  assert.match($("[data-todo]").textContent, /nothing is deleted automatically/);
+  assert.equal($('[data-act="delete"]'), null);
+  assert.equal($("input[data-term]").value, "Jury Duty Presents: Company Retreat");
+  $('[data-act="lookup"]').click();
+  await settle();
+  $('[data-act="link"]').click();
+  await settle();
+  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "link", pick: 0, token: "t-look" });
+  ({ $, calls } = await page(routes(true)));
+  $('[data-act="delete"]').click();
+  await settle();
+  $('[data-act="delete"]').click();
+  await settle();
+  assert.deepEqual(posts(calls)[0].body, { id: "aaaaaaaaaaaa", action: "delete", confirm: "delete" });
+});
+
+test("imported twice: every copy with its files and size, no buttons", async () => {
+  const p = problem({ type: "duplicate", key: "tv/319013", title: "Behind the Scenes of Company Retreat", year: 2025, offers: [],
+    details: { reason: "duplicate", release: "Jury.Duty.S02.2160p.AMZN.WEB-DL-UBWEB", copies: [
+      { app: "sonarr", title: "Jury Duty", year: 2023, tmdb: 222023, tvdb: 432093, files: 8, size: 27.8e9, added: "2026-11-09T22:03:46Z" },
+      { app: "sonarr", title: "Behind the Scenes of Company Retreat", year: 2025, tmdb: 319013, tvdb: 476659, files: 8, size: 27.8e9, added: "2026-11-10T01:00:00Z" }] } });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: true } } });
+  assert.match($("[data-problem] [data-type]").textContent, /Imported twice/);
+  assert.match($("[data-what]").textContent, /same release was imported into more than one title/);
+  const copies = $("[data-duplicate]").textContent;
+  assert.match(copies, /Sonarr: Jury Duty \(2023\) · 8 files · 27\.8 GB/);
+  assert.match(copies, /Sonarr: Behind the Scenes of Company Retreat \(2025\) · 8 files · 27\.8 GB/);
+  assert.match($("[data-file-name]").textContent, /Jury\.Duty\.S02/);
+  assert.equal($("[data-problem] [data-act]"), null);
+});
+
+test("German: mit einem anderen Titel verknüpft, doppelt importiert", async () => {
+  const a = problem({ type: "mismatch", key: "tv/312697", offers: ["link"], details: MISMATCH });
+  const b = problem({ id: "eeeeeeeeeeee", type: "duplicate", key: "tv/1", offers: [], details: { reason: "duplicate", copies: [{ app: "radarr", title: "A", year: 2001, files: 1, size: 1e9 }] } });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [a, b], done: [], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
+  assert.match($('[data-problem="aaaaaaaaaaaa"] [data-type]').textContent, /Mit einem anderen Titel in Sonarr\/Radarr verknüpft/);
+  assert.match($('[data-problem="eeeeeeeeeeee"] [data-type]').textContent, /Doppelt importiert/);
+  assert.match($("[data-duplicate]").textContent, /Radarr: A \(2001\) · 1 Datei · 1\.0 GB/);
+});
+
 test("German: Dateien prüfen und Import abschliessen", async () => {
   const p = problem({ type: "import", details: { release: "Some.Film.2024", message: "" } });
   const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
@@ -357,7 +411,7 @@ test("an unknown arr message: a general sentence with the message itself", async
 test("every reason has a plain sentence in both languages", () => {
   const w = load("manual.js", "", null, "https://requests.example.com/discover/movies");
   const { TEXT } = w.hgManual;
-  for (const code of ["id-match", "no-eligible", "not-upgrade", "sample", "unparsable", "not-in-release", "wrong-film", "dub-only", "failed", "no-release", "removed", "unmatched", "unknown"]) {
+  for (const code of ["id-match", "no-eligible", "not-upgrade", "sample", "unparsable", "not-in-release", "wrong-film", "dub-only", "failed", "no-release", "removed", "unmatched", "mismatch", "duplicate", "unknown"]) {
     assert.ok(TEXT.en.reasons[code] && TEXT.de.reasons[code], code);
   }
   assert.doesNotMatch(JSON.stringify(TEXT.de), /ß/);
