@@ -8,13 +8,13 @@ function usage(storage) {
   return { ok: true, generated: new Date().toISOString(), indexers: [], subscriptions: [], storage };
 }
 // Texts as scripts/indexer-usage.py writes them.
-const SSD = { name: "SSD", total: 7.3 * TB, used: 2.7 * TB, free: 4.6 * TB, pct: 37.6, level: "ok", yellow: 70, red: 80, partsLabel: "SSDs",
+const SSD = { name: "SSD", total: 7.3 * TB, used: 2.7 * TB, free: 4.6 * TB, pct: 37.6, level: "ok", yellow: 70, orange: 75, red: 80, partsLabel: "SSDs",
   sub: { en: "fast tier, new downloads", de: "schnell, neue Downloads" },
-  hint: { en: "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; from 80 % new downloads go straight to the HDD.",
-    de: "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab 80 % landen neue Downloads direkt auf der HDD." } };
-const HDD = { name: "HDD", total: 28 * TB, used: 535 * GB, free: 27.5 * TB, pct: 1.9, level: "ok", yellow: 80, red: 90,
+  hint: { en: "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; orange from 75 %: the limit is close; from 80 % new downloads go straight to the HDD.",
+    de: "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab 75 % orange: die Grenze ist nah; ab 80 % landen neue Downloads direkt auf der HDD." } };
+const HDD = { name: "HDD", total: 28 * TB, used: 535 * GB, free: 27.5 * TB, pct: 1.9, level: "ok", yellow: 80, orange: 85, red: 90,
   sub: { en: "archive", de: "Archiv" },
-  hint: { en: "Archive for older titles. From 90 % new downloads are no longer imported.", de: "Archiv für ältere Titel. Ab 90 % werden neue Downloads nicht mehr importiert." } };
+  hint: { en: "Archive for older titles. Orange from 85 %: the limit is close. From 90 % new downloads are no longer imported.", de: "Archiv für ältere Titel. Ab 85 % orange: die Grenze ist nah. Ab 90 % werden neue Downloads nicht mehr importiert." } };
 
 const open = [];
 afterEach(() => { while (open.length) open.pop().close(); });
@@ -46,13 +46,22 @@ test("colour follows the level from the collector", async () => {
   assert.ok(w.document.querySelector("#indexer-bar .ib-title .ib-dot.ib-full"));
 });
 
+test("orange step before the limit: orange meter, text and title dot", async () => {
+  const w = await bar(usage([{ ...SSD, pct: 77, level: "orange" }, { ...HDD, pct: 86, level: "orange" }]));
+  for (const n of ["SSD", "HDD"]) {
+    assert.ok(chip(w, n).querySelector(".ib-meter.ib-orange"));
+    assert.ok(chip(w, n).querySelector(".ib-orange-text"));
+  }
+  assert.ok(w.document.querySelector("#indexer-bar .ib-title .ib-dot.ib-orange"));
+});
+
 test("hint: headline, used, free, then the rule one sentence per row (English)", async () => {
   const w = await bar(usage([SSD, HDD]));
   assert.deepEqual(hintOf(w, chip(w, "SSD")), { title: "SSD — fast tier, new downloads", sections: 2, text: [
     "SSD — fast tier, new downloads", "Used: 2.7/7.3 TB · 38 %", "Free: 4.6 TB", "Free until the limit (80 %): 3.1 TB",
-    "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %", "From 80 % new downloads go straight to the HDD"].join("\n") });
+    "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %", "Orange from 75 %: the limit is close", "From 80 % new downloads go straight to the HDD"].join("\n") });
   assert.deepEqual(hintOf(w, chip(w, "HDD")), { title: "HDD — archive", sections: 2, text: [
-    "HDD — archive", "Used: 535 GB/28 TB · 2 %", "Free: 27.5 TB", "Free until the limit (90 %): 24.7 TB", "Archive for older titles", "From 90 % new downloads are no longer imported"].join("\n") });
+    "HDD — archive", "Used: 535 GB/28 TB · 2 %", "Free: 27.5 TB", "Free until the limit (90 %): 24.7 TB", "Archive for older titles", "Orange from 85 %: the limit is close", "From 90 % new downloads are no longer imported"].join("\n") });
 });
 
 test("hint: no rule, no sub = one section with the name as headline", async () => {
@@ -69,8 +78,8 @@ test("German UI: German hint and decimal comma", async () => {
   const w = await bar(usage([SSD, HDD]), SIDEBAR.replace(">Series<", ">Serien<"));
   assert.match(chip(w, "SSD").textContent, /2,7\/7,3 TB/);
   assert.equal(hintOf(w, chip(w, "SSD")).text, ["SSD — schnell, neue Downloads", "Belegt: 2,7/7,3 TB · 38 %", "Frei: 4,6 TB", "Frei bis zur Grenze (80 %): 3,1 TB",
-    "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %", "Ab 80 % landen neue Downloads direkt auf der HDD"].join("\n"));
-  assert.equal(hintOf(w, chip(w, "HDD")).text, ["HDD — Archiv", "Belegt: 535 GB/28 TB · 2 %", "Frei: 27,5 TB", "Frei bis zur Grenze (90 %): 24,7 TB", "Archiv für ältere Titel", "Ab 90 % werden neue Downloads nicht mehr importiert"].join("\n"));
+    "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %", "Ab 75 % orange: die Grenze ist nah", "Ab 80 % landen neue Downloads direkt auf der HDD"].join("\n"));
+  assert.equal(hintOf(w, chip(w, "HDD")).text, ["HDD — Archiv", "Belegt: 535 GB/28 TB · 2 %", "Frei: 27,5 TB", "Frei bis zur Grenze (90 %): 24,7 TB", "Archiv für ältere Titel", "Ab 85 % orange: die Grenze ist nah", "Ab 90 % werden neue Downloads nicht mehr importiert"].join("\n"));
 });
 
 test("hint: free until the limit from usage.json, \"limit reached\" at or over it (EN/DE)", async () => {
@@ -86,13 +95,13 @@ test("hint: free until the limit from usage.json, \"limit reached\" at or over i
 
 test("hint: no limit in the data = no limit row", async () => {
   const w = await bar(usage([{ ...HDD, red: undefined, yellow: undefined }]));
-  assert.doesNotMatch(hintOf(w, chip(w, "HDD")).text, /limit/);
+  assert.doesNotMatch(hintOf(w, chip(w, "HDD")).text, /until the limit/);
 });
 
 const marks = (m) => [...m.querySelectorAll(".ib-mark")].map((x) => [x.style.left, x.classList.contains("ib-mark-limit")]);
 
-test("meters mark the disk's limits: thin warn mark at yellow, limit mark at red (bar and more)", async () => {
-  const w = await bar(usage([{ ...SSD, pct: 75, level: "yellow" }, HDD]));
+test("meters mark the disk's limits: thin warn mark at yellow, limit mark at red, none at orange (bar and more)", async () => {
+  const w = await bar(usage([{ ...SSD, pct: 75, level: "orange" }, HDD]));
   assert.deepEqual(marks(chip(w, "SSD").querySelector(".ib-meter")), [["70%", false], ["80%", true]]);
   assert.deepEqual(marks(chip(w, "HDD").querySelector(".ib-meter")), [["80%", false], ["90%", true]]);
   assert.equal(chip(w, "SSD").querySelector(".ib-mark").getAttribute("aria-hidden"), "true");

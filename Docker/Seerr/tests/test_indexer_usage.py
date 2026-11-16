@@ -253,8 +253,8 @@ def fake_statvfs(table):
     return statvfs
 
 
-DISKS = [{"name": "SSD", "id": "ssd", "paths": ["/hot"], "yellow": 0.70, "red": 0.80},
-         {"name": "HDD", "id": "hdd", "paths": ["/cold"], "yellow": 0.80, "red": 0.90}]
+DISKS = [{"name": "SSD", "id": "ssd", "paths": ["/hot"], "yellow": 0.70, "orange": 0.75, "red": 0.80},
+         {"name": "HDD", "id": "hdd", "paths": ["/cold"], "yellow": 0.80, "orange": 0.85, "red": 0.90}]
 
 
 class Storage(unittest.TestCase):
@@ -262,13 +262,13 @@ class Storage(unittest.TestCase):
         st = fake_statvfs({"/hot": FakeStat(8 * TIB, 5 * TIB), "/cold": FakeStat(28 * TIB, 27 * TIB)})
         ssd, hdd = iu.storage(DISKS, st)
         self.assertEqual((ssd["name"], ssd["total"], ssd["used"], ssd["free"], ssd["pct"], ssd["level"]), ("SSD", 8 * TIB, 3 * TIB, 5 * TIB, 37.5, "ok"))
-        self.assertEqual((ssd["yellow"], ssd["red"]), (70, 80))
-        self.assertEqual((hdd["name"], hdd["pct"], hdd["level"], hdd["yellow"], hdd["red"]), ("HDD", 3.6, "ok", 80, 90))
+        self.assertEqual((ssd["yellow"], ssd["orange"], ssd["red"]), (70, 75, 80))
+        self.assertEqual((hdd["name"], hdd["pct"], hdd["level"], hdd["yellow"], hdd["orange"], hdd["red"]), ("HDD", 3.6, "ok", 80, 85, 90))
         self.assertNotIn("paths", ssd)
         self.assertNotIn("parts", ssd)
 
     def test_two_ssds_are_one_tier_with_parts(self):
-        disks = [{"name": "SSD", "id": "ssd", "paths": ["/hot", "/hot2"], "yellow": 0.70, "red": 0.80}]
+        disks = [{"name": "SSD", "id": "ssd", "paths": ["/hot", "/hot2"], "yellow": 0.70, "orange": 0.75, "red": 0.80}]
         st = fake_statvfs({"/hot": FakeStat(8 * TIB, 2 * TIB), "/hot2": FakeStat(8 * TIB, 8 * TIB)})
         ssd = iu.storage(disks, st)[0]
         self.assertEqual((ssd["total"], ssd["free"], ssd["pct"], ssd["level"]), (16 * TIB, 10 * TIB, 37.5, "ok"))
@@ -277,8 +277,8 @@ class Storage(unittest.TestCase):
         self.assertEqual(iu.storage(disks, st)[0]["total"], 8 * TIB)
 
     def test_levels_per_disk(self):
-        want = {"SSD": {0.699: "ok", 0.70: "yellow", 0.799: "yellow", 0.80: "full", 0.95: "full"},
-                "HDD": {0.799: "ok", 0.80: "yellow", 0.899: "yellow", 0.90: "full"}}
+        want = {"SSD": {0.699: "ok", 0.70: "yellow", 0.749: "yellow", 0.75: "orange", 0.799: "orange", 0.80: "full", 0.95: "full"},
+                "HDD": {0.799: "ok", 0.80: "yellow", 0.849: "yellow", 0.85: "orange", 0.899: "orange", 0.90: "full"}}
         for disk in DISKS:
             for ratio, level in want[disk["name"]].items():
                 total = 1000 * 4096
@@ -325,17 +325,18 @@ class Storage(unittest.TestCase):
             iu.run(Run.CFG, api, out, utc(2026, 10, 26, 12, 0), disks=DISKS, statvfs=st)
             data = json.loads(out.read_text())
         ssd, hdd = data["storage"]
-        self.assertEqual(ssd["hint"]["en"], "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; from 80 % new downloads go straight to the HDD.")
-        self.assertEqual(ssd["hint"]["de"], "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab 80 % landen neue Downloads direkt auf der HDD.")
+        self.assertEqual(ssd["hint"]["en"], "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; orange from 75 %: the limit is close; from 80 % new downloads go straight to the HDD.")
+        self.assertEqual(ssd["hint"]["de"], "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab 75 % orange: die Grenze ist nah; ab 80 % landen neue Downloads direkt auf der HDD.")
         self.assertEqual((ssd["sub"], ssd["partsLabel"]), ({"en": "fast tier, new downloads", "de": "schnell, neue Downloads"}, "SSDs"))
-        self.assertEqual(hdd["hint"]["en"], "Archive for older titles. From 90 % new downloads are no longer imported.")
+        self.assertEqual(hdd["hint"]["en"], "Archive for older titles. Orange from 85 %: the limit is close. From 90 % new downloads are no longer imported.")
+        self.assertEqual(hdd["hint"]["de"], "Archiv für ältere Titel. Ab 85 % orange: die Grenze ist nah. Ab 90 % werden neue Downloads nicht mehr importiert.")
         self.assertEqual(hdd["sub"], {"en": "archive", "de": "Archiv"})
         self.assertTrue(data["note"]["en"].startswith("When a limited indexer is used up, requests may wait until it resets"))
         self.assertNotIn("showUnlimited", data)
 
     def test_default_disks_are_the_two_branches(self):
-        self.assertEqual([(d["name"], d["paths"], d["yellow"], d["red"]) for d in iu.DISKS],
-                         [("SSD", ["/srv/.disks/ssd-hot", "/srv/.disks/ssd-hot2"], 0.70, 0.80), ("HDD", ["/srv/.disks/hdd-cold"], 0.80, 0.90)])
+        self.assertEqual([(d["name"], d["paths"], d["yellow"], d["orange"], d["red"]) for d in iu.DISKS],
+                         [("SSD", ["/srv/.disks/ssd-hot", "/srv/.disks/ssd-hot2"], 0.70, 0.75, 0.80), ("HDD", ["/srv/.disks/hdd-cold"], 0.80, 0.85, 0.90)])
 
 
 SUBS = {"subdl": {"name": "SubDL", "searches": 2000, "downloads": 50, "approx": ["searches"]},

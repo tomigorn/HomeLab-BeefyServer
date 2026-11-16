@@ -29,15 +29,15 @@ WINDOWS = {"rolling", "day"}
 AMBER, RED = 0.70, 0.95
 SUB_YELLOW_DAYS, SUB_ORANGE_DAYS, SUB_RED_DAYS = 30, 7, 0
 RANK = {"ok": 0, "yellow": 1, "warn": 2, "orange": 3, "full": 4}
-DISKS = [{"name": "SSD", "id": "ssd", "paths": ["/srv/.disks/ssd-hot", "/srv/.disks/ssd-hot2"], "yellow": 0.70, "red": 0.80},
-         {"name": "HDD", "id": "hdd", "paths": ["/srv/.disks/hdd-cold"], "yellow": 0.80, "red": 0.90}]
+DISKS = [{"name": "SSD", "id": "ssd", "paths": ["/srv/.disks/ssd-hot", "/srv/.disks/ssd-hot2"], "yellow": 0.70, "orange": 0.75, "red": 0.80},
+         {"name": "HDD", "id": "hdd", "paths": ["/srv/.disks/hdd-cold"], "yellow": 0.80, "orange": 0.85, "red": 0.90}]
 # Bar texts (indexer-bar/schema.md): the shared bar.js has no Seerr wording.
 DISK_TEXT = {
     "ssd": {"partsLabel": "SSDs", "sub": {"en": "fast tier, new downloads", "de": "schnell, neue Downloads"},
-            "hint": {"en": "Above {yellow} % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; from {red} % new downloads go straight to the HDD.",
-                     "de": "Ab {yellow} % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab {red} % landen neue Downloads direkt auf der HDD."}},
+            "hint": {"en": "Above {yellow} % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; orange from {orange} %: the limit is close; from {red} % new downloads go straight to the HDD.",
+                     "de": "Ab {yellow} % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab {orange} % orange: die Grenze ist nah; ab {red} % landen neue Downloads direkt auf der HDD."}},
     "hdd": {"sub": {"en": "archive", "de": "Archiv"},
-            "hint": {"en": "Archive for older titles. From {red} % new downloads are no longer imported.", "de": "Archiv für ältere Titel. Ab {red} % werden neue Downloads nicht mehr importiert."}},
+            "hint": {"en": "Archive for older titles. Orange from {orange} %: the limit is close. From {red} % new downloads are no longer imported.", "de": "Archiv für ältere Titel. Ab {orange} % orange: die Grenze ist nah. Ab {red} % werden neue Downloads nicht mehr importiert."}},
 }
 NOTE = {"en": "When a limited indexer is used up, requests may wait until it resets; the other indexers keep searching. Searches made by hand on the indexer websites are not counted.",
         "de": "Ist ein begrenzter Indexer aufgebraucht, warten Anfragen eventuell, bis er zurückgesetzt wird; die anderen Indexer suchen weiter. Von Hand auf den Indexer-Websites gemachte Suchen werden nicht gezählt."}
@@ -366,9 +366,9 @@ def storage(disks, statvfs=os.statvfs):
         total, free = sum(t for t, _ in sizes), sum(f for _, f in sizes)
         used = total - free
         ratio = used / total if total else 0
-        lvl = "full" if ratio >= d["red"] else "yellow" if ratio >= d["yellow"] else "ok"
+        lvl = "full" if ratio >= d["red"] else "orange" if ratio >= d["orange"] else "yellow" if ratio >= d["yellow"] else "ok"
         out.append({"name": d["name"], "id": d["id"], "total": total, "used": used, "free": free, "pct": round(100 * ratio, 1),
-                    "level": lvl, "yellow": round(100 * d["yellow"]), "red": round(100 * d["red"]),
+                    "level": lvl, "yellow": round(100 * d["yellow"]), "orange": round(100 * d["orange"]), "red": round(100 * d["red"]),
                     "freeToLimit": max(0, round(total * d["red"]) - used)})
         if len(d["paths"]) > 1:
             out[-1]["parts"] = [round(100 * (t - f) / t, 1) if t else 0 for t, f in sizes]
@@ -381,7 +381,7 @@ def bar_disk(d):
     if "sub" in t:
         out["sub"] = t["sub"]
     if "hint" in t:
-        out["hint"] = {lang: text.format(yellow=d["yellow"], red=d["red"]) for lang, text in t["hint"].items()}
+        out["hint"] = {lang: text.format(yellow=d["yellow"], orange=d["orange"], red=d["red"]) for lang, text in t["hint"].items()}
     if "partsLabel" in t:
         out["partsLabel"] = t["partsLabel"]
     return out

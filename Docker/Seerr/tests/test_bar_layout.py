@@ -104,7 +104,7 @@ class Popup(unittest.TestCase):
     def test_disk_hint_shows_free_until_the_limit(self):
         for width, mobile in ((390, True), (1280, False)):
             with self.subTest(width=width):
-                self.assertRegex(self.hint(width, '[data-ib-disk="SSD"]', mobile)[1]["text"], r"Free: 3\.7 TB\s+Free until the limit \(80 %\): 857 GB")
+                self.assertRegex(self.hint(width, '[data-ib-disk="SSD"]', mobile)[1]["text"], r"Free: 3\.3 TB\s+Free until the limit \(80 %\): 444 GB")
                 self.assertIn("Free until the limit (90 %): limit reached", self.hint(width, '[data-ib-disk="HDD"]', mobile)[1]["text"])
 
     def test_disk_meters_show_the_limit_marks_without_widening_the_chip(self):
