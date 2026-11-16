@@ -660,12 +660,12 @@ Terms combine (all must fit), at most 6, query ≤ 300 characters. A name that f
 
 ## Storage retention
 
-Modern titles leave the server 90 days after the download, old, niche and top-rated ones stay; rules, stages and the switch: `../Movie-Downloads/README.md` "Storage retention". **Observe mode: the dates are shown, nothing is deleted.**
+Modern titles leave the server 3 months after the download or the last play (watching resets the clock), old, niche and top-rated ones stay; rules, stages and the switch: `../Movie-Downloads/README.md` "Storage retention". **Observe mode: the dates are shown, nothing is deleted.**
 
 | Where | What |
 |---|---|
 | Request dialog | ☑ **♾️ Keep forever** (DE **♾️ Für immer behalten**) right below Can wait, preset from the title's state (in the library: its state; not yet: the category default from a Radarr/Sonarr lookup; unknown title: unticked). Changed and the request created (2xx) → stored for that title; unchanged → nothing stored |
-| Title page | facts row **On the server** (DE **Auf dem Server**) after Status / Size / Requested via: pill `🗑 Leaves on 26 Jan 2027` / `♾️ Kept forever` / orange `Leaving soon · 19 Nov` (7 days before), hint box: downloaded, SSD until, HDD from, deleted on or kept because, postponed, observe note; button **♾️ Keep forever** / **Let it leave** when allowed. Titles not in the library yet: no row |
+| Title page | facts row **On the server** (DE **Auf dem Server**) after Status / Size / Requested via: pill `🗑 Leaves on 26 Jan 2027 (3 months after the last play)` (or `… after the download` when nobody played it since) / `♾️ Kept forever` / orange `Leaving soon · 19 Nov` (7 days before), hint box: downloaded, last played, SSD until, HDD from, deleted on or kept because, postponed, observe note; button **♾️ Keep forever** / **Let it leave** when allowed. Titles not in the library yet: no row |
 | Requests rows and cards | the same pill in the Status field (phones: `🗑 26 Jan`, `♾️`, `Leaving soon`), one batch call per page |
 | Collections page (managers) | section **Leaving the server**: counts (kept by reason, temporary, leaving in 7 days), every temporary title by date (size, SSD/HDD, postponed / HDD full / grace), series that would move back to the SSD |
 
