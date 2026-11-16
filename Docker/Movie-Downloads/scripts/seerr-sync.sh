@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # After Radarr/Sonarr imported files: makes Seerr show them as Available within minutes instead of at the 04:22 full scan (README "Seerr availability after an import").
-# seerr-sync-hook.sh (Connect script) appends the imported file paths to <appdata>/<app>/seerr-sync.queue; systemd/seerr-sync.path starts this script, which debounces (waits until QUIET s after the last import, at most CAP s after the first, at least MIN_GAP s after the previous run), asks Jellyfin to scan files it does not have yet, then runs Seerr's "Jellyfin Full Library Scan" (Media Availability Sync alone does not flip titles with an old DateCreated).
+# seerr-sync-hook.sh (Connect script) appends the imported file paths to <appdata>/<app>/seerr-sync.queue; systemd/seerr-sync.path starts this script, which debounces (waits until QUIET s after the last import, at most CAP s after the first, at least MIN_GAP s after the previous run), asks Jellyfin to scan files it does not have yet, dates imported items whose file date is older than a day to the import (Recently added sorts by DateCreated, which Jellyfin takes from the file), then runs Seerr's "Jellyfin Full Library Scan" (Media Availability Sync alone does not flip titles with an old DateCreated).
 # Claimed queue files are deleted only after the Seerr scan request succeeded (back in the queue otherwise, exit 1); imports that land during a round get another round (systemd ignores PathChanged while this runs), up to BUDGET s.
 set -uo pipefail
 
@@ -17,6 +17,7 @@ QUIET=${SS_QUIET:-120}
 CAP=${SS_CAP:-600}
 MIN_GAP=${SS_MIN_GAP:-600}
 JF_WAIT=${SS_JF_WAIT:-90}
+REDATE_AGE=${SS_REDATE_AGE:-86400}
 SCAN_WAIT=${SS_SCAN_WAIT:-300}
 POLL=${SS_POLL:-5}
 BUDGET=${SS_BUDGET:-12600}
@@ -53,9 +54,23 @@ unclaim() { local c; for c in "${claimed[@]}"; do cat "$c" >> "${c%.claimed.*}" 
 pending() { local q; for q in $QUEUES; do [ -s "$q" ] && return 0; done; return 1; }
 
 jf() { curl -sf -m 30 -H @<(printf 'Authorization: MediaBrowser Token="%s"\n' "$jk") "$JF$1" "${@:2}" </dev/null; }
+# without userId Jellyfin 12.4 lists only part of the library
+library() { local u; u=$(jf /Users | jq -r 'first(.[] | select(.Policy.IsAdministrator)) | .Id') && [ -n "$u" ] && jf "/Items?userId=$u&Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path,DateCreated&EnableImages=false&EnableUserData=false"; }
 missing() { # paths (Jellyfin side) not known to Jellyfin
-  local have; have=$(jf "/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path&EnableImages=false&EnableUserData=false" | jq -r '.Items[].Path // empty') || return 1
+  local have; have=$(library | jq -r '.Items[].Path // empty') || return 1
   grep -vxFf <(echo "$have") <<<"$1" || true
+}
+redate() { # imported items Jellyfin dated by an old file time get the import time, so they show in Recently added
+  local u now cutoff ids id body n=0
+  u=$(jf /Users | jq -r 'first(.[] | select(.Policy.IsAdministrator)) | .Id') || return 1
+  now=$(date -u +%Y-%m-%dT%H:%M:%S.0000000Z); cutoff=$(date -u -d "@$(( $(date +%s) - REDATE_AGE ))" +%Y-%m-%dT%H:%M:%S)
+  ids=$(library | jq -r --arg c "$cutoff" --rawfile want <(echo "$1") '($want | split("\n") | map(select(length > 0))) as $w | .Items[] | select(.Path as $p | $w | index($p)) | select(.DateCreated < $c) | .Id') || return 1
+  for id in $ids; do
+    # Jellyfin 12.4 cannot read back its own Trickplay field on an item update
+    body=$(jf "/Users/$u/Items/$id" | jq -c --arg d "$now" 'del(.Trickplay) | .DateCreated = $d') && jf "/Items/$id" -X POST -H 'Content-Type: application/json' -d "$body" >/dev/null && n=$((n + 1))
+  done
+  [ "$n" -gt 0 ] && log "Jellyfin: $n item(s) with an old file date dated to the import"
+  return 0
 }
 seerr() { curl -sf -m 30 -H @<(printf 'X-Api-Key: %s\n' "$sk") "$SEERR/api/v1$1" "${@:2}" </dev/null; }
 running() { seerr /settings/jobs | jq -r '.[] | select(.id == "jellyfin-full-scan") | .running'; }
@@ -74,6 +89,7 @@ round() {
     while [ -n "${todo:-}" ] && [ "$waited" -lt "$JF_WAIT" ]; do sleep "$POLL"; waited=$((waited + POLL)); todo=$(missing "$want"); done
     [ -z "${todo:-}" ] && log "Jellyfin has the files" || log "Jellyfin still lacks $(grep -c . <<<"$todo") file(s) after $JF_WAIT s, scanning Seerr anyway"
   fi
+  redate "$want" || log "Jellyfin dates not checked"
   sk=$(tr -d '[:space:]' < "$SEERR_KEY") || { log "no Seerr API key at $SEERR_KEY"; return 1; }
   t0=$(date +%s)
   for _ in $(seq 60); do [ "$(running)" = false ] && break; sleep "$POLL"; done

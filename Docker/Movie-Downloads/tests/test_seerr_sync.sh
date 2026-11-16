@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs scripts/seerr-sync.sh against a fake Jellyfin + Seerr (python http.server): debounce, Jellyfin scan request only for unknown files, Seerr full scan.
+# Runs scripts/seerr-sync.sh against a fake Jellyfin + Seerr (python http.server): debounce, Jellyfin scan request only for unknown files, import date for old file dates, Seerr full scan.
 # Usage: tests/test_seerr_sync.sh   (needs bash, curl, jq, python3)
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCRIPT="$HERE/../scripts/seerr-sync.sh"
@@ -16,6 +16,9 @@ import http.server, json, os, sys
 T = sys.argv[1]
 def log(s):
     open(os.path.join(T, "calls"), "a").write(s + "\n")
+def items():
+    dates = json.load(open(os.path.join(T, "dates.json"))) if os.path.exists(os.path.join(T, "dates.json")) else {}
+    return {str(i): {"Id": str(i), "Path": p, "DateCreated": dates.get(p, "2999-01-01T00:00:00.0000000Z")} for i, p in enumerate(json.load(open(os.path.join(T, "jf.json"))))}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def reply(self, code, body=None):
@@ -23,9 +26,15 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_response(code); self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
     def do_GET(self):
+        if self.path == "/Users":
+            return self.reply(200, [{"Id": "viewer", "Policy": {"IsAdministrator": False}}, {"Id": "adm", "Policy": {"IsAdministrator": True}}])
+        if self.path.startswith("/Users/adm/Items/"):
+            p = items().get(self.path.rsplit("/", 1)[1])
+            return self.reply(200, {"Id": p["Id"], "Name": "x", "Path": p["Path"], "DateCreated": p["DateCreated"], "Trickplay": {"a": {"320": {"Width": 320}}}}) if p else self.reply(404)
         if self.path.startswith("/Items"):
             if "Token=\"jfkey\"" not in (self.headers.get("Authorization") or ""): return self.reply(401)
-            return self.reply(200, {"Items": [{"Path": p} for p in json.load(open(os.path.join(T, "jf.json")))]})
+            if "userId=adm" not in self.path: return self.reply(200, {"Items": []})
+            return self.reply(200, {"Items": list(items().values())})
         if self.path.startswith("/System/Info/Public"):
             return self.reply(200, {})
         if self.path == "/api/v1/settings/jobs":
@@ -44,6 +53,11 @@ class H(http.server.BaseHTTPRequestHandler):
             if not os.path.exists(os.path.join(T, "jf-stuck")):
                 have = json.load(open(os.path.join(T, "jf.json")))
                 json.dump(have + [u["Path"] for u in ups], open(os.path.join(T, "jf.json"), "w"))
+            return self.reply(204)
+        if self.path.startswith("/Items/"):
+            b = json.loads(body)
+            if "Trickplay" in b: return self.reply(500)
+            log("JF-DATE " + b["Path"] + " " + b["DateCreated"][:4])
             return self.reply(204)
         if self.path == "/api/v1/settings/jobs/jellyfin-full-scan/run":
             if self.headers.get("X-Api-Key") != "seerrkey": return self.reply(401)
@@ -65,7 +79,7 @@ echo seerrkey > "$T/seerr.key"; echo jfkey > "$T/jf.key"
 for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT/System/Info/Public" >/dev/null && break; sleep 0.1; done
 
 mkdir -p "$T/radarr" "$T/sonarr"
-reset() { rm -f "$T/calls" "$T/started" "$T/polls" "$T/jf-stuck" "$T/seerr-down" "$T/import-during-scan" "$T/log" "$T/last" "$T/radarr/"* "$T/sonarr/"*; echo '[]' > "$T/jf.json"; : > "$T/calls"; }
+reset() { rm -f "$T/calls" "$T/started" "$T/polls" "$T/jf-stuck" "$T/seerr-down" "$T/import-during-scan" "$T/log" "$T/last" "$T/dates.json" "$T/radarr/"* "$T/sonarr/"*; echo '[]' > "$T/jf.json"; : > "$T/calls"; }
 mkdir -p "$T/bin"; REAL_CURL=$(command -v curl)
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/argv"\nexec %s "$@"\n' "$T" "$REAL_CURL" > "$T/bin/curl"; chmod +x "$T/bin/curl"
 run() { # run [env...]: runs the script with test settings, prints its exit code
@@ -133,6 +147,12 @@ reset; echo /data/media/movies/E/E.mkv > "$T/radarr/seerr-sync.queue.claimed.999
 echo /data/media/movies/A/A.mkv > "$T/sonarr/seerr-sync.queue"
 assert_eq "a claimed file left by a killed run is taken too" "0" "$(run)"
 assert_eq "  and removed after success" "" "$(ls "$T/radarr" | grep claimed)"
+
+reset; echo '["/media/movies/F/F.mkv", "/media/movies/G/G.mkv", "/media/movies/H/H.mkv"]' > "$T/jf.json"
+echo '{"/media/movies/F/F.mkv": "2013-05-08T20:06:21.0000000Z", "/media/movies/H/H.mkv": "2013-05-08T20:06:21.0000000Z"}' > "$T/dates.json"
+printf '/data/media/movies/F/F.mkv\n/data/media/movies/G/G.mkv\n' > "$T/radarr/seerr-sync.queue"
+assert_eq "old file date: exits 0" "0" "$(run)"
+assert_eq "  only the imported item with an old date is dated to the import, before the Seerr scan" "JF-DATE /media/movies/F/F.mkv $(date -u +%Y) SEERR-SCAN" "$(calls)"
 
 grep -qE 'seerrkey|jfkey' "$T/argv" && bad "Seerr and Jellyfin keys never on curl's argv" "$(grep -m1 -E 'seerrkey|jfkey' "$T/argv")" || ok "Seerr and Jellyfin keys never on curl's argv ($(wc -l < "$T/argv") curl calls)"
 
