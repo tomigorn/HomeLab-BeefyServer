@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
-const { storeFor, missingFormats, promptOnStart, isPlaybackInfo, gatePlayback, layout, texts, APPLE, GOOGLE, FORMATS } = createRequire(import.meta.url)("./app-banner.js");
+const { storeFor, missingFormats, promptOnStart, isPlaybackInfo, gatePlayback, layout, texts, routeKind, startPrompt, APPLE, GOOGLE, FORMATS } = createRequire(import.meta.url)("./app-banner.js");
 
 const UA = {
   iphoneSafari: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1",
@@ -149,4 +149,88 @@ test("'back' cancels the play without opening anything", async () => {
   await tick();
   assert.deepEqual(sent, [["abort", "POST", PI]]);
   await assert.rejects(win.fetch(PI, { method: "POST" }));
+});
+
+const HOST = "https://jellyfin.holy-grail.ch";
+
+test("Quick Connect approval pages never prompt (QR code, user menu, sign-in redirect)", () => {
+  for (const href of [
+    `${HOST}/web/#/quickconnect?code=123456`,
+    `${HOST}/web/index.html#/quickconnect?code=123456`,
+    `${HOST}/web/#/quickconnect`,
+    `${HOST}/web/#!/quickconnect?code=123456`,
+    `${HOST}/web/#/QuickConnect?code=123456`,
+    `${HOST}/web/quickconnect?code=123456`,
+    `${HOST}/web/#/login?serverid=abc&url=%2Fquickconnect%3Fcode%3D123456`,
+  ]) assert.equal(routeKind(href), "skip", href);
+});
+
+test("normal pages prompt; sign-in and the bare start page wait for the next route", () => {
+  for (const href of [`${HOST}/web/#/home`, `${HOST}/web/#/details?id=abc`, `${HOST}/web/#/mypreferencesmenu`, `${HOST}/web/#/search?query=quickconnect`])
+    assert.equal(routeKind(href), "prompt", href);
+  for (const href of [`${HOST}/web/`, `${HOST}/web/#/`, `${HOST}/web/#/login?serverid=abc`, `${HOST}/web/#/login?serverid=abc&url=%2Fhome`])
+    assert.equal(routeKind(href), "wait", href);
+});
+
+function fakeStart(href) {
+  const calls = [];
+  let answer;
+  const page = { href };
+  const check = startPrompt(() => page.href, () => { calls.push("show"); return new Promise((r) => (answer = r)); }, () => calls.push("hide"));
+  return { page, check, calls, answer: (a) => answer(a) };
+}
+
+test("start on a Quick Connect page: no prompt", () => {
+  const s = fakeStart(`${HOST}/web/#/quickconnect?code=123456`);
+  s.check(); s.check();
+  assert.deepEqual(s.calls, []);
+});
+
+test("start on a normal page still prompts", () => {
+  const s = fakeStart(`${HOST}/web/#/home`);
+  s.check();
+  assert.deepEqual(s.calls, ["show"]);
+});
+
+test("sign-in that redirects to Quick Connect: no prompt, also after the in-app navigation", () => {
+  const s = fakeStart(`${HOST}/web/#/login?serverid=abc&url=%2Fquickconnect%3Fcode%3D123456`);
+  s.check();
+  s.page.href = `${HOST}/web/#/quickconnect?code=123456`;
+  s.check();
+  assert.deepEqual(s.calls, []);
+});
+
+test("prompt already open when the app moves on to Quick Connect: it closes", () => {
+  const s = fakeStart(`${HOST}/web/#/home`);
+  s.check();
+  s.page.href = `${HOST}/web/#/quickconnect?code=123456`;
+  s.check();
+  assert.deepEqual(s.calls, ["show", "hide"]);
+});
+
+test("skipping on Quick Connect is not a 'no': leaving it for a normal page prompts", async () => {
+  const s = fakeStart(`${HOST}/web/#/quickconnect?code=123456`);
+  s.check();
+  s.page.href = `${HOST}/web/#/home`;
+  s.check();
+  assert.deepEqual(s.calls, ["show"]);
+  s.answer("browser");
+  await tick();
+  s.page.href = `${HOST}/web/#/movies`;
+  s.check();
+  assert.deepEqual(s.calls, ["show"], "answered once per page start");
+});
+
+test("play gate lets requests through on a Quick Connect page", async () => {
+  const { win, sent } = fakeWindow();
+  let asked = 0;
+  let href = `${HOST}/web/#/quickconnect?code=123456`;
+  gatePlayback(win, () => { asked++; return Promise.resolve("app"); }, () => routeKind(href) === "skip");
+  const x = new win.XMLHttpRequest(); x.open("POST", PI); x.send("{}");
+  await win.fetch(PI, { method: "POST" });
+  assert.equal(asked, 0);
+  assert.equal(sent.length, 2);
+  href = `${HOST}/web/#/home`;
+  await assert.rejects(win.fetch(PI, { method: "POST" }));
+  assert.equal(asked, 1);
 });

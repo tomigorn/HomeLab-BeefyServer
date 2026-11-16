@@ -25,6 +25,42 @@
     return Boolean(store) && missing.length > 0;
   }
 
+  var QUICK_CONNECT = /^\/quickconnect(?:\.html)?\/?$/i;
+  var WAIT = /^\/(?:login|selectserver|addserver|forgotpassword|forgotpasswordpin)?(?:\.html)?\/?$/i;
+
+  // The TV's QR code opens /web/#/quickconnect?code=…; signed out, the app first shows /login?url=%2Fquickconnect…
+  function routeKind(href) {
+    var page, route;
+    try {
+      page = new URL(href, "https://x/");
+      route = new URL(page.hash.replace(/^#!?/, "") || "/", "https://x/");
+    } catch (e) {
+      return "prompt";
+    }
+    var path = page.pathname.replace(/^.*\/web(?=\/|$)/i, "").replace(/\/index\.html$/i, "") || "/";
+    if (QUICK_CONNECT.test(path) || QUICK_CONNECT.test(route.pathname)) return "skip";
+    var next = route.searchParams.get("url");
+    if (next && routeKind(new URL(next, "https://x/web/").href) === "skip") return "skip";
+    return WAIT.test(route.pathname) ? "wait" : "prompt";
+  }
+
+  // Run check() on every route change: shows the start prompt on the first normal page, closes it unanswered when the app moves to a page that must not show it.
+  function startPrompt(getHref, show, hide) {
+    var state = "idle";
+    return function check() {
+      if (state === "done") return state;
+      var kind = routeKind(getHref());
+      if (state === "idle" && kind === "prompt") {
+        state = "shown";
+        show().then(function () { if (state === "shown") state = "done"; });
+      } else if (state === "shown" && kind !== "prompt") {
+        state = "idle";
+        hide();
+      }
+      return state;
+    };
+  }
+
   function isPlaybackInfo(url, method) {
     return /^post$/i.test(method || "") && /\/Items\/[^/?#]+\/PlaybackInfo(?:[?#]|$)/i.test(String(url));
   }
@@ -79,6 +115,7 @@
       var t = texts(navigator.language, mode);
       var screen = document.createElement("div");
       screen.id = "hgAppPrompt";
+      screen.setAttribute("data-mode", mode);
       screen.setAttribute("role", "dialog");
       screen.setAttribute("aria-modal", "true");
       screen.setAttribute("aria-label", t.title);
@@ -141,7 +178,8 @@
   }
 
   // Holds every PlaybackInfo request (fetch and XMLHttpRequest) until ask() answers; asks on every play, nothing is remembered.
-  function gatePlayback(win, ask) {
+  function gatePlayback(win, ask, skip) {
+    skip = skip || function () { return false; };
     var pending = null;
     function decide() {
       if (!pending) {
@@ -156,7 +194,7 @@
     win.fetch = function (input, init) {
       var url = typeof input === "string" ? input : input && input.url;
       var method = (init && init.method) || (input && input.method) || "GET";
-      if (!isPlaybackInfo(url, method)) return fetch0.apply(this, arguments);
+      if (!isPlaybackInfo(url, method) || skip()) return fetch0.apply(this, arguments);
       var self = this, args = arguments;
       return decide().then(function (choice) {
         if (choice !== "browser") throw new Error("Playback cancelled: " + choice);
@@ -166,7 +204,7 @@
     var proto = win.XMLHttpRequest.prototype;
     var open0 = proto.open, send0 = proto.send;
     proto.open = function (method, url) {
-      this.hgPlayback = isPlaybackInfo(url, method);
+      this.hgPlayback = isPlaybackInfo(url, method) && !skip();
       return open0.apply(this, arguments);
     };
     proto.send = function () {
@@ -182,12 +220,21 @@
     var store = storeFor(navigator.userAgent, navigator.maxTouchPoints || 0, Boolean(window.NativeShell));
     var missing = missingFormats(canPlay);
     if (!promptOnStart(store, missing)) return;
-    gatePlayback(window, function () { return ask(store, "play"); });
-    ask(store, "start");
+    gatePlayback(window, function () { return ask(store, "play"); }, function () { return routeKind(location.href) === "skip"; });
+    var check = startPrompt(function () { return location.href; }, function () { return ask(store, "start"); }, function () {
+      var screen = document.querySelector('#hgAppPrompt[data-mode="start"]');
+      if (screen) screen.remove();
+    });
+    // The router mostly uses history.pushState, which fires no event.
+    var timer = setInterval(function () {
+      if (check() === "done") clearInterval(timer);
+    }, 300);
+    window.addEventListener("hashchange", check);
+    check();
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { storeFor: storeFor, missingFormats: missingFormats, promptOnStart: promptOnStart, isPlaybackInfo: isPlaybackInfo, gatePlayback: gatePlayback, layout: layout, texts: texts, APPLE: APPLE, GOOGLE: GOOGLE, FORMATS: FORMATS };
+    module.exports = { storeFor: storeFor, missingFormats: missingFormats, promptOnStart: promptOnStart, isPlaybackInfo: isPlaybackInfo, gatePlayback: gatePlayback, layout: layout, texts: texts, routeKind: routeKind, startPrompt: startPrompt, APPLE: APPLE, GOOGLE: GOOGLE, FORMATS: FORMATS };
   } else if (document.body) {
     start();
   } else {

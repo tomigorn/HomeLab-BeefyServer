@@ -22,7 +22,7 @@ if want jellyfin; then
   check jf.plugin-js-injector '^Active ' "$(jf_plugin 'JavaScript Injector')"
   check jf.js-injector-index '^JavaScriptInjector/public\.js' "$(curl -s -m 8 http://127.0.0.1:8096/web/index.html | grep -o 'JavaScriptInjector/public\.js' | head -1)"
   check jf.rate-in-tracker '^true$' "$(jf_api /Plugins/f5a34f7b2e8a4e6aa7223a216a81b374/Configuration | jq -c '[.CustomJavaScripts[] | select(.Name == "Rate in Tracker") | .Enabled] | first' 2>&1)"
-  check jf.app-banner '^true [1-9]$' "$(jf_api /Plugins/f5a34f7b2e8a4e6aa7223a216a81b374/Configuration | jq -c '[.CustomJavaScripts[] | select(.Name == "Moonfin app banner") | .Enabled] | first' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c gatePlayback)"
+  check jf.app-banner '^true 2$' "$(jf_api /Plugins/f5a34f7b2e8a4e6aa7223a216a81b374/Configuration | jq -c '[.CustomJavaScripts[] | select(.Name == "Moonfin app banner") | .Enabled] | first' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -o -e gatePlayback -e routeKind | sort -u | wc -l)"
   check jf.moonfin-button-hidden '^[1-9]$' "$(curl -s -m 8 http://127.0.0.1:8096/JavaScriptInjector/public.js | grep -c 'headerMoonfinButton{display:none')"
   check jf.plugin-webhooks '^Active ' "$(jf_plugin 'Webhooks')"
   check jf.webhooks-floppy '^[1-9][0-9]* hooks$' "$(jf_api /Plugins/d8ca599bab3c41b0a4ea6de1d52b9996/Configuration | jq -r '[.Hooks[] | select(.Url | startswith("http://192.168.1.102:8012/webhook/jellyfin/"))] | "\(length) hooks"' 2>&1)"
