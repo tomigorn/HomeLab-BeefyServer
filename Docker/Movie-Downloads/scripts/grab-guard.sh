@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Radarr + Sonarr Connect "Custom Script" (On Grab): an indexer that tags a search result with the searched title's IDs makes the app grab a same-titled release from another year (Treasure Maps: the 1990 remake for the 1968 Night of the Living Dead, or a same-named older/newer series). A grab more than 2 years off is removed, blocklisted and searched again; one that never reaches the queue is marked failed through the grab history instead. A grab whose title is on the dub-only list (scripts/nfo-scout.py: the NFO lists two or more languages but not the title's original one) gets the same removal. Each case leaves an event file for scripts/queue-watchdog.py to send as a Telegram (README "Wrong-film guard").
+# Radarr + Sonarr Connect "Custom Script" (On Grab): an indexer that tags a search result with the searched title's IDs makes the app grab a same-titled release from another year (Treasure Maps: the 1990 remake for the 1968 Night of the Living Dead, or a same-named older/newer series). A grab more than 2 years off is removed, blocklisted and searched again; one that never reaches the queue is marked failed through the grab history instead. A grab whose title is on the dub-only list (scripts/nfo-scout.py: the NFO lists two or more languages but not the title's original one) gets the same removal. A grab of a 720p/1080p WEB or Blu-ray release below its codec minimum per minute of runtime (scripts/guard-size.jq: x264 25, x265/AV1 15 MB/min) gets the same removal too, unless a person picked it (grab history releaseSource InteractiveSearch / ReleasePush, or the title tagged override). Each case leaves an event file for scripts/queue-watchdog.py to send as a Telegram (README "Wrong-film guard", "Codec minimum size").
 # Radarr compares the release year against the movie's year and secondary year. Sonarr compares the year parsed from the release title against the series' start year (±2), the series' run (start year to last-aired year, or the current year while it continues) and the air years of the grabbed episodes (±1): groups name a season pack with the season's air year (The.Boys.2024.S04), a legitimately old episode of a long-running series is kept.
 # Both apps write the grab history and list the queue item only after this script returns, so the removal runs detached (GG_DETACH=0 runs it inline). The year rule is scripts/guard-year.jq, shared with scripts/queue-watchdog.py.
 # Runs inside the Radarr/Sonarr container (bash, curl, jq); registered by scripts/language-policy.sh.
@@ -7,13 +7,16 @@ set -euo pipefail
 
 if [ "${radarr_eventtype:-}" = Grab ]; then
   app=radarr; id=$radarr_movie_id; title=$radarr_release_title; dlid=${radarr_download_id:-}
+  quality=${radarr_release_quality:-}; size=${radarr_release_size:-0}; episodes=1
 elif [ "${sonarr_eventtype:-}" = Grab ]; then
   app=sonarr; id=$sonarr_series_id; title=$sonarr_release_title; dlid=${sonarr_download_id:-}
+  quality=${sonarr_release_quality:-}; size=${sonarr_release_size:-0}; episodes=${sonarr_release_episodecount:-1}
 else
   exit 0
 fi
 WAIT=${GG_WAIT:-300}
 RULE=${GG_YEAR_RULE:-$(dirname "$0")/guard-year.jq}
+SIZE_RULE=${GG_SIZE_RULE:-$(dirname "$0")/guard-size.jq}
 LOG=${GG_LOG:-/config/grab-guard.log}
 EVENTS=${GG_EVENTS:-/config/guard-events}
 DUBONLY=${GG_DUBONLY:-/config/dub-only.json}
@@ -61,24 +64,49 @@ dub=$(jq -c --arg t "$title" --argjson id "$tid" --argjson min "$(( $(date +%s) 
 if [ -n "$dub" ]; then
   langs=$(jq -r '.langs | join(", ")' <<<"$dub"); orig=$(jq -r '.original' <<<"$dub")
   why="lists only dubbed audio ($langs), not the original $orig"
-elif fits; then
-  exit 0
-else
+elif ! fits; then
   why="is from $got, not $year"
+else
+  sz=$(jq -n --arg q "$quality" --arg t "$title" --arg s "$size" --argjson r "$(jq '.runtime // 0' <<<"$meta")" --arg e "$episodes" \
+    '{quality: $q, title: $t, size: $s, runtime: $r, episodes: $e}' | jq -c -f "$SIZE_RULE") || sz=
+  [ -n "$sz" ] && [ "$(jq -r .ok <<<"$sz")" = false ] || exit 0
+  why="is $(jq -r '"\(.codec) at \(.perMin) MB/min, below \(.min) MB/min"' <<<"$sz")"
+  if [ "$(jq '.tags // [] | length' <<<"$meta")" -gt 0 ]; then
+    ov=$(api /tag | jq -r '[.[] | select(.label == "override") | .id][0] // empty') || ov=
+    if [ -n "$ov" ] && jq -e --argjson o "$ov" 'any(.tags[]; . == $o)' <<<"$meta" >/dev/null; then
+      echo "$noun $id: grabbed '$title' $why: kept, title tagged override"
+      exit 0
+    fi
+  fi
 fi
 
 # queue-watchdog.py turns the event file into the Telegram: the container holds no bot token.
 event() {
   ( umask 002; mkdir -p "$EVENTS"; f=$EVENTS/$(date +%s)-$$.json
-    jq -n --arg app "$app" --arg action "$1" --arg title "$mtitle" --argjson year "$year" --arg release "$title" --argjson releaseYear "$got" --argjson dub "${dub:-null}" \
+    jq -n --arg app "$app" --arg action "$1" --arg title "$mtitle" --argjson year "$year" --arg release "$title" --argjson releaseYear "$got" --argjson dub "${dub:-null}" --argjson size "${sz:-null}" \
       '{app: $app, action: $action, title: $title, year: $year, release: $release, releaseYear: $releaseYear}
-       + (if $dub then {reason: "dub-only", languages: $dub.langs, original: $dub.original} else {} end)' > "$f.tmp" && mv "$f.tmp" "$f" ) || true
+       + (if $dub then {reason: "dub-only", languages: $dub.langs, original: $dub.original} else {} end)
+       + (if $size then {reason: "size", codec: $size.codec, perMin: $size.perMin, min: $size.min} else {} end)' > "$f.tmp" && mv "$f.tmp" "$f" ) || true
 }
 
 if [ "${GG_DETACH:-1}" != 0 ] && [ -z "${GG_DETACHED:-}" ]; then
   GG_DETACHED=1 setsid nohup bash "$0" </dev/null >>"$LOG" 2>&1 &
   echo "$noun $id: grabbed '$title' $why: removal scheduled"
   exit 0
+fi
+
+# A person's pick (Seerr manual page, Download anyway, the app's interactive search) is never removed for its size; the grab history record names the source.
+if [ -n "${sz:-}" ]; then
+  src=
+  for _ in $(seq 0 5 "$WAIT"); do
+    [ -n "$dlid" ] && src=$(api "/history/$noun?$hparam=$id" | jq -r --arg d "$dlid" '[.[] | select(.eventType == "grabbed" and .downloadId == $d)][0] | if . then .data.releaseSource // "none" else empty end') || src=
+    [ -n "$src" ] && break
+    sleep 5
+  done
+  case $src in
+    InteractiveSearch|ReleasePush) echo "$noun $id: grabbed '$title' $why: kept, picked by hand"; exit 0 ;;
+    '') echo "$noun $id: grabbed '$title' $why: kept, no grab history record to tell who picked it"; exit 0 ;;
+  esac
 fi
 
 # The grab reaches the queue with the next download-client poll. A release the app cannot map to the title (the wrong year) is queued with no movie/series id: it is neither returned by the movieIds/seriesIds filter nor without includeUnknown*Items, so match on the download id over the whole queue.

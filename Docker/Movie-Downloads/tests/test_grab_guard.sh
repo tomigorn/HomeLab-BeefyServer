@@ -32,7 +32,9 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.command == "GET" and p == "/parse":
             return self.reply(200, {"title": q["title"], "parsedMovieInfo": {"year": state["parsed_year"]}})
         if self.command == "GET" and p == "/movie/5":
-            return self.reply(200, {"id": 5, "title": "Night of the Living Dead", "year": 1968, "tmdbId": 1234, "secondaryYear": state.get("secondary")})
+            return self.reply(200, {"id": 5, "title": "Night of the Living Dead", "year": 1968, "tmdbId": 1234, "secondaryYear": state.get("secondary"), "runtime": state.get("runtime", 0), "tags": state.get("tags", [])})
+        if self.command == "GET" and p == "/tag":
+            return self.reply(200, [{"id": 2, "label": "old-rare"}, {"id": 3, "label": "override"}])
         if self.command == "GET" and p == "/queue":
             recs = state["queue"]
             if "movieIds" in q:
@@ -67,6 +69,7 @@ run() {
   grep '^POST ' "$T/requests" | cut -d' ' -f2- > "$T/posts"
   cat "$T"/events/*.json 2>/dev/null | jq -r '[.app, .action, .title, .year, .release, .releaseYear] | @tsv' > "$T/event"
   cat "$T"/events/*.json 2>/dev/null | jq -r '[.reason // "", (.languages // [] | join(",")), .original // ""] | @tsv' > "$T/event2"
+  cat "$T"/events/*.json 2>/dev/null | jq -r '[.reason // "", .codec // "", .perMin // "", .min // ""] | @tsv' > "$T/event3"
 }
 # dub <title> [age days] [titleId] [langs json]: a dub-only list with one entry
 dub() { jq -n --arg t "$1" --argjson at "$(( $(date +%s) - ${2:-1} * 86400 ))" --argjson id "${3:-1234}" --argjson l "${4:-[\"German\", \"French\"]}" \
@@ -148,6 +151,42 @@ dub "$DUBREL"
 run "{\"parsed_year\": 1990, \"queue\": $Q}" "$DUBREL"
 assert_eq "listed and wrong year: removed once, reported as dub-only" "radarr	removed	Night of the Living Dead	1968	$DUBREL	1990|dub-only	German,French	Persian" "$(cat "$T/event")|$(cat "$T/event2")"
 rm -f "$T/dub-only.json"
+
+echo "grab-guard codec minimum size"
+MIB=1048576
+SMALL=Night.of.the.Living.Dead.1968.1080p.WEB-DL.x264-SMALL
+HS='[{"id": 72, "eventType": "grabbed", "downloadId": "abc", "data": {"releaseSource": "Search"}}]'
+size() { run "$1" "$2" radarr_release_quality="${3:-WEBDL-1080p}" radarr_release_size="${4:-$((2050 * MIB))}"; }
+size "{\"parsed_year\": 1968, \"runtime\": 100, \"queue\": $Q, \"history\": $HS}" "$SMALL"
+assert_eq "x264 at 20.5 MB/min (below 25) found by an automatic search is removed and blocklisted" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
+assert_eq "  exit 0, log" "0|movie 5: grabbed '$SMALL' is x264 at 20.5 MB/min, below 25 MB/min: removed, blocklisted, searching again" "$RC|$(cat "$T/out")"
+assert_eq "  event" "radarr	removed	Night of the Living Dead	1968	$SMALL	1968" "$(cat "$T/event")"
+assert_eq "  event carries reason, codec, MB/min, minimum" "size	x264	20.5	25" "$(cat "$T/event3")"
+size "{\"parsed_year\": 1968, \"runtime\": 100, \"queue\": $Q, \"history\": $HS}" "Night.of.the.Living.Dead.1968.1080p.WEB-DL.x265-SMALL"
+assert_eq "the same size in x265 (minimum 15) is kept" "" "$(cat "$T/deletes")"
+size "{\"parsed_year\": 1968, \"runtime\": 100, \"queue\": $Q, \"history\": $HS}" "Night.of.the.Living.Dead.1968.1080p.WEB-DL-SMALL"
+assert_eq "no codec in the name: the stricter 25 applies" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
+size "{\"parsed_year\": 1968, \"runtime\": 100, \"queue\": $Q, \"history\": $HS}" "$SMALL" WEBDL-1080p $((2600 * MIB))
+assert_eq "x264 at 26 MB/min is kept" "" "$(cat "$T/deletes")"
+size "{\"parsed_year\": 1968, \"runtime\": 100, \"queue\": $Q, \"history\": $HS}" "$SMALL" Remux-1080p
+assert_eq "remux is not checked" "" "$(cat "$T/deletes")"
+size "{\"parsed_year\": 1968, \"runtime\": 100, \"queue\": $Q, \"history\": $HS}" "$SMALL" Bluray-2160p
+assert_eq "2160p is not checked" "" "$(cat "$T/deletes")"
+size "{\"parsed_year\": 1968, \"runtime\": 0, \"queue\": $Q, \"history\": $HS}" "$SMALL"
+assert_eq "unknown runtime is kept" "" "$(cat "$T/deletes")"
+for src in InteractiveSearch ReleasePush; do
+  size "{\"parsed_year\": 1968, \"runtime\": 100, \"queue\": $Q, \"history\": [{\"id\": 72, \"eventType\": \"grabbed\", \"downloadId\": \"abc\", \"data\": {\"releaseSource\": \"$src\"}}]}" "$SMALL"
+  assert_eq "picked by hand ($src): kept, no event" "||0" "$(cat "$T/deletes")|$(cat "$T/event")|$RC"
+  assert_eq "  log" "movie 5: grabbed '$SMALL' is x264 at 20.5 MB/min, below 25 MB/min: kept, picked by hand" "$(cat "$T/out")"
+done
+size "{\"parsed_year\": 1968, \"runtime\": 100, \"tags\": [2, 3], \"queue\": $Q, \"history\": $HS}" "$SMALL"
+assert_eq "title tagged override (Download anyway): kept, no history lookup" "||" "$(cat "$T/deletes")|$(cat "$T/event")|$(grep '/history' "$T/requests")"
+size "{\"parsed_year\": 1968, \"runtime\": 100, \"queue\": $Q, \"history\": []}" "$SMALL"
+assert_eq "no grab history record (source unknown): kept, exit 0" "||0" "$(cat "$T/deletes")|$(cat "$T/event")|$RC"
+size "{\"parsed_year\": 1968, \"runtime\": 100, \"queue\": [], \"history\": $HS}" "$SMALL"
+assert_eq "not in the queue: the grabbed history record is marked failed" "/api/v3/history/failed/72|radarr	marked-failed	Night of the Living Dead	1968	$SMALL	1968" "$(cat "$T/posts")|$(cat "$T/event")"
+size "{\"parsed_year\": 1990, \"runtime\": 100, \"queue\": $Q, \"history\": $HS}" "Night.of.the.Living.Dead.1990.1080p.WEB-DL.x264-SMALL"
+assert_eq "wrong year and too small: reported as the wrong year" "movie 5: grabbed 'Night.of.the.Living.Dead.1990.1080p.WEB-DL.x264-SMALL' is from 1990, not 1968: removed, blocklisted, searching again|	" "$(cat "$T/out")|$(cut -f1,2 "$T/event3")"
 
 # Radarr writes the grab history and lists the queue item only after the Connect script returns (2026-11-08: history and queue "added" = the second the inline guard gave up): the removal runs detached.
 echo "{\"parsed_year\": 1990, \"queue\": $Q}" > "$T/state.json"; : > "$T/requests"; rm -rf "$T/events"

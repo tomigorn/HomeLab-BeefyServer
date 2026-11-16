@@ -222,14 +222,18 @@ def event_text(ev):
     year = f" ({ev['year']})" if ev.get("year") else ""
     manual = ev.get("action") == "manual"
     dub = ev.get("reason") == "dub-only"
+    small = ev.get("reason") == "size"
+    head = "Dub-only release" if dub else "Undersized release" if small else None
     lines = [
-        f"{'🔴' if manual else '🟠'} <b>{('Dub-only release' if manual else 'Dub-only release removed') if dub else 'Wrong-film guard'}: {app}</b>",
+        f"{'🔴' if manual else '🟠'} <b>{(head if manual else head + ' removed') if head else 'Wrong-film guard'}: {app}</b>",
         "",
         f"• 🎬 {html.escape(str(ev.get('title', '?')))}{year}",
-        f"• Grabbed: <code>{html.escape(str(ev.get('release', '?')))}</code>" + ("" if dub else f" (release year {ev.get('releaseYear', '?')})"),
+        f"• Grabbed: <code>{html.escape(str(ev.get('release', '?')))}</code>" + ("" if head else f" (release year {ev.get('releaseYear', '?')})"),
     ]
     if dub:
         lines.append(f"• 🗣 Languages: {html.escape(', '.join(ev.get('languages') or []))} (original {html.escape(str(ev.get('original', '?')))} missing)")
+    if small:
+        lines.append(f"• 📦 {html.escape(str(ev.get('codec', '?')))} at {ev.get('perMin', '?')} MB/min, minimum {ev.get('min', '?')} MB/min")
     lines.append(f"• Result: {ACTIONS.get(ev.get('action'), 'check by hand')}")
     if manual:
         lines.append(f"<blockquote expandable>{app} → Activity → Queue</blockquote>")

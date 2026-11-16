@@ -34,9 +34,11 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.reply(200, {"title": q["title"], "parsedMovieInfo": {"year": state["parsed_year"]}, "parsedEpisodeInfo": {"seriesTitleInfo": {"year": state["parsed_year"]}}})
         if self.command == "GET" and p == "/series/4":
             body = {"id": 4, "title": "Money Heist", "year": state["series_year"], "tvdbId": 327417}
-            for k in ("firstAired", "lastAired", "status"):
+            for k in ("firstAired", "lastAired", "status", "runtime", "tags"):
                 if k in state: body[k] = state[k]
             return self.reply(200, body)
+        if self.command == "GET" and p == "/tag":
+            return self.reply(200, [{"id": 3, "label": "override"}])
         if self.command == "GET" and p == "/episode":
             return self.reply(200, [e for e in state.get("episodes", []) if str(e["seasonNumber"]) == q.get("seasonNumber")])
         if self.command == "GET" and p == "/movie/7":
@@ -172,6 +174,25 @@ for _ in $(seq 50); do grep -q '^DELETE ' "$T/requests" && break; sleep 0.2; don
 assert_eq "  background removal deletes the queue item" "DELETE /api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(grep '^DELETE ' "$T/requests")"
 sleep 0.5
 assert_eq "  background log" "series 4: grabbed '$REL' is from 1995, not 2017: removed, blocklisted, searching again" "$(tail -1 "$T/guard.log")"
+
+echo "grab-guard codec minimum size (Sonarr)"
+MIB=1048576
+HS='[{"id": 72, "eventType": "grabbed", "downloadId": "abc", "data": {"releaseSource": "Search"}}]'
+PACK=Money.Heist.S01.1080p.BluRay.x265-SMALL
+size() { run "$1" "$2" sonarr_release_quality=Bluray-1080p sonarr_release_size="$3" sonarr_release_episodecount="$4"; }
+size "{\"series_year\": 2017, \"parsed_year\": 0, \"runtime\": 24, \"queue\": $Q, \"history\": $HS}" "$PACK" $((3072 * MIB)) 12
+assert_eq "season pack x265 3 GB / 12 episodes / 24 min = 10.7 MB/min (below 15) is removed" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
+assert_eq "  log" "series 4: grabbed '$PACK' is x265 at 10.7 MB/min, below 15 MB/min: removed, blocklisted, searching again" "$(cat "$T/out")"
+size "{\"series_year\": 2017, \"parsed_year\": 0, \"runtime\": 24, \"queue\": $Q, \"history\": $HS}" "$PACK" $((5530 * MIB)) 12
+assert_eq "anime-style BD pack x265 5.4 GB / 12 episodes = 19.2 MB/min is kept" "" "$(cat "$T/deletes")"
+size "{\"series_year\": 2017, \"parsed_year\": 0, \"runtime\": 24, \"queue\": $Q, \"history\": $HS}" "Money.Heist.S01E01.1080p.BluRay.x264-SMALL" $((500 * MIB)) 1
+assert_eq "single episode x264 500 MB / 24 min = 20.8 (below 25) is removed" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
+size "{\"series_year\": 2017, \"parsed_year\": 0, \"runtime\": 24, \"queue\": $Q, \"history\": $HS}" "Money.Heist.S01E01.1080p.BluRay.x264-SMALL" $((500 * MIB)) ""
+assert_eq "no episode count: counted as one episode" "/api/v3/queue/42?removeFromClient=true&blocklist=true&skipRedownload=false" "$(cat "$T/deletes")"
+size "{\"series_year\": 2017, \"parsed_year\": 0, \"runtime\": 24, \"queue\": $Q, \"history\": [{\"id\": 72, \"eventType\": \"grabbed\", \"downloadId\": \"abc\", \"data\": {\"releaseSource\": \"InteractiveSearch\"}}]}" "$PACK" $((3072 * MIB)) 12
+assert_eq "picked by hand: kept" "|series 4: grabbed '$PACK' is x265 at 10.7 MB/min, below 15 MB/min: kept, picked by hand" "$(cat "$T/deletes")|$(cat "$T/out")"
+size "{\"series_year\": 2017, \"parsed_year\": 0, \"runtime\": 24, \"tags\": [3], \"queue\": $Q, \"history\": $HS}" "$PACK" $((3072 * MIB)) 12
+assert_eq "series tagged override: kept" "|series 4: grabbed '$PACK' is x265 at 10.7 MB/min, below 15 MB/min: kept, title tagged override" "$(cat "$T/deletes")|$(cat "$T/out")"
 
 run "{}" "x" sonarr_eventtype=Test
 assert_eq "Test event exits 0 and calls nothing" "0|" "$RC|$(cat "$T/requests")"

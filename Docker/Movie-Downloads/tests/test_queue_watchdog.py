@@ -276,6 +276,22 @@ class Run(unittest.TestCase):
         self.assertTrue(self.sent[1].startswith("🔴 <b>Dub-only release: Radarr</b>"))
         self.assertIn("check by hand", self.sent[1])
 
+    def test_size_event_message(self):
+        ev = {"app": "sonarr", "action": "manual", "reason": "size", "codec": "x264", "perMin": 20.8, "min": 25,
+              "release": "Show.S01E01.1080p.BluRay.x264-G", "title": "Show", "year": 2019, "releaseYear": 0}
+        text = qw.event_text(ev)
+        self.assertTrue(text.startswith("🔴 <b>Undersized release: Sonarr</b>\n\n• "), text)
+        for part in ("Show (2019)", "<code>Show.S01E01.1080p.BluRay.x264-G</code>", "📦 x264 at 20.8 MB/min, minimum 25 MB/min", "check by hand"):
+            self.assertIn(part, text)
+        self.assertNotIn("release year", text)
+        self.assertTrue(qw.event_text(dict(ev, action="removed")).startswith("🟠 <b>Undersized release removed: Sonarr</b>"))
+
+    def test_size_event_removed_goes_to_the_digest(self):
+        self.event("3.json", reason="size", action="removed", codec="x265", perMin=10.7, min=15)
+        self.assertEqual(self.go({"radarr": fake()}, T0), 0)
+        self.assertEqual(self.sent, [])
+        self.assertEqual([e["kind"] for e in digest(self.dir)], ["guard_removed"])
+
     def test_guard_event_stays_when_the_send_fails(self):
         self.event(action="manual")
         self.fail_send = True
