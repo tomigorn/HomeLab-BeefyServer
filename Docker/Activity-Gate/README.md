@@ -22,6 +22,7 @@ Exact request line (path and query string), GET only. Anything else: 404; anothe
 | `/sonarr/api/v3/queue?pageSize=500&includeSeries=true&includeEpisode=true` | Sonarr |
 | `/sonarr/api/v3/series` | Sonarr |
 | `/seerr/request-state.json`, `/seerr/night-waiting.json` | files in `/srv/appdata/indexer-bar` (Seerr README "Indexer bar"), mounted read-only |
+| `/beefy/resources.json` | `/run/beefy-activity/resources.json`, written every 60 s by the idle watcher (`../../Server/8-Idle-Watcher.md`, Observability); directory mounted read-only |
 | `/health` | `ok` (healthcheck) |
 
 A new path: add it in fastpi's `rust/src/beefy.rs` and here, plus `gate.allowlist` in `../_global/post-update.d/Activity-Gate.sh`.
