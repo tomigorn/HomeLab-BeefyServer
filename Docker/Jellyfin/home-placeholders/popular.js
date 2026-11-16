@@ -22,7 +22,7 @@
       empty: "Nothing on the list right now.", found: "available",
       details: "details", seasonLong: "Season {n}",
       tvCode: "Code for TV", tvHint: "On the TV in Moonfin, Settings, Requests sign-in (Jellyfin account): username {u}, password = this code. Valid {m} min (until {t}), once.", tvLimit: "Limit reached: 5 codes per hour", tvExpired: "Code expired: get a new one", tvFailed: "Code request failed",
-      none: "Not able to download", checked: "checked {d} · rechecked daily", unchecked: "not checked yet · checked tonight", unknown: "Title not identified",
+      none: "Not able to download", notYet: "Not downloaded yet", checked: "checked {d} · rechecked daily", unchecked: "not checked yet · checked tonight", unknown: "Title not identified",
       source: "Sources: Netflix Top 10 Switzerland (weekly), TMDB popularity, where to stream in Switzerland by JustWatch (via TMDB). Only titles in the library or with a release found are shown."
     },
     de: {
@@ -34,7 +34,7 @@
       empty: "Gerade nichts auf der Liste.", found: "verfügbar",
       details: "Details", seasonLong: "Staffel {n}",
       tvCode: "Code für TV", tvHint: "Auf dem TV in Moonfin, Einstellungen, Requests-Anmeldung (Jellyfin-Konto): Benutzername {u}, Passwort = dieser Code. Gültig {m} Min. (bis {t}), einmal.", tvLimit: "Limite erreicht: 5 Codes pro Stunde", tvExpired: "Code abgelaufen: neuen anfordern", tvFailed: "Code-Anfrage fehlgeschlagen",
-      none: "Nicht herunterladbar", checked: "geprüft {d} · täglich neu geprüft", unchecked: "noch nicht geprüft · wird heute Nacht geprüft", unknown: "Titel nicht erkannt",
+      none: "Nicht herunterladbar", notYet: "Noch nicht heruntergeladen", checked: "geprüft {d} · täglich neu geprüft", unchecked: "noch nicht geprüft · wird heute Nacht geprüft", unknown: "Titel nicht erkannt",
       source: "Quellen: Netflix Top 10 Schweiz (wöchentlich), TMDB-Beliebtheit, Streaming-Angebot in der Schweiz von JustWatch (über TMDB). Nur Titel aus der Bibliothek oder mit gefundenem Release."
     }
   };
@@ -194,8 +194,19 @@
       res.setAttribute("title", it.f + " " + tr(lang, "found"));
       poster.appendChild(res);
     }
+    poster.appendChild(band(doc, lang));
     c.appendChild(actionsFor(doc, it, lang, tv, states));
     return c;
+  }
+
+  // The bottom band of the TV placeholder poster (trending_art.py band), drawn over the TMDB poster.
+  function band(doc, lang) {
+    var text = tr(lang, "notYet");
+    var b = el(doc, "div", text.length > 20 ? "hssTopBand hssTopBandLong" : "hssTopBand");
+    b.setAttribute("aria-hidden", "true");
+    b.appendChild(el(doc, "span", "hssTopBandIcon"));
+    b.appendChild(el(doc, "span", "hssTopBandText", text));
+    return b;
   }
 
   function rowKey(entries, lang, states, doc) {
@@ -562,7 +573,12 @@
     "body.hssPopularOpen .MuiDrawer-paper .Mui-selected:not(.hssPopularNav) { background-color: transparent !important; }",
     "body.hssPopularOpen .MuiStack-root > .Mui-selected:not(.hssPopularNav) { background-color: transparent !important; }",
     "body.hssPopularOpen .navMenuOption-selected:not(.hssPopularNav) { background: transparent !important; color: inherit !important; }",
-    ".hssTrendingHidden { display: none !important; }"
+    ".hssTrendingHidden { display: none !important; }",
+    ".hssTopBand { position: absolute; left: 0; right: 0; bottom: 0; height: calc(var(--hss-p) * 0.2133); box-sizing: border-box; border-top: calc(var(--hss-p) * 0.0133) solid #ffb703; background: rgba(8, 8, 12, 0.88); display: flex; align-items: center; gap: calc(var(--hss-p) * 0.03); padding: 0 calc(var(--hss-p) * 0.04); overflow: hidden; pointer-events: none; }",
+    ".hssTopBandIcon { position: relative; flex: 0 0 auto; width: calc(var(--hss-p) * 0.115); height: calc(var(--hss-p) * 0.115); border-radius: 50%; background: #fff; }",
+    ".hssTopBandIcon::after { content: ''; position: absolute; inset: 22%; background: #101014; clip-path: polygon(30% 0, 70% 0, 70% 50%, 100% 50%, 50% 100%, 0 50%, 30% 50%); }",
+    ".hssTopBandText { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #fff; font: 700 calc(var(--hss-p) * 0.07)/1 'Liberation Sans Narrow', 'Arial Narrow', 'Roboto Condensed', sans-serif; font-stretch: condensed; letter-spacing: -0.01em; }",
+    ".hssTopBandLong .hssTopBandText { font-size: calc(var(--hss-p) * 0.052); }"
   ].join("\n");
 
   function styles(doc) {

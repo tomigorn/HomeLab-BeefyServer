@@ -507,6 +507,30 @@ test("no release yet: a red diagonal banner over the poster, kept red (grey only
   assert.equal(owned.classList.contains("hssTopNone"), false);
 });
 
+test("every title not in the library carries the TV poster's bottom band: amber edge, dark fill, white circle with arrow, Not downloaded yet; owned titles never", () => {
+  const d = doc();
+  for (const item of [FOUND, NONE, UNKNOWN]) {
+    const c = pp.card(d, { item, jf: null }, "en", false, null);
+    const band = c.querySelector(".hssTopPoster > .hssTopBand");
+    assert.ok(band, item.t.en);
+    assert.ok(band.querySelector(".hssTopBandIcon"));
+    assert.equal(band.querySelector(".hssTopBandText").textContent, "Not downloaded yet");
+    assert.equal(band.getAttribute("aria-hidden"), "true");
+  }
+  assert.equal(pp.card(d, { item: FOUND, jf: null }, "de", false, null).querySelector(".hssTopBandText").textContent, "Noch nicht heruntergeladen");
+  assert.equal(pp.card(d, { item: OWNED, jf: LIB["movie/121"] }, "en", false, null).querySelector(".hssTopBand"), null);
+  const rule = (sel) => (pp.CSS.split("\n").find((l) => l.startsWith(sel + " {")) || "");
+  assert.match(rule(".hssTopBand"), /position: absolute; left: 0; right: 0; bottom: 0/);
+  assert.match(rule(".hssTopBand"), /height: calc\(var\(--hss-p\) \* 0\.2133\)/, "128 of 900 px like the TV poster");
+  assert.match(rule(".hssTopBand"), /border-top: calc\(var\(--hss-p\) \* 0\.0133\) solid #ffb703/);
+  assert.match(rule(".hssTopBand"), /background: rgba\(8, 8, 12, 0\.88\)/);
+  assert.match(rule(".hssTopBandIcon"), /border-radius: 50%; background: #fff/);
+  assert.match(rule(".hssTopBandText"), /white-space: nowrap/);
+  assert.match(rule(".hssTopBandText"), /calc\(var\(--hss-p\) \* 0\.07\)/, "fits a plain sans (no narrow font in the browser)");
+  assert.ok(pp.card(d, { item: FOUND, jf: null }, "de", false, null).querySelector(".hssTopBand").classList.contains("hssTopBandLong"));
+  assert.match(rule(".hssTopBandLong .hssTopBandText"), /font-size: calc\(var\(--hss-p\) \* 0\.052\)/);
+});
+
 test("the source has no characters outside the BMP: the injector config drops them (🌙 became ' Tonight'), escapes survive", async () => {
   const fs = await import("node:fs");
   const src = fs.readFileSync(new URL("./popular.js", import.meta.url), "utf8");
