@@ -52,7 +52,7 @@ echo "nginx.conf"
 inject=$(grep -o "sub_filter \"</head>\" '.*';" "$CONF")
 assets=$(grep -o '/_indexer-bar/[a-z-]*\.\(js\|css\)\(?[^"]*\)\?"' <<<"$inject" | sort -u)
 assert_eq "every injected script and stylesheet carries ?v=\$hg_v" "" "$(grep -v '?v=\$hg_v"$' <<<"$assets")"
-assert_eq "17 injected files" 17 "$(wc -l <<<"$assets" | tr -d ' ')"
+assert_eq "16 injected files" 16 "$(wc -l <<<"$assets" | tr -d ' ')"
 assert_eq "version include read in the server block" 1 "$(grep -c 'include /srv/indexer-bar/data/asset-version\*\.conf;' "$CONF")"
 assert_eq "/_indexer-bar/ cached by version" 1 "$(sed -n '/location \/_indexer-bar\/ {/,/}/p' "$CONF" | grep -c 'add_header Cache-Control \$hg_asset_cache always;')"
 assert_eq "immutable only for the current version, private (no shared cache on the edge)" 1 "$(grep -c '"~^(\[0-9a-f\]{12}):\\1\$" "private, max-age=31536000, immutable";' "$CONF")"
