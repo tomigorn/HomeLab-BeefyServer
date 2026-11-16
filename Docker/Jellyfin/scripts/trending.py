@@ -902,8 +902,9 @@ def sync(io, paths, now, dry_run, log):
         n_order = 0
     all_placed = {f: pl for k in KINDS for f, pl in placed[k].items() if f in by_kind[k]}
     index_changed, n_index = write_index(paths, all_placed, plan.placeholders, now, dry_run)
+    own_ids = sorted(state["sets"][spec["key"]] for spec, _ in plan.collections if spec.get("user") and spec["key"] in state.get("sets", {}))
     hidden_ids = set(index_items(plan.placeholders, all_placed)) | {pl.item["Id"] for pl in all_placed.values()}
-    hide_changed = upsert_hide(io, hide_script({"lib": [lib_ids[k] for k in KINDS], "sets": set_ids, "items": sorted(hidden_ids)}), dry_run)
+    hide_changed = upsert_hide(io, hide_script({"lib": [lib_ids[k] for k in KINDS], "sets": set_ids, "user": own_ids, "items": sorted(hidden_ids)}), dry_run)
 
     for k in KINDS:
         gone = remove_stale(paths.dir(k), set(by_kind[k]), dry_run, log)

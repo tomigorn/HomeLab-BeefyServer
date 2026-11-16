@@ -510,6 +510,7 @@ class SyncTest(Base):
         hide = json.loads(entry_["Script"][len("window.HssTrendingHide = "):].rstrip().rstrip(";"))
         self.assertEqual(hide["lib"], [LIB, SHOWS])
         self.assertEqual(sorted(hide["sets"]), sorted(s["Id"] for s in self.io.sets.values() if tm.TAG in s["Tags"]))
+        self.assertEqual(hide["user"], [])
         self.assertIn(self.item("Alpha")["Id"], hide["items"])
         self.assertNotIn("real9", hide["items"])
         self.assertTrue(any(s["Name"] == "Other" for s in self.io.injector["CustomJavaScripts"]))
@@ -1037,6 +1038,19 @@ class UserCollections(Base):
 
     def user_set(self, name):
         return next((s for s in self.io.sets.values() if s["Name"] == name), None)
+
+    def hide(self):
+        entry_ = next(s for s in self.io.injector["CustomJavaScripts"] if s["Name"] == "Trending hidden")
+        return json.loads(entry_["Script"][len("window.HssTrendingHide = "):].rstrip().rstrip(";"))
+
+    def test_hide_entry_names_the_own_list_sets_the_web_shows(self):
+        self.with_user({"id": "user-pat", "kind": "mixed", "type": "user", "name": {"en": "Pat produced"}, "owner": "jane", "query": "q", "items": [entry(1, 1, "Alpha")]})
+        self.assertEqual(self.run_sync(), 0, self.out)
+        own = self.user_set("Pat produced")["Id"]
+        hide = self.hide()
+        self.assertEqual(hide["user"], [own])
+        self.assertIn(own, hide["sets"])
+        self.assertEqual(len(hide["sets"]), len([s for s in self.io.sets.values() if tm.TAG in s["Tags"]]))
 
     def test_user_list_collection_in_list_order_with_overview_and_both_tags(self):
         self.with_user({"id": "user-pat", "kind": "mixed", "type": "user", "name": {"en": "Pat produced"}, "owner": "jane", "query": "producer:Pat Example",

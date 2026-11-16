@@ -513,12 +513,14 @@
     return box;
   }
 
-  // The list collections stay visible; on a list's own page its placeholders show too (like the TV), everywhere else they are hidden.
+  // The automatic lists stay hidden (the web has the Popular pages), the household's own lists (hide.user) show; on an own list's page its placeholders show too (like the TV).
   function hideTrending(doc, hide) {
     if (!hide) return 0;
-    var onList = [].concat(hide.sets || []).indexOf(routeId(doc)) >= 0;
+    var own = {};
+    [].concat(hide.user || []).forEach(function (i) { own[i] = true; });
+    var onList = !!own[routeId(doc)];
     var ids = {};
-    [].concat(hide.lib || [], onList ? [] : hide.items || []).forEach(function (i) { ids[i] = true; });
+    [].concat(hide.lib || [], [].concat(hide.sets || []).filter(function (i) { return !own[i]; }), onList ? [] : hide.items || []).forEach(function (i) { ids[i] = true; });
     var n = 0;
     var els = doc.querySelectorAll("[data-id]");
     for (var i = 0; i < els.length; i++) {
