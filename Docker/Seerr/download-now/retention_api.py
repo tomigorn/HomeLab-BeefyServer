@@ -222,7 +222,7 @@ def title_state(dn, deps, me, kind, tmdb, media, today, lookup=True):
     ov = True if True in found else False if found else None
     out = {"key": k, "entryKey": ek, "known": isinstance(entry, dict), "deleteEnabled": bool(doc.get("deleteEnabled")), "updated": doc.get("updated")}
     if out["known"]:
-        out.update({f: entry.get(f) for f in ("imported", "ssdUntil", "hddFrom", "tier", "reasons", "default")})
+        out.update({f: entry.get(f) for f in ("imported", "lastPlayed", "anchor", "anchorBy", "ssdUntil", "hddFrom", "tier", "reasons", "default")})
         out.update(card(entry, ov, today, enabled_on(doc)))
     else:
         why = lookup_default(dn, deps, kind, tmdb, media, today, me.get("id")) if lookup else rr.reasons(kind, year_of(media, kind), today.year)

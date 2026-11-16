@@ -29,7 +29,7 @@ USERS = {"admin": ADMIN, "jane": JANE, "joe": JOE, "viewer": VIEWER}
 
 DOC = {"updated": "2026-12-20T10:00:00+01:00", "deleteEnabled": False, "enabledOn": None, "rules": {"deleteDays": 90, "soonDays": 7},
        "titles": {
-           "movie/10": {"t": "New Film", "y": 2025, "kind": "movie", "imported": "2026-10-01", "ssdUntil": "2026-10-31", "hddFrom": "2026-10-31", "due": "2026-12-30", "default": False, "reasons": [], "protected": False, "tier": "hdd", "size": 2**34, "postponed": None},
+           "movie/10": {"t": "New Film", "y": 2025, "kind": "movie", "imported": "2026-09-01", "lastPlayed": "2026-10-01", "anchor": "2026-10-01", "anchorBy": "play", "ssdUntil": "2026-10-31", "hddFrom": "2026-10-31", "due": "2026-12-30", "default": False, "reasons": [], "protected": False, "tier": "hdd", "size": 2**34, "postponed": None},
            "movie/11": {"t": "Old Film", "y": 1980, "kind": "movie", "imported": "2026-10-01", "ssdUntil": "2026-10-31", "hddFrom": "2026-10-31", "due": "2026-12-30", "default": True, "reasons": ["old"], "protected": False, "tier": "hdd", "size": 2**33, "postponed": None},
            "movie/653": {"t": "Nosferatu", "y": 1922, "kind": "movie", "imported": "2026-10-01", "ssdUntil": "2026-10-31", "hddFrom": "2026-10-31", "due": "2026-12-30", "default": True, "reasons": ["old"], "protected": True, "tier": "ssd", "size": 2**30, "postponed": None},
            "tv/20": {"t": "New Show", "y": 2025, "kind": "tv", "imported": "2026-12-01", "ssdUntil": "2026-12-31", "hddFrom": "2026-12-31", "due": "2027-03-01", "default": False, "reasons": [], "protected": False, "tier": "ssd", "size": 2**35, "postponed": "in-progress", "tvdb": 4020},
@@ -116,6 +116,10 @@ class Title(Base):
         self.assertEqual(code, 200)
         self.assertEqual((r["known"], r["state"], r["deleteOn"], r["soon"], r["ssdUntil"], r["tier"], r["canKeep"], r["canUnkeep"], r["deleteEnabled"]),
                          (True, "temporary", "2026-12-30", False, "2026-10-31", "hdd", True, True, False))
+
+    def test_clock_from_the_last_play_is_shown(self):
+        r = self.w.get("jane", "title?type=movie&tmdb=10")[1]
+        self.assertEqual((r["imported"], r["lastPlayed"], r["anchor"], r["anchorBy"]), ("2026-09-01", "2026-10-01", "2026-10-01", "play"))
 
     def test_unkeep_needs_requester_or_admin(self):
         self.assertFalse(self.w.get("jane", "title?type=movie&tmdb=11")[1]["canUnkeep"])

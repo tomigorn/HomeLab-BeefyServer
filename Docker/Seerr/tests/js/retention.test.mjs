@@ -172,3 +172,20 @@ test("admin list on the Collections page, with counts and observe note; none for
   await settle();
   assert.equal(w.document.querySelector("[data-hg-keep-list]"), null);
 });
+
+test("title page: the date says what started the clock, the hint shows the last play", async () => {
+  let w = load("retention.js", FACTS, fakeXHR({ [T("type=movie&tmdb=1")]: { ...TEMP, lastPlayed: "2026-11-17", anchor: "2026-11-17", anchorBy: "play" } }, []));
+  await settle();
+  const pill = w.document.querySelector("[data-hg-keep-pill]");
+  assert.match(pill.textContent, /🗑 Leaves on 15 Feb 2027 \(3 months after the last play\)/);
+  assert.match(hintOf(w, pill).text, /Last played: 17 Nov/);
+  w = load("retention.js", FACTS, fakeXHR({ [T("type=movie&tmdb=1")]: { ...TEMP, anchorBy: "import" } }, []));
+  await settle();
+  assert.match(w.document.querySelector("[data-hg-keep-pill]").textContent, /\(3 months after the download\)/);
+});
+
+test("dialog texts name the reset by watching", async () => {
+  const w = load("retention.js", modal("Request Movie"), fakeXHR({ [D("type=movie&tmdb=1")]: TEMP }, []));
+  await settle();
+  assert.match(w.document.querySelector("#hg-keep-forever").textContent, /3 months after the download or the last play/);
+});

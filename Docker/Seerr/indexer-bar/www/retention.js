@@ -13,10 +13,10 @@
   var TEXT = {
     en: {
       box: "♾️ Keep forever", loading: "…",
-      boxKeep: "Kept on the server for good ({why}). Untick to let it leave 90 days after the download.",
-      boxTemp: "Leaves the server 90 days after the download (1 month SSD, 2 months HDD). Tick to keep it for good.",
-      boxUnknown: "Tick to keep it for good. Otherwise it leaves 90 days after the download, unless it is old, niche or top-rated.",
-      fact: "On the server", kept: "♾️ Kept forever", leaves: "🗑 Leaves on {d}", soon: "Leaving soon · {d}", short: "🗑 {d}", soonShort: "Leaving soon",
+      boxKeep: "Kept on the server for good ({why}). Untick to let it leave 3 months after the download or the last play.",
+      boxTemp: "Leaves the server 3 months after the download or the last play (watching resets the clock). Tick to keep it for good.",
+      boxUnknown: "Tick to keep it for good. Otherwise it leaves 3 months after the download or the last play, unless it is old, niche or top-rated.",
+      fact: "On the server", kept: "♾️ Kept forever", leaves: "🗑 Leaves on {d}", afterPlay: "(3 months after the last play)", afterImport: "(3 months after the download)", played: "Last played:", soon: "Leaving soon · {d}", short: "🗑 {d}", soonShort: "Leaving soon",
       keep: "♾️ Keep forever", unkeep: "Let it leave", busy: "…", failed: "❌ Not saved",
       why: { old: "released 12 or more years ago", niche: "niche", goated: "top-rated on IMDb", override: "someone chose it", protected: "the permanent test film" },
       hKept: "♾️ Kept forever", hTemp: "🗑 Temporary", imported: "Downloaded:", ssd: "SSD until:", hdd: "HDD from:", del: "Deleted on:", because: "Kept because:",
@@ -31,10 +31,10 @@
     },
     de: {
       box: "♾️ Für immer behalten", loading: "…",
-      boxKeep: "Bleibt für immer auf dem Server ({why}). Abwählen, dann geht es 90 Tage nach dem Download.",
-      boxTemp: "Geht 90 Tage nach dem Download vom Server (1 Monat SSD, 2 Monate HDD). Anwählen, um es für immer zu behalten.",
-      boxUnknown: "Anwählen, um es für immer zu behalten. Sonst geht es 90 Tage nach dem Download, ausser es ist alt, eine Nische oder top bewertet.",
-      fact: "Auf dem Server", kept: "♾️ Für immer behalten", leaves: "🗑 Geht am {d}", soon: "Geht bald · {d}", short: "🗑 {d}", soonShort: "Geht bald",
+      boxKeep: "Bleibt für immer auf dem Server ({why}). Abwählen, dann geht es 3 Monate nach dem Download oder dem letzten Abspielen.",
+      boxTemp: "Geht 3 Monate nach dem Download oder dem letzten Abspielen vom Server (Schauen setzt die Frist zurück). Anwählen, um es für immer zu behalten.",
+      boxUnknown: "Anwählen, um es für immer zu behalten. Sonst geht es 3 Monate nach dem Download oder dem letzten Abspielen, ausser es ist alt, eine Nische oder top bewertet.",
+      fact: "Auf dem Server", kept: "♾️ Für immer behalten", leaves: "🗑 Geht am {d}", afterPlay: "(3 Monate nach dem letzten Abspielen)", afterImport: "(3 Monate nach dem Download)", played: "Zuletzt geschaut:", soon: "Geht bald · {d}", short: "🗑 {d}", soonShort: "Geht bald",
       keep: "♾️ Für immer behalten", unkeep: "Gehen lassen", busy: "…", failed: "❌ Nicht gespeichert",
       why: { old: "vor 12 oder mehr Jahren erschienen", niche: "Nische", goated: "top bewertet auf IMDb", override: "so gewählt", protected: "der feste Testfilm" },
       hKept: "♾️ Für immer behalten", hTemp: "🗑 Vorübergehend", imported: "Heruntergeladen:", ssd: "SSD bis:", hdd: "HDD ab:", del: "Gelöscht am:", because: "Behalten, weil:",
@@ -222,6 +222,7 @@
   function hintRows(st, l, observe) {
     var t = TEXT[l], rows = [];
     if (st.imported) rows.push([t.imported, day(st.imported, l)]);
+    if (st.lastPlayed) rows.push([t.played, day(st.lastPlayed, l)]);
     if (st.ssdUntil) rows.push([t.ssd, day(st.ssdUntil, l)]);
     if (st.hddFrom) rows.push([t.hdd, day(st.hddFrom, l)]);
     if (st.keep) rows.push([t.because, whyText(st, l)]);
@@ -248,6 +249,7 @@
     var short = kind === "keep" ? "♾️" : kind === "soon" ? t.soonShort : fill(t.short, { d: day(st.deleteOn, l) });
     var p = el(doc, "span", { "class": "hg-keep-pill hg-keep-" + kind, tabindex: "0" });
     p.setAttribute(attr, kind);
+    if (attr === "data-hg-keep-pill" && kind !== "keep" && st.anchorBy) long += " " + (st.anchorBy === "play" ? t.afterPlay : t.afterImport);
     p.appendChild(el(doc, "span", { "class": "hg-keep-long" }, long));
     if (attr === "data-hg-keep-card") p.appendChild(el(doc, "span", { "class": "hg-keep-short", "aria-hidden": "true" }, short));
     return p;
