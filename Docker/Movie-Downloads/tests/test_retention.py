@@ -109,6 +109,23 @@ class Collect(unittest.TestCase):
         self.assertNotIn("tv/4000", k)
         self.assertEqual((k["tv/3999"].tvdb, k["tv/3999"].unmapped), (9014, False))
 
+    def test_a_row_whose_sonarr_id_and_tvdb_id_disagree_maps_nothing(self):
+        stale = [{"mediaType": "tv", "tmdbId": 5000, "tvdbId": 9015, "externalServiceId": 11}]
+        k = keys(library(stale))
+        self.assertNotIn("tv/5000", k)
+        self.assertTrue(k["tv/2001"].unmapped and k["tv/2005"].unmapped)
+
+    def test_ids_claimed_twice_map_nothing(self):
+        twice_tvdb = [{"mediaType": "tv", "tmdbId": 2001, "tvdbId": 9011, "externalServiceId": None}, {"mediaType": "tv", "tmdbId": 7001, "tvdbId": 9011, "externalServiceId": None}]
+        self.assertTrue(keys(library(twice_tvdb))["tv/2001"].unmapped)
+        twice_sonarr = [{"mediaType": "tv", "tmdbId": 2001, "tvdbId": None, "externalServiceId": 11}, {"mediaType": "tv", "tmdbId": 7001, "tvdbId": None, "externalServiceId": 11}]
+        self.assertTrue(keys(library(twice_sonarr))["tv/2001"].unmapped)
+
+    def test_two_series_on_one_key_are_both_unmapped(self):
+        same = [{"mediaType": "tv", "tmdbId": 2001, "tvdbId": 9011, "externalServiceId": 11}, {"mediaType": "tv", "tmdbId": 2001, "tvdbId": 9014, "externalServiceId": 14}]
+        lib = library(same)
+        self.assertEqual(sorted((t.key, t.unmapped) for t in lib.titles if t.kind == "tv"), [("tv/2001", True), ("tv/2005", True), ("tv/4000", True)])
+
     def test_series_without_seerr_row_is_unmapped(self):
         k = keys(library())
         self.assertTrue(k["tv/2005"].unmapped)
@@ -150,7 +167,9 @@ class Classify(unittest.TestCase):
         e = self.run_it()
         self.assertTrue(rt.override_for({"tvdb/9014": True}, "tv/3999", e["tv/3999"]))
         self.assertIsNone(rt.override_for({}, "tv/3999", e["tv/3999"]))
-        self.assertFalse(rt.override_for({"tv/3999": False, "tvdb/9014": True}, "tv/3999", e["tv/3999"]))
+        self.assertTrue(rt.override_for({"tv/3999": False, "tvdb/9014": True}, "tv/3999", e["tv/3999"]))
+        self.assertTrue(rt.override_for({"tv/3999": True, "tvdb/9014": False}, "tv/3999", e["tv/3999"]))
+        self.assertFalse(rt.override_for({"tv/3999": False, "tvdb/9014": False}, "tv/3999", e["tv/3999"]))
 
     def test_tier_and_bytes_on_the_hdd(self):
         hot = {"media/movies/New Film (2025)/New Film (2025).mkv", "media/tv/New Show (2025)/Season 02/New Show S02E01.mkv"}
@@ -284,6 +303,29 @@ class KeepStore(unittest.TestCase):
         self.p.write_text(json.dumps({"titles": {"movie/1": {"keep": True}, "tv/2": {"keep": False, "tvdb": 92}, "bad": {"keep": True}, "movie/3": {"keep": "yes"}}}))
         self.assertEqual(rt.read_overrides(self.p), ({"movie/1": True, "tv/2": False, "tvdb/92": False}, None))
 
+    def test_conflicting_records_for_one_series_keep_wins(self):
+        self.p.write_text(json.dumps({"titles": {"tv/2": {"keep": False, "tvdb": 92}, "tv/5": {"keep": True, "tvdb": 92}}}))
+        self.assertEqual(rt.read_overrides(self.p)[0]["tvdb/92"], True)
+
+    def test_permission_denied_is_a_problem_not_a_missing_store(self):
+        locked = pathlib.Path(self.tmp.name, "locked")
+        locked.mkdir()
+        (locked / "keep.json").write_text(json.dumps({"titles": {"movie/1": {"keep": True}}}))
+        locked.chmod(0)
+        try:
+            out, problem = rt.read_overrides(locked / "keep.json")
+        finally:
+            locked.chmod(0o755)
+        self.assertEqual(out, {})
+        self.assertIn("unreadable", problem)
+
+    def test_lost_choices_block_deletion(self):
+        self.assertIn("3", rt.lost_choices(0, 3))
+        self.assertIsNotNone(rt.lost_choices(2, 3))
+        for now, last in ((3, 3), (4, 3), (0, 0), (5, None)):
+            self.assertIsNone(rt.lost_choices(now, last), (now, last))
+        self.assertEqual(rt.keep_records({"movie/1": True, "tv/2": False, "tvdb/92": False}), 2)
+
     def test_no_store_yet_is_fine(self):
         self.assertEqual(rt.read_overrides(self.p), ({}, None))
 
@@ -310,6 +352,22 @@ class Soon(unittest.TestCase):
         e["movie/3"]["postponed"] = None
         s2 = rt.update_soon(e, {}, TODAY, None, {"movie/3": {"since": "2026-12-01", "p": True}})
         self.assertEqual(s2["movie/3"], {"since": "2026-12-20", "p": False})
+
+
+class Bookkeeping(unittest.TestCase):
+    def test_switch_on_state_cleared_whenever_the_switch_is_off(self):
+        day = datetime.date(2027, 2, 1)
+        self.assertEqual(rt.bookkeeping({"firstOn": "2026-12-01", "date": "2027-01-01", "hddUsed": 5, "spaceDeleted": 1}, rt.Switch(False, None), day), {})
+        self.assertEqual(rt.bookkeeping({}, rt.Switch(True, day), day), {"firstOn": "2027-02-01"})
+        self.assertEqual(rt.bookkeeping({"firstOn": "2027-01-30"}, rt.Switch(True, day), day), {"firstOn": "2027-01-30"})
+
+    def test_clock_state_is_a_problem_unless_synced(self):
+        self.assertEqual(rt.clock_problems("yes"), [])
+        self.assertEqual(rt.clock_problems("no"), ["the clock is not NTP-synced"])
+        self.assertEqual(rt.clock_problems(None), ["NTP state unreadable"])
+        self.assertEqual(rt.clock_state(lambda: "yes\n"), "yes")
+        self.assertIsNone(rt.clock_state(lambda: (_ for _ in ()).throw(OSError())))
+        self.assertIsNone(rt.clock_state(lambda: ""))
 
 
 class Fake:
@@ -396,6 +454,22 @@ class Delete(unittest.TestCase):
         self.assertEqual(self.deletes(), [])
         self.assertFalse(any(c[0] == "sonarr" for c in self.arr.calls))
         self.assertTrue(any("stopped" in l for l in self.logs))
+
+    def test_the_0440_cutoff_is_checked_before_every_title(self):
+        times = iter([NIGHT, NIGHT, NIGHT.replace(minute=41)] + [NIGHT.replace(minute=41)] * 10)
+        self.assertEqual(self.run_it(clock=lambda: next(times)), (1, 0))
+        self.assertTrue(any("04:40" in l for l in self.logs))
+        self.assertEqual(self.run_it(clock=lambda: NIGHT.replace(minute=41)), (0, 0))
+
+    def test_series_without_tvdb_id_is_skipped_before_counting(self):
+        keyed = keys(rt.Library(self.titles, []))
+        keyed["tv/2001"].tvdb = None
+        self.assertEqual(self.run_it(cap=1, overrides={"movie/1001": True}), (1, 0))
+        self.assertEqual([c[2] for c in self.arr.calls if c[1] == "PUT"], ["/series/14"])
+
+    def test_leaving_soon_days_count_only_from_switch_on(self):
+        soon = {k: {"since": "2027-01-01", "p": False} for k in night().soon}
+        self.assertEqual(self.run_it(n=night(soon=soon, first_on=datetime.date(2027, 2, 5)), switch=rt.Switch(True, datetime.date(2027, 2, 5)))[0], 0)
 
     def test_per_night_cap(self):
         self.assertEqual(self.run_it(cap=1), (1, 0))

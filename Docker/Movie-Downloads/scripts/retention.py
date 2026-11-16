@@ -125,27 +125,47 @@ def rel_of(path, prefix):
     return path[len(prefix):].strip("/") if isinstance(path, str) and path.startswith(prefix) else None
 
 
-def seerr_tv_map(rows):
-    """{("sonarr", id) | ("tvdb", id): Seerr TMDB id} from Seerr's media rows (as manual.py: externalServiceId, else tvdbId)."""
-    out = {}
+def _int(v):
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else None
+
+
+def map_series(series, rows):
+    """{Sonarr series id: Seerr TMDB id} through Seerr's media rows (as manual.py: externalServiceId, else tvdbId). A row whose Sonarr id points to a series with another TVDB id is ignored; a Sonarr or TVDB id claimed by more than one row, or a TMDB id reached by more than one series, maps nothing (those series stay unmapped = protected)."""
+    tvdb_of = {x["id"]: _int(x.get("tvdbId")) for x in series if _int(x.get("id"))}
+    good = []
     for r in rows or []:
-        if not isinstance(r, dict) or r.get("mediaType") != "tv" or not isinstance(r.get("tmdbId"), int) or r["tmdbId"] <= 0:
+        if not isinstance(r, dict) or r.get("mediaType") != "tv" or not _int(r.get("tmdbId")):
             continue
-        if isinstance(r.get("externalServiceId"), int):
-            out.setdefault(("sonarr", r["externalServiceId"]), r["tmdbId"])
-        if isinstance(r.get("tvdbId"), int):
-            out.setdefault(("tvdb", r["tvdbId"]), r["tmdbId"])
-    return out
+        svc, tvdb = _int(r.get("externalServiceId")), _int(r.get("tvdbId"))
+        if svc in tvdb_of and tvdb and tvdb_of[svc] and tvdb_of[svc] != tvdb:
+            continue
+        good.append((svc, tvdb, r["tmdbId"]))
+    by_svc, by_tvdb = {}, {}
+    for svc, tvdb, tmdb in good:
+        if svc:
+            by_svc.setdefault(svc, []).append(tmdb)
+        if tvdb:
+            by_tvdb.setdefault(tvdb, []).append(tmdb)
+    out = {}
+    for sid, tvdb in tvdb_of.items():
+        hits = by_svc.get(sid) or (by_tvdb.get(tvdb) if tvdb else None) or []
+        if len(hits) == 1:
+            out[sid] = hits[0]
+    claimed = {}
+    for sid, tmdb in out.items():
+        claimed.setdefault(tmdb, []).append(sid)
+    return {sid: tmdb for sid, tmdb in out.items() if len(claimed[tmdb]) == 1}
 
 
 def collect(apis, seerr_rows):
     titles, skipped = [], []
-    tv = seerr_tv_map(seerr_rows)
     for app, kind in (("radarr", "movie"), ("sonarr", "tv")):
         call = getattr(apis, app)
         tags = {t["id"]: t["label"] for t in call("/tag")}
         profiles = {p["id"]: p["name"] for p in call("/qualityprofile")}
-        for x in call("/movie" if kind == "movie" else "/series"):
+        items = call("/movie" if kind == "movie" else "/series")
+        tv = map_series(items, seerr_rows) if kind == "tv" else {}
+        for x in items:
             base = rel_of(x.get("path"), "/data/")
             if not base:
                 continue
@@ -163,8 +183,8 @@ def collect(apis, seerr_rows):
             else:
                 if not (x.get("statistics") or {}).get("episodeFileCount"):
                     continue
-                tvdb = x.get("tvdbId") if isinstance(x.get("tvdbId"), int) and x.get("tvdbId") > 0 else None
-                seerr = tv.get(("sonarr", x["id"])) or (tv.get(("tvdb", tvdb)) if tvdb else None)
+                tvdb = _int(x.get("tvdbId"))
+                seerr = tv.get(x["id"])
                 tmdb = seerr or x.get("tmdbId")
                 if not tmdb:
                     skipped.append(x.get("title", ""))
@@ -183,12 +203,13 @@ def collect(apis, seerr_rows):
                           seasons=seasons, files=[e["id"] for e in eps if e.get("id")], tmdb=tmdb, tvdb=tvdb, unmapped=not seerr, added_at=max(dates))
             titles.append(t)
     mapped = {t.key for t in titles if not t.unmapped}
-    keep = []
+    keep, seen = [], set()
     for t in titles:
-        if t.unmapped and t.key in mapped:
+        if (t.unmapped and t.key in mapped) or t.key in seen:
             skipped.append(t.title)
         else:
             keep.append(t)
+            seen.add(t.key)
     return Library(keep, skipped)
 
 
@@ -299,10 +320,10 @@ def hdd_bytes(t, hot):
 
 
 def override_for(overrides, key, entry):
-    if key in overrides:
-        return overrides[key]
+    """A choice for the key or the series' TVDB id; records that disagree: keep wins."""
     tvdb = (entry or {}).get("tvdb")
-    return overrides.get(f"tvdb/{tvdb}") if tvdb else None
+    found = [overrides[k] for k in (key, f"tvdb/{tvdb}" if tvdb else None) if k in overrides]
+    return True if True in found else False if found else None
 
 
 def classify(titles, overrides, collections, progress, hot, hdd, today, pending=0):
@@ -311,7 +332,7 @@ def classify(titles, overrides, collections, progress, hot, hdd, today, pending=
     for t in titles:
         why = rr.reasons(t.kind, t.year, today.year, t.niche_votes, t.rating, t.votes, t.tags, t.profile)
         e = {"t": t.title, "y": t.year, "kind": t.kind, **rr.schedule(t.imported), "default": bool(why), "reasons": why,
-             "protected": rr.protected(t.key, t.tags) or t.unmapped, "tier": tier(t, hot), "size": t.size, "hddBytes": hdd_bytes(t, hot),
+             "protected": rr.protected(t.key, t.tags) or t.unmapped or (t.kind == "tv" and not t.tvdb), "tier": tier(t, hot), "size": t.size, "hddBytes": hdd_bytes(t, hot),
              "postponed": "in-progress" if t.key in progress else "collection" if t.key in collections else None}
         if t.kind == "tv":
             e["tvdb"] = t.tvdb
@@ -371,8 +392,18 @@ def read_json(path):
 def read_overrides(path):
     """({key | tvdb/<id>: keep}, problem or None). A missing store is fine unless its .bak exists (then it went missing)."""
     p = pathlib.Path(path)
-    if not p.exists():
-        return {}, ("keep.json missing while keep.json.bak exists" if p.with_name(p.name + ".bak").exists() else None)
+    try:
+        os.stat(p)
+    except FileNotFoundError:
+        try:
+            os.stat(p.with_name(p.name + ".bak"))
+        except FileNotFoundError:
+            return {}, None
+        except OSError as e:
+            return {}, f"keep.json.bak unreadable ({type(e).__name__})"
+        return {}, "keep.json missing while keep.json.bak exists"
+    except OSError as e:
+        return {}, f"keep.json unreadable ({type(e).__name__})"
     try:
         data = read_json(p)
     except (OSError, ValueError) as e:
@@ -384,9 +415,42 @@ def read_overrides(path):
         if not rr.parse_key(k) or not isinstance(v, dict) or not isinstance(v.get("keep"), bool):
             continue
         out[k] = v["keep"]
-        if k.startswith("tv/") and isinstance(v.get("tvdb"), int) and v["tvdb"] > 0:
-            out.setdefault(f"tvdb/{v['tvdb']}", v["keep"])
+        if k.startswith("tv/") and _int(v.get("tvdb")):
+            alias = f"tvdb/{v['tvdb']}"
+            out[alias] = out.get(alias, False) or v["keep"]
     return out, None
+
+
+def keep_records(overrides):
+    return sum(not k.startswith("tvdb/") for k in overrides)
+
+
+def lost_choices(count, last):
+    """Choices are never removed, only switched: fewer records than last seen = the store was lost or replaced."""
+    if isinstance(last, int) and count < last:
+        return f"keep.json has {count} choices, {last} were seen before"
+    return None
+
+
+def bookkeeping(last, switch, today):
+    """The switch-on state (first day seen on, last delete run): cleared whenever a run sees the switch off."""
+    if not switch.on:
+        return {}
+    if isinstance(last.get("firstOn"), str):
+        return last
+    return {**last, "firstOn": today.isoformat()}
+
+
+def clock_state(query):
+    try:
+        out = (query() or "").strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out if out in ("yes", "no") else None
+
+
+def clock_problems(state):
+    return [] if state == "yes" else ["the clock is not NTP-synced"] if state == "no" else ["NTP state unreadable"]
 
 
 def read_collections(path):
@@ -499,9 +563,10 @@ def refusal(switch, now, night):
     return None
 
 
-def delete_due(titles, entries, overrides, now, switch, arr, log, night, cap=DELETE_CAP, space_cap=SPACE_CAP, gone_file=None):
-    """Delete the media files of temporary titles whose date has come and that showed "Leaving soon" for 7 days. Returns (attempts, space-rule attempts)."""
-    why = refusal(switch, now, night)
+def delete_due(titles, entries, overrides, now, switch, arr, log, night, cap=DELETE_CAP, space_cap=SPACE_CAP, gone_file=None, clock=None):
+    """Delete the media files of temporary titles whose date has come and that showed "Leaving soon" for 7 days since switch-on. Returns (attempts, space-rule attempts). clock: the time now (re-read before every title)."""
+    clock = clock or (lambda: now)
+    why = refusal(switch, clock(), night)
     if why:
         log(f"retention: {why} - nothing deleted")
         return 0, 0
@@ -510,15 +575,16 @@ def delete_due(titles, entries, overrides, now, switch, arr, log, night, cap=DEL
     if not space_ok:
         log("retention: the HDD did not drop after the last night's space deletions (recycle bin?) - no space-rule deletions tonight")
     soon_limit = (today - datetime.timedelta(days=SOON_DAYS_BEFORE_DELETE)).isoformat()
+    on_since = night.first_on.isoformat() if night.first_on else ""
     for t in sorted(titles, key=lambda t: (t.imported, t.key)):
         e = entries.get(t.key)
-        if not e or done >= cap or e.get("protected") or e.get("unmapped"):
+        if not e or done >= cap or e.get("protected") or e.get("unmapped") or (t.kind == "tv" and not t.tvdb):
             continue
         st = rr.effective(e, override_for(overrides, t.key, e), today, switch.since)
         if st["keep"] or not st["deleteOn"] or st["deleteOn"] > today.isoformat():
             continue
         s = night.soon.get(t.key)
-        if not isinstance(s, dict) or not isinstance(s.get("since"), str) or s["since"] > soon_limit:
+        if not isinstance(s, dict) or not isinstance(s.get("since"), str) or max(s["since"], on_since) > soon_limit:
             continue
         if t.key in night.busy or (t.added_at and t.added_at > now - datetime.timedelta(hours=FRESH_HOURS)):
             log(f"retention: {t.key} ({t.title}) skipped: download or import in progress")
@@ -526,6 +592,9 @@ def delete_due(titles, entries, overrides, now, switch, arr, log, night, cap=DEL
         is_space = st["why"] == "space"
         if is_space and (not space_ok or space >= space_cap):
             continue
+        if not in_night(clock()):
+            log("retention: 04:40 reached - run stopped, the rest waits for the next night")
+            break
         done += 1
         space += is_space
         call = arr("radarr" if t.kind == "movie" else "sonarr")
@@ -595,11 +664,8 @@ def queue_keys(apis, titles):
     return {t.key for t in titles if ("radarr" if t.kind == "movie" else "sonarr", t.id) in ids}
 
 
-def clock_synced():
-    try:
-        return subprocess.run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"], capture_output=True, text=True, timeout=10).stdout.strip() == "yes"
-    except (OSError, subprocess.SubprocessError):
-        return False
+def timedatectl():
+    return subprocess.run(["timedatectl", "show", "-p", "NTPSynchronized", "--value"], capture_output=True, text=True, timeout=10).stdout
 
 
 def write_atomic(path, data, mode=0o644):
@@ -674,12 +740,18 @@ def main(argv=None):
         problems.append(f"Jellyfin unreadable ({type(e).__name__})")
     hot = hot_videos([pathlib.Path(h) for h in env.get("HOT", "/srv/.disks/ssd-hot /srv/.disks/ssd-hot2").split()])
     overrides, keep_problem = read_overrides(env.get("RT_KEEP", "/srv/appdata/seerr-retention/keep.json"))
-    if keep_problem:
-        problems.append(keep_problem)
+    state = pathlib.Path(env.get("RT_STATE", pathlib.Path.home() / ".local" / "state" / "movie-downloads"))
+    count_file = state / "retention-keep-count.json"
+    seen = read_state(count_file).get("records")
+    lost = lost_choices(keep_records(overrides), seen) if not keep_problem else None
+    for p in (keep_problem, lost):
+        if p:
+            problems.append(p)
+    clock = clock_state(timedatectl)
+    problems += clock_problems(clock)
     collections, ok = read_collections(env.get("RT_COLLECTIONS", "/srv/appdata/seerr-collections/lists.json"))
     if not ok:
         problems.append("Collections store unreadable")
-    state = pathlib.Path(env.get("RT_STATE", pathlib.Path.home() / ".local" / "state" / "movie-downloads"))
     gone = read_gone(state / "retention-gone.json")
     entries = classify(lib.titles, overrides, collections, progress, hot, hdd, now.date(), recycle_pending(gone, now.date()))
     promote = promotions(lib.titles, plays, hot)
@@ -689,7 +761,7 @@ def main(argv=None):
         print("\n".join(plan_lines(doc, overrides, now.date())))
         return 0
     sm = doc["summary"]
-    say(f"retention: {len(entries)} titles, {sm['keep']} kept forever, {sm['temporary']} temporary, next would-delete {sm['next']}, HDD {doc['hdd']['usedPct']} %{'' if switch.on else ', observe mode'}")
+    say(f"retention: {len(entries)} titles, {sm['keep']} kept forever, {sm['temporary']} temporary, next would-delete {sm['next']}, HDD {doc['hdd']['usedPct']} %, clock NTP-synced: {clock or 'unknown'}{'' if switch.on else ', observe mode'}")
     for p in problems:
         say(f"retention: WARNING {p} - deletion would be refused")
     for p in promote:
@@ -702,32 +774,31 @@ def main(argv=None):
     if a.dry_run:
         return 0
     write_atomic(env.get("RT_OUT", "/srv/appdata/indexer-bar/retention.json"), doc)
+    if not keep_problem and not lost:
+        write_atomic(count_file, {"records": keep_records(overrides)})
     soon = update_soon(entries, overrides, now.date(), switch.since, read_state(state / "retention-soon.json"))
     write_atomic(state / "retention-soon.json", soon)
     night_file = state / "retention-night.json"
-    last = read_state(night_file)
-    first_on = None
-    if switch.on:
-        try:
-            first_on = datetime.date.fromisoformat(last.get("firstOn") or "")
-        except ValueError:
-            first_on = now.date()
-            write_atomic(night_file, {**last, "firstOn": first_on.isoformat()})
-            last = read_state(night_file)
+    before = read_state(night_file)
+    last = bookkeeping(before, switch, now.date())
+    if last != before:
+        write_atomic(night_file, last)
+    first_on = datetime.date.fromisoformat(last["firstOn"]) if last.get("firstOn") else None
     if a.apply:
         try:
             busy = queue_keys(apis, lib.titles)
         except (OSError, ValueError) as e:
             busy = set()
             problems.append(f"Radarr/Sonarr queue unreadable ({type(e).__name__})")
-        night = Night(problems, soon, busy, hdd[1], last, clock_synced(), first_on)
+        night = Night(problems, soon, busy, hdd[1], last, clock == "yes", first_on)
         arr = {"radarr": apis.radarr, "sonarr": apis.sonarr}
         with media_lock() as locked:
             if not locked:
                 say("retention: the media lock stayed busy - nothing deleted")
                 done, space = 0, 0
             else:
-                done, space = delete_due(lib.titles, entries, overrides, now, switch, lambda app: arr[app], say, night, gone_file=state / "retention-gone.json")
+                done, space = delete_due(lib.titles, entries, overrides, now, switch, lambda app: arr[app], say, night, gone_file=state / "retention-gone.json",
+                                         clock=lambda: datetime.datetime.now(TZ))
         if done:
             write_atomic(night_file, {**last, "date": now.date().isoformat(), "hddUsed": hdd[1], "deleted": done, "spaceDeleted": space})
     if switch.on:
