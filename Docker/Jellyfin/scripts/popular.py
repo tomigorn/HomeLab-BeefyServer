@@ -5,8 +5,9 @@ Every rank is listed; a title not in the library is requestable only when a suit
 Writes the JavaScript Injector entry "Currently popular" (window.HssPopular), the request allow-list for the popular backend (opaque entry ids; the backend accepts nothing else)
 lists.json next to it (the published lists, for the trending sync) and details.json (the details overlay of every listed title not owned, by its own opaque id; tmdb_details.py).
 The household's own lists (Seerr "Collections" page, /srv/appdata/seerr-collections/lists.json) become lists.json "user" rows with their own search budget; never on the web Popular page.
---user-lists: only the own lists are searched (no Netflix fetch, no list refresh), run again when they changed meanwhile; runs wait for each other (lock).
-Never prints API keys. Usage: popular.py [--dry-run] [--user-lists] [--tsv FILE]  (FILE: the Netflix TSV downloaded elsewhere, when netflix.com is unreachable from beefy)"""
+--user-lists: the own lists published at once from what is cached, no searches (no Netflix fetch, no list refresh), run again when they changed meanwhile; titles never checked are "pending".
+--user-checks: the same, but the own lists' release checks run (daily budget, at least USER_GAP s after the previous checks run). Runs wait for each other (lock).
+Never prints API keys. Usage: popular.py [--dry-run] [--user-lists | --user-checks] [--tsv FILE]  (FILE: the Netflix TSV downloaded elsewhere, when netflix.com is unreachable from beefy)"""
 import datetime
 import fcntl
 import io
@@ -46,7 +47,7 @@ RETENTION_FILE = pathlib.Path("/home/buntu/.local/state/movie-downloads/retentio
 LOCK_FILE = STATE_FILE.with_name("jellyfin-popular.lock")
 LOCK_WAIT = 2400
 USER_SEARCH_MAX = int(os.environ.get("POP_USER_SEARCH_MAX", "150"))
-# indexer searches for the own lists per day, all users together; runs of --user-lists at least USER_GAP s apart (changes in between are taken together)
+# indexer searches for the own lists per day, all users together; runs of --user-checks at least USER_GAP s apart (changes in between are taken together)
 USER_DAILY_MAX = int(os.environ.get("POP_USER_DAILY_MAX", "300"))
 USER_GAP = 600
 OWNER_OK = re.compile(r"^[\w ,.!?'&()+:-]{1,60}$")
@@ -460,7 +461,7 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
     if "--tsv" in args:
         i = args.index("--tsv")
         args = args[:i] + args[i + 2:] if i + 1 < len(args) else ["--tsv"]
-    if any(a not in ("--dry-run", "--user-lists") for a in args):
+    if any(a not in ("--dry-run", "--user-lists", "--user-checks") for a in args):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     try:
@@ -471,7 +472,7 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
     fixed = now
     with lock:
         for again in (False, True):
-            if "--user-lists" in argv:
+            if "--user-checks" in argv:
                 last = load_json(state_file).get("userRun")
                 wait = USER_GAP - (now - datetime.datetime.fromisoformat(last)).total_seconds() if last else 0
                 if wait > 0:
@@ -480,7 +481,7 @@ def main(argv, io_=None, now=None, state_file=STATE_FILE, overrides_file=OVERRID
                     now = fixed or datetime.datetime.now()
             before = file_stamp(user_file)
             code = main_once(argv, io_, now, state_file, overrides_file, out, sleep, services, genres, allow_file, prom_file, user_file)
-            if again or code != 0 or "--user-lists" not in argv or file_stamp(user_file) == before:
+            if again or code != 0 or not ({"--user-lists", "--user-checks"} & set(argv)) or file_stamp(user_file) == before:
                 return code
             print("own lists changed during the run, once more", file=out)
 
@@ -510,11 +511,12 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
             return 2
         tsv_file = pathlib.Path(args.pop(i + 1))
         args.pop(i)
-    if any(a not in ("--dry-run", "--user-lists") for a in args):
+    if any(a not in ("--dry-run", "--user-lists", "--user-checks") for a in args):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     dry = "--dry-run" in args
-    user_only = "--user-lists" in args
+    user_only = "--user-lists" in args or "--user-checks" in args
+    publish_only = "--user-lists" in args
     io_ = io_ or Io()
     services = SERVICES if services is None else services
     genres = GENRES if genres is None else genres
@@ -689,10 +691,10 @@ def run(argv, io_, now, state_file, overrides_file, out, sleep, services, genres
     used = state.get("userSearches") if (state.get("userSearches") or {}).get("day") == today else {"day": today, "n": 0}
     ubudget = [max(0, min(USER_SEARCH_MAX, USER_DAILY_MAX - used["n"]))]
     start = ubudget[0]
-    fill(todo, "own lists", budget=ubudget)
+    fill(todo, "own lists", budget=ubudget, search=not publish_only)
     if not dry:
         state["userSearches"] = {"day": today, "n": used["n"] + start - ubudget[0]}
-        if user_only:
+        if "--user-checks" in args:
             state["userRun"] = stamp
         save_json(state_file, state)
 

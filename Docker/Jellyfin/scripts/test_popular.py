@@ -728,14 +728,14 @@ class UserLists(unittest.TestCase):
         pop.USER_DAILY_MAX, old = 3, pop.USER_DAILY_MAX
         try:
             fake = FakeIo()
-            self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"])[0], 0)
+            self.assertEqual(self.run_main(fake, self.sf, ["--user-checks"])[0], 0)
             self.assertEqual(len(fake.searches), 3)
             items = {i["id"]: i for i in self.published()["user"][0]["items"]}
             self.assertEqual((items[105]["c"], items[103]["c"]), ("2026-10-21", None))
             later = self.NOW + datetime.timedelta(hours=2)
-            self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], now=later)[0], 0)
+            self.assertEqual(self.run_main(fake, self.sf, ["--user-checks"], now=later)[0], 0)
             self.assertEqual(len(fake.searches), 3)
-            self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], now=self.NOW + datetime.timedelta(days=1))[0], 0)
+            self.assertEqual(self.run_main(fake, self.sf, ["--user-checks"], now=self.NOW + datetime.timedelta(days=1))[0], 0)
             self.assertGreater(len(fake.searches), 3)
         finally:
             pop.USER_DAILY_MAX = old
@@ -743,13 +743,27 @@ class UserLists(unittest.TestCase):
     def test_own_list_runs_keep_ten_minutes_apart_so_changes_coalesce(self):
         self.write(("user-pat", "Pat produced", "q", [("movie", 101)]))
         fake, slept = FakeIo(), []
-        self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], sleep=slept.append)[0], 0)
+        self.assertEqual(self.run_main(fake, self.sf, ["--user-checks"], sleep=slept.append)[0], 0)
         self.assertFalse([s for s in slept if s > 60])
-        self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], now=self.NOW + datetime.timedelta(minutes=2), sleep=slept.append)[0], 0)
+        self.assertEqual(self.run_main(fake, self.sf, ["--user-checks"], now=self.NOW + datetime.timedelta(minutes=2), sleep=slept.append)[0], 0)
         self.assertEqual([s for s in slept if s > 60], [480])
+        slept.clear()
+        self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], now=self.NOW + datetime.timedelta(minutes=3), sleep=slept.append)[0], 0)
+        self.assertFalse([s for s in slept if s > 60])
         slept.clear()
         self.assertEqual(self.run_main(fake, self.sf, now=self.NOW + datetime.timedelta(minutes=3), sleep=slept.append)[0], 0)
         self.assertFalse([s for s in slept if s > 60])
+
+    def test_user_lists_mode_publishes_at_once_without_searching(self):
+        self.write(("user-pat", "Pat produced", "q", [("movie", 104), ("movie", 105)]))
+        fake = FakeIo()
+        fake.releases["movie/105"] = [rel("Fifth.Film.2026.1080p.WEB-DL.x264", 4)]
+        self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"])[0], 0)
+        self.assertEqual(fake.searches, [])
+        items = self.published()["user"][0]["items"]
+        self.assertEqual([(i["id"], i["o"], i["f"], i["c"]) for i in items], [(104, True, None, None), (105, False, None, None)])
+        self.assertEqual(self.run_main(fake, self.sf, ["--user-checks"])[0], 0)
+        self.assertEqual([(i["id"], i["f"]) for i in self.published()["user"][0]["items"]], [(104, None), (105, "1080p")])
 
     def test_odd_lists_and_items_are_skipped(self):
         data = user_lists(("user-ok", "Fine", "q", [("movie", 105), ("book", 1), ("movie", "7; rm")]), ("../evil", "Bad id", "q", [("movie", 101)]), ("user-noname", "", "q", [("movie", 101)]))
@@ -779,7 +793,7 @@ class UserLists(unittest.TestCase):
         fake.releases["movie/105"] = [rel("Fifth.Film.2026.1080p.WEB-DL.x264", 4)]
         searched, fetched = len(fake.searches), fake.tsv_fetches
         later = self.NOW + datetime.timedelta(days=1)
-        self.assertEqual(self.run_main(fake, self.sf, ["--user-lists"], now=later)[0], 0)
+        self.assertEqual(self.run_main(fake, self.sf, ["--user-checks"], now=later)[0], 0)
         self.assertEqual(fake.tsv_fetches, fetched)
         new = [s["query"] for s in fake.searches[searched:]]
         self.assertTrue(new and all("tt105" in q or "Fifth" in q or "tt103" in q or "Nothing" in q for q in new), new)

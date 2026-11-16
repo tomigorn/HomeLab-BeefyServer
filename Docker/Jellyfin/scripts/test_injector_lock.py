@@ -106,7 +106,8 @@ class Lock(unittest.TestCase):
         fake.injector_lock = jellyfin_api.injector_lock
         sf = pathlib.Path(self.tmp.name) / "s.json"
         code = test_popular.pop.main([], io_=fake, now=datetime.datetime(2026, 10, 21, 4, 39), state_file=sf, overrides_file=pathlib.Path("/nonexistent"), out=io.StringIO(), sleep=lambda s: None,
-                                     services=[(8, "Netflix")], genres=[], allow_file=sf.with_name("allow.json"), prom_file=sf.with_name("p.prom"))
+                                     services=[(8, "Netflix")], genres=[], allow_file=sf.with_name("allow.json"), prom_file=sf.with_name("p.prom"),
+                                     user_file=sf.with_name("user-lists.json"), lock_file=sf.with_name("popular.lock"))
         self.assertEqual((code, seen), (0, [True]))
 
 
