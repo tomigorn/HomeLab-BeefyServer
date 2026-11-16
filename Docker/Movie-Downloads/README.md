@@ -211,7 +211,7 @@ Spec `docs/superpowers/specs/2026-11-15-storage-retention-design.md` (owner 2026
 | day 30 | HDD (every title, kept-forever ones too; done by the mover as today) |
 | day 90 | temporary titles: media files deleted after 7 days of "Leaving soon" (title unmonitored + tagged `retention-deleted` first, then files only). "Deleted" = Radarr/Sonarr's recycle bin `/data/.recyclebin` for 7 days, so the space comes back only after its cleanup |
 | HDD > 85 % | temporary titles past day 30 with bytes on the HDD (tier hdd/split, only those bytes counted) leave earlier, oldest import first, until 80 %; our deletions of the last 7 days (still in the recycle bin) count as free; at most 5 such deletions a night, none while the HDD did not drop after the previous night's |
-| postponed | someone is watching it (Continue Watching, Next Up or played in the last 14 days) or it is in a household collection (Seerr **Collections**): at most 30 days, then deleted anyway |
+| postponed | someone is watching it (Continue Watching, Next Up or played in the last 14 days) or it is in a household collection (Seerr **Collections**): at most 30 days, then deleted anyway (by design, spec: a title still being watched more than 30 days after its due date goes too) |
 | switched on | the date shown is never earlier than switch-on + 14 days (grace for the existing library) |
 
 | Keep forever by default (`../Seerr/download-now/retention_rules.py`) | Rule |
@@ -221,11 +221,11 @@ Spec `docs/superpowers/specs/2026-11-15-storage-retention-design.md` (owner 2026
 | goated | IMDb ≥ 8.0 with ≥ 25 000 votes (Radarr `ratings.imdb`; series: Sonarr `ratings`). IMDb Top 250 is not in the local data |
 | never deleted | Keep forever (default or someone's choice in Seerr), the test film Nosferatu (TMDB 653, tag `keep-test`), a series without a Seerr media row (unmapped) |
 | choice | Seerr "♾️ Keep forever" (`../Seerr/README.md` "Storage retention"), stored in `/srv/appdata/seerr-retention/keep.json` (a series with its TVDB id too) |
-| ids | films by TMDB id; series by Seerr's TMDB id, mapped from Sonarr through Seerr's media rows (`externalServiceId`, else TVDB id): Sonarr and Seerr can disagree on a series' TMDB id (seen 2026-11-16: 319013 vs 312697) |
+| ids | films by TMDB id; series by Seerr's TMDB id, mapped from Sonarr through Seerr's media rows (`externalServiceId`, else TVDB id): Sonarr and Seerr can disagree on a series' TMDB id (seen 2026-11-16: 319013 vs 312697). Protected (never temporary): a series without a TVDB id, without a Seerr row, matched by a row whose Sonarr id and TVDB id disagree, whose Sonarr or TVDB id is claimed by two rows, or that shares its key with another series. Two choices for one series under different ids: keep wins |
 
 | Part | What |
 |---|---|
-| Classifier | `scripts/retention.py` (`systemd/retention.timer`: boot + every 30 min while awake, as buntu, never wakes beefy): Radarr/Sonarr titles, Seerr media rows, Jellyfin (resume, Next Up, plays, coverage), Seerr Collections, keep store; scans only the SSD branches (HDD: mount check + statvfs only, not mounted = nothing written). A data problem (keep store unreadable or missing next to its `.bak`, Collections unreadable, Seerr or Jellyfin unreadable, Jellyfin knows < 90 % of the files) is logged `WARNING …` and listed in `problems`: observe goes on, deletion is refused. History: `~/.local/state/movie-downloads/retention-soon.json` (first "Leaving soon" day per title), `retention-night.json` (last delete run, first day seen on), `retention-gone.json` (deleted titles). Out `/srv/appdata/indexer-bar/retention.json` (per `movie\|tv/<tmdb>`: dates, default, reasons, tier, size, postponed; `summary`, `promote`) for the Seerr backend |
+| Classifier | `scripts/retention.py` (`systemd/retention.timer`: boot + every 30 min while awake, as buntu, never wakes beefy): Radarr/Sonarr titles, Seerr media rows, Jellyfin (resume, Next Up, plays, coverage), Seerr Collections, keep store; scans only the SSD branches (HDD: mount check + statvfs only, not mounted = nothing written). A data problem (keep store unreadable, including permission errors, or missing next to its `.bak`, or holding fewer choices than last seen (`retention-keep-count.json`; choices are never removed, only switched), clock not NTP-synced or its state unreadable (logged on every run), Collections unreadable, Seerr or Jellyfin unreadable, Jellyfin knows < 90 % of the files) is logged `WARNING …` and listed in `problems`: observe goes on, deletion is refused. History: `~/.local/state/movie-downloads/retention-soon.json` (first "Leaving soon" day per title), `retention-night.json` (last delete run, first day seen on; emptied by every run that sees the switch off), `retention-gone.json` (deleted titles). Out `/srv/appdata/indexer-bar/retention.json` (per `movie\|tv/<tmdb>`: dates, default, reasons, tier, size, postponed; `summary`, `promote`) for the Seerr backend |
 | Series promotion | an episode played in the last 24 h whose season (and the next) is not fully on the SSD: logged `would promote …` and listed on the Seerr page; **nothing moves** (the promoter is not armed, see `Server/3-Storage-Layout-and-Spindown.md` §7) |
 | Placeholders after delete | once on, `~/.local/state/movie-downloads/retention-lists.json` (`Leaving soon`, `Left the server`) joins Jellyfin's own lists (`../Jellyfin/README.md` "Native TV: Collections & Trending"): owned titles real, deleted ones placeholders with the download versions. Seerr media rows are never deleted (no clear-data-wipe). Jellyfin's watched state of a deleted title is lost (new item); likes and ratings stay in Floppy |
 | Morning metrics | `media-metrics.py` → `beefy_retention_titles{state}`, `beefy_retention_leaving_7d`, `beefy_retention_delete_enabled` (fastpi panel not built) |
@@ -234,14 +234,15 @@ Spec `docs/superpowers/specs/2026-11-15-storage-retention-design.md` (owner 2026
 
 Switch deletion on (owner only):
 
-1. `scripts/retention.py --dry-run` prints no `WARNING` line.
+1. `scripts/retention.py --dry-run` prints no `WARNING` line and `clock NTP-synced: yes`.
 2. `retention.conf`: `RETENTION_DELETE=1`, `RETENTION_ENABLED_ON=<today>` (a date in the future or more than a day before the first run that sees it is refused); commit.
 3. `sudo install -m 0644 systemd/retention-delete.service systemd/retention-delete.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now retention-delete.timer`.
-4. `sudo systemctl start retention.service`; the Seerr page then says "Cleanup is on", `md.retention-switch` expects `1 true`.
+4. `sudo bash ~/Projects/Server/9-Night-Schedule/install.sh` (the installed window script then also waits for `retention-delete.service`; until then the window may release while a delete run is still going).
+5. `sudo systemctl start retention.service`; the Seerr page then says "Cleanup is on", `md.retention-switch` expects `1 true`.
 
-The delete run (`retention-delete.timer` 04:31, `--apply`) deletes only when: switched on, 04:00–04:40, clock NTP-synced, no data problem, the media lock `/run/lock/beefy-media.lock` free within 4 min, and per title: temporary, its date reached, 14 days of grace after switch-on, 7 uninterrupted days of "Leaving soon", no queue item, no import in the last 6 h, the fetched title's TMDB/TVDB id matching. At most 20 attempts a night (5 for the space rule); the first error stops the run. Each title: unmonitor + tag, then delete the files.
+The delete run (`retention-delete.timer` 04:31, `--apply`) deletes only when: switched on, 04:00–04:40, clock NTP-synced, no data problem, the media lock `/run/lock/beefy-media.lock` free within 4 min, and per title: temporary, its date reached, 14 days of grace after switch-on, 7 uninterrupted days of "Leaving soon" counted from switch-on at the earliest, no queue item, no import in the last 6 h, the fetched title's TMDB/TVDB id matching. At most 20 attempts a night (5 for the space rule); the first error stops the run, so does 04:40 (checked before every title, also after the lock wait). Each title: unmonitor + tag, then delete the files.
 
-Off again: `RETENTION_DELETE=0`, `sudo systemctl disable --now retention-delete.timer`.
+Off again: `RETENTION_DELETE=0` (commit), `sudo systemctl disable --now retention-delete.timer`, `sudo systemctl start retention.service` (clears the switch-on state: switching on later again starts a fresh 14-day grace and leaving-soon week; set `RETENTION_ENABLED_ON` to that new day).
 
 ## Download → library pipeline
 
