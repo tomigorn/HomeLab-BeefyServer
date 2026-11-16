@@ -373,12 +373,15 @@ def classify(titles, overrides, collections, progress, hot, hdd, today, pending=
 
 
 def summary(entries, overrides, today, since):
-    out = {"keep": 0, "temporary": 0, "leaving7d": 0, "next": None}
+    out = {"keep": 0, "temporary": 0, "leaving7d": 0, "next": None, "keepBytes": 0, "temporaryBytes": 0, "leaving7dBytes": 0}
     for k, e in entries.items():
         st = rr.effective(e, override_for(overrides, k, e), today, since)
-        out["keep" if st["keep"] else "temporary"] += 1
+        state = "keep" if st["keep"] else "temporary"
+        out[state] += 1
+        out[state + "Bytes"] += e.get("size") or 0
         if not st["keep"] and st["deleteOn"]:
             out["leaving7d"] += st["soon"]
+            out["leaving7dBytes"] += (e.get("size") or 0) if st["soon"] else 0
             out["next"] = min(out["next"] or st["deleteOn"], st["deleteOn"])
     return out
 

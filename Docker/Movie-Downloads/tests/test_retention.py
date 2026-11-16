@@ -293,8 +293,15 @@ class Output(unittest.TestCase):
     def test_summary_for_the_morning_metrics(self):
         lib = library()
         e = rt.classify(lib.titles, {}, set(), set(), set(), (100, 10), datetime.date(2027, 1, 25))
-        self.assertEqual(rt.summary(e, {"movie/1001": True}, datetime.date(2027, 1, 25), None), {"keep": 7, "temporary": 2, "leaving7d": 0, "next": "2027-02-09"})
+        s = rt.summary(e, {"movie/1001": True}, datetime.date(2027, 1, 25), None)
+        self.assertEqual({k: s[k] for k in ("keep", "temporary", "leaving7d", "next")}, {"keep": 7, "temporary": 2, "leaving7d": 0, "next": "2027-02-09"})
         self.assertEqual(rt.summary(e, {}, datetime.date(2027, 1, 25), None)["leaving7d"], 1)
+
+    def test_summary_sums_bytes_per_state(self):
+        e = {"movie/1": {"default": True, "size": 10}, "movie/2": {"default": False, "size": 7, "due": "2027-01-28"},
+             "movie/3": {"default": False, "size": 5, "due": "2027-03-01"}, "movie/4": {"default": False, "size": 3, "due": "2027-03-01"}}
+        s = rt.summary(e, {"movie/3": True}, datetime.date(2027, 1, 25), None)
+        self.assertEqual((s["keepBytes"], s["temporaryBytes"], s["leaving7dBytes"]), (15, 10, 7))
 
     def test_switch_needs_both_flag_and_date(self):
         self.assertEqual(rt.Switch.from_env({}), rt.Switch(False, None))
