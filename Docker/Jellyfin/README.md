@@ -406,7 +406,7 @@ Wiki page for members: "Our machines" > "How many can watch at once".
 Transcode 4K HDR → 1080p SDR (`hevc_qsv` + `vpp_qsv` tonemap + `h264_qsv` 10 Mbit/s), slowest stream vs real time: 1: 3.70×, 2: 2.46×, 3: 1.69×, **4: 1.21×**, 5: 0.99×, 6: 0.84×, 8: 0.63× → **4 at once**.
 
 - Bottlenecks: direct play = the network (home: beefy 1 GbE; outside: most likely the Cloudflare tunnel, Traefik did 924 Mbit/s with TLS); transcoding = the UHD 730 media engine (load ≤ 3.5 on 12 threads).
-- RAM per transcode ~135 MB (3 parallel: ~0.4 GB); Jellyfin itself ~0.45 GB. The 8 GB `mem_limit` is ample; transcode segments go to `/config/cache/transcodes` on the NVMe, not RAM.
+- RAM per transcode ~135 MB (3 parallel: ~0.4 GB); Jellyfin itself ~0.45 GB. The 16 GB `mem_limit` (raised from 8 GB 2026-11-16 for more page cache: posters, repeated reads) is ample; transcode segments go to `/config/cache/transcodes` on the NVMe, not RAM.
 - Home and outside viewers share beefy's 1 GbE (~930 Mbit/s total). A round trip measured from fastpi itself (fastpi → Cloudflare → fastpi) shows only ~360 Mbit/s because the data crosses the home line twice; measure from a real outside client.
 
 ## Playback watch (2026-11-02)
