@@ -34,8 +34,8 @@ Auth: the bar exists only after a 200 from `data-ib-data`; 401, 403 or a redirec
 | `generated` | ISO UTC | older than 10 min = shown as unavailable |
 | `indexers[]` | list | `name`, `limited`, `window` (`rolling`/`day`), `level`, `searches`/`downloads` = {`used`, `limit` (null = ∞), `level`, `resetsAt`}, optional `premium` |
 | `showUnlimited` | bool, optional | unlimited indexers also in the bar (not only under more) |
-| `subscriptions[]` | list | `name`, `kind`, `lifetime`, `expires`, `daysLeft`, `expired`, `level`, optional `premium` |
-| `storage[]` | list | `name`, `id` (optional, chip key), `total`/`used`/`free` bytes, `pct`, `level`, `yellow`/`red` % (meter marks), optional `freeToLimit` bytes until `red` (≥ 0; absent: bar computes total × red − used), optional `parts` (% per member) + `partsLabel`, `label`/`sub`/`hint` = {`en`, `de`} |
+| `subscriptions[]` | list | `name`, `kind`, `lifetime`, `expires`, `daysLeft`, `expired`, `level`, optional `premium`. **more** groups them by `kind` (heading `indexer` → Indexers/Indexer, `Usenet provider` → Usenet, `VPN` → VPN, other kinds as written, none → Other/Weitere), soonest end first, lifetime last |
+| `storage[]` | list | `name`, `id` (optional, chip key), `total`/`used`/`free` bytes, `pct`, `level`, `yellow`/`orange`/`red` % (level thresholds; meter marks at `yellow` and `red` only), optional `freeToLimit` bytes until `red` (≥ 0; absent: bar computes total × red − used), optional `parts` (% per member) + `partsLabel`, `label`/`sub`/`hint` = {`en`, `de`} |
 | `note` | {`en`, `de`} or string, optional | last line of the panel |
 | `subtitles[]` | list, optional | subtitle providers: `name`, `id`, `window` (`utc-day`), `status` (`ok`/`paused`), `statusText` (paused: reason + retry), `level`, `searches`/`downloads` = {`used`, `limit` (null = no limit shown), `level`, `resetsAt`, `approx` (true = estimate, shown with ≈)}, optional `premium` |
 | `subtitlesOk` | bool, optional | false = Bazarr not reachable ("Subtitle usage unavailable"); absent = app without subtitles |
