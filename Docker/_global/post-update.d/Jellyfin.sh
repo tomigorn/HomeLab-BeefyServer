@@ -118,6 +118,8 @@ if want popular jellyfin; then
   check jf.identity-map '^ok [1-9][0-9]* users$' "$(python3 "$DIR/../../Jellyfin/scripts/identity-map.py" --check 2>&1 | tail -1)"
   check jf.identity-timer '^active$' "$(jf_user_systemctl is-active jellyfin-identity.timer 2>&1)"
   check jf.popular-served '^[1-9][0-9]* [1-9]' "$(jf_api /JavaScriptInjector/private.js | grep -c 'window.HssPopular = ' 2>&1) $(jf_api /JavaScriptInjector/private.js | grep -c 'hssPopularNav' 2>&1)"
+  # Web: placeholder cards carry the "Not downloaded yet" band, list collections stay visible (only placeholders and the trending libraries are hidden)
+  check jf.web-band-collections '^[1-9][0-9]* [1-9][0-9]* 0$' "$(js=$(jf_api /JavaScriptInjector/private.js 2>&1); echo "$(grep -c '.hssTopBand {' <<<"$js") $(grep -c 'function routeId' <<<"$js") $(grep -cF 'hide.lib || [], hide.sets' <<<"$js")")"
   # Details overlay: answers only signed-in users (an API key has no user), sidecars written by popular.py and upcoming-popularity.py
   check jf.popular-details-refusals '^401 401$' "$(curl -s -o /dev/null -w '%{http_code}' -m 8 "$POP/details?id=x") $(curl -s -o /dev/null -w '%{http_code}' -m 8 -H "X-Emby-Token: $(cat "$DIR/../../Jellyfin/secrets/api-key")" "$POP/details?id=x")"
   check jf.popular-details-sidecars '^fresh [1-9][0-9]* fresh [0-9]+$' "$(python3 -c 'import json,sys,datetime as d;print(*[("fresh" if d.datetime.now()-d.datetime.fromisoformat(a["updated"])<d.timedelta(days=9) else "stale")+" "+str(len(a["entries"])) for a in map(lambda f: json.load(open(f)), sys.argv[1:])])' /srv/appdata/jellyfin-popular/details.json /srv/appdata/jellyfin-popular/coming.json 2>&1)"

@@ -780,13 +780,31 @@ test("rank digits: opaque page-colour fill under a doubled outer stroke, so over
   assert.match(pp.CSS, /\.hssTopRank-2 \{[^}]*font-size/);
 });
 
-test("hideTrending hides library tile, list collections and placeholders", () => {
+test("hideTrending hides library tile and placeholders, the list collections stay (web Collections view lists them like the TV)", () => {
   const d = doc('<div class="card" data-id="lib1"></div><div class="listItem" data-id="set1"></div><div class="card" data-id="ph1"></div><div class="card" data-id="real1"></div>');
   const hide = { lib: "lib1", sets: ["set1"], items: ["ph1"] };
-  assert.equal(pp.hideTrending(d, hide), 3);
-  assert.deepEqual([...d.querySelectorAll(".hssTrendingHidden")].map((e) => e.getAttribute("data-id")), ["lib1", "set1", "ph1"]);
+  assert.equal(pp.hideTrending(d, hide), 2);
+  assert.deepEqual([...d.querySelectorAll(".hssTrendingHidden")].map((e) => e.getAttribute("data-id")), ["lib1", "ph1"]);
   assert.equal(pp.hideTrending(d, hide), 0);
   assert.match(pp.CSS, /\.hssTrendingHidden \{ display: none !important; \}/);
+});
+
+test("hideTrending on a list collection's own page shows its placeholders (band and download flow like the TV), elsewhere hides them again", () => {
+  const d = doc('<div class="card" data-id="lib1"></div><div class="card" data-id="ph1"></div><div class="card" data-id="real1"></div>');
+  const hide = { lib: "lib1", sets: ["set1"], items: ["ph1"] };
+  const ph = () => d.querySelector('[data-id="ph1"]').classList.contains("hssTrendingHidden");
+  assert.equal(pp.hideTrending(d, hide), 2);
+  assert.equal(ph(), true);
+  d.defaultView.location.hash = "#/details?id=set1&serverId=srv";
+  pp.hideTrending(d, hide);
+  assert.equal(ph(), false, "on the list's page");
+  assert.ok(d.querySelector('[data-id="lib1"]').classList.contains("hssTrendingHidden"), "library tile stays hidden");
+  d.defaultView.location.hash = "#/details?id=real1&serverId=srv";
+  pp.hideTrending(d, hide);
+  assert.equal(ph(), true, "on any other page");
+  d.defaultView.location.hash = "#/details?id=set10";
+  pp.hideTrending(d, hide);
+  assert.equal(ph(), true, "the id must match exactly");
 });
 
 test("hideTrending hides both trending libraries when lib is a list", () => {

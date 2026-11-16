@@ -513,17 +513,27 @@
     return box;
   }
 
+  // The list collections stay visible; on a list's own page its placeholders show too (like the TV), everywhere else they are hidden.
   function hideTrending(doc, hide) {
     if (!hide) return 0;
+    var onList = [].concat(hide.sets || []).indexOf(routeId(doc)) >= 0;
     var ids = {};
-    [].concat(hide.lib || [], hide.sets || [], hide.items || []).forEach(function (i) { ids[i] = true; });
+    [].concat(hide.lib || [], onList ? [] : hide.items || []).forEach(function (i) { ids[i] = true; });
     var n = 0;
     var els = doc.querySelectorAll("[data-id]");
     for (var i = 0; i < els.length; i++) {
       var e = els[i];
-      if (ids[e.getAttribute("data-id")] && !e.classList.contains("hssTrendingHidden")) { e.classList.add("hssTrendingHidden"); n++; }
+      var want = !!ids[e.getAttribute("data-id")];
+      if (want === e.classList.contains("hssTrendingHidden")) continue;
+      if (want) { e.classList.add("hssTrendingHidden"); n++; } else e.classList.remove("hssTrendingHidden");
     }
     return n;
+  }
+
+  function routeId(doc) {
+    var hash = String(((doc.defaultView || {}).location || {}).hash || "");
+    var m = /^#\/details\?(?:.*&)?id=([^&]+)/.exec(hash);
+    return m ? decodeURIComponent(m[1]) : null;
   }
 
   var CSS = [
