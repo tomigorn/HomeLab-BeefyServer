@@ -1,10 +1,13 @@
 [Unit]
-Description=Jellyfin own lists: release check of their titles, then the trending sync (collections, placeholders)
+Description=Jellyfin own lists: published at once (pending titles as placeholders), then their release checks and a second sync
 
 [Service]
 Type=oneshot
+Environment=PYTHONUNBUFFERED=1
 ExecStart=%h/Projects/Docker/Jellyfin/scripts/popular.py --user-lists
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/trending.py
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/popular.py --user-checks
 ExecStart=%h/Projects/Docker/Jellyfin/scripts/trending.py
 ExecStart=%h/Projects/Docker/Jellyfin/scripts/moonbase.py
 Nice=10
-TimeoutStartSec=40min
+TimeoutStartSec=60min
