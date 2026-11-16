@@ -214,8 +214,11 @@ def apply(path, plan):
         raise ToolError(f"mkvpropedit {path}: {r.stdout.strip()} {r.stderr.strip()}")
 
 
-def jellyfin(method, path, key):
-    req = urllib.request.Request(JELLYFIN + path, method=method, headers={"Authorization": f'MediaBrowser Token="{key}"'})
+def jellyfin(method, path, key, body=None):
+    headers = {"Authorization": f'MediaBrowser Token="{key}"'}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(JELLYFIN + path, data=None if body is None else json.dumps(body).encode(), method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             return json.load(r) if r.length != 0 and method == "GET" else None
@@ -223,21 +226,32 @@ def jellyfin(method, path, key):
         raise ToolError(f"Jellyfin {method} {path}: {e}") from None
 
 
+UNSCRAPED_NAME = re.compile(r"\[(tmdbid|tvdbid|imdbid)-", re.I)
+
+
+def refresh_query(item):
+    """Full re-probe; missing images are fetched, existing ones kept. An item still named after its folder or without a poster never got its provider refresh, so it gets all metadata."""
+    unscraped = bool(UNSCRAPED_NAME.search(item.get("Name") or "")) or "Primary" not in (item.get("ImageTags") or {})
+    return f"MetadataRefreshMode=FullRefresh&ImageRefreshMode=FullRefresh&ReplaceAllMetadata={'true' if unscraped else 'false'}&ReplaceAllImages=false"
+
+
 def refresh_jellyfin(paths):
-    """Re-probe the changed files (a plain library scan skips files whose mtime is unchanged)."""
+    """Re-probe the changed files (a plain library scan skips files whose mtime is unchanged). Files Jellyfin does not know yet are reported by path: a library scan request would cancel the running scan mid-way."""
     key = JELLYFIN_KEY.read_text().strip()
-    items = jellyfin("GET", "/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path", key)["Items"]
-    ids = {i["Path"]: i["Id"] for i in items if i.get("Path")}
-    missing = 0
+    admin = next(u["Id"] for u in jellyfin("GET", "/Users", key) if u["Policy"]["IsAdministrator"])
+    # without userId Jellyfin 12.4 lists only part of the library
+    items = jellyfin("GET", f"/Items?userId={admin}&Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path", key)["Items"]
+    known = {i["Path"]: i for i in items if i.get("Path")}
+    missing = []
     for p in paths:
         jf = "/media/" + str(pathlib.Path(p).relative_to(pathlib.Path(DATA_HOST) / "media"))
-        if jf in ids:
-            jellyfin("POST", f"/Items/{ids[jf]}/Refresh?MetadataRefreshMode=FullRefresh&ImageRefreshMode=None&ReplaceAllMetadata=false", key)
+        if jf in known:
+            jellyfin("POST", f"/Items/{known[jf]['Id']}/Refresh?{refresh_query(known[jf])}", key)
         else:
-            missing += 1
+            missing.append(jf)
     if missing:
-        jellyfin("POST", "/Library/Refresh", key)
-    return len(paths) - missing
+        jellyfin("POST", "/Library/Media/Updated", key, {"Updates": [{"Path": m, "UpdateType": "Created"} for m in missing]})
+    return len(paths) - len(missing)
 
 
 def handle_file(app, label, lang, path, dry, changed):

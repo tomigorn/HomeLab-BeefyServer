@@ -253,5 +253,65 @@ class RestoreMtime(unittest.TestCase):
             oa.restore_mtime("/srv/video/media/a.mkv", 5)
 
 
+class RefreshJellyfin(unittest.TestCase):
+    """Re-probe after an edit: never a refresh that leaves a new item without art, never a library scan that cancels a running one."""
+
+    def setUp(self):
+        self.calls, self.real_jf, self.real_key, self.real_host = [], oa.jellyfin, oa.JELLYFIN_KEY, oa.DATA_HOST
+        self.dir = tempfile.TemporaryDirectory()
+        key = pathlib.Path(self.dir.name) / "key"
+        key.write_text("k\n")
+        oa.JELLYFIN_KEY, oa.DATA_HOST = key, "/srv/video"
+        self.items = [
+            {"Id": "a", "Name": "Tenzing", "Path": "/media/movies/T/T.mkv", "ImageTags": {"Primary": "x"}},
+            {"Id": "b", "Name": "Stalker (1979) [tmdbid-1398]", "Path": "/media/movies/S/S.mkv", "ImageTags": {}},
+            {"Id": "c", "Name": "Pilot", "Path": "/media/tv/R/Season 01/R - S01E01.mkv", "ImageTags": {"Primary": "y"}},
+            {"Id": "d", "Name": "Odd Thomas", "Path": "/media/movies/O/O.mkv", "ImageTags": {}},
+        ]
+        oa.jellyfin = self.fake
+
+    def tearDown(self):
+        oa.jellyfin, oa.JELLYFIN_KEY, oa.DATA_HOST = self.real_jf, self.real_key, self.real_host
+        self.dir.cleanup()
+
+    def fake(self, method, path, key, body=None):
+        self.calls.append((method, path, body))
+        if path == "/Users":
+            return [{"Id": "u-viewer", "Policy": {"IsAdministrator": False}}, {"Id": "u-admin", "Policy": {"IsAdministrator": True}}]
+        return {"Items": self.items} if method == "GET" else None
+
+    def test_items_listed_as_an_administrator(self):
+        oa.refresh_jellyfin(["/srv/video/media/movies/T/T.mkv"])
+        gets = [p for m, p, _ in self.calls if m == "GET" and p.startswith("/Items")]
+        self.assertEqual(len(gets), 1)
+        self.assertIn("userId=u-admin", gets[0])
+
+    def refreshes(self):
+        return {p.split("/")[2]: p.split("?")[1] for m, p, _ in self.calls if m == "POST" and p.startswith("/Items/")}
+
+    def test_known_item_fetches_missing_images_and_keeps_existing(self):
+        oa.refresh_jellyfin(["/srv/video/media/movies/T/T.mkv"])
+        q = self.refreshes()["a"]
+        for want in ("MetadataRefreshMode=FullRefresh", "ImageRefreshMode=FullRefresh", "ReplaceAllImages=false", "ReplaceAllMetadata=false"):
+            self.assertIn(want, q)
+
+    def test_item_without_a_provider_refresh_gets_all_metadata(self):
+        oa.refresh_jellyfin(["/srv/video/media/movies/S/S.mkv", "/srv/video/media/movies/O/O.mkv"])
+        for i in ("b", "d"):
+            self.assertIn("ReplaceAllMetadata=true", self.refreshes()[i], i)
+            self.assertIn("ReplaceAllImages=false", self.refreshes()[i], i)
+
+    def test_missing_file_is_reported_by_path_not_a_library_scan(self):
+        n = oa.refresh_jellyfin(["/srv/video/media/movies/T/T.mkv", "/srv/video/media/movies/N (2025) [tmdbid-1]/N.mkv"])
+        self.assertEqual(n, 1)
+        self.assertNotIn("/Library/Refresh", [p for _, p, _ in self.calls])
+        upd = [b for m, p, b in self.calls if p == "/Library/Media/Updated"]
+        self.assertEqual(upd, [{"Updates": [{"Path": "/media/movies/N (2025) [tmdbid-1]/N.mkv", "UpdateType": "Created"}]}])
+
+    def test_nothing_missing_no_scan_request(self):
+        oa.refresh_jellyfin(["/srv/video/media/tv/R/Season 01/R - S01E01.mkv"])
+        self.assertEqual([p for m, p, _ in self.calls if p.startswith("/Library")], [])
+
+
 if __name__ == "__main__":
     unittest.main()
