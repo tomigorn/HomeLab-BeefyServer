@@ -399,6 +399,30 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | Registered by | `scripts/language-policy.sh` (both apps, idempotent) |
 | Tests | `tests/test_grab_guard.sh`, `tests/test_grab_guard_sonarr.sh`; live: `sudo docker exec movie-radarr env radarr_eventtype=Grab radarr_movie_id=<id> radarr_release_title=<name> radarr_download_id=x GG_WAIT=0 GG_DETACH=0 bash /scripts/grab-guard.sh` (Sonarr: `movie-sonarr`, `sonarr_eventtype`, `sonarr_series_id`, `sonarr_release_title`, `sonarr_download_id`) |
 
+### Codec minimum size
+
+Owner rule 2026-11-16: the minimum size per minute of runtime depends on the codec. Radarr/Sonarr size limits are per quality only (custom-format sizes are absolute GB), so the native minimum is the lower value and `scripts/grab-guard.sh` (On Grab, [Wrong-film guard](#wrong-film-guard)) checks the codec.
+
+| | |
+|---|---|
+| Minimum | x264 / H.264 / AVC **25 MB/min**; x265 / HEVC / AV1 **15 MB/min**; no codec in the release title = 25 |
+| Qualities | WEBDL / WEBRip / Bluray 720p and 1080p. Not checked: 2160p, remux, HDTV, SD (native minimums stay) |
+| Native minimum | Recyclarr `quality_definition`: Bluray-720p and Bluray-1080p 15 in both apps (TRaSH: Radarr 25.7 / 50.8, Sonarr 17.1 / 50.4); WEB stays TRaSH (Radarr 12.5, Sonarr 10 / 15) |
+| Math | release size (MiB, as the apps) ÷ runtime: Radarr movie `runtime`; Sonarr series `runtime` × `sonarr_release_episodecount` (a season pack: size ÷ episodes ÷ episode runtime). Runtime or size unknown = kept |
+| Below | same path as a wrong film: queue item removed, blocklisted, re-searched (history markAsFailed fallback); digest `guard_removed`, Telegram "Undersized release" only when it could not be removed |
+| Kept | a person's pick: grab history `releaseSource` `InteractiveSearch` / `ReleasePush` (Seerr manual page, [Download anyway](../Seerr/README.md#download-anyway), Pick another release, the app's interactive search), a title tagged `override`, or no grab history record within `GG_WAIT`. A wrong year or dub-only release is reported as that |
+| Rule | `scripts/guard-size.jq`, the one copy (guard and dry run) |
+| Log | `/config/grab-guard.log`: `movie 5: grabbed '<release>' is x264 at 20.5 MB/min, below 25 MB/min: removed, …` / `…: kept, picked by hand` |
+| Dry run | `scripts/codec-size-report.py [-n 15]`: existing files (mediaInfo codec, app runtime) below their codec minimum; report only, files are never touched |
+| Tests | `tests/test_guard_size.sh`, `tests/test_grab_guard.sh`, `tests/test_grab_guard_sonarr.sh`, `python3 tests/test_codec_size_report.py`, `QualitySizes` in `tests/test_scoring_order.py` |
+
+Dry run 2026-11-16 (existing files, per file): Radarr 68 checked (all x264), 0 below; Sonarr 615 checked, 15 below: 13 x264 WEB-DL 1080p at 21.8–25 MB/min (*Rick and Morty* S03–S04 German DL, *The Office* 2001), 2 x265 anime Blu-ray episodes (*The Eminence in Shadow* S02, 14.3 / 14.6 MB/min; their pack averages more). Anime: 2 of 204 below. 2160p files all above their native minimums except 9 Sonarr WEB-DL-2160p episodes (17.6–23.3 vs 25), so the 2160p minimums stay.
+
+```bash
+scripts/codec-size-report.py          # existing files below their codec minimum (report only)
+bash tests/test_guard_size.sh         # rule
+```
+
 ### Queue watchdog
 
 `scripts/queue-watchdog.py` (beefy host, `systemd/queue-watchdog.timer`, every 15 min, first run 15 min after boot) sends **one** Telegram per item that needs a hand; what the apps handle themselves goes to fastpi's 06:30 morning digest instead.
@@ -408,7 +432,7 @@ The shared `scripts/grab-guard.sh` runs On Grab in both apps.
 | blocked: state `importBlocked` / `importPending` / `failedPending`, or status `warning` / `error` (needs a manual import) | Telegram | after `QW_BLOCKED_MIN` (30 min); 22:00–07:00 held, sent on the first run from 07:00 if still blocked |
 | guard "could not be removed: check by hand" | Telegram | at once; 22:00–07:00 held (event file kept), sent from 07:00 |
 | indexers disabled after failures | Telegram | at once; 22:00–07:00 held, sent from 07:00 if still disabled |
-| guard removed / marked failed, re-searching (wrong film, dub-only) | digest `guard_removed` | at once |
+| guard removed / marked failed, re-searching (wrong film, dub-only, [undersized](#codec-minimum-size)) | digest `guard_removed` | at once |
 | Radarr/Sonarr "matched to movie/series by ID" imported by the watchdog ([below](#id-matched-imports)) | digest `auto_imported` | at once |
 | finished season pack with fewer episodes than the season: imported, missing ones searched ([below](#partial-season-packs)) | digest `partial_imported` (`<series> Sxx: imported 8 of 10, searching E09, E10`) | next run after the import landed |
 | "matched … by ID" download of the wrong year ([backstop](#removals-backstop-and-fakes)) removed, blocklisted, re-searched | digest `guard_removed` | at once |
@@ -629,7 +653,7 @@ night at `RECYCLARR_CRON` (04:15, inside the nightly window beefy is woken for).
 **Edit `recyclarr/recyclarr.yml`, not the Radarr UI** — Recyclarr overwrites what
 it manages. API keys: `secrets/recyclarr.yml` (`!secret radarr_api_key` / `sonarr_api_key`, "Secrets"). Own custom formats (Swiss German, resolution, `Bad Group: BlackBit`, `Bad Group: Vyndros`, `Bad Group: CSWEB`): `recyclarr/custom-formats/radarr/*.json` and `…/sonarr/*.json` (same patterns, own ids; Sonarr has no `Resolution: DVD`, its DVD quality is 480p and counts as SD), loaded through `recyclarr/settings.yml` (local resource provider); both are mounted into the container.
 
-Quality sizes: TRaSH's tables (Radarr `movie`, Sonarr `series`), except Sonarr **Bluray-1080p minimum 15 MB/min** (TRaSH 50.4): Sonarr 4 has one size table for all profiles, and the series minimum rejected normal anime Blu-ray encodes (x265 10-bit, ~18 MB/min), so only bloated packs passed (2026-11-15: a 48 GB Eminence S2 torrent instead of a 5.4 GB pack). 15 = the WEB 1080p floor; Bluray-1080p is only allowed in the anime and older-versions profiles. Test `QualitySizes` in `tests/test_scoring_order.py`.
+Quality sizes: TRaSH's tables (Radarr `movie`, Sonarr `series`), except **Bluray-720p and Bluray-1080p minimum 15 MB/min** in both apps (TRaSH Radarr 25.7 / 50.8, Sonarr 17.1 / 50.4; the codec minimum on top is checked at grab time: [Codec minimum size](#codec-minimum-size), 2026-11-16) and, before that, Sonarr Bluray-1080p 15: Sonarr 4 has one size table for all profiles, and the series minimum rejected normal anime Blu-ray encodes (x265 10-bit, ~18 MB/min), so only bloated packs passed (2026-11-15: a 48 GB Eminence S2 torrent instead of a 5.4 GB pack). 15 = the WEB 1080p floor; Bluray-1080p is only allowed in the anime and older-versions profiles. Test `QualitySizes` in `tests/test_scoring_order.py`.
 
 ```bash
 docker compose run --rm recyclarr sync --preview   # what would change
