@@ -1,0 +1,10 @@
+[Unit]
+Description=Jellyfin beta home rows, daily outside the night window (catches up after sleep)
+
+[Timer]
+OnCalendar=*-*-* 12:17
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target

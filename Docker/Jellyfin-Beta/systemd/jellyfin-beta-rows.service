@@ -1,0 +1,10 @@
+[Unit]
+Description=Jellyfin beta: rebuild the home rows (monthly rotation, seasonal row, per-user rows)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/Docker/Jellyfin-Beta/scripts
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 rows.py
+Nice=19
+IOSchedulingClass=idle
