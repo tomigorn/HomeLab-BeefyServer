@@ -108,6 +108,7 @@ class Night:
     last: dict
     clock_ok: bool
     first_on: datetime.date | None
+    watching: set = dataclasses.field(default_factory=set)
 
 
 class NotMounted(Exception):
@@ -263,6 +264,18 @@ def in_progress(jf, titles, now):
     return out
 
 
+def last_plays(jf, titles):
+    """{key: last play by any user} from Jellyfin's per-user LastPlayedDate (series: any episode). Read-only; a title nobody played is missing (its clock stays at the import)."""
+    units, out = by_unit(titles), {}
+    for user in jf("/Users"):
+        for it in jf(f"/Users/{user['Id']}/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path&EnableImages=false&EnableUserData=true")["Items"]:
+            t = units.get(unit(jf_rel(it.get("Path"))))
+            when = stamp((it.get("UserData") or {}).get("LastPlayedDate"))
+            if t and when and when.year > 1 and (t.key not in out or when > out[t.key]):
+                out[t.key] = when
+    return out
+
+
 def coverage(jf, titles, now):
     """Share of the library's files (imported more than a day ago) that Jellyfin knows (None: nothing to check)."""
     users = jf("/Users")
@@ -326,14 +339,20 @@ def override_for(overrides, key, entry):
     return True if True in found else False if found else None
 
 
-def classify(titles, overrides, collections, progress, hot, hdd, today, pending=0):
-    """pending: HDD bytes of our own deletions still in the 7-day recycle bin (counted as free)."""
-    entries = {}
+def classify(titles, overrides, collections, progress, hot, hdd, today, pending=0, plays=None):
+    """The clock of a title starts at its import or the last play by anyone, whichever is later (owner 2026-11-16: watching resets it). pending: HDD bytes of our own deletions still in the 7-day recycle bin (counted as free)."""
+    entries, anchors = {}, {}
     for t in titles:
         why = rr.reasons(t.kind, t.year, today.year, t.niche_votes, t.rating, t.votes, t.tags, t.profile)
-        e = {"t": t.title, "y": t.year, "kind": t.kind, **rr.schedule(t.imported), "default": bool(why), "reasons": why,
+        played = (plays or {}).get(t.key)
+        played_on = played.astimezone(TZ).date() if played else None
+        anchor = max(t.imported, played_on) if played_on else t.imported
+        anchors[t.key] = anchor
+        e = {"t": t.title, "y": t.year, "kind": t.kind, **rr.schedule(anchor), "imported": t.imported.isoformat(), "lastPlayed": played_on.isoformat() if played_on else None,
+             "anchor": anchor.isoformat(), "anchorBy": "play" if played_on and played_on > t.imported else "import", "watching": t.key in progress,
+             "default": bool(why), "reasons": why,
              "protected": rr.protected(t.key, t.tags) or t.unmapped or (t.kind == "tv" and not t.tvdb), "tier": tier(t, hot), "size": t.size, "hddBytes": hdd_bytes(t, hot),
-             "postponed": "in-progress" if t.key in progress else "collection" if t.key in collections else None}
+             "postponed": "collection" if t.key in collections else None}
         if t.kind == "tv":
             e["tvdb"] = t.tvdb
             if t.unmapped:
@@ -342,7 +361,7 @@ def classify(titles, overrides, collections, progress, hot, hdd, today, pending=
     total, used = hdd
     used -= pending
     if total and used / total > HDD_START:
-        for t in sorted(titles, key=lambda t: (t.imported, t.key)):
+        for t in sorted(titles, key=lambda t: (anchors[t.key], t.key)):
             if used / total <= HDD_TARGET:
                 break
             e = entries[t.key]
@@ -365,15 +384,16 @@ def summary(entries, overrides, today, since):
 
 
 def update_soon(entries, overrides, today, since, prev):
-    """{key: {since, p}}: the first day each temporary title showed "Leaving soon"; gone when it stops, restarted when its postponement changes."""
+    """{key: {since, p, a}}: the first day each temporary title showed "Leaving soon"; gone when it stops, restarted when its postponement or its clock (a play) changes."""
     out = {}
     for k, e in entries.items():
         st = rr.effective(e, override_for(overrides, k, e), today, since)
         if st["keep"] or not st["soon"]:
             continue
         p, old = bool(e.get("postponed")), prev.get(k) if isinstance(prev, dict) else None
-        keep_old = isinstance(old, dict) and old.get("p") == p and isinstance(old.get("since"), str)
-        out[k] = {"since": old["since"] if keep_old else today.isoformat(), "p": p}
+        a = e.get("anchor")
+        keep_old = isinstance(old, dict) and old.get("p") == p and old.get("a") == a and isinstance(old.get("since"), str)
+        out[k] = {"since": old["since"] if keep_old else today.isoformat(), "p": p, "a": a}
     return out
 
 
@@ -576,7 +596,7 @@ def delete_due(titles, entries, overrides, now, switch, arr, log, night, cap=DEL
         log("retention: the HDD did not drop after the last night's space deletions (recycle bin?) - no space-rule deletions tonight")
     soon_limit = (today - datetime.timedelta(days=SOON_DAYS_BEFORE_DELETE)).isoformat()
     on_since = night.first_on.isoformat() if night.first_on else ""
-    for t in sorted(titles, key=lambda t: (t.imported, t.key)):
+    for t in sorted(titles, key=lambda t: ((entries.get(t.key) or {}).get("anchor") or t.imported.isoformat(), t.key)):
         e = entries.get(t.key)
         if not e or done >= cap or e.get("protected") or e.get("unmapped") or (t.kind == "tv" and not t.tvdb):
             continue
@@ -585,6 +605,9 @@ def delete_due(titles, entries, overrides, now, switch, arr, log, night, cap=DEL
             continue
         s = night.soon.get(t.key)
         if not isinstance(s, dict) or not isinstance(s.get("since"), str) or max(s["since"], on_since) > soon_limit:
+            continue
+        if t.key in night.watching:
+            log(f"retention: {t.key} ({t.title}) skipped: someone is watching it")
             continue
         if t.key in night.busy or (t.added_at and t.added_at > now - datetime.timedelta(hours=FRESH_HOURS)):
             log(f"retention: {t.key} ({t.title}) skipped: download or import in progress")
@@ -699,7 +722,7 @@ def plan_lines(doc, overrides, today):
     out = []
     for _, k, e, st in sorted(rows):
         what = f"keep ({st['source']}: {'unmapped series' if e.get('unmapped') else ','.join(e['reasons']) or 'test film' if st['source'] != 'override' else 'override'})" if st["keep"] else f"delete {st['deleteOn']} ({st['why']})"
-        out.append(f"  {what:38} {e['tier']:5} {human(e['size']):>10}  imported {e['imported']}  SSD until {e['ssdUntil']}  {k}  {e['t']} ({e['y']})" + (f"  postponed: {e['postponed']}" if e["postponed"] else ""))
+        out.append(f"  {what:38} {e['tier']:5} {human(e['size']):>10}  imported {e['imported']}  clock {e.get("anchor")}  SSD until {e['ssdUntil']}  {k}  {e['t']} ({e['y']})" + (f"  postponed: {e['postponed']}" if e["postponed"] else ""))
     return out
 
 
@@ -731,12 +754,13 @@ def main(argv=None):
     lib = collect(apis, rows)
     try:
         progress = in_progress(apis.jf, lib.titles, now)
+        played = last_plays(apis.jf, lib.titles)
         plays = recent_plays(apis.jf, lib.titles, now - datetime.timedelta(hours=PROMOTE_HOURS))
         cov = coverage(apis.jf, lib.titles, now)
         if cov is not None and cov < COVERAGE_MIN:
             problems.append(f"Jellyfin knows only {100 * cov:.0f} % of the library files")
     except (OSError, ValueError, KeyError, TypeError, IndexError) as e:
-        progress, plays = set(), {}
+        progress, plays, played = set(), {}, {}
         problems.append(f"Jellyfin unreadable ({type(e).__name__})")
     hot = hot_videos([pathlib.Path(h) for h in env.get("HOT", "/srv/.disks/ssd-hot /srv/.disks/ssd-hot2").split()])
     overrides, keep_problem = read_overrides(env.get("RT_KEEP", "/srv/appdata/seerr-retention/keep.json"))
@@ -753,7 +777,7 @@ def main(argv=None):
     if not ok:
         problems.append("Collections store unreadable")
     gone = read_gone(state / "retention-gone.json")
-    entries = classify(lib.titles, overrides, collections, progress, hot, hdd, now.date(), recycle_pending(gone, now.date()))
+    entries = classify(lib.titles, overrides, collections, progress, hot, hdd, now.date(), recycle_pending(gone, now.date()), played)
     promote = promotions(lib.titles, plays, hot)
     switch = Switch.from_env(env)
     doc = document(entries, promote, now, switch, hdd, lib.skipped, summary(entries, overrides, now.date(), switch.since), problems)
@@ -790,7 +814,7 @@ def main(argv=None):
         except (OSError, ValueError) as e:
             busy = set()
             problems.append(f"Radarr/Sonarr queue unreadable ({type(e).__name__})")
-        night = Night(problems, soon, busy, hdd[1], last, clock == "yes", first_on)
+        night = Night(problems, soon, busy, hdd[1], last, clock == "yes", first_on, progress)
         arr = {"radarr": apis.radarr, "sonarr": apis.sonarr}
         with media_lock() as locked:
             if not locked:

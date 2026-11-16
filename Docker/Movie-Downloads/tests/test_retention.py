@@ -144,8 +144,8 @@ class Collect(unittest.TestCase):
 
 
 class Classify(unittest.TestCase):
-    def run_it(self, overrides=None, progress=(), collections=(), hot=(), hdd=(100, 10), pending=0):
-        return rt.classify(library().titles, overrides or {}, set(collections), set(progress), set(hot), hdd, TODAY, pending)
+    def run_it(self, overrides=None, progress=(), collections=(), hot=(), hdd=(100, 10), pending=0, plays=None):
+        return rt.classify(library().titles, overrides or {}, set(collections), set(progress), set(hot), hdd, TODAY, pending, plays or {})
 
     def test_defaults_by_category(self):
         e = self.run_it()
@@ -178,10 +178,26 @@ class Classify(unittest.TestCase):
         self.assertEqual((e["movie/1002"]["tier"], e["movie/1002"]["hddBytes"]), ("hdd", 10 * GIB))
         self.assertEqual((e["tv/2001"]["tier"], e["tv/2001"]["hddBytes"]), ("split", int(5 * GIB * 2 / 3)))
 
-    def test_postponed_by_progress_or_own_collection(self):
+    def test_own_collection_postpones_watching_only_marks(self):
         e = self.run_it(progress={"movie/1001"}, collections={"movie/1002", "tv/2001"})
-        self.assertEqual(e["movie/1001"]["postponed"], "in-progress")
+        self.assertEqual((e["movie/1001"]["postponed"], e["movie/1001"]["watching"]), (None, True))
         self.assertEqual(e["tv/2001"]["postponed"], "collection")
+
+    def test_the_last_play_by_anyone_resets_the_clock(self):
+        e = self.run_it(plays={"movie/1001": datetime.datetime(2026, 12, 10, 9, tzinfo=datetime.timezone.utc)})["movie/1001"]
+        self.assertEqual((e["imported"], e["lastPlayed"], e["anchor"], e["anchorBy"]), ("2026-11-01", "2026-12-10", "2026-12-10", "play"))
+        self.assertEqual((e["ssdUntil"], e["hddFrom"], e["due"]), ("2027-01-09", "2027-01-09", "2027-03-10"))
+
+    def test_a_play_before_the_import_does_not_move_the_clock(self):
+        e = self.run_it(plays={"tv/2001": datetime.datetime(2026, 10, 5, 9, tzinfo=datetime.timezone.utc)})["tv/2001"]
+        self.assertEqual((e["anchor"], e["anchorBy"], e["lastPlayed"], e["due"]), ("2026-11-11", "import", "2026-10-05", "2027-02-09"))
+        e = self.run_it()["movie/1001"]
+        self.assertEqual((e["anchorBy"], e["lastPlayed"]), ("import", None))
+
+    def test_space_rule_takes_the_oldest_clock_first(self):
+        e = self.run_it(hdd=(100 * GIB, 86 * GIB), plays={"movie/1001": datetime.datetime(2026, 11, 20, 9, tzinfo=datetime.timezone.utc)})
+        self.assertIsNone(e["movie/1001"].get("space"))
+        self.assertEqual(e["tv/2001"]["space"], "2026-12-20")
 
     def test_space_rule_oldest_temporary_hdd_bytes_first_until_80(self):
         e = self.run_it(hdd=(100 * GIB, 86 * GIB))
@@ -230,6 +246,17 @@ class Jellyfin(unittest.TestCase):
         self.assertEqual(plays, {"tv/2001": (1, "2026-12-20T09:00:00Z")})
         hot = {"media/tv/New Show (2025)/Season 01/New Show S01E01.mkv"}
         self.assertEqual(rt.promotions(lib.titles, plays, hot), [{"key": "tv/2001", "title": "New Show", "seasons": [2], "played": "2026-12-20T09:00:00Z"}])
+
+
+class Plays(unittest.TestCase):
+    def test_last_play_of_any_user_per_title_series_by_any_episode(self):
+        lib = library()
+        jf = jellyfin(played=[("/media/movies/New Film (2025)/New Film (2025).mkv", "2026-12-10T09:00:00Z"),
+                              ("/media/tv/New Show (2025)/Season 01/New Show S01E01.mkv", "2026-12-01T09:00:00Z"),
+                              ("/media/tv/New Show (2025)/Season 03/New Show S03E01.mkv", "2026-12-15T09:00:00Z"),
+                              ("/elsewhere/x.mkv", "2026-12-19T09:00:00Z")])
+        got = rt.last_plays(jf, lib.titles)
+        self.assertEqual(got, {"movie/1001": datetime.datetime(2026, 12, 10, 9, tzinfo=datetime.timezone.utc), "tv/2001": datetime.datetime(2026, 12, 15, 9, tzinfo=datetime.timezone.utc)})
 
 
 class Pool(unittest.TestCase):
@@ -345,13 +372,20 @@ class Soon(unittest.TestCase):
         e = {"movie/1": {"due": "2026-12-24", "default": False, "postponed": None}, "movie/2": {"due": "2027-03-01", "default": False, "postponed": None},
              "movie/3": {"due": "2026-12-22", "default": False, "postponed": "in-progress"}}
         s = rt.update_soon(e, {}, TODAY, None, {})
-        self.assertEqual(s, {"movie/1": {"since": "2026-12-20", "p": False}})
+        self.assertEqual(s, {"movie/1": {"since": "2026-12-20", "p": False, "a": None}})
         s = rt.update_soon(e, {}, TODAY + datetime.timedelta(days=1), None, s)
         self.assertEqual(s["movie/1"]["since"], "2026-12-20")
         self.assertEqual(rt.update_soon(e, {"movie/1": True}, TODAY, None, s), {})
         e["movie/3"]["postponed"] = None
         s2 = rt.update_soon(e, {}, TODAY, None, {"movie/3": {"since": "2026-12-01", "p": True}})
-        self.assertEqual(s2["movie/3"], {"since": "2026-12-20", "p": False})
+        self.assertEqual(s2["movie/3"], {"since": "2026-12-20", "p": False, "a": None})
+
+    def test_a_new_clock_restarts_the_leaving_soon_week(self):
+        e = {"movie/1": {"due": "2026-12-24", "default": False, "postponed": None, "anchor": "2026-09-25"}}
+        s = rt.update_soon(e, {}, TODAY, None, {"movie/1": {"since": "2026-12-18", "p": False, "a": "2026-09-25"}})
+        self.assertEqual(s["movie/1"]["since"], "2026-12-18")
+        s = rt.update_soon(e, {}, TODAY, None, {"movie/1": {"since": "2026-12-18", "p": False, "a": "2026-09-20"}})
+        self.assertEqual(s["movie/1"]["since"], "2026-12-20")
 
 
 class Bookkeeping(unittest.TestCase):
@@ -496,6 +530,10 @@ class Delete(unittest.TestCase):
         del soon["tv/2001"]
         self.run_it(n=night(soon=soon))
         self.assertFalse(any(c[2] in ("/movie/1", "/series/11") for c in self.arr.calls))
+
+    def test_titles_someone_is_watching_are_skipped(self):
+        self.run_it(n=night(watching={"movie/1001"}))
+        self.assertNotIn("/moviefile/101", self.deletes())
 
     def test_queue_items_and_fresh_imports_are_skipped(self):
         self.run_it(n=night(busy={"movie/1001"}))
