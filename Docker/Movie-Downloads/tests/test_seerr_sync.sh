@@ -18,7 +18,8 @@ def log(s):
     open(os.path.join(T, "calls"), "a").write(s + "\n")
 def items():
     dates = json.load(open(os.path.join(T, "dates.json"))) if os.path.exists(os.path.join(T, "dates.json")) else {}
-    return {str(i): {"Id": str(i), "Path": p, "DateCreated": dates.get(p, "2999-01-01T00:00:00.0000000Z")} for i, p in enumerate(json.load(open(os.path.join(T, "jf.json"))))}
+    tmdb = json.load(open(os.path.join(T, "tmdb.json"))) if os.path.exists(os.path.join(T, "tmdb.json")) else {}
+    return {str(i): {"Id": str(i), "Type": "Episode" if "/tv/" in p else "Movie", "Path": p, "DateCreated": dates.get(p, "2999-01-01T00:00:00.0000000Z"), "ProviderIds": {"Tmdb": tmdb[p]} if p in tmdb else {}} for i, p in enumerate(json.load(open(os.path.join(T, "jf.json"))))}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def reply(self, code, body=None):
@@ -34,7 +35,9 @@ class H(http.server.BaseHTTPRequestHandler):
         if self.path.startswith("/Items"):
             if "Token=\"jfkey\"" not in (self.headers.get("Authorization") or ""): return self.reply(401)
             if "userId=adm" not in self.path: return self.reply(200, {"Items": []})
-            return self.reply(200, {"Items": list(items().values())})
+            its = list(items().values())
+            if "ProviderIds" not in self.path: its = [{k: v for k, v in i.items() if k != "ProviderIds"} for i in its]
+            return self.reply(200, {"Items": its})
         if self.path.startswith("/System/Info/Public"):
             return self.reply(200, {})
         if self.path == "/api/v1/settings/jobs":
@@ -79,7 +82,7 @@ echo seerrkey > "$T/seerr.key"; echo jfkey > "$T/jf.key"
 for _ in $(seq 50); do curl -s "http://127.0.0.1:$PORT/System/Info/Public" >/dev/null && break; sleep 0.1; done
 
 mkdir -p "$T/radarr" "$T/sonarr"
-reset() { rm -f "$T/calls" "$T/started" "$T/polls" "$T/jf-stuck" "$T/seerr-down" "$T/import-during-scan" "$T/log" "$T/last" "$T/dates.json" "$T/radarr/"* "$T/sonarr/"*; echo '[]' > "$T/jf.json"; : > "$T/calls"; }
+reset() { rm -f "$T/calls" "$T/started" "$T/polls" "$T/jf-stuck" "$T/seerr-down" "$T/import-during-scan" "$T/log" "$T/last" "$T/dates.json" "$T/tmdb.json" "$T/radarr/"* "$T/sonarr/"*; echo '[]' > "$T/jf.json"; : > "$T/calls"; }
 mkdir -p "$T/bin"; REAL_CURL=$(command -v curl)
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/argv"\nexec %s "$@"\n' "$T" "$REAL_CURL" > "$T/bin/curl"; chmod +x "$T/bin/curl"
 run() { # run [env...]: runs the script with test settings, prints its exit code
@@ -153,6 +156,13 @@ echo '{"/media/movies/F/F.mkv": "2013-05-08T20:06:21.0000000Z", "/media/movies/H
 printf '/data/media/movies/F/F.mkv\n/data/media/movies/G/G.mkv\n' > "$T/radarr/seerr-sync.queue"
 assert_eq "old file date: exits 0" "0" "$(run)"
 assert_eq "  only the imported item with an old date is dated to the import, before the Seerr scan" "JF-DATE /media/movies/F/F.mkv $(date -u +%Y) SEERR-SCAN" "$(calls)"
+
+reset; echo '["/media/movies/Nosferatu (1922) [tmdbid-653]/N.mkv", "/media/movies/Other/N2.mkv", "/media/movies/F/F.mkv", "/media/tv/S/E.mkv"]' > "$T/jf.json"
+echo '{"/media/movies/Nosferatu (1922) [tmdbid-653]/N.mkv": "2013-05-08T20:06:21.0000000Z", "/media/movies/Other/N2.mkv": "2013-05-08T20:06:21.0000000Z", "/media/movies/F/F.mkv": "2013-05-08T20:06:21.0000000Z", "/media/tv/S/E.mkv": "2013-05-08T20:06:21.0000000Z"}' > "$T/dates.json"
+echo '{"/media/movies/Other/N2.mkv": "653", "/media/tv/S/E.mkv": "653"}' > "$T/tmdb.json"
+printf '/data/media/movies/Nosferatu (1922) [tmdbid-653]/N.mkv\n/data/media/movies/Other/N2.mkv\n/data/media/movies/F/F.mkv\n/data/media/tv/S/E.mkv\n' > "$T/radarr/seerr-sync.queue"
+assert_eq "test film Nosferatu (TMDB 653): exits 0" "0" "$(run)"
+assert_eq "  never dated to the import, by folder id or Jellyfin TMDB id (an episode with that TMDB id still is)" "JF-DATE /media/movies/F/F.mkv $(date -u +%Y) JF-DATE /media/tv/S/E.mkv $(date -u +%Y) SEERR-SCAN" "$(calls)"
 
 grep -qE 'seerrkey|jfkey' "$T/argv" && bad "Seerr and Jellyfin keys never on curl's argv" "$(grep -m1 -E 'seerrkey|jfkey' "$T/argv")" || ok "Seerr and Jellyfin keys never on curl's argv ($(wc -l < "$T/argv") curl calls)"
 

@@ -18,6 +18,8 @@ CAP=${SS_CAP:-600}
 MIN_GAP=${SS_MIN_GAP:-600}
 JF_WAIT=${SS_JF_WAIT:-90}
 REDATE_AGE=${SS_REDATE_AGE:-86400}
+# test films (pipeline tests re-import them) never go to Recently added; Nosferatu 1922, beefy.md
+REDATE_SKIP_TMDB=${SS_REDATE_SKIP_TMDB:-653}
 SCAN_WAIT=${SS_SCAN_WAIT:-300}
 POLL=${SS_POLL:-5}
 BUDGET=${SS_BUDGET:-12600}
@@ -55,7 +57,7 @@ pending() { local q; for q in $QUEUES; do [ -s "$q" ] && return 0; done; return 
 
 jf() { curl -sf -m 30 -H @<(printf 'Authorization: MediaBrowser Token="%s"\n' "$jk") "$JF$1" "${@:2}" </dev/null; }
 # without userId Jellyfin 12.4 lists only part of the library
-library() { local u; u=$(jf /Users | jq -r 'first(.[] | select(.Policy.IsAdministrator)) | .Id') && [ -n "$u" ] && jf "/Items?userId=$u&Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path,DateCreated&EnableImages=false&EnableUserData=false"; }
+library() { local u; u=$(jf /Users | jq -r 'first(.[] | select(.Policy.IsAdministrator)) | .Id') && [ -n "$u" ] && jf "/Items?userId=$u&Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path,DateCreated,ProviderIds&EnableImages=false&EnableUserData=false"; }
 missing() { # paths (Jellyfin side) not known to Jellyfin
   local have; have=$(library | jq -r '.Items[].Path // empty') || return 1
   grep -vxFf <(echo "$have") <<<"$1" || true
@@ -64,7 +66,7 @@ redate() { # imported items Jellyfin dated by an old file time get the import ti
   local u now cutoff ids id body n=0
   u=$(jf /Users | jq -r 'first(.[] | select(.Policy.IsAdministrator)) | .Id') || return 1
   now=$(date -u +%Y-%m-%dT%H:%M:%S.0000000Z); cutoff=$(date -u -d "@$(( $(date +%s) - REDATE_AGE ))" +%Y-%m-%dT%H:%M:%S)
-  ids=$(library | jq -r --arg c "$cutoff" --rawfile want <(echo "$1") '($want | split("\n") | map(select(length > 0))) as $w | .Items[] | select(.Path as $p | $w | index($p)) | select(.DateCreated < $c) | .Id') || return 1
+  ids=$(library | jq -r --arg c "$cutoff" --argjson skip "$(tr ', ' '\n\n' <<<"$REDATE_SKIP_TMDB" | jq -Rnc '[inputs | select(length > 0)]')" --rawfile want <(echo "$1") '($want | split("\n") | map(select(length > 0))) as $w | .Items[] | select(.Path as $p | $w | index($p)) | select(.DateCreated < $c) | select(.Type != "Movie" or ((.ProviderIds.Tmdb // "") as $t | (.Path | capture("\\[tmdbid-(?<id>[0-9]+)\\]").id // "") as $f | $skip | index($t) == null and index($f) == null)) | .Id') || return 1
   for id in $ids; do
     # Jellyfin 12.4 cannot read back its own Trickplay field on an item update
     body=$(jf "/Users/$u/Items/$id" | jq -c --arg d "$now" 'del(.Trickplay) | .DateCreated = $d') && jf "/Items/$id" -X POST -H 'Content-Type: application/json' -d "$body" >/dev/null && n=$((n + 1))
