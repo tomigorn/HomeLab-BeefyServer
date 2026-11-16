@@ -107,6 +107,91 @@ class Decide(unittest.TestCase):
         self.assertEqual(self.v([a("eng", commentary=True)]), "unknown")
 
 
+class SpokenLanguages(unittest.TestCase):
+    def test_spoken_language_counts_as_original(self):
+        d = lb.decide([a("ara")], "English", spoken={"ara", "eng"})
+        self.assertEqual(d["verdict"], "ok")
+
+    def test_spoken_languages_do_not_accept_others(self):
+        d = lb.decide([a("fre")], "English", spoken={"ara"})
+        self.assertEqual(d["verdict"], "block")
+        self.assertIn("Arabic", d["reason"])
+
+    def test_unreadable_tmdb_never_blocks(self):
+        d = lb.decide([a("fre")], "English", spoken_error="Seerr: timed out")
+        self.assertEqual(d["verdict"], "unknown")
+        self.assertIn("TMDB languages not readable", d["reason"])
+        self.assertEqual(lb.decide([a("eng")], "French", spoken_error="x")["verdict"], "ok")
+
+    def test_codes_from_seerr_movie_and_tv_details(self):
+        movie = {"originalLanguage": "en", "spokenLanguages": [{"english_name": "Arabic", "iso_639_1": "ar", "name": "x"}]}
+        self.assertEqual(lb.tmdb_codes(movie), {"ara", "eng"})
+        tv = {"originalLanguage": "es", "spokenLanguages": [{"englishName": "Russian", "iso_639_1": "ru"}]}
+        self.assertEqual(lb.tmdb_codes(tv), {"spa", "rus"})
+        self.assertEqual(lb.tmdb_codes({"originalLanguage": "xx", "spokenLanguages": [{"english_name": "No Language", "iso_639_1": "xx"}]}), set())
+        self.assertEqual(lb.tmdb_codes({"originalLanguage": "de", "spokenLanguages": None}), {"ger", "deu"})
+
+
+class TmdbCache(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = pathlib.Path(self.tmp.name) / "language-block-tmdb.json"
+        self.calls = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def fetch(self, path):
+        self.calls.append(path)
+        if path == "/movie/9":
+            raise lb.ApiError("GET /movie/9: boom")
+        return {"originalLanguage": "en", "spokenLanguages": [{"english_name": "Russian", "iso_639_1": "ru"}]}
+
+    def test_fetched_once_per_title_and_kept_on_disk(self):
+        c = lb.TmdbLanguages(self.fetch, self.path, now=1000.0)
+        self.assertEqual(c.get("movie", 926676), ({"rus", "eng"}, None))
+        self.assertEqual(c.get("movie", 926676), ({"rus", "eng"}, None))
+        self.assertEqual(c.get("tv", 5), ({"rus", "eng"}, None))
+        c.save()
+        self.assertEqual(self.calls, ["/movie/926676", "/tv/5"])
+        again = lb.TmdbLanguages(self.fetch, self.path, now=2000.0)
+        self.assertEqual(again.get("movie", 926676), ({"rus", "eng"}, None))
+        self.assertEqual(len(self.calls), 2)
+
+    def test_expired_entry_is_fetched_again(self):
+        c = lb.TmdbLanguages(self.fetch, self.path, now=1000.0)
+        c.get("movie", 1)
+        c.save()
+        lb.TmdbLanguages(self.fetch, self.path, now=1000.0 + lb.TMDB_KEEP_DAYS * 86400 + 1).get("movie", 1)
+        self.assertEqual(self.calls, ["/movie/1", "/movie/1"])
+
+    def test_error_is_reported_and_not_cached(self):
+        c = lb.TmdbLanguages(self.fetch, self.path, now=1000.0)
+        codes, err = c.get("movie", 9)
+        self.assertEqual(codes, set())
+        self.assertIn("boom", err)
+        c.get("movie", 9)
+        self.assertEqual(self.calls, ["/movie/9", "/movie/9"])
+
+    def test_no_tmdb_id_is_no_lookup(self):
+        c = lb.TmdbLanguages(self.fetch, self.path, now=1000.0)
+        self.assertEqual(c.get("tv", 0), (set(), None))
+        self.assertEqual(self.calls, [])
+
+    def test_broken_cache_file_starts_empty(self):
+        self.path.write_text("{broken")
+        self.assertEqual(lb.TmdbLanguages(self.fetch, self.path, now=1000.0).get("movie", 1)[0], {"rus", "eng"})
+
+
+class FakeTmdb:
+    def __init__(self, codes=None, error=None):
+        self.codes, self.error, self.asked = codes or set(), error, []
+
+    def get(self, kind, tmdb_id):
+        self.asked.append((kind, tmdb_id))
+        return (set(), self.error) if self.error else (set(self.codes), None)
+
+
 class Parse(unittest.TestCase):
     def test_mkvmerge_audio_tracks(self):
         info = {"tracks": [
@@ -188,9 +273,32 @@ class Act(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def run_act(self, arr, item, title=MOVIE, probe=None, dry=False, now=1000.0):
+    def run_act(self, arr, item, title=MOVIE, probe=None, dry=False, now=1000.0, tmdb=None):
         probe = probe or (lambda host: BAD if "MULTi" in host else GOOD)
-        return lb.act(arr.app, arr, item, title, probe, self.state, host=self.host, dry=dry, now=now)
+        return lb.act(arr.app, arr, item, title, probe, self.state, host=self.host, dry=dry, now=now, tmdb=tmdb)
+
+    def test_tmdb_spoken_language_keeps_the_file(self):
+        arr, tmdb = FakeArr(), FakeTmdb({"ara", "eng"})
+        e = self.run_act(arr, self.item, probe=lambda h: [a("ara")], tmdb=tmdb)
+        self.assertEqual((e["verdict"], e["file"]), ("ok", "kept"))
+        self.assertEqual(tmdb.asked, [("movie", 4242)])
+        self.assertFalse(arr.made("POST", "/") or arr.made("DELETE", "/"))
+
+    def test_tmdb_asked_only_when_the_file_would_be_blocked(self):
+        tmdb = FakeTmdb({"ara"})
+        self.run_act(FakeArr(), self.item, probe=lambda h: GOOD, tmdb=tmdb)
+        self.assertEqual(tmdb.asked, [])
+
+    def test_tmdb_not_readable_keeps_the_file(self):
+        arr = FakeArr()
+        e = self.run_act(arr, self.item, tmdb=FakeTmdb(error="GET /movie/4242: timed out"))
+        self.assertEqual(e["verdict"], "unknown")
+        self.assertFalse(arr.made("POST", "/") or arr.made("DELETE", "/"))
+
+    def test_tmdb_other_languages_still_blocked(self):
+        arr = FakeArr()
+        e = self.run_act(arr, self.item, tmdb=FakeTmdb({"ara"}))
+        self.assertEqual((e["verdict"], e["file"]), ("block", "removed"))
 
     def old_in_recycle_bin(self, name="A (2020) - [Bluray-1080p].mkv", sidecar=True):
         rb = self.root / "data/.recyclebin/A (2020)"
@@ -392,6 +500,16 @@ class Library(unittest.TestCase):
         api = lambda method, path, query=None, body=None: movies if path == "/movie" else []
         rows = list(lb.library_rows("radarr", api))
         self.assertEqual([(r["title"], r["verdict"]) for r in rows], [("A Film", "ok"), ("B", "block"), ("C", "unknown")])
+
+    def test_tmdb_spoken_languages_in_the_library(self):
+        movies = [dict(MOVIE, id=1, title="P", movieFile={"path": "/data/media/movies/p.mkv", "mediaInfo": {"audioLanguages": "ara"}})]
+        series = [{"id": 5, "title": "S", "year": 2020, "tmdbId": 77, "originalLanguage": {"name": "English"}, "tags": []}]
+        files = [{"path": "/data/media/tv/s/1.mkv", "mediaInfo": {"audioLanguages": "rus"}}]
+        api = lambda method, path, query=None, body=None: movies if path == "/movie" else series if path == "/series" else files if path == "/episodefile" else []
+        tmdb = FakeTmdb({"ara", "rus"})
+        self.assertEqual([r["verdict"] for r in lb.library_rows("radarr", api, tmdb)], ["ok"])
+        self.assertEqual([r["verdict"] for r in lb.library_rows("sonarr", api, tmdb)], ["ok"])
+        self.assertEqual(tmdb.asked, [("movie", 4242), ("tv", 77)])
 
 
 if __name__ == "__main__":

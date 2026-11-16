@@ -1071,14 +1071,15 @@ Jellyfin plays the user's preferred language, else the track flagged *default* i
 
 #### Language block
 
-Owner 2026-11-16: an imported file's real audio must have German, English or the title's original language (one is enough). None of them (a `MULTi` with only French + Italian for an English film, a mislabelled release) → blocked automatically right after the import.
+Owner 2026-11-16: an imported file's real audio must have German, English or one of the title's original languages (one is enough). None of them (a `MULTi` with only French + Italian for an English film, a mislabelled release) → blocked automatically right after the import.
 
 | Part | What |
 |---|---|
 | Trigger | `scripts/original-audio-hook.sh` (Connect On Import/Upgrade, already registered) also writes `<id> <path> <file id> <download id> <isupgrade> <deleted paths> <recycle-bin paths>` to `/config/language-block.queue`; `systemd/language-block-import.path` → `scripts/language-block.py --queue` (buntu, media lock) |
 | Tracks | `mkvmerge -J` on the library file (no ffprobe on the host; same track data); `und`/empty tags: the track name (`languages.tsv` patterns, language names), else unknown |
-| Counts | German (`ger`, `deu`, `gsw`, `de-CH`: Swiss German too), English, the original language (Radarr/Sonarr `originalLanguage`; unknown → only German/English; anime: Japanese); commentary tracks never |
-| Never blocked | an unknown track language (the Manual page checks still show it), tag `override` (download anyway), the test film, films before 1930 (silent), a file without a grab (imported by hand) |
+| Counts | German (`ger`, `deu`, `gsw`, `de-CH`: Swiss German too), English, the original language (Radarr/Sonarr `originalLanguage`; unknown → only German/English; anime: Japanese), TMDB's `original_language` and `spoken_languages` (e.g. Palestine 36: Arabic, Navalny: Russian, where Radarr says English); commentary tracks never |
+| TMDB | asked only for a file that would be blocked: Seerr `GET /api/v1/movie/<tmdb>` or `/tv/<tmdb>` (Seerr proxies TMDB, key `Seerr/secrets/api-key`), cached per title 30 days in `~/.local/state/movie-downloads/language-block-tmdb.json`; Seerr not readable → unknown, not blocked |
+| Never blocked | an unknown track language (the Manual page checks still show it), TMDB languages not readable, tag `override` (download anyway), the test film, films before 1930 (silent), a file without a grab (imported by hand) |
 | Block | new title: file deleted via the API (arr recycle bin, 7 days); upgrade: the previous file and its subtitles back from `/data/.recyclebin` (only if it does not fail the rule too and its place is free), then the new file deleted and the title rescanned; nothing to put back → new file kept. Then `POST /history/failed/<grab id>` (blocklist, once per download) and `MoviesSearch` / `EpisodeSearch` |
 | Shown | `~/.local/state/movie-downloads/language-block.json` (180 days) → Seerr Manual page, Done tab: "Blocked automatically: no German, English or original-language audio — searching again" (`../Seerr/README.md` "Manual interaction") |
 
@@ -1090,6 +1091,7 @@ sudo install -m 0644 systemd/language-block-import.{service,path} /etc/systemd/s
 ```
 
 - Tests: `python3 tests/test_language_block.py`, `tests/test_original_audio_hook.sh`.
+- Library dry run 2026-11-16: with TMDB languages ok 1063, unknown 15 (no audio / `und` tags), block 0; before: block 2 (Palestine 36, Navalny).
 - Library 2026-11-16 (`--library`): 1082 files, 2 would be blocked (only Arabic / only Russian audio where Radarr says English: *Palestine 36*, *Navalny*; left alone, only new imports act), 15 unknown (no or untagged audio in the arr's media info).
 
 ### Swiss German
