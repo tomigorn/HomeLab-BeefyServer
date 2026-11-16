@@ -322,15 +322,15 @@
   {
    "name": "SSD",
    "total": 15874605416448,
-   "used": 5854927069184,
-   "free": 10019678347264,
-   "pct": 36.9,
-   "level": "ok",
+   "used": 11778957219004,
+   "free": 4095648197444,
+   "pct": 74.2,
+   "level": "yellow",
    "yellow": 70,
    "red": 80,
    "parts": [
-    73.8,
-    0.0
+    80.3,
+    68.1
    ],
    "sub": {
     "en": "fast tier, new downloads",
@@ -340,15 +340,16 @@
     "en": "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %; from 80 % new downloads go straight to the HDD.",
     "de": "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %; ab 80 % landen neue Downloads direkt auf der HDD."
    },
-   "partsLabel": "SSDs"
+   "partsLabel": "SSDs",
+   "freeToLimit": 920727114154
   },
   {
    "name": "HDD",
    "total": 29998208495616,
-   "used": 574425268224,
-   "free": 29423783227392,
-   "pct": 1.9,
-   "level": "ok",
+   "used": 27118380480037,
+   "free": 2879828015579,
+   "pct": 90.4,
+   "level": "full",
    "yellow": 80,
    "red": 90,
    "sub": {
@@ -358,7 +359,8 @@
    "hint": {
     "en": "Archive for older titles. From 90 % new downloads are no longer imported.",
     "de": "Archiv für ältere Titel. Ab 90 % werden neue Downloads nicht mehr importiert."
-   }
+   },
+   "freeToLimit": 0
   }
  ],
  "note": {

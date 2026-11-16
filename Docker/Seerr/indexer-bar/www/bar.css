@@ -30,6 +30,10 @@ html.ib-on .toastify-top { margin-top: var(--ib-h); }
 #indexer-bar .ib-muted { color: #9ca3af; }
 #indexer-bar .ib-meter { display: inline-block; width: 38px; height: 5px; border-radius: 3px; background: #374151; overflow: hidden; flex: none; }
 #indexer-bar .ib-fill { height: 100%; border-radius: 3px; }
+/* disk limits on the meter: thin light tick at yellow, white tick at red, reaching past the track, dark edge to stand out on the fill */
+#indexer-bar .ib-meter:has(.ib-mark) { position: relative; overflow: visible; }
+#indexer-bar .ib-mark { position: absolute; top: -2px; bottom: -2px; width: 1px; margin-left: -0.5px; background: #d1d5db; border-radius: 1px; box-shadow: 0 0 0 1px rgba(17, 24, 39, .75); pointer-events: none; }
+#indexer-bar .ib-mark-limit { width: 2px; margin-left: -1px; background: #f9fafb; }
 .ib-ok .ib-fill, .ib-ok.ib-dot { background: #22c55e !important; }
 .ib-warn .ib-fill, .ib-warn.ib-dot { background: #f59e0b !important; }
 .ib-yellow .ib-fill, .ib-yellow.ib-dot { background: #eab308 !important; }

@@ -74,10 +74,10 @@
   }
 
   var TEXT = {
-    en: { free: "free", used: "Used:", freeL: "Free:", head: "Storage", quota: "My requests", frees: "next free ", days: function (n) { return " in " + n + " days"; },
+    en: { free: "free", used: "Used:", freeL: "Free:", toLimit: function (r) { return "Free until the limit (" + r + " %):"; }, reached: "limit reached", head: "Storage", quota: "My requests", frees: "next free ", days: function (n) { return " in " + n + " days"; },
       quotaNote: function (q) { return q.limit + " requests per person in " + q.days + " days, deleted requests count too."; },
       quotaRows: function (q) { return [q.limit + " requests per person in " + q.days + " days", "Deleted requests count too"]; } },
-    de: { free: "frei", used: "Belegt:", freeL: "Frei:", head: "Speicher", quota: "Meine Anfragen", frees: "wieder frei ", days: function (n) { return " in " + n + " Tagen"; },
+    de: { free: "frei", used: "Belegt:", freeL: "Frei:", toLimit: function (r) { return "Frei bis zur Grenze (" + r + " %):"; }, reached: "Grenze erreicht", head: "Speicher", quota: "Meine Anfragen", frees: "wieder frei ", days: function (n) { return " in " + n + " Tagen"; },
       quotaNote: function (q) { return q.limit + " Anfragen pro Person in " + q.days + " Tagen, gelöschte Anfragen zählen mit."; },
       quotaRows: function (q) { return [q.limit + " Anfragen pro Person in " + q.days + " Tagen", "Gelöschte Anfragen zählen mit"]; } }
   };
@@ -121,9 +121,15 @@
     return used + "/" + total;
   }
   function diskName(d, l) { return tr(d.label, l) || d.name; }
+  function isPct(v) { return typeof v === "number" && v > 0 && v < 100; }
+  function toLimit(d) {
+    if (typeof d.freeToLimit === "number") return Math.max(0, d.freeToLimit);
+    return Math.max(0, (d.total * d.red) / 100 - d.used);
+  }
   function diskHint(d, l) {
     var sub = tr(d.sub, l), t = TEXT[l];
-    var rows = [[t.used, diskUsed(d, l) + " · " + Math.round(d.pct) + " %"], [t.freeL, bytes(d.free, l)]];
+    var rows = [[t.used, diskUsed(d, l) + " · " + Math.round(d.pct) + " %"], [t.freeL, bytes(d.free, l)]], left;
+    if (isPct(d.red)) rows.push([t.toLimit(d.red), (left = toLimit(d)) > 0 ? bytes(left, l) : t.reached]);
     if (Array.isArray(d.parts) && d.parts.length > 1) rows.push([d.parts.length + (d.partsLabel ? " " + d.partsLabel : "") + ":", d.parts.map(function (p) { return Math.round(p) + " %"; }).join(" · ")]);
     return { title: diskName(d, l) + (sub ? " — " + sub : ""), rows: rows, sections: [{ rows: sentences(tr(d.hint, l)) }] };
   }
@@ -131,7 +137,15 @@
     var box = el("span", "ib-meter ib-" + d.level), fill = el("span", "ib-fill");
     fill.style.width = Math.min(100, d.pct) + "%";
     fill.style.display = "block";
-    return add(box, fill);
+    add(box, fill);
+    [[d.yellow, "ib-mark"], [d.red, "ib-mark ib-mark-limit"]].forEach(function (m) {
+      if (!isPct(m[0])) return;
+      var k = el("span", m[1]);
+      k.style.left = m[0] + "%";
+      k.setAttribute("aria-hidden", "true");
+      box.appendChild(k);
+    });
+    return box;
   }
   function disks(d) { return d && Array.isArray(d.storage) ? d.storage : []; }
   function diskChips(box, d) {

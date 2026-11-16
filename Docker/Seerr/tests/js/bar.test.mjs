@@ -49,28 +49,63 @@ test("colour follows the level from the collector", async () => {
 test("hint: headline, used, free, then the rule one sentence per row (English)", async () => {
   const w = await bar(usage([SSD, HDD]));
   assert.deepEqual(hintOf(w, chip(w, "SSD")), { title: "SSD — fast tier, new downloads", sections: 2, text: [
-    "SSD — fast tier, new downloads", "Used: 2.7/7.3 TB · 38 %", "Free: 4.6 TB",
+    "SSD — fast tier, new downloads", "Used: 2.7/7.3 TB · 38 %", "Free: 4.6 TB", "Free until the limit (80 %): 3.1 TB",
     "Above 70 % the night mover moves titles nobody played for 30 days (oldest first) to the HDD, down to 60 %", "From 80 % new downloads go straight to the HDD"].join("\n") });
   assert.deepEqual(hintOf(w, chip(w, "HDD")), { title: "HDD — archive", sections: 2, text: [
-    "HDD — archive", "Used: 535 GB/28 TB · 2 %", "Free: 27.5 TB", "Archive for older titles", "From 90 % new downloads are no longer imported"].join("\n") });
+    "HDD — archive", "Used: 535 GB/28 TB · 2 %", "Free: 27.5 TB", "Free until the limit (90 %): 24.7 TB", "Archive for older titles", "From 90 % new downloads are no longer imported"].join("\n") });
 });
 
 test("hint: no rule, no sub = one section with the name as headline", async () => {
   const w = await bar(usage([{ ...HDD, sub: undefined, hint: undefined }]));
-  assert.deepEqual(hintOf(w, chip(w, "HDD")), { title: "HDD", sections: 1, text: "HDD\nUsed: 535 GB/28 TB · 2 %\nFree: 27.5 TB" });
+  assert.deepEqual(hintOf(w, chip(w, "HDD")), { title: "HDD", sections: 1, text: "HDD\nUsed: 535 GB/28 TB · 2 %\nFree: 27.5 TB\nFree until the limit (90 %): 24.7 TB" });
 });
 
 test("two SSDs: the hint names each one on its own row", async () => {
   const w = await bar(usage([{ ...SSD, parts: [75, 0.4] }, HDD]));
-  assert.match(hintOf(w, chip(w, "SSD")).text, /^SSD — fast tier, new downloads\nUsed: 2\.7\/7\.3 TB · 38 %\nFree: 4\.6 TB\n2 SSDs: 75 % · 0 %\nAbove 70 %/);
+  assert.match(hintOf(w, chip(w, "SSD")).text, /^SSD — fast tier, new downloads\nUsed: 2\.7\/7\.3 TB · 38 %\nFree: 4\.6 TB\nFree until the limit \(80 %\): 3\.1 TB\n2 SSDs: 75 % · 0 %\nAbove 70 %/);
 });
 
 test("German UI: German hint and decimal comma", async () => {
   const w = await bar(usage([SSD, HDD]), SIDEBAR.replace(">Series<", ">Serien<"));
   assert.match(chip(w, "SSD").textContent, /2,7\/7,3 TB/);
-  assert.equal(hintOf(w, chip(w, "SSD")).text, ["SSD — schnell, neue Downloads", "Belegt: 2,7/7,3 TB · 38 %", "Frei: 4,6 TB",
+  assert.equal(hintOf(w, chip(w, "SSD")).text, ["SSD — schnell, neue Downloads", "Belegt: 2,7/7,3 TB · 38 %", "Frei: 4,6 TB", "Frei bis zur Grenze (80 %): 3,1 TB",
     "Ab 70 % verschiebt der Nacht-Mover Titel, die 30 Tage niemand geschaut hat (älteste zuerst), auf die HDD, bis 60 %", "Ab 80 % landen neue Downloads direkt auf der HDD"].join("\n"));
-  assert.equal(hintOf(w, chip(w, "HDD")).text, ["HDD — Archiv", "Belegt: 535 GB/28 TB · 2 %", "Frei: 27,5 TB", "Archiv für ältere Titel", "Ab 90 % werden neue Downloads nicht mehr importiert"].join("\n"));
+  assert.equal(hintOf(w, chip(w, "HDD")).text, ["HDD — Archiv", "Belegt: 535 GB/28 TB · 2 %", "Frei: 27,5 TB", "Frei bis zur Grenze (90 %): 24,7 TB", "Archiv für ältere Titel", "Ab 90 % werden neue Downloads nicht mehr importiert"].join("\n"));
+});
+
+test("hint: free until the limit from usage.json, \"limit reached\" at or over it (EN/DE)", async () => {
+  const over = { ...HDD, used: 25.5 * TB, free: 2.5 * TB, pct: 91.1, level: "full", freeToLimit: 0 };
+  const w = await bar(usage([{ ...SSD, freeToLimit: 2 * TB }, over]));
+  assert.match(hintOf(w, chip(w, "SSD")).text, /\nFree until the limit \(80 %\): 2 TB\n/);
+  assert.match(hintOf(w, chip(w, "HDD")).text, /\nFree: 2\.5 TB\nFree until the limit \(90 %\): limit reached\n/);
+  const n = await bar(usage([{ ...over, freeToLimit: undefined }]));
+  assert.match(hintOf(n, chip(n, "HDD")).text, /Free until the limit \(90 %\): limit reached/);
+  const de = await bar(usage([over]), SIDEBAR.replace(">Series<", ">Serien<"));
+  assert.match(hintOf(de, chip(de, "HDD")).text, /\nFrei: 2,5 TB\nFrei bis zur Grenze \(90 %\): Grenze erreicht\n/);
+});
+
+test("hint: no limit in the data = no limit row", async () => {
+  const w = await bar(usage([{ ...HDD, red: undefined, yellow: undefined }]));
+  assert.doesNotMatch(hintOf(w, chip(w, "HDD")).text, /limit/);
+});
+
+const marks = (m) => [...m.querySelectorAll(".ib-mark")].map((x) => [x.style.left, x.classList.contains("ib-mark-limit")]);
+
+test("meters mark the disk's limits: thin warn mark at yellow, limit mark at red (bar and more)", async () => {
+  const w = await bar(usage([{ ...SSD, pct: 75, level: "yellow" }, HDD]));
+  assert.deepEqual(marks(chip(w, "SSD").querySelector(".ib-meter")), [["70%", false], ["80%", true]]);
+  assert.deepEqual(marks(chip(w, "HDD").querySelector(".ib-meter")), [["80%", false], ["90%", true]]);
+  assert.equal(chip(w, "SSD").querySelector(".ib-mark").getAttribute("aria-hidden"), "true");
+  w.document.querySelector("#indexer-bar .ib-more").click();
+  const pm = [...w.document.querySelectorAll("#indexer-bar .ib-panel .ib-meter")].map(marks);
+  assert.deepEqual(pm, [[["70%", false], ["80%", true]], [["80%", false], ["90%", true]]]);
+  assert.match(chip(w, "SSD").textContent, /^SSD\s*2\.7\/7\.3 TB\s*75 %$/);
+});
+
+test("meters without limits in the data have no marks; indexer meters never", async () => {
+  const w = await bar({ ...usage([{ ...HDD, red: undefined, yellow: undefined }]), indexers: [{ name: "X", limited: true, level: "ok", window: "day",
+    searches: { used: 5, limit: 10, level: "ok" }, downloads: { used: 0, limit: null, level: "ok" } }] });
+  assert.equal(w.document.querySelectorAll("#indexer-bar .ib-mark").length, 0);
 });
 
 test("hinted chips are focusable, so keyboard and a tap open the hint", async () => {

@@ -37,6 +37,11 @@ def serve(route):
         route.fulfill(status=404, body="")
 
 
+MARKS = """() => [...document.querySelectorAll('#indexer-bar [data-ib-disk] .ib-meter, #indexer-bar .ib-panel .ib-meter')].filter((m) => m.querySelector('.ib-mark')).map((m) => {
+  const r = m.getBoundingClientRect(), at = [...m.querySelectorAll('.ib-mark')].map((k) => { const b = k.getBoundingClientRect(); return { left: b.left, right: b.right, width: b.width, height: b.height }; });
+  return { left: r.left, right: r.right, height: r.height, marks: at.length, at };
+})"""
+
 GEOMETRY = """() => {
   const p = document.querySelector('#indexer-bar .ib-panel'), pr = p.getBoundingClientRect();
   const names = [...p.querySelectorAll('.ib-name')].map((n) => { const r = n.getBoundingClientRect(); return { text: n.textContent, left: r.left, right: r.right }; });
@@ -76,10 +81,15 @@ class Popup(unittest.TestCase):
         page.goto("http://bar.test/")
         chip = page.locator(selector)
         chip.scroll_into_view_if_needed()
-        chip.tap() if mobile else chip.hover()
+        if mobile:
+            chip.tap()
+        else:
+            chip.hover(position={"x": 2, "y": 2})
+            chip.hover(position={"x": 6, "y": 4})
         page.wait_for_selector("#hg-tip", state="visible")
         return page, page.evaluate("""() => { const r = document.getElementById('hg-tip').getBoundingClientRect();
-          return { left: r.left, right: r.right, top: r.top, inner: innerWidth, title: document.querySelector('#hg-tip .hg-tip-title').textContent, seps: document.querySelectorAll('#hg-tip .hg-tip-sep').length }; }""")
+          return { left: r.left, right: r.right, top: r.top, inner: innerWidth, title: document.querySelector('#hg-tip .hg-tip-title').textContent, seps: document.querySelectorAll('#hg-tip .hg-tip-sep').length,
+                   text: document.getElementById('hg-tip').innerText }; }""")
 
     def test_chip_hints_open_inside_the_screen(self):
         for width, mobile in ((390, True), (1280, False)):
@@ -90,6 +100,30 @@ class Popup(unittest.TestCase):
                     self.assertEqual(b["seps"], 1)
                     self.assertGreaterEqual(b["left"], 0)
                     self.assertLessEqual(b["right"], b["inner"])
+
+    def test_disk_hint_shows_free_until_the_limit(self):
+        for width, mobile in ((390, True), (1280, False)):
+            with self.subTest(width=width):
+                self.assertRegex(self.hint(width, '[data-ib-disk="SSD"]', mobile)[1]["text"], r"Free: 3\.7 TB\s+Free until the limit \(80 %\): 857 GB")
+                self.assertIn("Free until the limit (90 %): limit reached", self.hint(width, '[data-ib-disk="HDD"]', mobile)[1]["text"])
+
+    def test_disk_meters_show_the_limit_marks_without_widening_the_chip(self):
+        for width, mobile in ((390, True), (1280, False)):
+            with self.subTest(width=width):
+                page = self.open(width, mobile=mobile)
+                g = page.evaluate(MARKS)
+                self.assertEqual(len(g), 4)
+                for m in g:
+                    self.assertEqual(m["marks"], 2, m)
+                    for k in m["at"]:
+                        self.assertGreater(k["height"], m["height"], m)
+                        self.assertGreaterEqual(k["left"], m["left"], m)
+                        self.assertLessEqual(k["right"], m["right"], m)
+                        self.assertGreaterEqual(k["width"], 1, m)
+                    self.assertLess(m["at"][0]["right"], m["at"][1]["left"], m)
+                widths = page.evaluate("() => [...document.querySelectorAll('#indexer-bar .ib-chips [data-ib-disk]')].map((c) => c.getBoundingClientRect().width)")
+                page.evaluate("() => document.querySelectorAll('#indexer-bar .ib-mark').forEach((k) => k.remove())")
+                self.assertEqual(widths, page.evaluate("() => [...document.querySelectorAll('#indexer-bar .ib-chips [data-ib-disk]')].map((c) => c.getBoundingClientRect().width)"))
 
     def test_phone_widths_have_no_horizontal_scroll(self):
         for width in (320, 390, 430):
@@ -122,7 +156,7 @@ class Popup(unittest.TestCase):
         self.open(390, height=1800).screenshot(path=f"{shots}/popup-390.png")
         self.open(1280, height=1400, mobile=False).screenshot(path=f"{shots}/popup-1280.png")
         for width, mobile in ((390, True), (1280, False)):
-            for name, selector in (("storage", '[data-ib-disk="SSD"]'), ("subtitle", '[data-ib-subtitle="subdl"]')):
+            for name, selector in (("storage", '[data-ib-disk="SSD"]'), ("storage-hdd", '[data-ib-disk="HDD"]'), ("subtitle", '[data-ib-subtitle="subdl"]')):
                 self.hint(width, selector, mobile, height=420 if mobile else 360)[0].screenshot(path=f"{shots}/hint-{name}-{width}.png")
 
 
