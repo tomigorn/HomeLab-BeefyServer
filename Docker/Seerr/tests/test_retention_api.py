@@ -199,7 +199,34 @@ class Series(Base):
         self.assertEqual(json.loads(self.w.keep.read_text())["titles"]["tv/20"], {"keep": True, "tvdb": 4020, "by": 7, "at": json.loads(self.w.keep.read_text())["titles"]["tv/20"]["at"]})
 
 
+class Conflicts(Base):
+    def test_keep_wins_over_a_temporary_record_of_the_same_series(self):
+        self.w.keep.write_text(json.dumps({"titles": {"tv/20": {"keep": False, "tvdb": 4020}, "tv/99": {"keep": True, "tvdb": 4020}}}))
+        self.assertEqual(self.w.get("jane", "title?type=tv&tmdb=20")[1]["state"], "keep")
+        self.assertEqual(self.w.get("jane", "titles?keys=tv/20")[1]["titles"]["tv/20"]["state"], "keep")
+
+    def test_choice_for_a_series_updates_every_record_of_its_tvdb_id(self):
+        self.w.keep.write_text(json.dumps({"titles": {"tv/99": {"keep": True, "tvdb": 4020}}}))
+        code, r = self.w.post("jane", {"type": "tv", "tmdbId": 20, "keep": False})
+        self.assertEqual((code, r["state"]), (200, "temporary"))
+        self.assertEqual(json.loads(self.w.keep.read_text())["titles"]["tv/99"]["keep"], False)
+
+
 class Store(Base):
+    def test_permission_denied_is_unreadable_never_missing(self):
+        locked = pathlib.Path(self.tmp.name, "locked")
+        locked.mkdir()
+        (locked / "keep.json").write_text(json.dumps({"titles": {"movie/10": {"keep": True}}}))
+        self.w.deps.retention_keep = str(locked / "keep.json")
+        locked.chmod(0)
+        try:
+            code = self.w.post("jane", {"type": "movie", "tmdbId": 10, "keep": False})[0]
+            kept = ra.is_kept(self.w.deps, "movie/10")
+        finally:
+            locked.chmod(0o755)
+        self.assertEqual((code, kept), (503, True))
+        self.assertEqual(json.loads((locked / "keep.json").read_text())["titles"]["movie/10"]["keep"], True)
+
     def test_write_never_leaves_a_moment_without_the_file_and_keeps_a_backup(self):
         self.w.keep.write_text(json.dumps({"titles": {"movie/1": {"keep": True}}}))
         seen, real_replace, real_rename, synced = [], ra.os.replace, ra.os.rename, []

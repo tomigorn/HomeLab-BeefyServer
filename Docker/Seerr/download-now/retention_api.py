@@ -54,10 +54,18 @@ def read_doc(path):
 
 def read_store(path):
     p = pathlib.Path(path)
-    if not p.exists():
-        if p.with_name(p.name + ".bak").exists():
-            raise StoreUnreadable("missing while its .bak exists")
-        return {"titles": {}}
+    try:
+        os.stat(p)
+    except FileNotFoundError:
+        try:
+            os.stat(p.with_name(p.name + ".bak"))
+        except FileNotFoundError:
+            return {"titles": {}}
+        except OSError as e:
+            raise StoreUnreadable(type(e).__name__) from None
+        raise StoreUnreadable("missing while its .bak exists")
+    except OSError as e:
+        raise StoreUnreadable(type(e).__name__) from None
     try:
         data = json.loads(p.read_text())
     except (OSError, ValueError) as e:
@@ -78,15 +86,16 @@ def overrides(path):
         if isinstance(v, dict) and isinstance(v.get("keep"), bool):
             out[k] = v["keep"]
             if isinstance(v.get("tvdb"), int) and v["tvdb"] > 0:
-                out.setdefault(f"tvdb/{v['tvdb']}", v["keep"])
+                alias = f"tvdb/{v['tvdb']}"
+                out[alias] = out.get(alias, False) or v["keep"]
     return out
 
 
 def override_for(ovs, key, entry):
-    if key in ovs:
-        return ovs[key]
+    """A choice for the key or the series' TVDB id; records that disagree: keep wins (as Movie-Downloads' retention.py)."""
     tvdb = (entry or {}).get("tvdb")
-    return ovs.get(f"tvdb/{tvdb}") if tvdb else None
+    found = [ovs[k] for k in (key, f"tvdb/{tvdb}" if tvdb else None) if k in ovs]
+    return True if True in found else False if found else None
 
 
 def write_store(path, data):
@@ -209,7 +218,8 @@ def title_state(dn, deps, me, kind, tmdb, media, today, lookup=True):
     k = rr.key(kind, tmdb)
     ek, entry = find_entry(doc, kind, tmdb, media)
     ovs = overrides(deps.retention_keep)
-    ov = ovs.get(k) if k in ovs else override_for(ovs, ek, entry if entry else {"tvdb": tvdb_of(media) if kind == "tv" else None})
+    found = [v for v in (override_for(ovs, k, None), override_for(ovs, ek, entry if entry else {"tvdb": tvdb_of(media) if kind == "tv" else None})) if v is not None]
+    ov = True if True in found else False if found else None
     out = {"key": k, "entryKey": ek, "known": isinstance(entry, dict), "deleteEnabled": bool(doc.get("deleteEnabled")), "updated": doc.get("updated")}
     if out["known"]:
         out.update({f: entry.get(f) for f in ("imported", "ssdUntil", "hddFrom", "tier", "reasons", "default")})
@@ -293,6 +303,9 @@ def keep(dn, deps, me, req, auth, today):
         rec = {"keep": want, "by": me["id"], "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
         if kind == "tv" and tvdb_of(media):
             rec["tvdb"] = tvdb_of(media)
+            for other in store["titles"].values():
+                if isinstance(other, dict) and other.get("tvdb") == rec["tvdb"]:
+                    other.update(keep=want, by=me["id"], at=rec["at"])
         store["titles"][k] = rec
         write_store(deps.retention_keep, store)
     print(f"retention: user {me['id']} set {k} to {'keep forever' if want else 'temporary'}", flush=True)
