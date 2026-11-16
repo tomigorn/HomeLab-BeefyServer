@@ -71,8 +71,8 @@ test("panel: stars on limited, unlimited, subtitle and subscription rows", async
     ["Treasure Maps", "Paid subscription until 18 Nov 2026"],
     ["NZBgeek", "Paid account (lifetime)"],
     ["Paid Subs", "Paid account"],
-    ["Treasure Maps", "Paid subscription until 18 Nov 2026"],
     ["Eweka", "Paid subscription, ended 3 Mar 2026"],
+    ["Treasure Maps", "Paid subscription until 18 Nov 2026"],
     ["NZBgeek", "Paid account (lifetime)"],
   ]);
 });

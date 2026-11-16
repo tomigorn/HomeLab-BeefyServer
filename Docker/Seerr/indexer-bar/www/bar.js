@@ -282,6 +282,25 @@
     diskChips(box, d);
   }
 
+  var KINDS = {
+    indexer: { en: "Indexers", de: "Indexer" },
+    "usenet provider": { en: "Usenet", de: "Usenet" },
+    vpn: { en: "VPN", de: "VPN" },
+    "": { en: "Other", de: "Weitere" }
+  };
+  function ends(x) { return x.lifetime || typeof x.daysLeft !== "number" ? Infinity : x.daysLeft; }
+  function bySoonest(a, b) { return ends(a) - ends(b) || a.name.localeCompare(b.name); }
+  // Groups per kind, soonest end first inside and across groups; lifetime entries and lifetime-only groups last.
+  function subGroups(subs, l) {
+    var map = {}, list = [];
+    subs.forEach(function (x) {
+      var key = String(x.kind || "").trim(), id = key.toLowerCase();
+      if (!map[id]) list.push(map[id] = { head: KINDS[id] ? KINDS[id][l] : key, items: [] });
+      map[id].items.push(x);
+    });
+    list.forEach(function (g) { g.items.sort(bySoonest); });
+    return list.sort(function (a, b) { return ends(a.items[0]) - ends(b.items[0]) || a.head.localeCompare(b.head); });
+  }
   function panel(d) {
     var p = el("div", "ib-panel"), l = lang();
     p.addEventListener("click", function (e) { e.stopPropagation(); });
@@ -317,13 +336,16 @@
     subPanel(p, d);
     var subs = d ? d.subscriptions || [] : [];
     if (subs.length) {
-      var s = el("table");
-      subs.forEach(function (x) {
-        add(s, add(el("tr"), add(el("td"), named("div", x), el("div", "ib-muted", x.kind || "")),
-          add(el("td"), add(el("div", "ib-line"), x.lifetime ? null : el("span", "ib-dot ib-" + x.level),
-            el("span", x.lifetime ? "ib-muted" : "ib-" + x.level + "-text", subText(x))))));
+      add(p, el("h4", null, "Subscriptions"));
+      subGroups(subs, l).forEach(function (g) {
+        var s = el("table");
+        g.items.forEach(function (x) {
+          add(s, add(el("tr"), named("td", x),
+            add(el("td"), add(el("div", "ib-line"), x.lifetime ? null : el("span", "ib-dot ib-" + x.level),
+              el("span", x.lifetime ? "ib-muted" : "ib-" + x.level + "-text", subText(x))))));
+        });
+        add(p, add(el("div", "ib-subs-group"), el("h5", "ib-subs-kind", g.head), s));
       });
-      add(p, el("h4", null, "Subscriptions"), s);
     }
     diskPanel(p, d);
     quotaPanel(p);
