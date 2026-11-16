@@ -508,5 +508,78 @@ class TestActivityGate(unittest.TestCase):
         self.assertEqual(count_inbound(txt, self.LISTEN, ex), 2)
 
 
+class TestResources(unittest.TestCase):
+    """Aggregate resource figures for fastpi's activity page (resources.json, served by the activity gate)."""
+    MEMINFO = "MemTotal:       64338400 kB\nMemFree:        43543636 kB\nMemAvailable:   58467792 kB\nBuffers:          123 kB\n"
+
+    def test_ram_used_is_total_minus_available(self):
+        self.assertEqual(biw.mem_used_total(self.MEMINFO), ((64338400 - 58467792) * 1024, 64338400 * 1024))
+        self.assertIsNone(biw.mem_used_total("MemFree: 1 kB\n"))
+
+    def test_cgroup_cpu_usage(self):
+        self.assertEqual(biw.cgroup_cpu_usec("usage_usec 1163306583\nuser_usec 971531522\n"), 1163306583)
+        self.assertIsNone(biw.cgroup_cpu_usec(""))
+
+    def test_cgroup_memory_leaves_out_the_inactive_page_cache(self):
+        stat = "anon 422948864\nfile 7943233536\ninactive_file 7585140736\nactive_file 204738560\n"
+        self.assertEqual(biw.cgroup_mem_bytes("8567152640\n", stat), 8567152640 - 7585140736)
+        self.assertIsNone(biw.cgroup_mem_bytes("", stat))
+        self.assertEqual(biw.cgroup_mem_bytes("100\n", "inactive_file 500\n"), 0)
+
+    def test_container_cpu_is_a_share_of_the_whole_host(self):
+        # 12 threads, 60 s: 72 s of CPU time = 10 % of the host
+        self.assertAlmostEqual(biw.cgroup_cpu_pct(1_000_000, 73_000_000, 60, 12), 10.0)
+        self.assertIsNone(biw.cgroup_cpu_pct(None, 5, 60, 12))
+        self.assertIsNone(biw.cgroup_cpu_pct(5_000_000, 1_000_000, 60, 12), "container restarted: counter reset")
+        self.assertIsNone(biw.cgroup_cpu_pct(1, 2, 0, 12))
+
+    def test_upload_is_the_nic_tx_rate_in_kbit(self):
+        a = "enp6s0: 1000 0 0 0 0 0 0 0 1000000 0 0 0 0 0 0 0\n"
+        b = "enp6s0: 9000 0 0 0 0 0 0 0 7000000 0 0 0 0 0 0 0\n"
+        self.assertAlmostEqual(biw.nic_tx_kbit(a, b, "enp6s0", 2), 24000.0)
+        self.assertEqual(biw.nic_tx_kbit(b, a, "enp6s0", 2), 0.0)
+
+    def test_gpu_busy_is_the_busiest_engine(self):
+        a = {"rcs0": 0, "vcs0": 1_000_000_000, "vecs0": 0}
+        b = {"rcs0": 6_000_000_000, "vcs0": 25_600_000_000, "vecs0": 3_000_000_000}
+        self.assertAlmostEqual(biw.gpu_busy_pct(a, b, 60), 41.0)
+        self.assertIsNone(biw.gpu_busy_pct(None, b, 60))
+        self.assertIsNone(biw.gpu_busy_pct({}, {}, 60))
+        self.assertEqual(biw.gpu_busy_pct({"rcs0": 0}, {"rcs0": 90_000_000_000}, 60), 100.0, "clamped")
+        self.assertIsNone(biw.gpu_busy_pct({"rcs0": 9}, {"rcs0": 1}, 60), "counter went back")
+
+    def test_i915_busy_events_from_sysfs(self):
+        import os, tempfile
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "events"))
+        for name, body in [("rcs0-busy", "config=0x0"), ("vcs0-busy", "config=0x2000"), ("vcs0-busy.unit", "ns"), ("rcs0-wait", "config=0x1"), ("actual-frequency", "config=0x100000")]:
+            open(os.path.join(d, "events", name), "w").write(body + "\n")
+        open(os.path.join(d, "type"), "w").write("24\n")
+        open(os.path.join(d, "cpumask"), "w").write("0\n")
+        self.assertEqual(biw.i915_busy_events(d), (24, 0, {"rcs0": 0x0, "vcs0": 0x2000}))
+        self.assertIsNone(biw.i915_busy_events(os.path.join(d, "missing")))
+
+    def test_resources_json_has_numbers_only(self):
+        import json
+        body = biw.render_resources(1794861178, 60.2, {"cpu_pct": 23.14, "jellyfin_cpu_pct": 18.04, "gpu_pct": 41.0,
+                                                        "mem_used_bytes": 9878000000, "mem_total_bytes": 65882521600,
+                                                        "jellyfin_mem_bytes": 982011904, "up_kbps": 27012.6})
+        j = json.loads(body)
+        self.assertEqual(j, {"v": 1, "updated": 1794861178, "interval_s": 60, "cpu_pct": 23.1, "jellyfin_cpu_pct": 18.0,
+                             "gpu_pct": 41.0, "mem_used_bytes": 9878000000, "mem_total_bytes": 65882521600,
+                             "jellyfin_mem_bytes": 982011904, "up_kbps": 27013})
+        j = json.loads(biw.render_resources(5, 60, {"cpu_pct": 3.0, "gpu_pct": None, "jellyfin_cpu_pct": None}))
+        self.assertEqual(j, {"v": 1, "updated": 5, "interval_s": 60, "cpu_pct": 3.0}, "unknown figures are left out")
+
+    def test_config_resources_file_and_jellyfin_container(self):
+        self.assertEqual(load_config({})["RESOURCES_FILE"], "/run/beefy-activity/resources.json")
+        self.assertEqual(load_config({})["JELLYFIN_CONTAINER"], "jellyfin")
+        self.assertEqual(load_config({"RESOURCES_FILE": "", "JELLYFIN_CONTAINER": "jf"})["JELLYFIN_CONTAINER"], "jf")
+
+    def test_cgroup_dir_from_proc_cgroup(self):
+        self.assertEqual(biw.cgroup_dir("0::/system.slice/docker-e03356fa.scope\n"), "/sys/fs/cgroup/system.slice/docker-e03356fa.scope")
+        self.assertIsNone(biw.cgroup_dir("12:cpu:/x\n"))
+
+
 if __name__ == "__main__":
     unittest.main()

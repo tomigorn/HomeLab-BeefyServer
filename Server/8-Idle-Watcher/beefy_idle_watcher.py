@@ -10,7 +10,9 @@ via fastpi's Traefik path. See 8-Idle-Watcher.md for the design.
 Stdlib only. The parser/decision functions are pure (unit-tested); the I/O glue
 is a thin layer that reads /proc, ss, who and calls systemctl poweroff.
 """
+import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -375,6 +377,111 @@ def write_idle_metrics(path, body):
         log("WARN: metrics write failed: %s" % e)
 
 
+# Aggregate resource figures for fastpi's activity page: written to RESOURCES_FILE, served read-only by the activity gate.
+
+def mem_used_total(meminfo_text):
+    """(used, total) RAM bytes from /proc/meminfo (used = MemTotal - MemAvailable), None when absent."""
+    kb = {}
+    for line in meminfo_text.splitlines():
+        k, _, rest = line.partition(":")
+        f = rest.split()
+        if f and f[0].isdigit():
+            kb[k.strip()] = int(f[0])
+    if "MemTotal" not in kb or "MemAvailable" not in kb:
+        return None
+    return (kb["MemTotal"] - kb["MemAvailable"]) * 1024, kb["MemTotal"] * 1024
+
+
+def cgroup_cpu_usec(cpu_stat_text):
+    for line in cpu_stat_text.splitlines():
+        f = line.split()
+        if len(f) == 2 and f[0] == "usage_usec" and f[1].isdigit():
+            return int(f[1])
+    return None
+
+
+def cgroup_mem_bytes(current_text, stat_text):
+    """A cgroup's memory without its inactive page cache (as `docker stats` shows it), None when unreadable."""
+    cur = current_text.strip()
+    if not cur.isdigit():
+        return None
+    inactive = 0
+    for line in stat_text.splitlines():
+        f = line.split()
+        if len(f) == 2 and f[0] == "inactive_file" and f[1].isdigit():
+            inactive = int(f[1])
+    return max(0, int(cur) - inactive)
+
+
+def cgroup_cpu_pct(usec_a, usec_b, secs, ncpu):
+    """A cgroup's CPU time as a share of the whole host's, in %; None when unknown or the counter reset."""
+    if usec_a is None or usec_b is None or secs <= 0 or not ncpu or usec_b < usec_a:
+        return None
+    return (usec_b - usec_a) / 1e6 / secs / ncpu * 100.0
+
+
+def nic_tx_kbit(dev_a, dev_b, nic, secs):
+    """Bytes the NIC sent between two /proc/net/dev snapshots, in kbit/s."""
+    if secs <= 0:
+        return 0.0
+    _, tx_a = _nic_rx_tx(dev_a, nic)
+    _, tx_b = _nic_rx_tx(dev_b, nic)
+    return max(0, tx_b - tx_a) * 8 / 1000.0 / secs
+
+
+def gpu_busy_pct(busy_a, busy_b, secs):
+    """Busy % of the busiest i915 engine between two {engine: busy ns} readings, None when unknown."""
+    if not busy_a or not busy_b or secs <= 0:
+        return None
+    pcts = []
+    for e, b in busy_b.items():
+        if e not in busy_a:
+            continue
+        if b < busy_a[e]:
+            return None
+        pcts.append((b - busy_a[e]) / 1e9 / secs * 100.0)
+    return min(100.0, max(pcts)) if pcts else None
+
+
+def i915_busy_events(root="/sys/bus/event_source/devices/i915"):
+    """(pmu type, cpu, {engine: config}) of the i915 PMU's busy events, None without the PMU."""
+    try:
+        ptype = int(_read(os.path.join(root, "type")))
+        cpu = int(_read(os.path.join(root, "cpumask")).strip().split(",")[0].split("-")[0])
+        events = {}
+        for name in sorted(os.listdir(os.path.join(root, "events"))):
+            if name.endswith("-busy"):
+                m = re.search(r"config=(0x[0-9a-fA-F]+|\d+)", _read(os.path.join(root, "events", name)))
+                if m:
+                    events[name[:-len("-busy")]] = int(m.group(1), 0)
+        return ptype, cpu, events
+    except (OSError, ValueError):
+        return None
+
+
+def cgroup_dir(proc_cgroup_text):
+    """cgroup v2 directory of a process from /proc/<pid>/cgroup, None when not on the unified hierarchy."""
+    for line in proc_cgroup_text.splitlines():
+        if line.startswith("0::/"):
+            return "/sys/fs/cgroup" + line[3:].strip()
+    return None
+
+
+RESOURCE_FIELDS = (("cpu_pct", 1), ("jellyfin_cpu_pct", 1), ("gpu_pct", 1), ("mem_used_bytes", None),
+                   ("mem_total_bytes", None), ("jellyfin_mem_bytes", None), ("up_kbps", 0))
+
+
+def render_resources(ts, interval, figures):
+    """resources.json: numbers only (no names, no addresses); an unknown figure is left out."""
+    out = {"v": 1, "updated": int(ts), "interval_s": int(round(interval))}
+    for key, digits in RESOURCE_FIELDS:
+        v = figures.get(key)
+        if v is None:
+            continue
+        out[key] = int(v) if digits is None else (int(round(v)) if digits == 0 else round(v, digits))
+    return json.dumps(out, separators=(",", ":")) + "\n"
+
+
 def evaluate(probes, inhibit):
     """(busy, reasons) from per-probe booleans + the inhibit flag."""
     reasons = []
@@ -423,6 +530,8 @@ _DEFAULTS = {
     "VPN_UPLINK": "auto",
     "VPN_TUNNEL": "tun0",
     "METRICS_FILE": "/run/beefy-idle.prom",
+    "RESOURCES_FILE": "/run/beefy-activity/resources.json",
+    "JELLYFIN_CONTAINER": "jellyfin",
 }
 
 
@@ -455,7 +564,7 @@ def load_config(env):
         cfg["DATA_DISKS"] = _clean(env["DATA_DISKS"]).split()
     if "EXCLUDE_PORTS" in env:
         cfg["EXCLUDE_PORTS"] = {int(p) for p in _clean(env["EXCLUDE_PORTS"]).split()}
-    for key in ("INHIBIT_FILE", "METRICS_FILE", "VPN_CONTAINER", "VPN_UPLINK", "VPN_TUNNEL"):
+    for key in ("INHIBIT_FILE", "METRICS_FILE", "VPN_CONTAINER", "VPN_UPLINK", "VPN_TUNNEL", "RESOURCES_FILE", "JELLYFIN_CONTAINER"):
         if key in env:
             cfg[key] = _clean(env[key])
     return cfg
@@ -495,7 +604,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.7.1"   # bump on each release; logged at startup so journald records it
+VERSION = "1.8.0"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -510,7 +619,76 @@ def _container_pid(name):
     return pid if pid.isdigit() and pid != "0" else None
 
 
-def _snapshot(cfg):
+class I915Busy:
+    """Engine busy counters of the i915 PMU (as intel_gpu_top reads them), kept open between cycles; cumulative ns, so a read costs nothing extra."""
+
+    def __init__(self):
+        self.fds = {}
+        found = i915_busy_events() if platform.machine() == "x86_64" else None
+        if not found:
+            return
+        ptype, cpu, events = found
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+
+        class Attr(ctypes.Structure):
+            _fields_ = [("type", ctypes.c_uint32), ("size", ctypes.c_uint32), ("config", ctypes.c_uint64),
+                        ("rest", ctypes.c_uint8 * 112)]
+
+        for engine, config in events.items():
+            a = Attr(type=ptype, size=ctypes.sizeof(Attr), config=config)
+            fd = libc.syscall(298, ctypes.byref(a), -1, cpu, -1, 0)   # perf_event_open on x86_64
+            if fd < 0:
+                log("WARN: i915 %s-busy unavailable (errno %d): no GPU figure" % (engine, ctypes.get_errno()))
+                continue
+            self.fds[engine] = fd
+
+    def read(self):
+        if not self.fds:
+            return None
+        try:
+            return {e: int.from_bytes(os.read(fd, 8), sys.byteorder) for e, fd in self.fds.items()}
+        except OSError:
+            return None
+
+
+def _container_cgroup(name):
+    pid = _container_pid(name)
+    return cgroup_dir(_read("/proc/%s/cgroup" % pid)) if pid else None
+
+
+def _resource_snapshot(cfg, gpu):
+    cg = _container_cgroup(cfg["JELLYFIN_CONTAINER"]) if cfg["JELLYFIN_CONTAINER"] else None
+    return {
+        "jf_cpu": cgroup_cpu_usec(_read(cg + "/cpu.stat")) if cg else None,
+        "jf_mem": cgroup_mem_bytes(_read(cg + "/memory.current"), _read(cg + "/memory.stat")) if cg else None,
+        "gpu": gpu.read() if gpu else None,
+    }
+
+
+def resource_figures(prev, cur, secs, cfg, cpu):
+    mem = mem_used_total(_read("/proc/meminfo"))
+    return {
+        "cpu_pct": cpu,
+        "jellyfin_cpu_pct": cgroup_cpu_pct(prev["res"]["jf_cpu"], cur["res"]["jf_cpu"], secs, os.cpu_count()),
+        "gpu_pct": gpu_busy_pct(prev["res"]["gpu"], cur["res"]["gpu"], secs),
+        "mem_used_bytes": mem[0] if mem else None,
+        "mem_total_bytes": mem[1] if mem else None,
+        "jellyfin_mem_bytes": cur["res"]["jf_mem"],
+        "up_kbps": nic_tx_kbit(prev["dev"], cur["dev"], cfg["PRIMARY_NIC"], secs),
+    }
+
+
+def write_resources(path, body):
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o755, exist_ok=True)
+    except OSError as e:
+        log("WARN: resources dir: %s" % e)
+        return
+    write_idle_metrics(path, body)
+
+
+def _snapshot(cfg, gpu=None):
     vpn_pid = _container_pid(cfg["VPN_CONTAINER"])
     return {
         "t": _now(),
@@ -520,6 +698,7 @@ def _snapshot(cfg):
         "vpn_pid": vpn_pid,
         "vpn_dev": _read("/proc/%s/net/dev" % vpn_pid) if vpn_pid else None,
         "vpn_route": _read("/proc/%s/net/route" % vpn_pid) if vpn_pid else None,
+        "res": _resource_snapshot(cfg, gpu),
     }
 
 
@@ -527,14 +706,15 @@ def main():
     cfg = load_config(os.environ)
     log(start_banner(VERSION, cfg))
 
-    prev = _snapshot(cfg)
+    gpu = I915Busy()
+    prev = _snapshot(cfg, gpu)
     prev_ct_bytes = None
     idle_since = _now()
     time.sleep(cfg["SAMPLE_INTERVAL"])
 
     while True:
         now = _now()
-        cur = _snapshot(cfg)
+        cur = _snapshot(cfg, gpu)
         secs = cur["t"] - prev["t"]
 
         # Any failure computing the probes (a failed ss/ps -> None, a malformed
@@ -585,6 +765,12 @@ def main():
 
         write_idle_metrics(cfg["METRICS_FILE"], render_idle_metrics(reasons, detail, int(time.time()),
                                                                   parse_btime(cur["stat"]), gauges))
+        # never part of the idle decision; a stale file shows as unavailable on fastpi
+        if cfg["RESOURCES_FILE"]:
+            try:
+                write_resources(cfg["RESOURCES_FILE"], render_resources(time.time(), secs, resource_figures(prev, cur, secs, cfg, cpu_busy_pct(prev["stat"], cur["stat"]))))
+            except Exception as e:
+                log("WARN: resources failed: %s" % e)
         idle_since = update_idle(busy, idle_since, now)
         idle_min = (now - idle_since) / 60.0
         log("idle=%4.1fm %s -> %s%s"
