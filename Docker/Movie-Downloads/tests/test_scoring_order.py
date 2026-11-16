@@ -999,6 +999,14 @@ class QualitySizes(unittest.TestCase):
         self.assertGreaterEqual(season_pack_mb / minutes, sizes["Bluray-1080p"]["min"], "the 5.4 GB anime BD season pack must pass")
 
 
+    def test_codec_floor_minimums(self):
+        """2026-11-16 owner: x264 >= 25, x265/AV1 >= 15 MB/min (grab-guard.sh + guard-size.jq); the native minimums of the Blu-ray 720p/1080p qualities drop to 15 so x265 encodes reach the guard."""
+        radarr = {q["name"]: q for q in CFG["radarr"]["movies"]["quality_definition"].get("qualities") or []}
+        sonarr = {q["name"]: q for q in CFG["sonarr"]["series"]["quality_definition"].get("qualities") or []}
+        self.assertEqual(CFG["radarr"]["movies"]["quality_definition"]["type"], "movie")
+        self.assertEqual({n: q["min"] for n, q in radarr.items()}, {"Bluray-720p": 15, "Bluray-1080p": 15})
+        self.assertEqual({n: q["min"] for n, q in sonarr.items()}, {"Bluray-720p": 15, "Bluray-1080p": 15})
+
 class SwissGerman(unittest.TestCase):
     def test_g_swiss_profile_unchanged(self):
         for app in PROFILES:

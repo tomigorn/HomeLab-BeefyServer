@@ -43,6 +43,13 @@ radarr:
     # TRaSH file-size limits per quality (min/preferred/max MB per minute).
     quality_definition:
       type: movie
+      # 2026-11-16 owner: the minimum depends on the codec (x264 25, x265/AV1 15 MB/min), checked at grab time by scripts/grab-guard.sh.
+      # The native floor drops to 15 so x265 Blu-ray encodes reach that check (TRaSH: Bluray-720p 25.7, Bluray-1080p 50.8).
+      qualities:
+        - name: Bluray-720p
+          min: 15
+        - name: Bluray-1080p
+          min: 15
 
     # TRaSH: with the Repack/Proper custom format doing the work, Radarr's own
     # "prefer and upgrade" must be off or it fights the scores.
@@ -886,7 +893,10 @@ sonarr:
       # Sonarr 4 keeps one size table for all profiles. TRaSH's series minimum for Bluray-1080p (50.4 MB/min) rejected normal anime
       # Blu-ray encodes (x265 10-bit, ~18 MB/min) and left only bloated packs (2026-11-15: a 48 GB Eminence S2 torrent instead of 5.4 GB):
       # the WEB 1080p floor instead. Bluray-1080p is only allowed in the anime and older-versions profiles.
+      # 2026-11-16: Bluray-720p too (TRaSH 17.1); the codec minimum (x264 25, x265/AV1 15 MB/min) is checked at grab time by scripts/grab-guard.sh.
       qualities:
+        - name: Bluray-720p
+          min: 15
         - name: Bluray-1080p
           min: 15
 
