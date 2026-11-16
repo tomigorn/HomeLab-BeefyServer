@@ -1,8 +1,9 @@
 [Unit]
-Description=Jellyfin studio and network logos, Moonfin studio cards and the Coming soon popularity for the home rows
+Description=Jellyfin studio and network logos, Moonfin studio cards, the Coming soon popularity for the home rows and the franchise collection TMDB ids
 
 [Service]
 Type=oneshot
 ExecStart=%h/Projects/Docker/Jellyfin/scripts/studio-logos.py
 ExecStart=%h/Projects/Docker/Jellyfin/scripts/studio-cards.py
 ExecStart=%h/Projects/Docker/Jellyfin/scripts/upcoming-popularity.py
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/collection-ids.py
