@@ -793,6 +793,24 @@ def migrate(records, pid, p):
         target["actions"] = sorted((old.get("actions") or []) + (target.get("actions") or []), key=lambda a: a.get("at") or "")
 
 
+def auto_blocks(deps, records, now):
+    """Releases Movie-Downloads' language-block.py blocked on import (no German, English or original-language audio): one Done record per download, the latest file's outcome."""
+    for e in scout_files(deps)["language-block.json"].get("entries") or []:
+        if not isinstance(e, dict) or e.get("blocked") is not True or not isinstance(e.get("key"), str) or now - (epoch(e.get("at")) or 0) > KEEP_DAYS * DAY:
+            continue
+        ident = f"auto-block|{e.get('app')}|{e.get('downloadId')}"
+        pid = pid_of("auto-block", e["key"], ident)
+        details = {"reason": "no-language-audio", "release": str(e.get("release") or "")[:200], "audio": [str(x) for x in e.get("languages") or []][:12],
+                   "original": e.get("original"), "file": e.get("file"), "searched": bool(e.get("searched"))}
+        r = records.get(pid)
+        if r is None:
+            records[pid] = {"id": pid, "type": "auto-block", "key": e["key"], "ident": ident, "title": e.get("title") or e["key"], "year": e.get("year"), "requesters": [],
+                            "details": details, "firstSeen": e.get("at"), "lastSeen": e.get("at"), "resolved": {"at": e.get("at"), "how": "auto-block"},
+                            "actions": [{"at": e.get("at"), "user": None, "userId": None, "action": "auto-block", "result": e.get("file")}]}
+        else:
+            r["details"] = details
+
+
 def merge(records, found, complete, now, imported=()):
     for pid in imported:
         r = records.get(pid)
@@ -1119,6 +1137,7 @@ def refresh(dn, deps, force=False):
                                                   {pid: r.get("firstSeen") for pid, r in records.items() if isinstance(r, dict)}, replacement_downloads(records))
         if readable:
             merge(records, found, complete, now, imported)
+            auto_blocks(deps, records, now)
             track(deps, records, now)
             track_replacements(dn, deps, records, now)
             releases_known(dn, deps, records, now)
@@ -1431,10 +1450,10 @@ def request_id(x):
 
 
 def scout_files(deps):
-    """Movie-Downloads' scout state (read-only mount): the NFO scout's releases and the description scout's entries, re-read when they change."""
+    """Movie-Downloads' state (read-only mount): the NFO scout's releases, the description scout's entries and the language block's log, re-read when they change."""
     d = getattr(deps, "scout_dir", None)
     out = {}
-    for name in ("nfo-scout.json", "description-scout.json"):
+    for name in ("nfo-scout.json", "description-scout.json", "language-block.json"):
         path = os.path.join(d, name) if d else None
         try:
             st = os.stat(path) if path else None

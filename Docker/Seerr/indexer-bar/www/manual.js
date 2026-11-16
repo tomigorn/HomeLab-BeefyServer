@@ -76,7 +76,7 @@
     en: {
       locale: "en-GB", title: "Manual interaction", intro: "Downloads that need a hand. Everyone can help, also with other people's requests.", back: "← Back to Seerr",
       open: "Open", done: "Done", empty: "Nothing needs a hand right now.", emptyDone: "Nothing done yet.", signin: "Sign in to Seerr first", loadError: "Could not load the list. Try again later.",
-      types: { removed: "Removed from Radarr/Sonarr", unmatched: "Not matched — Seerr could not hand it over", "import": "Downloaded, but not importable", "wrong-film": "Wrong film downloaded", failed: "Download failed", "no-release": "Nothing found for days" },
+      types: { removed: "Removed from Radarr/Sonarr", unmatched: "Not matched — Seerr could not hand it over", "import": "Downloaded, but not importable", "wrong-film": "Wrong film downloaded", failed: "Download failed", "no-release": "Nothing found for days", "auto-block": "Blocked automatically" },
       hints: {
         removed: "The request is still open in Seerr, but the title is gone from Radarr/Sonarr, so nothing searches for it.",
         unmatched: "Pick the right title; it is added to Radarr/Sonarr with the usual quality rules.",
@@ -98,6 +98,7 @@
         "no-release": "No release has been found for days.",
         removed: "The request is still open in Seerr, but the title is gone from Radarr/Sonarr, so nothing searches for it.",
         unmatched: "Seerr could not hand the request over to Radarr/Sonarr (the title was not found there).",
+        "no-language-audio": "Blocked automatically: no German, English or original-language audio — searching again.",
         unknown: "Sonarr/Radarr stopped this download for a reason this page doesn't know yet:"
       },
       marks: { ok: "✅", warn: "⚠️", bad: "❌", none: "–" },
@@ -167,7 +168,7 @@
       history: "What happened", gone: "Went away by itself", imported: "Imported", found: "Found and downloaded",
       removedBy: function (u) { return "Removed by admin" + (u ? " (" + u + ")" : ""); }, fixedBy: function (u, a) { return "Fixed by " + (u || "someone") + " (" + a + ")"; },
       actions: { readd: "added again", "delete": "deleted", block: "blocked, searched again", profile: "older versions allowed", grab: "release picked", link: "matched", "import": "imported", reopened: "back again",
-        replace: "other release picked", reject: "release blocked, searching again", replaced: "release replaced", "replace-failed": "replacement failed",
+        replace: "other release picked", reject: "release blocked, searching again", "auto-block": "blocked automatically (audio)", replaced: "release replaced", "replace-failed": "replacement failed",
         override: "downloaded anyway", "override-downloading": "downloading", "override-finished": "download finished", "override-replacing": "better version found", "override-replaced": "replaced by a version the profile allows" },
       errors: { 429: "Too many tries — wait a moment and try again.", 403: "Not allowed — an admin can do this.", 400: "That does not fit any more — reload the page.", 404: "Already solved — reload the page.", other: "Radarr/Sonarr not reachable — try again later." },
       ok: "Done: ", working: "Working…", problems: function (n) { return n + " problems"; },
@@ -181,12 +182,14 @@
       replacingLine: function (rel, u) { return "🔄 " + rel + " (picked by " + (u || "someone") + ") — the current file stays until it is imported"; },
       rejectingLine: function (rel, u, keep) { return "🚫 " + rel + " blocked by " + (u || "someone") + ", searching for another release — " + (keep ? "the current file stays until a replacement arrives" : "the current file was deleted"); },
       replacedBy: function (u) { return "Release replaced (picked by " + (u || "someone") + ")"; }, replacedAfterBlock: function (u) { return "Another release replaced the blocked one (blocked by " + (u || "someone") + ")"; },
-      replaceFailed: "Replacement failed — the current file stays"
+      replaceFailed: "Replacement failed — the current file stays",
+      autoBlocked: "Blocked automatically, searching again", originalIs: "original language ",
+      autoFile: { removed: "the file was removed", "previous restored": "the previous file is back", kept: "the file stays until a better one arrives" }
     },
     de: {
       locale: "de-CH", title: "Manuell beheben", intro: "Downloads, die Hilfe brauchen. Alle können helfen, auch bei Anfragen von anderen.", back: "← Zurück zu Seerr",
       open: "Offen", done: "Erledigt", empty: "Gerade braucht nichts Hilfe.", emptyDone: "Noch nichts erledigt.", signin: "Zuerst bei Seerr anmelden", loadError: "Liste nicht ladbar. Später nochmals versuchen.",
-      types: { removed: "Aus Radarr/Sonarr entfernt", unmatched: "Nicht zugeordnet — Seerr konnte es nicht übergeben", "import": "Heruntergeladen, aber nicht importierbar", "wrong-film": "Falscher Film heruntergeladen", failed: "Download fehlgeschlagen", "no-release": "Seit Tagen nichts gefunden" },
+      types: { removed: "Aus Radarr/Sonarr entfernt", unmatched: "Nicht zugeordnet — Seerr konnte es nicht übergeben", "import": "Heruntergeladen, aber nicht importierbar", "wrong-film": "Falscher Film heruntergeladen", failed: "Download fehlgeschlagen", "no-release": "Seit Tagen nichts gefunden", "auto-block": "Automatisch gesperrt" },
       hints: {
         removed: "Die Anfrage ist in Seerr noch offen, der Titel fehlt aber in Radarr/Sonarr, darum sucht nichts danach.",
         unmatched: "Den richtigen Titel wählen; er kommt mit den üblichen Qualitätsregeln in Radarr/Sonarr.",
@@ -208,6 +211,7 @@
         "no-release": "Seit Tagen wurde kein Release gefunden.",
         removed: "Die Anfrage ist in Seerr noch offen, der Titel fehlt aber in Radarr/Sonarr, darum sucht nichts danach.",
         unmatched: "Seerr konnte die Anfrage nicht an Radarr/Sonarr übergeben (der Titel wurde dort nicht gefunden).",
+        "no-language-audio": "Automatisch gesperrt: kein Deutsch, Englisch oder Ton in der Originalsprache — wird neu gesucht.",
         unknown: "Sonarr/Radarr hat diesen Download aus einem Grund angehalten, den diese Seite noch nicht kennt:"
       },
       marks: { ok: "✅", warn: "⚠️", bad: "❌", none: "–" },
@@ -277,7 +281,7 @@
       history: "Verlauf", gone: "Hat sich von selbst erledigt", imported: "Importiert", found: "Gefunden und heruntergeladen",
       removedBy: function (u) { return "Von Admin entfernt" + (u ? " (" + u + ")" : ""); }, fixedBy: function (u, a) { return "Behoben von " + (u || "jemandem") + " (" + a + ")"; },
       actions: { readd: "wieder hinzugefügt", "delete": "gelöscht", block: "gesperrt, neu gesucht", profile: "ältere Versionen erlaubt", grab: "Release gewählt", link: "zugeordnet", "import": "importiert", reopened: "wieder da",
-        replace: "anderes Release gewählt", reject: "Release gesperrt, neu gesucht", replaced: "Release ersetzt", "replace-failed": "Ersetzen fehlgeschlagen",
+        replace: "anderes Release gewählt", reject: "Release gesperrt, neu gesucht", "auto-block": "automatisch gesperrt (Ton)", replaced: "Release ersetzt", "replace-failed": "Ersetzen fehlgeschlagen",
         override: "trotzdem heruntergeladen", "override-downloading": "lädt herunter", "override-finished": "Download fertig", "override-replacing": "bessere Version gefunden", "override-replaced": "ersetzt durch eine vom Profil erlaubte Version" },
       errors: { 429: "Zu viele Versuche — kurz warten und nochmals versuchen.", 403: "Nicht erlaubt — das kann ein Admin.", 400: "Das passt nicht mehr — Seite neu laden.", 404: "Schon gelöst — Seite neu laden.", other: "Radarr/Sonarr nicht erreichbar — später nochmals versuchen." },
       ok: "Erledigt: ", working: "Läuft…", problems: function (n) { return n + " Probleme"; },
@@ -291,7 +295,9 @@
       replacingLine: function (rel, u) { return "🔄 " + rel + " (gewählt von " + (u || "jemandem") + ") — die aktuelle Datei bleibt, bis es importiert ist"; },
       rejectingLine: function (rel, u, keep) { return "🚫 " + rel + " gesperrt von " + (u || "jemandem") + ", sucht ein anderes Release — " + (keep ? "die aktuelle Datei bleibt, bis ein Ersatz da ist" : "die aktuelle Datei wurde gelöscht"); },
       replacedBy: function (u) { return "Release ersetzt (gewählt von " + (u || "jemandem") + ")"; }, replacedAfterBlock: function (u) { return "Ein anderes Release ersetzte das gesperrte (gesperrt von " + (u || "jemandem") + ")"; },
-      replaceFailed: "Ersetzen fehlgeschlagen — die aktuelle Datei bleibt"
+      replaceFailed: "Ersetzen fehlgeschlagen — die aktuelle Datei bleibt",
+      autoBlocked: "Automatisch gesperrt, wird neu gesucht", originalIs: "Originalsprache ",
+      autoFile: { removed: "die Datei wurde entfernt", "previous restored": "die vorherige Datei ist wieder da", kept: "die Datei bleibt, bis eine bessere da ist" }
     }
   };
 
@@ -534,7 +540,15 @@
     return parts.join(" · ");
   }
 
-  var TYPE_REASON = { removed: "removed", unmatched: "unmatched", "no-release": "no-release", "wrong-film": "wrong-film", failed: "failed" };
+  var TYPE_REASON = { removed: "removed", unmatched: "unmatched", "no-release": "no-release", "wrong-film": "wrong-film", failed: "failed", "auto-block": "no-language-audio" };
+
+  function autoBlockLine(t, x) {
+    var parts = [];
+    if ((x.audio || []).length) parts.push(t.audio + ": " + x.audio.map(String).join(", "));
+    if (x.original) parts.push(t.originalIs + String(x.original));
+    if (t.autoFile[x.file]) parts.push(t.autoFile[x.file]);
+    return parts.join(" · ");
+  }
 
   App.prototype.section = function (head, attrs) {
     var d = this.doc, s = el(d, "div", Object.assign({ "class": "hg-m-section" }, attrs || {}));
@@ -566,6 +580,7 @@
       if (x.nameMatch && x.nameMatch.name) dl.appendChild(el(d, "p", { "class": "hg-m-media", "data-name-match": true }, t.nameMatch(String(x.nameMatch.name), !!x.nameMatch.original)));
       c.appendChild(dl);
     }
+    if (p.type === "auto-block") c.appendChild(el(d, "p", { "class": "hg-m-media", "data-auto-block": true }, autoBlockLine(t, x)));
     if (x.message && code !== "unknown") c.appendChild(el(d, "details", { "class": "hg-m-raw", "data-raw": true }, el(d, "summary", null, t.raw), el(d, "p", null, String(x.message))));
     if (open && !rp) {
       var todo = this.section(t.whatToDo, { "data-todo": true });
@@ -579,7 +594,7 @@
       var res = p.resolved || {};
       var by = (p.actions || []).filter(function (a) { return a.action === res.how; }).pop() || {};
       var pick = (p.actions || []).filter(function (a) { return a.action === "replace" || a.action === "reject"; }).pop() || {};
-      var how = res.how === "gone" || res.how === "imported" || res.how === "found" ? t[res.how] : res.how === "delete" ? t.removedBy(by.user ? String(by.user) : null)
+      var how = res.how === "auto-block" ? t.autoBlocked : res.how === "gone" || res.how === "imported" || res.how === "found" ? t[res.how] : res.how === "delete" ? t.removedBy(by.user ? String(by.user) : null)
         : res.how === "override" ? t.overriddenBy(by.user ? String(by.user) : null) : res.how === "block" ? t.blockedBy(by.user ? String(by.user) : null)
         : res.how === "replaced" ? (pick.action === "reject" ? t.replacedAfterBlock : t.replacedBy)(pick.user ? String(pick.user) : null) : res.how === "replace-failed" ? t.replaceFailed
         : t.fixedBy(by.user ? String(by.user) : null, t.actions[res.how] || String(res.how));

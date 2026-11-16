@@ -2370,5 +2370,65 @@ class ReleaseActions(unittest.TestCase):
                                     ("sonarr", "POST", "/command", {"name": "EpisodeSearch", "episodeIds": [2045]})])
 
 
+class AutoBlock(unittest.TestCase):
+    """Releases blocked on import by Movie-Downloads' language-block.py (no German, English or original-language audio) show on the Done tab."""
+
+    def setUp(self):
+        reset()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.scouts = pathlib.Path(self.tmp.name, "scouts")
+        self.scouts.mkdir()
+        self.w = World()
+        self.deps = self.w.deps()
+        self.deps.scout_dir = str(self.scouts)
+
+    def entries(self, *entries):
+        (self.scouts / "language-block.json").write_text(json.dumps({"entries": list(entries), "downloads": []}))
+
+    def entry(self, **kw):
+        e = {"at": "2026-11-15T02:00:00Z", "app": "radarr", "key": "movie/4242", "arrId": 12, "title": "Some Film", "year": 2020, "original": "English",
+             "fileName": "Some Film (2020) - [MULTi].mkv", "downloadId": "DL9", "verdict": "block", "reason": "no German, English or English audio, found: French, Italian",
+             "languages": ["French", "Italian"], "release": "Some.Film.2020.MULTi.1080p-GRP", "file": "removed", "blocked": True, "searched": True, "note": ""}
+        e.update(kw)
+        return e
+
+    def done(self):
+        status, out = dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", self.deps)
+        self.assertEqual(status, 200)
+        self.assertEqual(out["open"], [])
+        return [d for d in out["done"] if d["type"] == "auto-block"]
+
+    def test_blocked_entry_is_a_done_record(self):
+        self.entries(self.entry())
+        [d] = self.done()
+        self.assertEqual((d["key"], d["title"], d["year"], d["resolved"]["how"], d["resolved"]["at"]), ("movie/4242", "Some Film", 2020, "auto-block", "2026-11-15T02:00:00Z"))
+        self.assertEqual(d["details"], {"reason": "no-language-audio", "release": "Some.Film.2020.MULTi.1080p-GRP", "audio": ["French", "Italian"],
+                                        "original": "English", "file": "removed", "searched": True})
+        self.assertEqual(d["offers"], [])
+        self.assertEqual([a["action"] for a in d["actions"]], ["auto-block"])
+
+    def test_same_entry_again_is_one_record(self):
+        self.entries(self.entry())
+        first = self.done()
+        manual.CACHE.clear()
+        self.assertEqual([d["id"] for d in self.done()], [d["id"] for d in first])
+
+    def test_not_blocked_entries_are_not_shown(self):
+        self.entries(self.entry(blocked=False, note="no grab event for this download: not blocked"))
+        self.assertEqual(self.done(), [])
+
+    def test_two_files_of_one_download_are_one_record(self):
+        self.entries(self.entry(), self.entry(fileName="other.mkv", file="previous restored"))
+        [d] = self.done()
+        self.assertEqual(d["details"]["file"], "previous restored")
+
+    def test_no_file_or_broken_file_shows_nothing(self):
+        self.assertEqual(self.done(), [])
+        (self.scouts / "language-block.json").write_text("{broken")
+        manual.CACHE.clear()
+        self.assertEqual(self.done(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

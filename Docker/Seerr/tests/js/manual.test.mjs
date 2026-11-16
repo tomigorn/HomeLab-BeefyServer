@@ -88,6 +88,32 @@ test("Check files to finish importing toggles to Hide files, is disabled while l
   assert.equal(calls.filter((c) => c.url.startsWith("/_download-now/manual/files")).length, 2);
 });
 
+test("done tab: a release blocked automatically for its audio, with what was found and what happened to the file", async () => {
+  const d = problem({ type: "auto-block", key: "movie/4242", title: "Some Film", year: 2020, requesters: [], resolved: { at: "2026-11-15T02:00:00Z", how: "auto-block" },
+    details: { reason: "no-language-audio", release: "Some.Film.2020.MULTi.1080p-GRP", audio: ["French", "Italian"], original: "English", file: "removed", searched: true },
+    actions: [{ at: "2026-11-15T02:00:00Z", user: null, action: "auto-block", result: "removed" }] });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [d], admin: false } } });
+  $('[data-tab="done"]').click();
+  await settle();
+  const text = $("[data-problem]").textContent;
+  assert.match($("[data-problem] [data-type]").textContent, /Blocked automatically/);
+  assert.match(text, /Blocked automatically: no German, English or original-language audio — searching again/);
+  assert.match($("[data-problem] [data-auto-block]").textContent, /Audio: French, Italian · original language English · the file was removed/);
+  assert.match(text, /Some\.Film\.2020\.MULTi/);
+  assert.doesNotMatch(text, /Fixed by/);
+  assert.equal($("[data-problem] [data-act]"), null);
+});
+
+test("German: automatisch gesperrt, previous file put back", async () => {
+  const d = problem({ type: "auto-block", key: "movie/4242", resolved: { at: "2026-11-15T02:00:00Z", how: "auto-block" },
+    details: { reason: "no-language-audio", release: "X", audio: ["Russian"], original: null, file: "previous restored", searched: true } });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [d], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
+  $('[data-tab="done"]').click();
+  await settle();
+  assert.match($("[data-problem]").textContent, /Automatisch gesperrt: kein Deutsch, Englisch oder Ton in der Originalsprache — wird neu gesucht/);
+  assert.match($("[data-problem] [data-auto-block]").textContent, /Ton: Russian · die vorherige Datei ist wieder da/);
+});
+
 test("German: Dateien prüfen und Import abschliessen", async () => {
   const p = problem({ type: "import", details: { release: "Some.Film.2024", message: "" } });
   const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [p], done: [], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
