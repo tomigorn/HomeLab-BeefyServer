@@ -487,6 +487,128 @@ def disk_write_kbit(ds_a, ds_b, disks, secs):
     return max(0, written(ds_b) - written(ds_a)) * 512 * 8 / 1000.0 / secs
 
 
+def _diskstat_rows(text):
+    return {p[2]: [int(x) for x in p[3:13]] for p in (l.split() for l in (text or "").splitlines()) if len(p) >= 13}
+
+
+def _disk_mounts(mounts_text):
+    """disk basename -> first mount point of the disk or one of its partitions, from /proc/mounts."""
+    out = {}
+    for line in (mounts_text or "").splitlines():
+        f = line.split()
+        if len(f) >= 2 and f[0].startswith("/dev/"):
+            dev = re.sub(r"(?<=[a-z])\d+$|(?<=\d)p\d+$", "", f[0][len("/dev/"):])
+            out.setdefault(dev, f[1])
+    return out
+
+
+_SPIN_RE = re.compile(r"\s(SPUN-DOWN|SLEEP)\s.*\sread=(\d+)\s+written=(\d+)")
+_KIND_ORDER = {"ssd": 0, "hdd": 1, "disk": 2}
+
+
+def disk_loads(ds_a, ds_b, disks, secs, rotational, mounts_text, spin_line, statvfs=None, limits=None):
+    """One entry per data disk: type (ssd/hdd from the kernel's rotational flag), number within its type by mount point, busy % (io_ticks), read/write kbit/s.
+    An HDD is asleep only when the spin-state log's last line says parked and its sector counters are the ones logged then (no I/O since). With statvfs: space of the disk's mount point and the type's limits."""
+    a, b = _diskstat_rows(ds_a), _diskstat_rows(ds_b)
+    mounts = _disk_mounts(mounts_text)
+    spin = _SPIN_RE.search(spin_line or "")
+    out = []
+    for d in disks:
+        if d not in b:
+            continue
+        r = rotational.get(d)
+        kind = "disk" if r is None else ("hdd" if r else "ssd")
+        cur, old = b[d], a.get(d, b[d])
+        delta = [max(0, x - y) for x, y in zip(cur, old)]
+        e = {"kind": kind, "_sort": (_KIND_ORDER[kind], mounts.get(d, "~"), d),
+             "busy_pct": min(100.0, delta[9] / (secs * 1000.0) * 100.0) if secs > 0 else 0.0,
+             "read_kbps": delta[2] * 512 * 8 / 1000.0 / secs if secs > 0 else 0.0,
+             "write_kbps": delta[6] * 512 * 8 / 1000.0 / secs if secs > 0 else 0.0}
+        if kind == "hdd" and spin and (int(spin.group(2)), int(spin.group(3))) == (cur[2], cur[6]):
+            e["asleep"] = True
+        if statvfs and d in mounts:
+            try:
+                st = statvfs(mounts[d])
+                total, free = st.f_blocks * st.f_frsize, st.f_bavail * st.f_frsize
+                e["used_bytes"], e["total_bytes"] = total - free, total
+                if limits and kind in limits:
+                    e["yellow_pct"], e["orange_pct"], e["limit_pct"] = limits[kind]
+            except OSError:
+                pass
+        out.append(e)
+    out.sort(key=lambda e: e["_sort"])
+    seen, numbered = {}, []
+    for e in out:
+        del e["_sort"]
+        kind = e.pop("kind")
+        seen[kind] = seen.get(kind, 0) + 1
+        numbered.append({"kind": kind, "n": seen[kind], **e})
+    return numbered
+
+
+def last_line(path):
+    """The last non-empty line of a file (read from its end), None when unreadable."""
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 4096))
+            lines = [l for l in f.read().decode("utf-8", "replace").splitlines() if l.strip()]
+    except OSError:
+        return None
+    return lines[-1].strip() if lines else None
+
+
+def core_busy_pcts(stat_a, stat_b):
+    """Busy % of each CPU (cpu0, cpu1, …) between two /proc/stat snapshots."""
+    def cores(text):
+        return {p[0]: [int(x) for x in p[1:]] for p in (l.split() for l in text.splitlines()) if p and re.fullmatch(r"cpu\d+", p[0])}
+    a, b = cores(stat_a), cores(stat_b)
+    out = []
+    for name in sorted(b, key=lambda n: int(n[3:])):
+        na, nb = a.get(name, b[name]), b[name]
+        tot = sum(nb) - sum(na)
+        idle = (nb[3] + nb[4]) - (na[3] + na[4])
+        out.append((tot - idle) / tot * 100.0 if tot > 0 else 0.0)
+    return out
+
+
+def swap_used_total(meminfo_text):
+    """(used, total) swap bytes from /proc/meminfo, None when absent."""
+    kb = {}
+    for line in meminfo_text.splitlines():
+        k, _, rest = line.partition(":")
+        f = rest.split()
+        if f and f[0].isdigit():
+            kb[k.strip()] = int(f[0])
+    if "SwapTotal" not in kb or "SwapFree" not in kb:
+        return None
+    return (kb["SwapTotal"] - kb["SwapFree"]) * 1024, kb["SwapTotal"] * 1024
+
+
+HISTORY_KEYS = ("cpu_pct", "mem_pct", "gpu_pct", "down_kbps", "up_kbps")
+
+
+def remember(history, figures, keep):
+    """Appends this cycle's overview figures to `history` (key -> last `keep` values; disks by type and number)."""
+    mem, tot = figures.get("mem_used_bytes"), figures.get("mem_total_bytes")
+    vals = {"cpu_pct": figures.get("cpu_pct"), "mem_pct": mem / tot * 100.0 if mem is not None and tot else None,
+            "gpu_pct": figures.get("gpu_pct"), "down_kbps": figures.get("down_kbps"), "up_kbps": figures.get("up_kbps")}
+    for d in figures.get("disks") or []:
+        vals["disk:%s%d" % (d["kind"], d["n"])] = d.get("busy_pct")
+    for k, v in vals.items():
+        history[k] = (history.get(k, []) + [v])[-keep:]
+
+
+def attach_history(figures, history):
+    figures["hist"] = {k: history[k] for k in HISTORY_KEYS if k in history}
+    for d in figures.get("disks") or []:
+        h = history.get("disk:%s%d" % (d["kind"], d["n"]))
+        if h is not None:
+            d["busy_hist"] = h
+
+
 def ffmpeg_stream_key(argv):
     """sha256 (first 16 hex) of the input file of a Jellyfin stream's ffmpeg (it writes to the transcodes folder); None for other ffmpeg runs."""
     if not any(b"/transcodes/" in a for a in argv):
@@ -579,7 +701,16 @@ def sab_post_state(comms):
 
 RESOURCE_FIELDS = (("cpu_pct", 1), ("jellyfin_cpu_pct", 1), ("gpu_pct", 1), ("mem_used_bytes", None),
                    ("mem_total_bytes", None), ("jellyfin_mem_bytes", None), ("up_kbps", 0),
-                   ("dl_cpu_pct", 1), ("dl_mem_bytes", None), ("dl_down_kbps", 0), ("disk_write_kbps", 0))
+                   ("dl_cpu_pct", 1), ("dl_mem_bytes", None), ("dl_down_kbps", 0), ("disk_write_kbps", 0),
+                   ("swap_used_bytes", None), ("swap_total_bytes", None), ("down_kbps", 0))
+
+
+def _fig(key, v):
+    if v is None or isinstance(v, bool) or not isinstance(v, (int, float)):
+        return v
+    if key.endswith("_bytes"):
+        return int(v)
+    return round(v, 1) if key.endswith("_pct") or key.endswith("_hist") else int(round(v))
 
 
 def render_resources(ts, interval, figures):
@@ -595,6 +726,13 @@ def render_resources(ts, interval, figures):
     for key in ("streams", "background"):
         if figures.get(key) is not None:
             out[key] = [{k: v for k, v in s.items() if v is not None} for s in figures[key]]
+    if figures.get("cores_pct") is not None:
+        out["cores_pct"] = [round(v, 1) for v in figures["cores_pct"]]
+    if figures.get("disks") is not None:
+        out["disks"] = [{k: ([_fig(k, x) for x in v] if isinstance(v, list) else _fig(k, v)) for k, v in d.items() if v is not None}
+                        for d in figures["disks"]]
+    if figures.get("hist"):
+        out["hist"] = {k: [_fig(k, x) for x in v] for k, v in figures["hist"].items()}
     return json.dumps(out, separators=(",", ":")) + "\n"
 
 
@@ -650,6 +788,12 @@ _DEFAULTS = {
     "JELLYFIN_CONTAINER": "jellyfin",
     "DOWNLOAD_CONTAINERS": ["movie-sabnzbd", "movie-qbittorrent", "movie-gluetun"],
     "SAB_CONTAINER": "movie-sabnzbd",
+    # written by Server/3-Storage-Layout-and-Spindown/hdd-spinstate.sh (smartctl -n standby, never wakes the disk); empty = off
+    "SPINSTATE_LOG": "/var/log/hdd-spinstate.log",
+    # used % per disk type: mover/yellow, orange, limit (same as Docker/Seerr/scripts/indexer-usage.py DISKS)
+    "DISK_LIMITS": {"ssd": (70, 75, 80), "hdd": (80, 85, 90)},
+    # cycles of overview history in resources.json (sparklines)
+    "HISTORY_SAMPLES": 15,
 }
 
 
@@ -670,7 +814,7 @@ def load_config(env):
     cfg = dict(_DEFAULTS)
     if "DRY_RUN" in env:
         cfg["DRY_RUN"] = _clean(env["DRY_RUN"]) not in ("0", "false", "False", "")
-    for key in ("IDLE_MINUTES", "SAMPLE_INTERVAL", "CT_MAX_IDLE", "CT_MIN_BYTES"):
+    for key in ("IDLE_MINUTES", "SAMPLE_INTERVAL", "CT_MAX_IDLE", "CT_MIN_BYTES", "HISTORY_SAMPLES"):
         if key in env:
             cfg[key] = int(_clean(env[key]))
     for key in ("CPU_BUSY_PCT", "NET_BUSY_KBPS", "DISK_BUSY_KBPS"):
@@ -684,9 +828,13 @@ def load_config(env):
         cfg["DOWNLOAD_CONTAINERS"] = _clean(env["DOWNLOAD_CONTAINERS"]).split()
     if "EXCLUDE_PORTS" in env:
         cfg["EXCLUDE_PORTS"] = {int(p) for p in _clean(env["EXCLUDE_PORTS"]).split()}
-    for key in ("INHIBIT_FILE", "METRICS_FILE", "VPN_CONTAINER", "VPN_UPLINK", "VPN_TUNNEL", "RESOURCES_FILE", "JELLYFIN_CONTAINER", "SAB_CONTAINER"):
+    for key in ("INHIBIT_FILE", "METRICS_FILE", "VPN_CONTAINER", "VPN_UPLINK", "VPN_TUNNEL", "RESOURCES_FILE", "JELLYFIN_CONTAINER", "SAB_CONTAINER", "SPINSTATE_LOG"):
         if key in env:
             cfg[key] = _clean(env[key])
+    cfg["DISK_LIMITS"] = dict(cfg["DISK_LIMITS"])
+    for kind in ("ssd", "hdd"):
+        if "DISK_LIMITS_" + kind.upper() in env:
+            cfg["DISK_LIMITS"][kind] = tuple(int(x) for x in _clean(env["DISK_LIMITS_" + kind.upper()]).split())
     return cfg
 
 
@@ -724,7 +872,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.9.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.10.0"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -857,8 +1005,18 @@ def download_cpu_pct(prev, cur, secs, ncpu):
     return sum(pcts) if pcts else None
 
 
+def _rotational(disks):
+    out = {}
+    for d in disks:
+        v = _read("/sys/block/%s/queue/rotational" % d).strip()
+        out[d] = None if v not in ("0", "1") else v == "1"
+    return out
+
+
 def resource_figures(prev, cur, secs, cfg, cpu):
-    mem = mem_used_total(_read("/proc/meminfo"))
+    meminfo = _read("/proc/meminfo")
+    mem = mem_used_total(meminfo)
+    swap = swap_used_total(meminfo)
     p, c = prev["res"], cur["res"]
     dl_mem = [m for m in c.get("dl_mem", []) if m is not None]
     same_vpn = prev["vpn_pid"] == cur["vpn_pid"]
@@ -877,6 +1035,13 @@ def resource_figures(prev, cur, secs, cfg, cpu):
         "mem_total_bytes": mem[1] if mem else None,
         "jellyfin_mem_bytes": c.get("jf_mem"),
         "up_kbps": nic_tx_kbit(prev["dev"], cur["dev"], cfg["PRIMARY_NIC"], secs),
+        "down_kbps": nic_rx_kbit(prev["dev"], cur["dev"], cfg["PRIMARY_NIC"], secs),
+        "cores_pct": core_busy_pcts(prev["stat"], cur["stat"]),
+        "swap_used_bytes": swap[0] if swap else None,
+        "swap_total_bytes": swap[1] if swap else None,
+        # /proc and statvfs only: answered from kernel memory, never a command to a parked HDD
+        "disks": disk_loads(prev["ds"], cur["ds"], cfg["DATA_DISKS"], secs, _rotational(cfg["DATA_DISKS"]), _read("/proc/mounts"),
+                            last_line(cfg["SPINSTATE_LOG"]), os.statvfs, cfg["DISK_LIMITS"]),
     }
 
 
@@ -908,6 +1073,7 @@ def main():
     log(start_banner(VERSION, cfg))
 
     gpu = I915Busy()
+    history = {}
     prev = _snapshot(cfg, gpu)
     prev_ct_bytes = None
     idle_since = _now()
@@ -969,7 +1135,10 @@ def main():
         # never part of the idle decision; a stale file shows as unavailable on fastpi
         if cfg["RESOURCES_FILE"]:
             try:
-                write_resources(cfg["RESOURCES_FILE"], render_resources(time.time(), secs, resource_figures(prev, cur, secs, cfg, cpu_busy_pct(prev["stat"], cur["stat"]))))
+                figures = resource_figures(prev, cur, secs, cfg, cpu_busy_pct(prev["stat"], cur["stat"]))
+                remember(history, figures, cfg["HISTORY_SAMPLES"])
+                attach_history(figures, history)
+                write_resources(cfg["RESOURCES_FILE"], render_resources(time.time(), secs, figures))
             except Exception as e:
                 log("WARN: resources failed: %s" % e)
         idle_since = update_idle(busy, idle_since, now)

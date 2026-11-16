@@ -154,6 +154,11 @@ Since v1.8.0 each cycle also writes `/run/beefy-activity/resources.json` (`RESOU
 | `dl_cpu_pct`, `dl_mem_bytes` (v1.9.0) | cgroups of `DOWNLOAD_CONTAINERS` (`movie-sabnzbd movie-qbittorrent movie-gluetun`) summed, as for Jellyfin |
 | `dl_down_kbps` (v1.9.0) | rx of `VPN_TUNNEL` in `VPN_CONTAINER`'s netns (both download clients share it) |
 | `disk_write_kbps` (v1.9.0) | `DATA_DISKS` sectors written, kbit/s |
+| `cores_pct` (v1.10.0) | `/proc/stat` `cpuN` lines, busy % per logical CPU |
+| `swap_used_bytes`, `swap_total_bytes` (v1.10.0) | `/proc/meminfo` SwapTotal − SwapFree, SwapTotal |
+| `down_kbps` (v1.10.0) | `PRIMARY_NIC` rx in kbit/s |
+| `disks` (v1.10.0) | one entry per `DATA_DISKS` disk: `kind` `ssd`/`hdd` (`/sys/block/<disk>/queue/rotational`), `n` numbered per kind by mount point (`/proc/mounts`; stable when sdX names change), `busy_pct` (io_ticks, Task Manager's active time), `read_kbps`/`write_kbps` (sectors); `used_bytes`/`total_bytes` (statvfs of the branch mount); `yellow_pct`/`orange_pct`/`limit_pct` from `DISK_LIMITS_SSD`/`_HDD` (default 70 75 80 / 80 85 90, the indexer bar's; a unit test keeps them equal); `asleep` only for an HDD whose last `SPINSTATE_LOG` line (`hdd-spinstate.sh`, `smartctl -n standby`) says parked and whose sector counters still equal the logged ones; `busy_hist`. All from kernel memory: verified 2026-11-16 that the parked HDD stays in STANDBY with unchanged counters |
+| `hist` (v1.10.0) | the last `HISTORY_SAMPLES` (15) cycles of `cpu_pct`, `mem_pct`, `gpu_pct`, `down_kbps`, `up_kbps` (in the watcher's memory, lost on restart) |
 | `sab_post` (v1.9.0) | `unpacking` (unrar, 7z, 7zz, 7za) or `verifying` (par2) running in `SAB_CONTAINER`'s cgroup |
 | `updated`, `interval_s` | write time, length of the cycle |
 

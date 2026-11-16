@@ -3,6 +3,8 @@
 Fixtures are real samples captured from beefy (2026-06-25). Run:
     python3 -m unittest test_beefy_idle_watcher -v
 """
+import os
+import pathlib
 import unittest
 
 import beefy_idle_watcher as biw
@@ -650,6 +652,124 @@ class TestResources(unittest.TestCase):
         self.assertAlmostEqual(biw.nic_rx_kbit(t1, t2, "tun0", 2), 24000.0)
         self.assertEqual(biw.nic_rx_kbit(t2, t1, "tun0", 2), 0.0)
         self.assertIsNone(biw.nic_rx_kbit(None, t1, "tun0", 2))
+
+    # sda: 800 sectors read, 6000 written, io_ticks +1000 ms; sdb and sdc idle; sdd not a data disk
+    DS_A = ("   8       0 sda 10 0 100 0 5 0 1000 0 0 0 0\n   8       1 sda1 10 0 100 0 5 0 1000 0 0 0 0\n"
+            "   8      16 sdb 10 0 100 0 5 0 500 0 0 7 0\n   8      32 sdc 336 0 16030 0 1 0 4096 0 0 664 0\n"
+            "   8      48 sdd 1 0 1 0 1 0 7 0 0 0 0\n")
+    DS_B = ("   8       0 sda 10 0 900 0 5 0 7000 0 0 1000 0\n   8       1 sda1 10 0 900 0 5 0 7000 0 0 1000 0\n"
+            "   8      16 sdb 10 0 100 0 5 0 500 0 0 7 0\n   8      32 sdc 336 0 16030 0 1 0 4096 0 0 664 0\n"
+            "   8      48 sdd 1 0 1 0 1 0 9999 0 0 9000 0\n")
+    MOUNTS = "/dev/sdb1 /srv/.disks/ssd-hot2 ext4 rw 0 0\n/dev/sda1 /srv/.disks/ssd-hot ext4 rw 0 0\n/dev/sdc1 /srv/.disks/hdd-cold xfs rw 0 0\n"
+    SPUN_DOWN = "2026-11-16T18:51:01+01:00  SPUN-DOWN     [STANDBY ]  read=16030 written=4096\n"
+    IDLE = {"busy_pct": 0.0, "read_kbps": 0.0, "write_kbps": 0.0}
+
+    def test_disk_loads_one_per_data_disk_labelled_by_type(self):
+        rot = {"sda": False, "sdb": False, "sdc": True}
+        got = biw.disk_loads(self.DS_A, self.DS_B, ["sdc", "sdb", "sda"], 2, rot, self.MOUNTS, None)
+        # 1000 ms busy in 2 s; 800 / 6000 sectors * 512 B * 8 bit in 2 s; the partition row left out
+        self.assertEqual(got, [{"kind": "ssd", "n": 1, "busy_pct": 50.0, "read_kbps": 1638.4, "write_kbps": 12288.0},
+                               {"kind": "ssd", "n": 2, **self.IDLE}, {"kind": "hdd", "n": 1, **self.IDLE}],
+                         "SSDs first, each type numbered by mount point")
+
+    def test_disk_busy_is_capped_and_survives_a_counter_reset(self):
+        got = biw.disk_loads(self.DS_A, self.DS_B, ["sda"], 0.5, {"sda": False}, self.MOUNTS, None)
+        self.assertEqual(got[0]["busy_pct"], 100.0)
+        got = biw.disk_loads(self.DS_B, self.DS_A, ["sda"], 2, {"sda": False}, self.MOUNTS, None)
+        self.assertEqual({k: got[0][k] for k in self.IDLE}, self.IDLE)
+
+    def test_disk_order_follows_the_mount_point_not_the_device_name(self):
+        swapped = "/dev/sda1 /srv/.disks/ssd-hot2 ext4 rw 0 0\n/dev/sdb1 /srv/.disks/ssd-hot ext4 rw 0 0\n"
+        got = biw.disk_loads(self.DS_A, self.DS_B, ["sda", "sdb"], 2, {"sda": False, "sdb": False}, swapped, None)
+        self.assertEqual([(d["n"], d["write_kbps"]) for d in got], [(1, 0.0), (2, 12288.0)])
+
+    def test_disk_of_unknown_type_and_missing_disk(self):
+        got = biw.disk_loads(self.DS_A, self.DS_A, ["sdd", "sdx"], 2, {"sdd": None}, "", None)
+        self.assertEqual(got, [{"kind": "disk", "n": 1, **self.IDLE}], "a disk not in diskstats is left out")
+
+    def test_hdd_asleep_only_when_the_spin_log_matches_its_untouched_counters(self):
+        rot = {"sdc": True}
+        self.assertEqual(biw.disk_loads(self.DS_A, self.DS_B, ["sdc"], 2, rot, self.MOUNTS, self.SPUN_DOWN),
+                         [{"kind": "hdd", "n": 1, **self.IDLE, "asleep": True}])
+        self.assertEqual(biw.disk_loads(self.DS_A, self.DS_B, ["sdc"], 2, rot, self.MOUNTS, self.SPUN_DOWN.replace("SPUN-DOWN", "SLEEP    "))[0].get("asleep"), True)
+        for line in (self.SPUN_DOWN.replace("written=4096", "written=4000"), self.SPUN_DOWN.replace("SPUN-DOWN", "IDLE-SPINNING"), "", "garbage\n"):
+            self.assertNotIn("asleep", biw.disk_loads(self.DS_A, self.DS_B, ["sdc"], 2, rot, self.MOUNTS, line)[0], line)
+        self.assertNotIn("asleep", biw.disk_loads(self.DS_A, self.DS_B, ["sda"], 2, {"sda": False}, self.MOUNTS,
+                                                  "x  SPUN-DOWN  [STANDBY ]  read=900 written=7000\n")[0], "only HDDs sleep")
+
+    def test_disk_space_against_its_limits(self):
+        class St:
+            def __init__(self, total, free):
+                self.f_frsize, self.f_blocks, self.f_bavail = 4096, total // 4096, free // 4096
+        fs = {"/srv/.disks/ssd-hot": St(1000 * 4096, 250 * 4096), "/srv/.disks/hdd-cold": St(2000 * 4096, 2000 * 4096)}
+
+        def statvfs(path):
+            if path not in fs:
+                raise OSError(path)
+            return fs[path]
+        limits = {"ssd": (70, 75, 80), "hdd": (80, 85, 90)}
+        got = biw.disk_loads(self.DS_A, self.DS_B, ["sda", "sdb", "sdc"], 2, {"sda": False, "sdb": False, "sdc": True}, self.MOUNTS, None, statvfs, limits)
+        self.assertEqual({k: got[0][k] for k in ("used_bytes", "total_bytes", "yellow_pct", "orange_pct", "limit_pct")},
+                         {"used_bytes": 750 * 4096, "total_bytes": 1000 * 4096, "yellow_pct": 70, "orange_pct": 75, "limit_pct": 80})
+        self.assertNotIn("used_bytes", got[1], "statvfs failed: no space figures")
+        self.assertEqual((got[2]["used_bytes"], got[2]["limit_pct"]), (0, 90))
+
+    def test_config_disk_limits_match_the_indexer_bar(self):
+        import ast
+        src = pathlib.Path(__file__).resolve().parents[2] / "Docker/Seerr/scripts/indexer-usage.py"
+        tree = ast.parse(src.read_text())
+        disks = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "DISKS")
+        want = {d["id"]: tuple(round(100 * d[k]) for k in ("yellow", "orange", "red")) for d in disks}
+        self.assertEqual(load_config({})["DISK_LIMITS"], want, "same limits as the Seerr indexer bar")
+        self.assertEqual(load_config({"DISK_LIMITS_SSD": "60 65 70"})["DISK_LIMITS"]["ssd"], (60, 65, 70))
+
+    def test_last_line_of_the_spin_log(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", delete=False) as f:
+            f.write("old line\n" * 5000 + self.SPUN_DOWN)
+        self.assertEqual(biw.last_line(f.name), self.SPUN_DOWN.strip())
+        os.unlink(f.name)
+        self.assertIsNone(biw.last_line("/nonexistent/spin.log"))
+        self.assertIsNone(biw.last_line(""))
+
+    def test_config_spin_log(self):
+        self.assertEqual(load_config({})["SPINSTATE_LOG"], "/var/log/hdd-spinstate.log")
+        self.assertEqual(load_config({"SPINSTATE_LOG": ""})["SPINSTATE_LOG"], "")
+
+    def test_per_core_busy(self):
+        a = "cpu  10 0 10 80 0 0 0 0 0 0\ncpu0 0 0 0 100 0 0 0 0 0 0\ncpu1 0 0 0 100 0 0 0 0 0 0\nintr 5\n"
+        b = "cpu  10 0 10 80 0 0 0 0 0 0\ncpu0 75 0 0 125 0 0 0 0 0 0\ncpu1 0 0 10 190 0 0 0 0 0 0\nintr 9\n"
+        self.assertEqual(biw.core_busy_pcts(a, b), [75.0, 10.0])
+        self.assertEqual(biw.core_busy_pcts(a, a), [0.0, 0.0])
+
+    def test_swap_used_total(self):
+        self.assertEqual(biw.swap_used_total("SwapTotal:  8000 kB\nSwapFree:   6000 kB\n"), (2048000, 8192000))
+        self.assertIsNone(biw.swap_used_total("MemTotal: 1 kB\n"))
+
+    def test_history_keeps_the_last_samples_of_the_overview(self):
+        h = {}
+        for i in range(3):
+            biw.remember(h, {"cpu_pct": i, "mem_used_bytes": 50, "mem_total_bytes": 200, "gpu_pct": None, "down_kbps": 8, "up_kbps": 9,
+                             "disks": [{"kind": "ssd", "n": 1, "busy_pct": 10 * i}]}, keep=2)
+        self.assertEqual(h, {"cpu_pct": [1, 2], "mem_pct": [25.0, 25.0], "gpu_pct": [None, None], "down_kbps": [8, 8], "up_kbps": [9, 9],
+                             "disk:ssd1": [10, 20]})
+        f = {"disks": [{"kind": "ssd", "n": 1, "busy_pct": 20}, {"kind": "hdd", "n": 1, "busy_pct": 0}]}
+        biw.attach_history(f, h)
+        self.assertEqual(f["hist"], {"cpu_pct": [1, 2], "mem_pct": [25.0, 25.0], "gpu_pct": [None, None], "down_kbps": [8, 8], "up_kbps": [9, 9]})
+        self.assertEqual([d.get("busy_hist") for d in f["disks"]], [[10, 20], None])
+
+    def test_resources_json_overview(self):
+        import json
+        j = json.loads(biw.render_resources(5, 60, {"cores_pct": [75.04, 0.0], "swap_used_bytes": 2048000, "swap_total_bytes": 8192000, "down_kbps": 900.6,
+                                                    "disks": [{"kind": "ssd", "n": 1, "busy_pct": 50.04, "read_kbps": 1638.4, "write_kbps": 12288.4, "busy_hist": [1.04, None]},
+                                                              {"kind": "hdd", "n": 1, **self.IDLE, "asleep": True}],
+                                                    "hist": {"cpu_pct": [3.04], "down_kbps": [900.6], "gpu_pct": [None]}}))
+        self.assertEqual({k: j[k] for k in ("cores_pct", "swap_used_bytes", "swap_total_bytes", "down_kbps", "disks", "hist")},
+                         {"cores_pct": [75.0, 0.0], "swap_used_bytes": 2048000, "swap_total_bytes": 8192000, "down_kbps": 901,
+                          "disks": [{"kind": "ssd", "n": 1, "busy_pct": 50.0, "read_kbps": 1638, "write_kbps": 12288, "busy_hist": [1.0, None]},
+                                    {"kind": "hdd", "n": 1, "busy_pct": 0.0, "read_kbps": 0, "write_kbps": 0, "asleep": True}],
+                          "hist": {"cpu_pct": [3.0], "down_kbps": [901], "gpu_pct": [None]}},
+                         "type and number only, no serials or mount points")
 
     def test_resources_json_streams_and_downloads(self):
         import json
