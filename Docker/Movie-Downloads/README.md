@@ -205,13 +205,14 @@ original-audio (mkvpropedit edits in place) takes the shared media lock `/run/lo
 
 Spec `docs/superpowers/specs/2026-11-15-storage-retention-design.md` (owner 2026-11-15). **Observe mode since 2026-11-16: nothing is deleted.** Moves SSD → HDD stay with the existing mover ([The mergerfs catch](#the-mergerfs-catch-and-why-it-matters-here)).
 
-| Stage (from the import date; series: its latest import) | What |
+| Stage, from the clock: the later of the import (series: its latest import) and the last play by anyone (series: any episode; Jellyfin `LastPlayedDate`, owner 2026-11-16: watching resets it) | What |
 |---|---|
 | day 0–30 | SSD |
 | day 30 | HDD (every title, kept-forever ones too; done by the mover as today) |
 | day 90 | temporary titles: media files deleted after 7 days of "Leaving soon" (title unmonitored + tagged `retention-deleted` first, then files only). "Deleted" = Radarr/Sonarr's recycle bin `/data/.recyclebin` for 7 days, so the space comes back only after its cleanup |
 | HDD > 85 % | temporary titles past day 30 with bytes on the HDD (tier hdd/split, only those bytes counted) leave earlier, oldest import first, until 80 %; our deletions of the last 7 days (still in the recycle bin) count as free; at most 5 such deletions a night, none while the HDD did not drop after the previous night's |
-| postponed | someone is watching it (Continue Watching, Next Up or played in the last 14 days) or it is in a household collection (Seerr **Collections**): at most 30 days, then deleted anyway (by design, spec: a title still being watched more than 30 days after its due date goes too) |
+| watching | resets the clock (no cap): a title played again leaves 3 months after that play; a reset ends "Leaving soon" and the 7 days start over when it is due again. Extra guard at delete time: nothing in someone's Continue Watching or Next Up or played in the last 14 days is deleted. Missing play data never makes a title look older: Jellyfin unreadable or knowing < 90 % of the files = no deletion that night |
+| postponed | in a household collection (Seerr **Collections**): at most 30 days, then deleted anyway (spec) |
 | switched on | the date shown is never earlier than switch-on + 14 days (grace for the existing library) |
 
 | Keep forever by default (`../Seerr/download-now/retention_rules.py`) | Rule |
