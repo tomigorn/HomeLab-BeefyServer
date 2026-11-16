@@ -44,7 +44,7 @@ PAGES = {
 }
 TITLE_OLD = {"key": "movie/30", "known": False, "state": "keep", "keep": True, "source": "default", "default": True, "reasons": ["old"], "deleteOn": None, "canKeep": True, "canUnkeep": True, "deleteEnabled": False}
 TITLE_NEW = {"key": "movie/10", "known": True, "state": "temporary", "keep": False, "source": "default", "default": False, "reasons": [], "deleteOn": "2027-02-14", "soon": False, "overdue": False,
-             "imported": "2026-11-16", "ssdUntil": "2026-12-16", "hddFrom": "2026-12-16", "tier": "ssd", "canKeep": True, "canUnkeep": True, "deleteEnabled": False}
+             "imported": "2026-11-16", "ssdUntil": "2026-12-16", "hddFrom": "2026-12-16", "tier": "ssd", "lastPlayed": "2026-11-16", "anchorBy": "play", "canKeep": True, "canUnkeep": True, "deleteEnabled": False}
 CARDS = {"titles": {"movie/10": {"state": "temporary", "deleteOn": "2027-02-14", "soon": False}, "movie/11": {"state": "keep", "source": "default"},
                     "tv/20": {"state": "temporary", "deleteOn": "2026-11-19", "soon": True}}, "deleteEnabled": False}
 
@@ -97,6 +97,11 @@ class Layout(unittest.TestCase):
         page.goto("http://seerr.test/movie/10")
         page.wait_for_selector("[data-hg-keep-fact] [data-hg-keep-toggle]")
         self.inside(page, "[data-hg-keep-fact]", width)
+        self.inside(page, "[data-hg-keep-pill]", width)
+        label = page.eval_on_selector("[data-hg-keep-fact] > span:first-child", "e => e.getBoundingClientRect().right")
+        self.assertGreaterEqual(page.eval_on_selector("[data-hg-keep-pill]", "e => e.getBoundingClientRect().left"), label)
+        self.inside(page, "[data-hg-keep-toggle]", width)
+        self.assertEqual(page.evaluate("document.documentElement.scrollWidth <= innerWidth"), True)
         self.shot(page, f"title-{width}.png")
         page.goto("http://seerr.test/requests")
         page.wait_for_function("document.querySelectorAll('[data-hg-keep-card]').length === 3")
