@@ -59,6 +59,6 @@ Details: `Docker/Movie-Downloads/README.md` "Can wait: downloads at night".
 | `snap.firmware-updater.firmware-notifier.timer` (user, masked) | desktop notifier |
 | `pro config set apt_news=false` | ads in `apt upgrade` |
 
-Kept on purpose: the live pollers (`request-tags`, `night-downloads`, `clear-data-wipe`, `indexer-usage`, `hdd-spinstate`, `queue-watchdog`, `sysstat-collect`, `jellyfin-user-defaults`, `request-state` 15 s, `media-metrics` 5 min, `retention` 30 min, `floppy-abs-push` 15 min, `smart-exporter` 30 min, never spins up a parked HDD) run only while beefy is awake and never wake it. `snapd.snap-repair` (snapd default 05/11/17/23 h, only while awake) is left as shipped. Radarr/Sonarr internal tasks and Bazarr's scheduler have fixed intervals and stay.
+Kept on purpose: the live pollers (`request-tags`, `night-downloads`, `clear-data-wipe`, `indexer-usage`, `hdd-spinstate`, `queue-watchdog`, `sysstat-collect`, `jellyfin-user-defaults`, `request-state` 15 s, `media-metrics` 5 min (library sizes hourly, from the Radarr/Sonarr DB), `retention` 30 min, `floppy-abs-push` 15 min, `smart-exporter` 30 min, never spins up a parked HDD) run only while beefy is awake and never wake it. `snapd.snap-repair` (snapd default 05/11/17/23 h, only while awake) is left as shipped. Radarr/Sonarr internal tasks and Bazarr's scheduler have fixed intervals and stay.
 
 Floppy snapshots its SQLite itself at 04:20 inside the container (no systemd timer).

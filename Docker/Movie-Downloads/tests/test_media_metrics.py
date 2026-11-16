@@ -4,6 +4,7 @@ Usage: python3 tests/test_media_metrics.py"""
 import datetime
 import importlib.util
 import pathlib
+import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -71,6 +72,13 @@ class Lines(unittest.TestCase):
         self.assertIn("beefy_retention_delete_enabled 0", t)
         self.assertEqual(mm.retention_lines({"titles": {}}), "")
 
+    def test_retention_bytes(self):
+        t = mm.retention_lines({"summary": {"keep": 1, "temporary": 1, "leaving7d": 0, "keepBytes": 30, "temporaryBytes": 20, "leaving7dBytes": 5}})
+        self.assertIn('beefy_retention_bytes{state="keep"} 30', t)
+        self.assertIn('beefy_retention_bytes{state="temporary"} 20', t)
+        self.assertIn("beefy_retention_leaving_7d_bytes 5", t)
+        self.assertNotIn("beefy_retention_bytes", mm.retention_lines({"summary": {"keep": 1, "temporary": 1}}))
+
     def test_indexers(self):
         t = mm.indexer_lines({"ok": True, "generated": "2026-10-29T00:28:03Z", "indexers": [
             {"name": "Treasure Maps", "searches": {"used": 272, "limit": None}, "downloads": {"used": 13, "limit": 400}}]})
@@ -79,6 +87,61 @@ class Lines(unittest.TestCase):
         self.assertNotIn('indexer_limit{host="beefy",indexer="Treasure Maps",kind="searches"}', t)
         self.assertIn('indexer_bar_generated_timestamp_seconds{host="beefy"} 1793233683', t)
 
+
+def mfile(res, size, hdr="", hdr_type=""):
+    return {"size": size, "quality": {"quality": {"resolution": res}}, "mediaInfo": {"videoDynamicRange": hdr, "videoDynamicRangeType": hdr_type}}
+
+
+class Library(unittest.TestCase):
+    def test_quality_classes(self):
+        self.assertEqual(mm.quality_class(mfile(2160, 1, "HDR", "DV HDR10")), "4k_hdr")
+        self.assertEqual(mm.quality_class(mfile(2160, 1, "", "HLG")), "4k_hdr")
+        self.assertEqual(mm.quality_class(mfile(2160, 1)), "4k_sdr")
+        self.assertEqual(mm.quality_class(mfile(1080, 1, "HDR", "HDR10")), "1080p")
+        self.assertEqual(mm.quality_class(mfile(720, 1)), "other")
+        self.assertEqual(mm.quality_class({"size": 1}), "other")
+
+    def test_bytes_titles_and_tiers(self):
+        movies = [{"tmdbId": 1, "movieFile": mfile(2160, 100, "HDR", "HDR10")}, {"tmdbId": 2, "movieFile": mfile(2160, 40, "HDR", "HDR10")},
+                  {"tmdbId": 3, "movieFile": mfile(1080, 10)}, {"tmdbId": 4}]
+        series = [({"tvdbId": 9}, [mfile(1080, 30), mfile(1080, 30), mfile(2160, 20)]), ({"tvdbId": 8}, [mfile(480, 5)])]
+        retention = {"movie/1": {"size": 100, "hddBytes": 100}, "movie/2": {"size": 40, "hddBytes": 0}, "tv/77": {"tvdb": 9, "size": 80, "hddBytes": 40}}
+        t = mm.library_lines(movies, series, retention)
+        self.assertIn('beefy_library_bytes{kind="movie",quality="4k_hdr",tier="hdd"} 100', t)
+        self.assertIn('beefy_library_bytes{kind="movie",quality="4k_hdr",tier="ssd"} 40', t)
+        self.assertIn('beefy_library_bytes{kind="movie",quality="1080p",tier="unknown"} 10', t)
+        self.assertIn('beefy_library_bytes{kind="movie",quality="4k_sdr",tier="ssd"} 0', t)
+        self.assertNotIn('beefy_library_bytes{kind="movie",quality="4k_sdr",tier="unknown"}', t)
+        self.assertIn('beefy_library_titles{kind="movie",quality="4k_hdr"} 2', t)
+        self.assertIn('beefy_library_bytes{kind="series",quality="1080p",tier="ssd"} 30', t)
+        self.assertIn('beefy_library_bytes{kind="series",quality="1080p",tier="hdd"} 30', t)
+        self.assertIn('beefy_library_bytes{kind="series",quality="4k_sdr",tier="hdd"} 10', t)
+        self.assertIn('beefy_library_bytes{kind="series",quality="other",tier="unknown"} 5', t)
+        self.assertIn('beefy_library_titles{kind="series",quality="1080p"} 1', t)
+        self.assertIn('beefy_library_titles{kind="series",quality="4k_sdr"} 0', t)
+        self.assertIn('beefy_library_files{kind="series",quality="1080p"} 2', t)
+
+    def test_refreshed_at_most_hourly(self):
+        calls = []
+
+        def build():
+            calls.append(1)
+            return f"x {len(calls)}\n"
+        with tempfile.TemporaryDirectory() as d:
+            cache = pathlib.Path(d, "library.prom")
+            self.assertEqual(mm.cached(cache, build, now=1000.0), ("x 1\n", True))
+            self.assertEqual(mm.cached(cache, build, now=cache.stat().st_mtime + 3500), ("x 1\n", True))
+            self.assertEqual(mm.cached(cache, build, now=cache.stat().st_mtime + 3700), ("x 2\n", True))
+
+    def test_a_failed_refresh_keeps_the_old_figures(self):
+        def boom():
+            raise OSError("down")
+        with tempfile.TemporaryDirectory() as d:
+            cache = pathlib.Path(d, "library.prom")
+            self.assertEqual(mm.cached(cache, boom, now=0.0), ("", False))
+            cache.write_text("old\n")
+            self.assertEqual(mm.cached(cache, boom, now=cache.stat().st_mtime + 7200), ("old\n", False))
+            self.assertEqual(cache.read_text(), "old\n")
 
 if __name__ == "__main__":
     unittest.main()
