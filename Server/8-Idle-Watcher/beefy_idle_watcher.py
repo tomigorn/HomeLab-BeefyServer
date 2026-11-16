@@ -10,6 +10,7 @@ via fastpi's Traefik path. See 8-Idle-Watcher.md for the design.
 Stdlib only. The parser/decision functions are pure (unit-tested); the I/O glue
 is a thin layer that reads /proc, ss, who and calls systemctl poweroff.
 """
+import hashlib
 import json
 import os
 import platform
@@ -467,8 +468,118 @@ def cgroup_dir(proc_cgroup_text):
     return None
 
 
+def nic_rx_kbit(dev_a, dev_b, nic, secs):
+    """Bytes a NIC received between two /proc/net/dev snapshots, in kbit/s; None without both snapshots."""
+    if not dev_a or not dev_b or secs <= 0:
+        return None
+    rx_a, _ = _nic_rx_tx(dev_a, nic)
+    rx_b, _ = _nic_rx_tx(dev_b, nic)
+    return max(0, rx_b - rx_a) * 8 / 1000.0 / secs
+
+
+def disk_write_kbit(ds_a, ds_b, disks, secs):
+    """Data-disk writes in kbit/s between two /proc/diskstats snapshots (512-byte sectors)."""
+    if secs <= 0:
+        return 0.0
+
+    def written(text):
+        return sum(int(p[9]) for p in (l.split() for l in text.splitlines()) if len(p) > 9 and p[2] in set(disks))
+    return max(0, written(ds_b) - written(ds_a)) * 512 * 8 / 1000.0 / secs
+
+
+def ffmpeg_stream_key(argv):
+    """sha256 (first 16 hex) of the input file of a Jellyfin stream's ffmpeg (it writes to the transcodes folder); None for other ffmpeg runs."""
+    if not any(b"/transcodes/" in a for a in argv):
+        return None
+    for flag, arg in zip(argv, argv[1:]):
+        if flag == b"-i" and arg.startswith(b"file:"):
+            return hashlib.sha256(arg[5:]).hexdigest()[:16]
+    return None
+
+
+def proc_cpu_start(stat_text):
+    """(utime + stime, starttime) in clock ticks from /proc/<pid>/stat, None when unreadable."""
+    f = stat_text.rpartition(")")[2].split()
+    if len(f) < 20 or not (f[11].isdigit() and f[12].isdigit() and f[19].isdigit()):
+        return None
+    return int(f[11]) + int(f[12]), int(f[19])
+
+
+def drm_client_engines(fdinfo_text):
+    """(drm-client-id, {engine: busy ns / engine capacity}) of a DRM fd's fdinfo; None for any other fd."""
+    kv = {}
+    for line in fdinfo_text.splitlines():
+        k, _, v = line.partition(":")
+        kv[k.strip()] = v.strip()
+    client = kv.get("drm-client-id")
+    if client is None:
+        return None
+    engines = {}
+    for k, v in kv.items():
+        if k.startswith("drm-engine-") and not k.startswith("drm-engine-capacity-") and v.endswith(" ns"):
+            e = k[len("drm-engine-"):]
+            cap = kv.get("drm-engine-capacity-" + e, "1")
+            engines[e] = int(v[:-3]) / (int(cap) if cap.isdigit() and int(cap) > 0 else 1)
+    return client, engines
+
+
+def stream_figures(prev, cur, secs, ncpu, hz, uptime):
+    """CPU (share of the whole host) and GPU (busiest engine) per stream key over the cycle; a process new in this cycle counts over its own lifetime."""
+    acc = {}
+    for pid, p in cur.items():
+        old = prev.get(pid)
+        if old and old["start"] == p["start"] and old["key"] == p["key"]:
+            span, cpu0, gpu0 = secs, old["cpu"], old["gpu"]
+        else:
+            span, cpu0, gpu0 = min(secs, uptime - p["start"] / hz), 0, {}
+        if span <= 0 or not ncpu:
+            continue
+        a = acc.setdefault(p["key"], {"cpu": 0.0, "gpu": {}})
+        a["cpu"] += max(0, p["cpu"] - cpu0) / hz / span / ncpu * 100.0
+        for e, ns in p["gpu"].items():
+            a["gpu"][e] = a["gpu"].get(e, 0.0) + max(0.0, ns - gpu0.get(e, 0.0)) / 1e9 / span * 100.0
+    return [{"key": k, "cpu_pct": round(min(100.0, a["cpu"]), 1),
+             "gpu_pct": round(min(100.0, max(a["gpu"].values())), 1) if a["gpu"] else None}
+            for k, a in sorted(acc.items())]
+
+
+def ffmpeg_task(comm, argv):
+    """Which Jellyfin background job an ffmpeg/ffprobe process is, from its arguments (no titles); None for a stream or another process."""
+    if comm not in ("ffmpeg", "ffprobe") or not argv:
+        return None
+    if comm == "ffprobe":
+        return "keyframe extraction" if b"nokey" in argv or b"-show_packets" in argv else "media probing"
+    if ffmpeg_stream_key(argv) or any(b"/transcodes/" in a for a in argv):
+        return None
+    joined = b" ".join(argv)
+    if b"chromaprint" in joined or b"blackframe" in joined or b"silencedetect" in joined:
+        return "intro/credits detection"
+    if argv[-1].endswith(b"%08d.jpg") or b"%08d" in argv[-1]:
+        return "preview images"
+    if b"-vframes" in argv or b"-frames:v" in argv:
+        return "chapter images"
+    return "other ffmpeg"
+
+
+def split_figures(figures):
+    """(stream figures, background task figures) from stream_figures over every Jellyfin ffmpeg/ffprobe."""
+    streams = [f for f in figures if not f["key"].startswith("task:")]
+    tasks = [{"task": f["key"][len("task:"):], "cpu_pct": f["cpu_pct"], "gpu_pct": f["gpu_pct"]} for f in figures if f["key"].startswith("task:")]
+    return streams, tasks
+
+
+def sab_post_state(comms):
+    """SABnzbd's post-processing from its process names: unpacking (unrar, 7-Zip), verifying (par2), else None."""
+    if any(c in ("unrar", "7z", "7zz", "7za") for c in comms):
+        return "unpacking"
+    if any(c.startswith("par2") for c in comms):
+        return "verifying"
+    return None
+
+
 RESOURCE_FIELDS = (("cpu_pct", 1), ("jellyfin_cpu_pct", 1), ("gpu_pct", 1), ("mem_used_bytes", None),
-                   ("mem_total_bytes", None), ("jellyfin_mem_bytes", None), ("up_kbps", 0))
+                   ("mem_total_bytes", None), ("jellyfin_mem_bytes", None), ("up_kbps", 0),
+                   ("dl_cpu_pct", 1), ("dl_mem_bytes", None), ("dl_down_kbps", 0), ("disk_write_kbps", 0))
 
 
 def render_resources(ts, interval, figures):
@@ -479,6 +590,11 @@ def render_resources(ts, interval, figures):
         if v is None:
             continue
         out[key] = int(v) if digits is None else (int(round(v)) if digits == 0 else round(v, digits))
+    if figures.get("sab_post") in ("unpacking", "verifying"):
+        out["sab_post"] = figures["sab_post"]
+    for key in ("streams", "background"):
+        if figures.get(key) is not None:
+            out[key] = [{k: v for k, v in s.items() if v is not None} for s in figures[key]]
     return json.dumps(out, separators=(",", ":")) + "\n"
 
 
@@ -532,6 +648,8 @@ _DEFAULTS = {
     "METRICS_FILE": "/run/beefy-idle.prom",
     "RESOURCES_FILE": "/run/beefy-activity/resources.json",
     "JELLYFIN_CONTAINER": "jellyfin",
+    "DOWNLOAD_CONTAINERS": ["movie-sabnzbd", "movie-qbittorrent", "movie-gluetun"],
+    "SAB_CONTAINER": "movie-sabnzbd",
 }
 
 
@@ -562,9 +680,11 @@ def load_config(env):
         cfg["PRIMARY_NIC"] = _clean(env["PRIMARY_NIC"])
     if "DATA_DISKS" in env:
         cfg["DATA_DISKS"] = _clean(env["DATA_DISKS"]).split()
+    if "DOWNLOAD_CONTAINERS" in env:
+        cfg["DOWNLOAD_CONTAINERS"] = _clean(env["DOWNLOAD_CONTAINERS"]).split()
     if "EXCLUDE_PORTS" in env:
         cfg["EXCLUDE_PORTS"] = {int(p) for p in _clean(env["EXCLUDE_PORTS"]).split()}
-    for key in ("INHIBIT_FILE", "METRICS_FILE", "VPN_CONTAINER", "VPN_UPLINK", "VPN_TUNNEL", "RESOURCES_FILE", "JELLYFIN_CONTAINER"):
+    for key in ("INHIBIT_FILE", "METRICS_FILE", "VPN_CONTAINER", "VPN_UPLINK", "VPN_TUNNEL", "RESOURCES_FILE", "JELLYFIN_CONTAINER", "SAB_CONTAINER"):
         if key in env:
             cfg[key] = _clean(env[key])
     return cfg
@@ -604,7 +724,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.8.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.9.0"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -652,29 +772,110 @@ class I915Busy:
             return None
 
 
-def _container_cgroup(name):
-    pid = _container_pid(name)
-    return cgroup_dir(_read("/proc/%s/cgroup" % pid)) if pid else None
+def _container_cgroups(names):
+    """{name: cgroup dir} of the running containers among names, from one docker inspect."""
+    names = [n for n in names if n]
+    out = _run(["docker", "inspect", "-f", "{{.Name}} {{.State.Pid}}"] + names) if names else None
+    dirs = {}
+    for line in (out or "").splitlines():
+        f = line.split()
+        if len(f) == 2 and f[1].isdigit() and f[1] != "0":
+            d = cgroup_dir(_read("/proc/%s/cgroup" % f[1]))
+            if d:
+                dirs[f[0].lstrip("/")] = d
+    return dirs
+
+
+def _read_bytes(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except OSError:
+        return b""
+
+
+def _pid_gpu(pid):
+    """Busy ns per engine summed over the DRM clients a process holds (each client once)."""
+    clients = {}
+    try:
+        fds = os.listdir("/proc/%s/fdinfo" % pid)
+    except OSError:
+        return {}
+    for fd in fds:
+        c = drm_client_engines(_read("/proc/%s/fdinfo/%s" % (pid, fd)))
+        if c:
+            clients[c[0]] = c[1]
+    total = {}
+    for engines in clients.values():
+        for e, ns in engines.items():
+            total[e] = total.get(e, 0.0) + ns
+    return total
+
+
+def _stream_procs(cg):
+    """{pid: key, cpu ticks, start, gpu} of the ffmpeg/ffprobe processes in the Jellyfin cgroup: a stream's file key, or task:<background job>."""
+    procs = {}
+    for pid in _read(cg + "/cgroup.procs").split():
+        comm = _read("/proc/%s/comm" % pid).strip()
+        if comm not in ("ffmpeg", "ffprobe"):
+            continue
+        argv = _read_bytes("/proc/%s/cmdline" % pid).split(b"\0")
+        while argv and argv[-1] == b"":
+            argv.pop()
+        task = ffmpeg_task(comm, argv)
+        key = "task:" + task if task else ffmpeg_stream_key(argv)
+        st = proc_cpu_start(_read("/proc/%s/stat" % pid))
+        if key and st:
+            procs[pid] = {"key": key, "cpu": st[0], "start": st[1], "gpu": _pid_gpu(pid)}
+    return procs
 
 
 def _resource_snapshot(cfg, gpu):
-    cg = _container_cgroup(cfg["JELLYFIN_CONTAINER"]) if cfg["JELLYFIN_CONTAINER"] else None
-    return {
-        "jf_cpu": cgroup_cpu_usec(_read(cg + "/cpu.stat")) if cg else None,
-        "jf_mem": cgroup_mem_bytes(_read(cg + "/memory.current"), _read(cg + "/memory.stat")) if cg else None,
-        "gpu": gpu.read() if gpu else None,
-    }
+    try:
+        cgs = _container_cgroups([cfg["JELLYFIN_CONTAINER"]] + cfg["DOWNLOAD_CONTAINERS"])
+        cg = cgs.get(cfg["JELLYFIN_CONTAINER"])
+        sab = cgs.get(cfg["SAB_CONTAINER"])
+        return {
+            "jf_cpu": cgroup_cpu_usec(_read(cg + "/cpu.stat")) if cg else None,
+            "jf_mem": cgroup_mem_bytes(_read(cg + "/memory.current"), _read(cg + "/memory.stat")) if cg else None,
+            "gpu": gpu.read() if gpu else None,
+            "streams": _stream_procs(cg) if cg else None,
+            "uptime": float(_read("/proc/uptime").split()[0]),
+            "dl_cpu": {n: cgroup_cpu_usec(_read(cgs[n] + "/cpu.stat")) for n in cfg["DOWNLOAD_CONTAINERS"] if n in cgs},
+            "dl_mem": [cgroup_mem_bytes(_read(cgs[n] + "/memory.current"), _read(cgs[n] + "/memory.stat")) for n in cfg["DOWNLOAD_CONTAINERS"] if n in cgs],
+            "sab_post": sab_post_state([_read("/proc/%s/comm" % p).strip() for p in _read(sab + "/cgroup.procs").split()]) if sab else None,
+        }
+    except Exception as e:
+        log("WARN: resource snapshot failed: %s" % e)
+        return {}
+
+
+def download_cpu_pct(prev, cur, secs, ncpu):
+    """Summed CPU share of the download containers present in both snapshots; None when none is."""
+    pcts = [cgroup_cpu_pct(prev.get(n), cur.get(n), secs, ncpu) for n in cur]
+    pcts = [p for p in pcts if p is not None]
+    return sum(pcts) if pcts else None
 
 
 def resource_figures(prev, cur, secs, cfg, cpu):
     mem = mem_used_total(_read("/proc/meminfo"))
+    p, c = prev["res"], cur["res"]
+    dl_mem = [m for m in c.get("dl_mem", []) if m is not None]
+    same_vpn = prev["vpn_pid"] == cur["vpn_pid"]
     return {
         "cpu_pct": cpu,
-        "jellyfin_cpu_pct": cgroup_cpu_pct(prev["res"]["jf_cpu"], cur["res"]["jf_cpu"], secs, os.cpu_count()),
-        "gpu_pct": gpu_busy_pct(prev["res"]["gpu"], cur["res"]["gpu"], secs),
+        "jellyfin_cpu_pct": cgroup_cpu_pct(p.get("jf_cpu"), c.get("jf_cpu"), secs, os.cpu_count()),
+        "gpu_pct": gpu_busy_pct(p.get("gpu"), c.get("gpu"), secs),
+        **dict(zip(("streams", "background"), split_figures(stream_figures(p.get("streams") or {}, c["streams"], secs, os.cpu_count(), os.sysconf("SC_CLK_TCK"), c["uptime"]))
+                                                    if c.get("streams") is not None else (None, None))),
+        "dl_cpu_pct": download_cpu_pct(p.get("dl_cpu", {}), c.get("dl_cpu", {}), secs, os.cpu_count()),
+        "dl_mem_bytes": sum(dl_mem) if dl_mem else None,
+        "dl_down_kbps": nic_rx_kbit(prev["vpn_dev"], cur["vpn_dev"], cfg["VPN_TUNNEL"], secs) if same_vpn else None,
+        "disk_write_kbps": disk_write_kbit(prev["ds"], cur["ds"], cfg["DATA_DISKS"], secs),
+        "sab_post": c.get("sab_post"),
         "mem_used_bytes": mem[0] if mem else None,
         "mem_total_bytes": mem[1] if mem else None,
-        "jellyfin_mem_bytes": cur["res"]["jf_mem"],
+        "jellyfin_mem_bytes": c.get("jf_mem"),
         "up_kbps": nic_tx_kbit(prev["dev"], cur["dev"], cfg["PRIMARY_NIC"], secs),
     }
 

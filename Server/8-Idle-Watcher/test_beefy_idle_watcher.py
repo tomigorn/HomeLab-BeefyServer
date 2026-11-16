@@ -576,6 +576,96 @@ class TestResources(unittest.TestCase):
         self.assertEqual(load_config({})["JELLYFIN_CONTAINER"], "jellyfin")
         self.assertEqual(load_config({"RESOURCES_FILE": "", "JELLYFIN_CONTAINER": "jf"})["JELLYFIN_CONTAINER"], "jf")
 
+    def test_ffmpeg_stream_key_is_the_hashed_input_file_of_a_transcode(self):
+        import hashlib
+        argv = [b"/usr/lib/jellyfin-ffmpeg/ffmpeg", b"-ss", b"00:08:36.000", b"-i", b"file:/media/movies/Fixture Film (2001)/f.mkv",
+                b"-codec:v:0", b"hevc_qsv", b"-hls_segment_filename", b"/cache/transcodes/abc%d.mp4", b"/cache/transcodes/abc.m3u8"]
+        want = hashlib.sha256(b"/media/movies/Fixture Film (2001)/f.mkv").hexdigest()[:16]
+        self.assertEqual(biw.ffmpeg_stream_key(argv), want)
+        trickplay = [b"ffmpeg", b"-i", b"file:/media/movies/x.mkv", b"/config/data/trickplay/x/%08d.jpg"]
+        self.assertIsNone(biw.ffmpeg_stream_key(trickplay), "only streams write to the transcodes folder")
+        self.assertIsNone(biw.ffmpeg_stream_key([b"ffmpeg", b"-i", b"http://tuner/1", b"/cache/transcodes/a.m3u8"]), "no file input")
+        self.assertIsNone(biw.ffmpeg_stream_key([]))
+
+    def test_proc_stat_cpu_ticks_and_start(self):
+        stat = "4242 (ffmpeg (x)) S 1 2 3 0 -1 4194560 100 0 0 0 1500 250 0 0 20 0 9 0 777000 1 2 3\n"
+        self.assertEqual(biw.proc_cpu_start(stat), (1750, 777000))
+        self.assertIsNone(biw.proc_cpu_start(""))
+
+    def test_drm_fdinfo_engine_time_per_client(self):
+        fd = ("pos:\t0\nflags:\t02100002\ndrm-driver:\ti915\ndrm-client-id:\t7\ndrm-pdev:\t0000:00:02.0\n"
+              "drm-engine-render:\t9000000000 ns\ndrm-engine-copy:\t0 ns\ndrm-engine-video:\t4000000000 ns\n"
+              "drm-engine-capacity-video:\t2\ndrm-engine-video-enhance:\t1000 ns\n")
+        self.assertEqual(biw.drm_client_engines(fd), ("7", {"render": 9e9, "copy": 0.0, "video": 2e9, "video-enhance": 1000.0}),
+                         "busy ns per engine, divided by the engine's capacity")
+        self.assertIsNone(biw.drm_client_engines("pos:\t0\nflags:\t02\n"), "not a DRM fd")
+
+    def test_stream_figures_per_input_file(self):
+        hz, ncpu = 100, 12
+        prev = {"10": {"key": "k1", "cpu": 1000, "start": 50000, "gpu": {"render": 0.0, "video": 1e9}}}
+        cur = {"10": {"key": "k1", "cpu": 1000 + 7200, "start": 50000, "gpu": {"render": 6e9, "video": 25.6e9}},
+               # started 20 s before this snapshot (uptime 1000 s): its whole CPU time over its 20 s
+               "11": {"key": "k2", "cpu": 480, "start": 98000, "gpu": {}},
+               # restarted ffmpeg with a reused pid: counts from its own start
+               "12": {"key": "k2", "cpu": 240, "start": 98000, "gpu": {}}}
+        prev["12"] = {"key": "k9", "cpu": 99999, "start": 1, "gpu": {}}
+        out = biw.stream_figures(prev, cur, 60, ncpu, hz, 1000.0)
+        self.assertEqual(out, [{"key": "k1", "cpu_pct": 10.0, "gpu_pct": 41.0}, {"key": "k2", "cpu_pct": 3.0, "gpu_pct": None}],
+                         "k1: 72 s CPU in 60 s on 12 threads = 10 %, busiest engine 41 %; k2: two processes summed, 7.2 s in their 20 s = 3 %")
+        self.assertEqual(biw.stream_figures({}, {}, 60, ncpu, hz, 1000.0), [])
+
+    def test_jellyfin_background_tasks_from_ffmpeg_arguments(self):
+        f = lambda *a: [b"/usr/lib/jellyfin-ffmpeg/ffmpeg"] + [x.encode() for x in a]
+        self.assertEqual(biw.ffmpeg_task("ffmpeg", f("-i", "file:/m/a.mkv", "-vf", "fps=1/10,scale=320:-2", "-f", "image2", "/config/cache/temp/ab12/%08d.jpg")), "preview images")
+        self.assertEqual(biw.ffmpeg_task("ffmpeg", f("-ss", "60", "-i", "file:/m/a.mkv", "-vframes", "1", "-f", "image2", "/config/cache/temp/x.jpg")), "chapter images")
+        self.assertEqual(biw.ffmpeg_task("ffmpeg", f("-i", "file:/m/a.mkv", "-ac", "2", "-f", "chromaprint", "-fp_format", "raw", "-")), "intro/credits detection")
+        self.assertEqual(biw.ffmpeg_task("ffmpeg", f("-i", "file:/m/a.mkv", "-vf", "blackframe=amount=50", "-f", "null", "-")), "intro/credits detection")
+        self.assertEqual(biw.ffmpeg_task("ffmpeg", f("-i", "file:/m/a.mkv", "-af", "silencedetect=noise=-50dB", "-f", "null", "-")), "intro/credits detection")
+        self.assertEqual(biw.ffmpeg_task("ffprobe", f("-skip_frame", "nokey", "-show_packets", "-i", "file:/m/a.mkv")), "keyframe extraction")
+        self.assertEqual(biw.ffmpeg_task("ffprobe", f("-show_streams", "-i", "file:/m/a.mkv")), "media probing")
+        self.assertEqual(biw.ffmpeg_task("ffmpeg", f("-i", "file:/m/a.mkv", "-f", "null", "-")), "other ffmpeg")
+        self.assertIsNone(biw.ffmpeg_task("ffmpeg", f("-i", "file:/m/a.mkv", "-hls_segment_filename", "/config/cache/transcodes/a%d.ts")), "a stream, not a task")
+        self.assertIsNone(biw.ffmpeg_task("jellyfin", []))
+
+    def test_split_streams_and_background(self):
+        figs = [{"key": "stream-key-film", "cpu_pct": 2.0, "gpu_pct": None}, {"key": "task:preview images", "cpu_pct": 4.0, "gpu_pct": 22.0}]
+        self.assertEqual(biw.split_figures(figs), ([{"key": "stream-key-film", "cpu_pct": 2.0, "gpu_pct": None}], [{"task": "preview images", "cpu_pct": 4.0, "gpu_pct": 22.0}]))
+        import json
+        j = json.loads(biw.render_resources(5, 60, {"background": [{"task": "preview images", "cpu_pct": 4.0, "gpu_pct": None}]}))
+        self.assertEqual(j["background"], [{"task": "preview images", "cpu_pct": 4.0}])
+
+    def test_sab_post_processing_from_process_names(self):
+        self.assertEqual(biw.sab_post_state(["s6-supervise", "python3", "unrar"]), "unpacking")
+        self.assertEqual(biw.sab_post_state(["python3", "7zz"]), "unpacking")
+        self.assertEqual(biw.sab_post_state(["python3", "par2"]), "verifying")
+        self.assertIsNone(biw.sab_post_state(["python3"]))
+
+    def test_disk_write_and_tunnel_download_rates(self):
+        a = "   8       0 sda 100 0 4000 0 50 0 1000 0 0 0 0\n   8      16 sdb 1 0 1 0 1 0 2000 0 0 0 0\n   8      32 sdd 1 0 1 0 1 0 9 0 0 0 0\n"
+        b = "   8       0 sda 900 0 9000 0 60 0 3000 0 0 0 0\n   8      16 sdb 1 0 1 0 1 0 6000 0 0 0 0\n   8      32 sdd 1 0 1 0 1 0 99999 0 0 0 0\n"
+        # 6000 sectors * 512 B * 8 bit in 2 s, reads and other disks left out
+        self.assertAlmostEqual(biw.disk_write_kbit(a, b, ["sda", "sdb"], 2), 12288.0)
+        t1 = "  tun0: 1000000 0 0 0 0 0 0 0 5 0 0 0 0 0 0 0\n"
+        t2 = "  tun0: 7000000 0 0 0 0 0 0 0 9 0 0 0 0 0 0 0\n"
+        self.assertAlmostEqual(biw.nic_rx_kbit(t1, t2, "tun0", 2), 24000.0)
+        self.assertEqual(biw.nic_rx_kbit(t2, t1, "tun0", 2), 0.0)
+        self.assertIsNone(biw.nic_rx_kbit(None, t1, "tun0", 2))
+
+    def test_resources_json_streams_and_downloads(self):
+        import json
+        j = json.loads(biw.render_resources(5, 60, {"cpu_pct": 3.0, "dl_cpu_pct": 22.04, "dl_mem_bytes": 1181116006, "dl_down_kbps": 432000.4,
+                                                    "disk_write_kbps": 960000.2, "sab_post": "unpacking",
+                                                    "streams": [{"key": "stream-key-film", "cpu_pct": 34.0, "gpu_pct": None}]}))
+        self.assertEqual(j, {"v": 1, "updated": 5, "interval_s": 60, "cpu_pct": 3.0, "dl_cpu_pct": 22.0, "dl_mem_bytes": 1181116006,
+                             "dl_down_kbps": 432000, "disk_write_kbps": 960000, "sab_post": "unpacking",
+                             "streams": [{"key": "stream-key-film", "cpu_pct": 34.0}]}, "stream keys only, no titles; unknown figures left out")
+        self.assertEqual(json.loads(biw.render_resources(5, 60, {"streams": []}))["streams"], [], "measured, no stream ffmpeg running")
+
+    def test_config_download_containers(self):
+        self.assertEqual(load_config({})["DOWNLOAD_CONTAINERS"], ["movie-sabnzbd", "movie-qbittorrent", "movie-gluetun"])
+        self.assertEqual(load_config({})["SAB_CONTAINER"], "movie-sabnzbd")
+        self.assertEqual(load_config({"DOWNLOAD_CONTAINERS": "a b # c", "SAB_CONTAINER": ""})["DOWNLOAD_CONTAINERS"], ["a", "b"])
+
     def test_cgroup_dir_from_proc_cgroup(self):
         self.assertEqual(biw.cgroup_dir("0::/system.slice/docker-e03356fa.scope\n"), "/sys/fs/cgroup/system.slice/docker-e03356fa.scope")
         self.assertIsNone(biw.cgroup_dir("12:cpu:/x\n"))

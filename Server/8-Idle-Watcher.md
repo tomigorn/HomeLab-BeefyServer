@@ -149,9 +149,15 @@ Since v1.8.0 each cycle also writes `/run/beefy-activity/resources.json` (`RESOU
 | `mem_used_bytes`, `mem_total_bytes` | `/proc/meminfo` MemTotal − MemAvailable, MemTotal |
 | `jellyfin_mem_bytes` | cgroup `memory.current` − `inactive_file` (as `docker stats`) |
 | `up_kbps` | `PRIMARY_NIC` tx in kbit/s (everything beefy sends: streams, also through fastpi's tunnel, seeding) |
+| `streams` (v1.9.0) | per stream ffmpeg in the Jellyfin cgroup (argv writes to `/transcodes/`): `key` = first 16 hex of sha256 of its `-i file:` path (fastpi matches it to the session's item path; no titles in the file), `cpu_pct` (`/proc/<pid>/stat` utime+stime, share of the host), `gpu_pct` (DRM fdinfo `drm-engine-*` ns per client ÷ capacity, busiest engine); a process started in the cycle counts over its own lifetime; `[]` = measured, none running |
+| `background` (v1.9.0) | Jellyfin's other ffmpeg/ffprobe by job, from their arguments: `preview images` (trickplay, `%08d.jpg`), `chapter images` (`-vframes`), `intro/credits detection` (chromaprint, blackframe, silencedetect), `keyframe extraction` (ffprobe `nokey`/`-show_packets`), `media probing` (other ffprobe), `other ffmpeg`; same CPU/GPU figures |
+| `dl_cpu_pct`, `dl_mem_bytes` (v1.9.0) | cgroups of `DOWNLOAD_CONTAINERS` (`movie-sabnzbd movie-qbittorrent movie-gluetun`) summed, as for Jellyfin |
+| `dl_down_kbps` (v1.9.0) | rx of `VPN_TUNNEL` in `VPN_CONTAINER`'s netns (both download clients share it) |
+| `disk_write_kbps` (v1.9.0) | `DATA_DISKS` sectors written, kbit/s |
+| `sab_post` (v1.9.0) | `unpacking` (unrar, 7z, 7zz, 7za) or `verifying` (par2) running in `SAB_CONTAINER`'s cgroup |
 | `updated`, `interval_s` | write time, length of the cycle |
 
-Never part of the idle decision; a failure only logs `WARN: resources failed`.
+Never part of the idle decision; a failure only logs `WARN: resources failed` (`WARN: resource snapshot failed` for the /proc reads). One `docker inspect` per cycle for all resource containers.
 
 So every decision — and every *near* decision — is auditable. This is what makes
 threshold tuning data-driven rather than guesswork.
