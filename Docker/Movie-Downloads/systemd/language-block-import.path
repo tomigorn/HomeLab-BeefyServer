@@ -1,0 +1,11 @@
+[Unit]
+Description=Language block: a Radarr/Sonarr import or upgrade queued a file for the audio language check
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Path]
+PathChanged=/srv/appdata/radarr/language-block.queue
+PathChanged=/srv/appdata/sonarr/language-block.queue
+Unit=language-block-import.service
+
+[Install]
+WantedBy=multi-user.target

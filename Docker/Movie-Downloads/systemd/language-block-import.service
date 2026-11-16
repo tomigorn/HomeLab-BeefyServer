@@ -1,0 +1,13 @@
+[Unit]
+Description=Blocks a just imported release without German, English or original-language audio and searches again (README Language block)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+# puts a previous file back from the recycle bin: one shared media lock with the SSD->HDD mover and original-audio
+Type=oneshot
+User=buntu
+ExecStart=/usr/bin/flock -w 1800 /run/lock/beefy-media.lock /home/buntu/Projects/Docker/Movie-Downloads/scripts/language-block.py --queue
+NoNewPrivileges=true
+PrivateTmp=true

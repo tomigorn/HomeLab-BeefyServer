@@ -1045,6 +1045,29 @@ Jellyfin plays the user's preferred language, else the track flagged *default* i
 - `systemd/original-audio.timer`: daily 04:20 in the maintenance window (sweep of the whole library, no boot trigger); `systemd/original-audio-import.path` runs `original-audio.py --queue` for the files Radarr/Sonarr queue on import/upgrade (Connect script `scripts/original-audio-hook.sh`, registered by `scripts/language-policy.sh`; a file still seeding, i.e. hard-linked, is dropped and left to the sweep). Import bursts: `original-audio-import.service` has `StartLimitIntervalSec=0`, so many imports in a row never trip the start limit (which disabled the path unit); a run takes the whole queue. Tests: `python3 tests/test_original_audio.py`, `tests/test_original_audio_hook.sh`. Install as above (`sudo install -m 0644 original-audio.service original-audio.timer /etc/systemd/system/`, `enable --now`). Needs `mkvtoolnix` (`sudo apt-get install -y mkvtoolnix`).
 - By hand: `scripts/original-audio.py --dry-run`, then without `--dry-run`. Tests: `python3 tests/test_original_audio.py`.
 
+#### Language block
+
+Owner 2026-11-16: an imported file's real audio must have German, English or the title's original language (one is enough). None of them (a `MULTi` with only French + Italian for an English film, a mislabelled release) → blocked automatically right after the import.
+
+| Part | What |
+|---|---|
+| Trigger | `scripts/original-audio-hook.sh` (Connect On Import/Upgrade, already registered) also writes `<id> <path> <file id> <download id> <isupgrade> <deleted paths> <recycle-bin paths>` to `/config/language-block.queue`; `systemd/language-block-import.path` → `scripts/language-block.py --queue` (buntu, media lock) |
+| Tracks | `mkvmerge -J` on the library file (no ffprobe on the host; same track data); `und`/empty tags: the track name (`languages.tsv` patterns, language names), else unknown |
+| Counts | German (`ger`, `deu`, `gsw`, `de-CH`: Swiss German too), English, the original language (Radarr/Sonarr `originalLanguage`; unknown → only German/English; anime: Japanese); commentary tracks never |
+| Never blocked | an unknown track language (the Manual page checks still show it), tag `override` (download anyway), the test film, films before 1930 (silent), a file without a grab (imported by hand) |
+| Block | new title: file deleted via the API (arr recycle bin, 7 days); upgrade: the previous file and its subtitles back from `/data/.recyclebin` (only if it does not fail the rule too and its place is free), then the new file deleted and the title rescanned; nothing to put back → new file kept. Then `POST /history/failed/<grab id>` (blocklist, once per download) and `MoviesSearch` / `EpisodeSearch` |
+| Shown | `~/.local/state/movie-downloads/language-block.json` (180 days) → Seerr Manual page, Done tab: "Blocked automatically: no German, English or original-language audio — searching again" (`../Seerr/README.md` "Manual interaction") |
+
+```bash
+scripts/language-block.py --library           # read-only: every file, from the arr's media info (no disk reads), lists block/unknown
+scripts/language-block.py --queue --dry-run   # what the waiting imports would get, queue left in place
+journalctl -u language-block-import -n 20     # what real imports got
+sudo install -m 0644 systemd/language-block-import.{service,path} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now language-block-import.path
+```
+
+- Tests: `python3 tests/test_language_block.py`, `tests/test_original_audio_hook.sh`.
+- Library 2026-11-16 (`--library`): 1082 files, 2 would be blocked (only Arabic / only Russian audio where Radarr says English: *Palestine 36*, *Navalny*; left alone, only new imports act), 15 unknown (no or untagged audio in the arr's media info).
+
 ### Swiss German
 
 `audio-swiss-german` = Swiss German audio is mandatory and outranks quality: a Swiss German DVD is taken over a High German 4K; no Swiss German release = nothing is grabbed.
