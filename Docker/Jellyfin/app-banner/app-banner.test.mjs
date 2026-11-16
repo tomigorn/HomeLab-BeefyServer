@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
-const { storeFor, missingFormats, promptOnStart, isPlaybackInfo, gatePlayback, layout, texts, routeKind, startPrompt, APPLE, GOOGLE, FORMATS } = createRequire(import.meta.url)("./app-banner.js");
+const { storeFor, missingFormats, promptOnStart, isPlaybackInfo, gatePlayback, layout, texts, routeKind, startPrompt, quickConnectHref, APPLE, GOOGLE, FORMATS } = createRequire(import.meta.url)("./app-banner.js");
 
 const UA = {
   iphoneSafari: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1",
@@ -121,8 +121,8 @@ test("every play asks again, nothing is remembered", async () => {
 });
 
 test("start shows both answers; play hides 'browser anyway' behind More options", () => {
-  assert.deepEqual(layout("start"), { back: false, shown: ["yes", "no"], more: [] });
-  assert.deepEqual(layout("play"), { back: true, shown: ["yes"], more: ["no"] });
+  assert.deepEqual(layout("start"), { back: false, shown: ["yes", "no"], more: [], link: ["quickconnect"] });
+  assert.deepEqual(layout("play"), { back: true, shown: ["yes"], more: ["no"], link: [] });
   assert.match(texts("en", "play").back, /back/i);
   assert.match(texts("de", "play").back, /zurück/i);
   assert.match(texts("en", "play").more, /more options/i);
@@ -233,4 +233,28 @@ test("play gate lets requests through on a Quick Connect page", async () => {
   href = `${HOST}/web/#/home`;
   await assert.rejects(win.fetch(PI, { method: "POST" }));
   assert.equal(asked, 1);
+});
+
+test("start prompt offers a Quick Connect link for a TV, EN and DE", () => {
+  assert.equal(texts("en", "start").quickconnect, "Connect a TV with a Quick Connect code");
+  assert.equal(texts("de-CH", "start").quickconnect, "Fernseher mit Quick-Connect-Code verbinden");
+});
+
+test("the Quick Connect link goes to Jellyfin's Quick Connect page, which never prompts", () => {
+  assert.equal(quickConnectHref(`${HOST}/web/#/home`), `${HOST}/web/#/quickconnect`);
+  assert.equal(quickConnectHref(`${HOST}/web/index.html#/details?id=abc`), `${HOST}/web/index.html#/quickconnect`);
+  assert.equal(quickConnectHref(`${HOST}/web/`), `${HOST}/web/#/quickconnect`);
+  assert.equal(routeKind(quickConnectHref(`${HOST}/web/#/home`)), "skip");
+});
+
+test("choosing Quick Connect is not a 'no': the next normal page prompts again", async () => {
+  const s = fakeStart(`${HOST}/web/#/home`);
+  s.check();
+  s.answer("quickconnect");
+  await tick();
+  s.page.href = `${HOST}/web/#/quickconnect`;
+  assert.equal(s.check(), "idle");
+  s.page.href = `${HOST}/web/#/home`;
+  s.check();
+  assert.deepEqual(s.calls, ["show", "show"]);
 });

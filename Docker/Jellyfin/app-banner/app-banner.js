@@ -52,13 +52,19 @@
       var kind = routeKind(getHref());
       if (state === "idle" && kind === "prompt") {
         state = "shown";
-        show().then(function () { if (state === "shown") state = "done"; });
+        show().then(function (choice) { if (state === "shown") state = choice === "quickconnect" ? "idle" : "done"; });
       } else if (state === "shown" && kind !== "prompt") {
         state = "idle";
         hide();
       }
       return state;
     };
+  }
+
+  function quickConnectHref(href) {
+    var page = new URL(href);
+    page.hash = "/quickconnect";
+    return page.href;
   }
 
   function isPlaybackInfo(url, method) {
@@ -73,6 +79,7 @@
       yes: "Ja, Moonfin laden",
       no: mode === "play" ? "Trotzdem im Browser abspielen" : "Nein, ich stöbere nur",
       more: "Weitere Optionen",
+      quickconnect: "Fernseher mit Quick-Connect-Code verbinden",
       back: "← Zurück",
     } : {
       title: "Watch in the Moonfin app",
@@ -80,13 +87,14 @@
       yes: "Yes, get Moonfin",
       no: mode === "play" ? "Play in the browser anyway" : "No, I'm only browsing",
       more: "More options",
+      quickconnect: "Connect a TV with a Quick Connect code",
       back: "← Back",
     };
     return t;
   }
 
   function layout(mode) {
-    return mode === "play" ? { back: true, shown: ["yes"], more: ["no"] } : { back: false, shown: ["yes", "no"], more: [] };
+    return mode === "play" ? { back: true, shown: ["yes"], more: ["no"], link: [] } : { back: false, shown: ["yes", "no"], more: [], link: ["quickconnect"] };
   }
 
   function canPlay(type) {
@@ -107,7 +115,7 @@
     return b;
   }
 
-  // Resolves "app", "browser" or "back" (play cancelled, stay on the page).
+  // Resolves "app", "browser", "back" (play cancelled, stay on the page) or "quickconnect" (no answer, the next normal page asks again).
   function ask(store, mode) {
     return new Promise(function (resolve) {
       var old = document.getElementById("hgAppPrompt");
@@ -119,10 +127,11 @@
       screen.setAttribute("role", "dialog");
       screen.setAttribute("aria-modal", "true");
       screen.setAttribute("aria-label", t.title);
-      screen.style.cssText = "position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;" +
-        "padding:24px 24px calc(24px + env(safe-area-inset-bottom));background:rgba(5,8,12,.96);color:#fff;font-family:inherit;text-align:center";
+      // Auto margins centre the box but collapse when the viewport is too short, so the screen scrolls instead of clipping.
+      screen.style.cssText = "position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;align-items:center;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;box-sizing:border-box;" +
+        "padding:calc(24px + env(safe-area-inset-top)) calc(24px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(24px + env(safe-area-inset-left));background:rgba(5,8,12,.96);color:#fff;font-family:inherit;text-align:center";
       var box = document.createElement("div");
-      box.style.cssText = "max-width:420px;width:100%";
+      box.style.cssText = "max-width:420px;width:100%;margin:auto 0;flex:none";
       var title = document.createElement("h2");
       title.textContent = t.title;
       title.style.cssText = "margin:0 0 12px;font-size:24px";
@@ -172,6 +181,20 @@
         box.appendChild(hidden);
       }
       screen.appendChild(box);
+      l.link.forEach(function (k) {
+        var link = document.createElement("a");
+        link.href = quickConnectHref(location.href);
+        link.setAttribute("data-choice", k);
+        link.textContent = t[k];
+        link.style.cssText = "flex:none;display:inline-block;margin-top:20px;padding:12px 8px;max-width:420px;color:rgba(255,255,255,.6);font-size:14px;line-height:1.3;text-decoration:underline;cursor:pointer";
+        link.addEventListener("click", function (e) {
+          e.preventDefault();
+          screen.remove();
+          resolve(k);
+          location.href = link.href;
+        });
+        screen.appendChild(link);
+      });
       document.body.appendChild(screen);
       yes.focus();
     });
@@ -234,7 +257,7 @@
   }
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { storeFor: storeFor, missingFormats: missingFormats, promptOnStart: promptOnStart, isPlaybackInfo: isPlaybackInfo, gatePlayback: gatePlayback, layout: layout, texts: texts, routeKind: routeKind, startPrompt: startPrompt, APPLE: APPLE, GOOGLE: GOOGLE, FORMATS: FORMATS };
+    module.exports = { storeFor: storeFor, missingFormats: missingFormats, promptOnStart: promptOnStart, isPlaybackInfo: isPlaybackInfo, gatePlayback: gatePlayback, layout: layout, texts: texts, routeKind: routeKind, startPrompt: startPrompt, quickConnectHref: quickConnectHref, APPLE: APPLE, GOOGLE: GOOGLE, FORMATS: FORMATS };
   } else if (document.body) {
     start();
   } else {
