@@ -1,0 +1,75 @@
+# =========================================================
+# Services ================================================
+# =========================================================
+services:
+# #########################################################
+# JELLYFIN-BETA ###########################################
+# #########################################################
+# Beta channel of Jellyfin: a copy of prod's DB, config and metadata (scripts/refresh-from-prod.sh) to try plugins, home rows and settings before prod.
+# Same image as prod (../Jellyfin), own uid, own network, media read-only, no night jobs or webhooks (scripts/sanitize.py).
+  jellyfin-beta:
+    image: jellyfin-local:12.4ubu2604-ls57   # built by ../Jellyfin; follows prod's version, never auto-updated on its own
+    container_name: jellyfin-beta
+    restart: unless-stopped
+    mem_limit: 4g
+    cpu_shares: 256   # a quarter of prod's weight when both are busy
+    blkio_config:
+      weight: 100     # lowest I/O weight: prod streams first
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    environment:
+      - PUID=65132
+      - PGID=65132
+      - TZ=${TZ}
+      - UMASK=${UMASK}
+      - JELLYFIN_PublishedServerUrl=${PUBLISHED_SERVER_URL}
+    volumes:
+      - ${APPDATA_ROOT}/jellyfin-beta:/config
+      # READ-ONLY, like prod
+      - ${MEDIA_ROOT}:/media:ro
+      - ../_global/lsio-init/drop-users-group.sh:/custom-cont-init.d/drop-users-group.sh:ro
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID}"
+    ports:
+      # The firewall lets only fastpi (Traefik) reach it, like prod's 8096
+      - "${JELLYFIN_BETA_PORT}:8096"
+    networks:
+      - jellyfin-beta
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8096/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# =========================================================
+# Networks ================================================
+# =========================================================
+# Own bridge, not prod's `jellyfin` network: no path to jellyfin-popular, the arrs or Floppy (DOCKER-USER), no LAN (192.168.1.0/24 dropped).
+networks:
+  jellyfin-beta:
+    name: jellyfin-beta
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.20.0/24
+
+# =========================================================
+# Volumes =================================================
+# =========================================================
+# None. Config is a bind mount under APPDATA_ROOT, the media tree read-only.

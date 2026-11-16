@@ -8,3 +8,4 @@
 | Floppy | ❌ | ❌ | | | |
 | Subtitle-Translate | ❌ | ❌ | | | |
 | Activity-Gate | ❌ | ❌ | | | |
+| Jellyfin-Beta | ❌ | ❌ | | | |
