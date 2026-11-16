@@ -18,6 +18,7 @@ PREFIX = {
     "night": "✓ Requested — downloading tonight",
     "now": "✓ Requested — downloading now",
     "none": "Not able to download yet — checked daily",
+    "pending": "⏳ Release check pending — the download versions follow once a release is found",
 }
 TV_FOUND = "⬇ Not downloaded — open Specials, choose ⬇ now or 🌙 tonight and press Play"
 EPISODES = {
@@ -158,7 +159,7 @@ def _files(folder, kind, state):
 
 
 def _clip(state):
-    return {"none": "unavailable", "requested": "requested", "downloading": "requested", "coming": "coming"}[state]
+    return {"none": "unavailable", "pending": "unavailable", "requested": "requested", "downloading": "requested", "coming": "coming"}[state]
 
 
 def _state(entry, request):
@@ -172,6 +173,8 @@ def _state(entry, request):
         return "none", None
     if entry.get("f") and entry.get("x"):
         return "found", None
+    if entry.get("id") and not entry.get("o") and not entry.get("u") and entry.get("c") is None:
+        return "pending", None
     return "none", None
 
 
@@ -234,7 +237,7 @@ def plan(lists, coming, details, owned, states):
         placeholders[folder] = Ph(
             key=key, kind=t["kind"], tmdb=t["tmdb"], season=(e or {}).get("s"), folder=folder, title=title, year=year, state=state, mode=mode,
             x=e.get("x") if state == "found" else None, sort_title=f"{li:02d}-{rank:02d} {title}", info=inf, files=_files(folder, t["kind"], state),
-            badge=None if state == "coming" else state, coming_date=t["date"], rank=rank if li <= len(HOME) else None,
+            badge=None if state in ("coming", "pending") else state, coming_date=t["date"], rank=rank if li <= len(HOME) else None,
             marks=marks.get(key, []), coming_ep=t.get("ep"))
         folders[key] = folder
 

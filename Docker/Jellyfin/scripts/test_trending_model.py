@@ -152,6 +152,16 @@ class Plan(unittest.TestCase):
         self.assertEqual(members["service-8-movie"], [("ph", p.placeholders["Other (2026)"].folder), ("ph", ph.folder)])
         self.assertEqual(p.placeholders["Other (2026)"].sort_title, "04-01 Other")
 
+    def test_never_checked_title_is_a_pending_placeholder_without_the_red_banner(self):
+        e = dict(item("movie", 7, 1, "Unchecked"), c=None)
+        l = lists(movies=[e, item("movie", 8, 2, "Checked")])
+        by = {ph.key: ph for ph in tm.plan(l, coming(), {}, {}, {}).placeholders.values()}
+        ph = by["movie/7"]
+        self.assertEqual((ph.state, ph.badge, ph.x), ("pending", None, None))
+        self.assertEqual(ph.files, {f"{ph.folder}.mp4": "unavailable"})
+        self.assertIn("Release check pending", tm.nfo(ph))
+        self.assertEqual((by["movie/8"].state, by["movie/8"].badge), ("none", "none"))
+
     def test_states_and_files(self):
         l = lists(movies=[item("movie", 1, 1, "Found", f="2160p", x="tok1", d="d1"), item("movie", 2, 2, "Nothing"), item("movie", 3, 3, "Req Night", f="1080p", x="tok3"),
                           item("movie", 4, 4, "Downloading", f="1080p", x="tok4"), item("movie", 5, 5, "Declined", f="1080p", x="tok5")],
@@ -358,7 +368,8 @@ class Nfo(unittest.TestCase):
         self.assertTrue(plot(self.ph("downloading", None)).startswith("✓ Requested — downloading now\n\n"))
         self.assertTrue(plot(self.ph("none")).startswith("Not able to download yet — checked daily\n\n"))
         self.assertEqual(set(tm.PREFIX.values()), {"⬇ Not downloaded — choose a version (⋯ / Version) and press Play", "✓ Requested — downloading tonight",
-                                                   "✓ Requested — downloading now", "Not able to download yet — checked daily"})
+                                                   "✓ Requested — downloading now", "Not able to download yet — checked daily",
+                                               "⏳ Release check pending — the download versions follow once a release is found"})
 
     def test_coming_plot_prefix(self):
         p = tm.plan(lists(), coming(("movie", 20, "d20", "2026-11-04")), {"d20": info("movie", 20, "Upcoming", 2026, overview="Soon.")}, {}, {})
