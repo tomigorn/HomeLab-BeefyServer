@@ -124,7 +124,7 @@ services:
       # ONE mount for the whole tree. Separate /downloads and /movies mounts are
       # the classic mistake: they look like different filesystems to Radarr, so
       # every import becomes a full copy instead of a hardlink.
-      - ${DATA_ROOT}:/data
+      - ${DL_ROOT}:/data   # the pool through the download view (README "Disk priority")
       # Completion scan (README "Completion scan"): the hook script and its metrics file.
       - ../Antivirus/hook:/clamav-hook:ro
       - /var/lib/clamav-scan/textfile:/clamav
@@ -253,7 +253,7 @@ services:
       - autoheal-movie=true
     volumes:
       - ${APPDATA_ROOT}/sabnzbd:/config
-      - ${DATA_ROOT}:/data
+      - ${DL_ROOT}:/data   # the pool through the download view (README "Disk priority")
       # Completion scan (README "Completion scan"): the hook script and its metrics file.
       - ../Antivirus/hook:/clamav-hook:ro
       - /var/lib/clamav-scan/textfile:/clamav

@@ -181,6 +181,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | autoheal-movie label on 8 containers | compose | compose | `md.autoheal-label`: → 8 labelled | |
 | Network `movie-downloads` `ip_range` .0/25: dynamic addresses never take a pinned .2xx (qBit bypass list, S-13) | `Movie-Downloads/docker-compose.yaml` | down Seerr, Antivirus, Movie-Downloads, then up in reverse (network is recreated) | `md.network-ip-range`: → 172.28.10.0/24 172.28.10.0/25 | the network is created by another project first (no ip_range) |
 | Built-in scheduled backups daily, 14 days kept (Radarr/Sonarr/Prowlarr every day; Bazarr Daily 04:00, 14 kept); the zips go off-host with the nightly backup | app settings (DB; Bazarr `config.yaml`) | `scripts/arr-backup-schedule.sh` | `md.radarr-backup-daily`, `md.sonarr-backup-daily`, `md.prowlarr-backup-daily`: → 1 14; `md.bazarr-backup-daily`: → Daily 14 4 | a migration resetting the host / backup settings |
+| SABnzbd and qBittorrent on the download view `/srv/dlpool` (2026-11-17, `DL_ROOT`; README "Disk priority") | `Movie-Downloads/docker-compose.yaml`, `.env` | `docker compose up -d --no-deps qbittorrent sabnzbd` | `md.sab-dlpool`, `md.qbit-dlpool`: `/data` source → /srv/dlpool | `.env` without `DL_ROOT` (compose mounts nothing useful: recreate fails or binds an empty path) |
 
 ## Floppy
 

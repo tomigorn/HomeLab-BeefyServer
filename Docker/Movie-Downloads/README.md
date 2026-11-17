@@ -208,7 +208,7 @@ Goal (owner 2026-11-17): a stream always wins the disk over downloads, imports, 
 | Fact | Consequence |
 |---|---|
 | Data disks run `mq-deadline` (kernel default), NVMe `none`; kernel has `io.prio.class` and `io.cost`, no `io.latency` | `io.weight` / systemd `IOWeight` / Docker `blkio_weight` do nothing (they need BFQ or io.cost); I/O classes (`ionice`, `IOSchedulingClass`, cgroup `io.prio.class`) do work |
-| Every container sees the pool through the one mergerfs process (`system.slice/srv-video.mount`, 2.40.2, no passthrough) | the disk sees all union reads and writes as mergerfs's: a class or weight on SABnzbd, qBittorrent, clamav-queue or the hooks cannot reach the disk |
+| A container sees the pool through a mergerfs process (`system.slice/srv-video.mount`, 2.40.2, no passthrough) | the disk sees all its reads and writes as that mergerfs's: a class or weight on a container cannot reach the disk, only one on the mount's cgroup |
 | The nightly ClamAV scan and the mover read and write the branches (`/srv/.disks/*`) directly | their own cgroup counts: idle class works |
 
 Live:
@@ -217,6 +217,7 @@ Live:
 |---|---|
 | Mover at idle class, its writeback too | `beefy-mover.service`: `IOSchedulingClass=idle` + `ExecStartPre=+` writes `idle` to its `io.prio.class` |
 | Nightly scan at idle class | `clamav-scan.service`: `ExecStartPre=+` writes `idle` to the clamav container's `io.prio.class` before each run |
+| Downloads behind streams | SABnzbd, qBittorrent, clamav-queue on the download view `/srv/dlpool` (below) |
 | Checks | `host.io-sched`, `host.mover-io-idle`, `av.scan-io-idle` (CUSTOMIZATIONS.md) |
 
 Test: 12 GiB "stream" file and an 8 GiB read + 8 GiB write load on `ssd-hot2` (scratch folder, deleted), 3-7 rounds each, nobody playing. Stream = 2 MiB reads at 40 MB/s (latency) then an unthrottled read (MB/s); load = 150 MB/s buffered writes + an unthrottled read.
@@ -231,7 +232,21 @@ Test: 12 GiB "stream" file and an 8 GiB read + 8 GiB write load on `ssd-hot2` (s
 | through a second mergerfs instance, default | 0-3 | 9-72 ms | 139-529 MB/s, median 158 |
 | through a second mergerfs instance in its own cgroup, `idle` | 0-4 | 7-8 ms | 473-527 MB/s |
 
-Open, needs the owner's yes (pool change): the downloads get their own mergerfs instance (same branches and options, own systemd unit whose cgroup gets `idle`, `docker.service` `RequiresMountsFor` it), mounted as `/data` in SABnzbd, qBittorrent and clamav-queue (container paths unchanged, Radarr's hardlinks still work: same branch). Measured above as the last row. Jellyfin stays untouched. Alternative: mergerfs ≥ 2.41 with `passthrough.io` (I/O then counts in each container's cgroup; loses `moveonenospc`).
+**Download view `/srv/dlpool`** (2026-11-17, owner yes): a second mergerfs mount of the same branches with the pool's options (`fsname=mergerfs-dl`, same `category.create`, built from the pool's fstab line), its mount unit's cgroup at idle class (`dlpool-ioprio.service`). SABnzbd and qBittorrent (`DL_ROOT` in `.env`) and clamav-queue mount it as `/data`; container paths are unchanged, Radarr/Sonarr/Bazarr/Jellyfin stay on `/srv/video`. Imports still hardlink: the file stays on its branch (tested 2026-11-17: a release written through the view, Radarr Copy import → same inode, 2 links). `docker.service` waits for it (`docker.service.d/11-require-dlpool.conf`); `beefy-branch-order` keeps the emptier SSD first in both views (`Server/3-Storage-Layout-and-Spindown.md`).
+
+| | |
+|---|---|
+| Install | `sudo Server/3-Storage-Layout-and-Spindown/install-dlpool.sh`, then `sudo docker compose up -d --no-deps qbittorrent sabnzbd` here and `sudo docker compose up -d --no-deps clamav-queue` in `../Antivirus` (pause SABnzbd first) |
+| Checks | `host.dlpool`, `host.branch-order`, `md.sab-dlpool`, `md.qbit-dlpool`, `av.queue-dlpool` |
+| Rollback | `DL_ROOT=/srv/video` in `.env` and `source: /srv/video` for clamav-queue, recreate the three; `sudo rm /etc/systemd/system/docker.service.d/11-require-dlpool.conf`; `sudo systemctl disable --now dlpool-ioprio.service`; delete the `/srv/dlpool` line in `/etc/fstab` (backup `/etc/fstab.bak-dlpool-*`), `sudo systemctl daemon-reload && sudo umount /srv/dlpool` |
+
+Re-measured on the real views 2026-11-17 (same test, 3 rounds; stream read through `/srv/video` as Jellyfin):
+
+| Load | Reads > 100 ms | Stream p99 | Unthrottled read | its p99 |
+|---|---|---|---|---|
+| none | 0 | 7-10 ms | 529-550 MB/s | 4-10 ms |
+| through `/srv/video` (before) | 3-4 | 51-73 ms | 120-158 MB/s | 330-465 ms |
+| through `/srv/dlpool` (now) | 0-5 | 9-107 ms (two of three 9 ms) | 425-498 MB/s | 10 ms |
 
 ### Storage retention
 

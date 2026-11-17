@@ -72,7 +72,7 @@ Dead-man's switch every 28 days. Rules that fire when the alerting itself breaks
       `grafana/alertmanager/secrets/telegram_bot_token`, restart alertmanager.
 - [ ] **NVMe scratch dir for SABnzbd `incomplete/`** (§13.4) — unpack writes are
       heavy and don't belong on the media pool. Optional, not required.
-- [ ] **Downloads on their own mergerfs instance at idle I/O class** (needs your yes, pool change): streams then win the disk over SABnzbd, qBittorrent and clamav-queue (measured: unthrottled stream read 473-527 MB/s instead of median 158, p99 7 ms). Plan and numbers: `Movie-Downloads/README.md` "Disk priority".
+- [x] **Downloads on their own mergerfs instance at idle I/O class** (done 2026-11-17, owner yes): streams then win the disk over SABnzbd, qBittorrent and clamav-queue (measured: unthrottled stream read 473-527 MB/s instead of median 158, p99 7 ms). Plan and numbers: `Movie-Downloads/README.md` "Disk priority".
 - [ ] Wire the **promoter's trigger** once Jellyfin is running and its read
       behaviour can be measured rather than guessed.
 
