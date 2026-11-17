@@ -2,7 +2,8 @@
 """Builds the planned Moonfin home rows in the beta: one collection per row (tags beta-row, beta-row-<key>), per-user rows as one collection per user (tag beta-row-u-<userId>, hidden from everyone else by BlockedTags, like prod's "For you"), then every user's Moonfin home layout.
 Fixed rows: Continue Watching, Favourites (built in), New on the Server (last 30 days), Top Picks for You, Hidden Gems, Watch Again (per user), Awards Season, Sagas & Franchises, Based on a True Story, Christmas (Dec) / Halloween (Oct), Binge in a Weekend.
 Rotating rows: 3 of ROTATING per month, Director Spotlight and Starring pick a new person each month. Out of season the seasonal row is left out, so Binge moves up.
-Usage: rows.py [--dry-run] [--month YYYY-MM] [--counts]  (--counts prints titles per row, changes nothing)"""
+Order: New on the Server newest first, Top Picks by relevance, Watch Again last played first; every other row shuffled once a day (seed: date, row, user for per-user rows), the same on every device.
+Usage: rows.py [--dry-run] [--month YYYY-MM | --date YYYY-MM-DD] [--counts]  (--counts prints titles per row, changes nothing; --month/--date simulate a day, run again without them to reset)"""
 import collections
 import base64
 import datetime
@@ -38,6 +39,8 @@ NAMES = {"toppicks": "Top Picks for You", "gems": "Hidden Gems", "watchagain": "
          "truestory": "Based on a True Story", "binge": "Binge in a Weekend", "world": "World Cinema", "dach": "Made in Switzerland & DACH",
          "mind": "Mind-Benders", "animation": "Animation for Grown-ups", "under100": "Under 100 Minutes", "uhd": "4K HDR Showcase"}
 USER_ROWS = ("toppicks", "gems", "watchagain")
+# Rows with an order of their own (newest, relevance, last played); every other row is shuffled once a day.
+NATURAL = {"new", "toppicks", "watchagain"}
 BETA_ADMIN = "beta-admin"  # local test account: no rows of its own, sees no one's
 
 
@@ -109,17 +112,32 @@ def seasonal(items, month):
     return None
 
 
+def seed(day, key, owner=None):
+    """Same order all day, on every device; per-user rows per user."""
+    return f"{day.isoformat()}:{key}:{owner or ''}"
+
+
+def shuffled(member_ids, seed_text):
+    """A stable shuffle: each id ranked by a hash of the seed and the id."""
+    return sorted(member_ids, key=lambda i: hashlib.sha256(f"{seed_text}:{i}".encode()).hexdigest())
+
+
+def ordered(key, member_ids, day, owner=None):
+    return member_ids if key in NATURAL else shuffled(member_ids, seed(day, key, owner))
+
+
 def played(i):
     return bool((i.get("UserData") or {}).get("Played"))
 
 
 def hidden_gems(items):
-    best = sorted((i for i in items if (i.get("CommunityRating") or 0) >= 7.5 and not played(i)), key=lambda i: -(i.get("CommunityRating") or 0))
-    return ids(best)
+    return ids(i for i in items if (i.get("CommunityRating") or 0) >= 7.5 and not played(i))
 
 
 def watch_again(items):
-    return ids(i for i in items if played(i) and ((i.get("CommunityRating") or 0) >= 7 or (i.get("UserData") or {}).get("IsFavorite")))
+    """Played and liked (rating 7+ or ♥), last played first."""
+    again = [i for i in items if played(i) and ((i.get("CommunityRating") or 0) >= 7 or (i.get("UserData") or {}).get("IsFavorite"))]
+    return ids(sorted(again, key=lambda i: (i.get("UserData") or {}).get("LastPlayedDate") or "", reverse=True))
 
 
 def top_picks(items, similar, seeds_max=15):
@@ -275,13 +293,18 @@ def sync_set(key, name, want, boxes, admin, dry, owner=None):
     return sid
 
 
-def hide_others(users, dry):
-    """Every user's BlockedTags hold the per-user tags of everyone else (beta-admin: of everyone)."""
-    tags_all = {u["Id"]: f"beta-row-u-{u['Id']}" for u in users}
+def blocked_for(user, all_users):
+    """The per-user tags of everyone else, disabled users included (their sets stay); beta-admin: of everyone."""
+    return {f"beta-row-u-{u['Id']}" for u in all_users if u["Id"] != user["Id"] or user["Name"] == BETA_ADMIN}
+
+
+def hide_others(users, dry, all_users=None):
+    """Every enabled user's BlockedTags hold the per-user tags of everyone else."""
+    all_users = all_users or users
     changed = 0
     for u in users:
         pol = u["Policy"]
-        want = {t for uid, t in tags_all.items() if uid != u["Id"] or u["Name"] == BETA_ADMIN}
+        want = blocked_for(u, all_users)
         have = set(pol.get("BlockedTags") or [])
         if not want <= have:
             changed += 1
@@ -377,6 +400,14 @@ def main(argv):
     args = list(argv)
     dry, counts = "--dry-run" in args, "--counts" in args
     day = datetime.date.today()
+    if "--date" in args:
+        i = args.index("--date")
+        try:
+            day = datetime.datetime.strptime(args[i + 1], "%Y-%m-%d").date()
+        except (IndexError, ValueError):
+            print(__doc__.strip(), file=sys.stderr)
+            return 2
+        del args[i:i + 2]
     if "--month" in args:
         i = args.index("--month")
         try:
@@ -388,7 +419,8 @@ def main(argv):
     if any(a not in ("--dry-run", "--counts") for a in args):
         print(__doc__.strip(), file=sys.stderr)
         return 2
-    users = [u for u in api("GET", "/Users") if not u["Policy"].get("IsDisabled")]
+    everyone = api("GET", "/Users")
+    users = [u for u in everyone if not u["Policy"].get("IsDisabled")]
     admin = next(u["Id"] for u in users if u["Policy"]["IsAdministrator"])
     items = library(admin)
     rows = plan(items, day, awards_tmdb())
@@ -410,23 +442,26 @@ def main(argv):
     art_state = load_art_state()
     arts = 0
     for key, (name, want) in rows.items():
+        want = ordered(key, want, day)
         sid = sync_set(key, name, want, boxes, admin, dry)
         if sid:
             sets[key] = sid
             NAMES[key] = name
             arts += set_art(sid, name, want[:SIZE], art_state, dry)
+    franchises = ordered("sagas", franchises, day)
     sid = sync_set("sagas", NAMES["sagas"], franchises, boxes, admin, dry)
     if sid:
         sets["sagas"] = sid
         arts += set_art(sid, NAMES["sagas"], franchises, art_state, dry)
     print(f"global rows: {', '.join(f'{k} {len(rows[k][1])}' for k in sorted(rows))}, sagas {len(franchises)}; this month: {', '.join(rotation)}{', seasonal' if 'seasonal' in rows else ''}")
-    hidden = hide_others(users, dry)
+    hidden = hide_others(users, dry, everyone)
     for u in users:
         if u["Name"] == BETA_ADMIN:
             continue
         mine = library(u["Id"])
         own = dict(sets)
         for key, want in (("toppicks", top_picks(mine, similar_for(u["Id"]))), ("gems", hidden_gems(mine)), ("watchagain", watch_again(mine))):
+            want = ordered(key, want, day, u["Id"])
             sid = sync_set(key, NAMES[key], want, boxes, admin, dry, owner=u["Id"])
             if sid:
                 own[key] = sid

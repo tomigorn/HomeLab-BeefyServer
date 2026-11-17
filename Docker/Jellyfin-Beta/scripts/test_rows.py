@@ -61,19 +61,52 @@ class Global(unittest.TestCase):
 
 
 class PerUser(unittest.TestCase):
-    def test_hidden_gems_unplayed_best_first(self):
+    def test_hidden_gems_unplayed(self):
         items = [item("a", CommunityRating=8.0), item("b", CommunityRating=7.6, UserData={"Played": True}), item("c", CommunityRating=7.0), item("d", CommunityRating=9.0)]
-        self.assertEqual(rows.hidden_gems(items), ["d", "a"])
+        self.assertEqual(sorted(rows.hidden_gems(items)), ["a", "d"])
 
     def test_watch_again_played_and_liked(self):
         items = [item("a", CommunityRating=7.5, UserData={"Played": True}), item("b", CommunityRating=5, UserData={"Played": True, "IsFavorite": True}),
                  item("c", CommunityRating=5, UserData={"Played": True}), item("d", CommunityRating=9)]
         self.assertEqual(sorted(rows.watch_again(items)), ["a", "b"])
 
+    def test_watch_again_last_played_first(self):
+        items = [item("a", CommunityRating=8, UserData={"Played": True, "LastPlayedDate": "2026-11-01T00:00:00Z"}),
+                 item("b", CommunityRating=8, UserData={"Played": True, "LastPlayedDate": "2026-11-15T00:00:00Z"})]
+        self.assertEqual(rows.watch_again(items), ["b", "a"])
+
     def test_top_picks_ranks_by_how_many_seeds_point_at_it(self):
         similar = {"s1": ["x", "y"], "s2": ["y", "z"]}
         items = [item("s1", UserData={"Played": True, "IsFavorite": True}), item("s2", UserData={"Played": True}), item("x"), item("y"), item("z", UserData={"Played": True})]
         self.assertEqual(rows.top_picks(items, lambda i: similar.get(i, [])), ["y", "x"])
+
+
+class Shuffle(unittest.TestCase):
+    IDS = [f"id{n:02d}" for n in range(40)]
+
+    def test_same_seed_same_order_other_day_other_order(self):
+        a = rows.shuffled(self.IDS, "2026-11-17:uhd")
+        self.assertEqual(a, rows.shuffled(self.IDS, "2026-11-17:uhd"))
+        self.assertNotEqual(a, rows.shuffled(self.IDS, "2026-11-18:uhd"))
+        self.assertEqual(sorted(a), sorted(self.IDS))
+
+    def test_not_alphabetical(self):
+        self.assertNotEqual(rows.shuffled(self.IDS, "2026-11-17:uhd")[:5], self.IDS[:5])
+
+    def test_seed_per_day_row_and_user(self):
+        day = datetime.date(2026, 11, 17)
+        self.assertEqual(rows.seed(day, "gems", "u1"), "2026-11-17:gems:u1")
+        self.assertEqual(rows.seed(day, "uhd"), "2026-11-17:uhd:")
+
+    def test_which_rows_keep_their_natural_order(self):
+        self.assertEqual(rows.NATURAL, {"new", "toppicks", "watchagain"})
+
+
+class Privacy(unittest.TestCase):
+    def test_per_user_sets_of_disabled_users_stay_hidden_too(self):
+        users = [{"Id": "a", "Name": "a", "Policy": {}}, {"Id": "b", "Name": "b", "Policy": {"IsDisabled": True}}, {"Id": "c", "Name": "beta-admin", "Policy": {}}]
+        self.assertEqual(rows.blocked_for(users[0], users), {"beta-row-u-b", "beta-row-u-c"})
+        self.assertEqual(rows.blocked_for(users[2], users), {"beta-row-u-a", "beta-row-u-b", "beta-row-u-c"})
 
 
 class Rotation(unittest.TestCase):
