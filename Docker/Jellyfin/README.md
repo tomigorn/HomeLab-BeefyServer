@@ -423,7 +423,7 @@ Auto-fixes, only while a stutter episode (incident within 2 min) runs with someo
 | Action | Change | Revert |
 |---|---|---|
 | `downloads_slow` | qBittorrent alternative speed on, alt download 2 MiB/s, alt upload = normal upload (seeding unchanged); SABnzbd limit 2M | saved values back |
-| `background_low` | `CPUWeight=10 IOWeight=10` (runtime) for running subtitle-translate, clamav, mover, original-audio, promoter units and their containers | saved weights back |
+| `background_low` | `CPUWeight=10 IOWeight=10` (runtime) for running subtitle-translate, clamav, mover, original-audio, promoter units and their containers; only the CPU part acts: `IOWeight` needs BFQ or io.cost, the data disks run mq-deadline (Movie-Downloads README "Disk priority") | saved weights back |
 
 Conversion report (2026-11-15): every playback (one session + item pair; gaps under 5 min and seeks stay one playback) is recorded in `plays.jsonl` (0600, 90 days, no IPs) with the worst method seen, from the same `/Sessions` poll (no extra API call):
 
