@@ -14,6 +14,8 @@ if want clamav-queue; then
   check av.queue-perms '^65112:1100 2770 [0-9]+:1100 2770 65112:1100 2770 [0-9]+:1100 2770$' "$(stat -c '%u:%g %a' /srv/.disks/ssd-hot/.clamav-queue /srv/.disks/ssd-hot/quarantine /srv/.disks/ssd-hot2/.clamav-queue /srv/.disks/ssd-hot2/quarantine 2>&1 | xargs)"
 fi
 if want clamav clamav-hostscan; then
+  # the nightly scan reads the SSD branches directly; its unit gives the clamav container the idle I/O class before each run (a recreate resets it)
+  check av.scan-io-idle '^1$' "$(grep -c '^ExecStartPre=.*io\.prio\.class' /etc/systemd/system/clamav-scan.service 2>&1)"
   check av.timers '^active active$' "$(systemctl is-active clamav-scan.timer clamav-hostscan.timer | xargs)"
   check av.unit-sandbox '^installed installed ProtectSystem=strict ProtectSystem=strict$' "$(for u in clamav-scan clamav-hostscan; do cmp -s "$DIR/../../Antivirus/systemd/$u.service" /etc/systemd/system/$u.service && echo installed || echo differs; done | xargs) $(systemctl show -p ProtectSystem clamav-scan.service clamav-hostscan.service | xargs)"
 fi

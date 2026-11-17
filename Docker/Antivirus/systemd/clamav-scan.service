@@ -6,6 +6,8 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+# The scan reads the SSD branches directly: idle I/O class, so a stream on the same SSD wins (reset by every recreate, set again each run).
+ExecStartPre=+/bin/sh -c 'echo idle > /sys/fs/cgroup/system.slice/docker-$$(/usr/bin/docker inspect -f {{.Id}} clamav).scope/io.prio.class'
 ExecStart=/usr/bin/docker exec clamav /scan.sh new
 # Exit 1 = infected files found and quarantined; the alert reports those, the unit only fails on scan errors.
 SuccessExitStatus=1
