@@ -7,6 +7,7 @@ if want clamav; then
   check av.local-build '^clamav-local:' "$(docker inspect -f '{{.Config.Image}}' clamav 2>&1)"
 fi
 if want clamav-queue; then
+  check av.queue-dlpool '^/srv/dlpool$' "$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' clamav-queue 2>&1)"
   check av.queue-worker '^alive$' "$(docker exec clamav-queue sh -c 'find /tmp/clamav-queue-alive -mmin -15 | grep -q . && echo alive' 2>&1)"
   check av.parts-scan '^ffprobe version .* /tmp 192(\.0)?M$' "$(echo "$(docker exec clamav-queue ffprobe -version 2>&1 | head -1 | cut -c1-24) $(docker exec clamav-queue df -h /tmp 2>&1 | awk 'NR==2{print $6, $2}')")"
   check av.vt-key '^65112 400 ok$' "$(echo "$(stat -c '%u %a' "$DIR/../../Antivirus/secrets/vt_api_key" 2>&1) $(docker exec clamav-queue sh -c 'test -s /run/secrets/vt_api_key && echo ok' 2>&1)")"

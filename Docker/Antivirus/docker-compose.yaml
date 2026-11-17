@@ -108,9 +108,9 @@ services:
       retries: 3
       start_period: 60s
     volumes:
-      # The union, as SABnzbd/qBittorrent see it: a queued link and the imported library file have the same inode there.
+      # The union through the download view, as SABnzbd/qBittorrent see it (idle I/O class, Movie-Downloads README "Disk priority"): a queued link and the imported library file have the same inode there.
       - type: bind
-        source: /srv/video
+        source: /srv/dlpool
         target: /data
         bind:
           create_host_path: false
