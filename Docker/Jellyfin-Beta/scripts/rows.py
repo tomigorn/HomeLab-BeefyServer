@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Builds the planned Moonfin home rows in the beta: one collection per row (tags beta-row, beta-row-<key>), per-user rows as one collection per user (tag beta-row-u-<userId>, hidden from everyone else by BlockedTags, like prod's "For you"), then every user's Moonfin home layout.
-Fixed rows: Continue Watching, Next Up, Favourites, New on the Server (built in), Top Picks for You, Hidden Gems, Watch Again (per user), Awards Season, Sagas & Franchises, Based on a True Story, Christmas (Dec) / Halloween (Oct), Binge in a Weekend.
+Fixed rows: Continue Watching, Favourites (built in), New on the Server (last 30 days), Top Picks for You, Hidden Gems, Watch Again (per user), Awards Season, Sagas & Franchises, Based on a True Story, Christmas (Dec) / Halloween (Oct), Binge in a Weekend.
 Rotating rows: 3 of ROTATING per month, Director Spotlight and Starring pick a new person each month. Out of season the seasonal row is left out, so Binge moves up.
 Usage: rows.py [--dry-run] [--month YYYY-MM] [--counts]  (--counts prints titles per row, changes nothing)"""
 import collections
+import base64
 import datetime
+import hashlib
 import importlib.util
 import json
 import pathlib
@@ -13,13 +15,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from beta_api import api
+from beta_api import api, api_raw
 
 HERE = pathlib.Path(__file__).resolve().parent
 SERVER = "https://jellyfin-beta.holy-grail.ch"
 TRENDING_PATH = "/config/trending/"
 SIZE = 30
 AWARDS_CACHE = pathlib.Path.home() / ".cache" / "jellyfin-beta-awards.json"
+ART_STATE = pathlib.Path.home() / ".local" / "state" / "jellyfin-beta-rows-art.json"
+WEB_ENTRY = "Beta rows"
 # Wikidata: Academy Award for Best Picture, Golden Globe Best Motion Picture (Drama, Musical or Comedy), Palme d'Or; won (P166) or nominated (P1411).
 AWARDS = ("Q102427", "Q1011509", "Q670282", "Q179808")
 TRUE_STORY = {"based on true story", "based on real events", "biography", "true crime", "based on real person"}
@@ -47,6 +51,13 @@ def ids(items):
 
 def movies(items):
     return [i for i in items if i["Type"] == "Movie"]
+
+
+def new_on_server(items, day):
+    """Added in the last 30 days, newest first."""
+    since = (day - datetime.timedelta(days=30)).isoformat()
+    fresh = [i for i in items if (i.get("DateCreated") or "")[:10] >= since]
+    return ids(sorted(fresh, key=lambda i: i.get("DateCreated") or "", reverse=True))
 
 
 def true_story(items):
@@ -159,10 +170,31 @@ def collection(sid, name, server):
             "serverId": server, "pluginSection": "collection", "pluginAdditionalData": sid, "pluginDisplayText": name}
 
 
+def order_keys(rotation, seasonal_on):
+    """Rows 4-20 in home order: the seasonal row only in season (Binge follows it), then this month's rotating rows."""
+    return ["toppicks", "gems", "watchagain", "awards", "sagas", "truestory"] + (["seasonal"] if seasonal_on else []) + ["binge"] + list(rotation)
+
+
+def web_rows(rotation, seasonal_on, names):
+    """[{key, name, kind}] for the classic web (beta-rows.js), same order as Moonfin: Favourites and New on the Server (last 30 days) are queried directly, the rest are the row collections."""
+    return [{"key": "favourites", "name": "Favourites", "kind": "favourites"}, {"key": "new", "name": "New on the Server", "kind": "new"}] + \
+        [{"key": k, "name": names[k], "kind": "collection"} for k in order_keys(rotation, seasonal_on) if k in names]
+
+
+def art_key(member_ids):
+    return hashlib.sha256(",".join(member_ids[:3]).encode()).hexdigest()
+
+
+def art_due(state, sid, member_ids):
+    return state.get(sid) != art_key(member_ids)
+
+
 def layout(sets, names, rotation, seasonal_on, server):
-    """Moonfin homeSections: the fixed rows, the seasonal row only in season (Binge follows it), then this month's rotating rows; rows without a set left out."""
-    order = ["toppicks", "gems", "watchagain", "awards", "sagas", "truestory"] + (["seasonal"] if seasonal_on else []) + ["binge"] + list(rotation)
-    out = [builtin("resume"), builtin("nextup"), builtin("favoritemovies"), builtin("favoriteseries"), builtin("latestmedia")]
+    """Moonfin homeSections: Continue Watching, Favourites (built in), New on the Server, then rows 4-20 (order_keys); rows without a set left out. Next Up is not in the plan."""
+    order = order_keys(rotation, seasonal_on)
+    # Row 3: our "New on the Server" (last 30 days, the spec's title); Moonfin's Recently Added has neither the limit nor the title.
+    new = collection(sets["new"], names["new"], server) if "new" in sets else builtin("latestmedia")
+    out = [builtin("resume"), builtin("favoritemovies"), builtin("favoriteseries"), new]
     out += [collection(sets[k], names[k], server) for k in order if k in sets]
     for n, s in enumerate(out):
         s["order"] = n
@@ -225,9 +257,7 @@ def sync_set(key, name, want, boxes, admin, dry, owner=None):
     utag = f"beta-row-u-{owner}" if owner else None
     box = next((b for b in boxes if tag in (b.get("Tags") or []) and (utag in (b.get("Tags") or []) if utag else not any(t.startswith("beta-row-u-") for t in b.get("Tags") or []))), None)
     want = want[:SIZE]
-    if not want:
-        return box["Id"] if box else None
-    if dry:
+    if not want or dry:
         return box["Id"] if box else None
     if box is None:
         # Jellyfin keeps one collection folder per name: a per-user set is created under a unique name and renamed below.
@@ -275,9 +305,60 @@ def write_layout(uid, sections, dry):
     return profiles
 
 
+def _module(name, file):
+    spec = importlib.util.spec_from_file_location(name, HERE.parent.parent / "Jellyfin" / "scripts" / file)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def poster(iid):
+    try:
+        return api_raw("GET", f"/Items/{iid}/Images/Primary?maxHeight=900", None, "image/jpeg")
+    except urllib.error.HTTPError:
+        return None
+
+
+def set_art(sid, name, member_ids, state, dry):
+    """Poster (first 3 member posters fanned, like prod's lists) and backdrop of a row's collection: no blank tiles in the web grids. Returns 1 when uploaded."""
+    if not member_ids or not art_due(state, sid, member_ids):
+        return 0
+    if dry:
+        return 1
+    sys.path.insert(0, str(HERE.parent.parent / "Jellyfin" / "scripts"))
+    import trending_art as art
+    posters = [p for p in (poster(i) for i in member_ids[:3]) if p]
+    if not posters:
+        return 0
+    api_raw("POST", f"/Items/{sid}/Images/Primary", base64.b64encode(art.collection_poster("beta", name, None, posters)), "image/jpeg")
+    api_raw("POST", f"/Items/{sid}/Images/Backdrop/0", base64.b64encode(art.collection_backdrop("beta", name, None, None, posters)), "image/jpeg")
+    state[sid] = art_key(member_ids)
+    return 1
+
+
+def load_art_state():
+    try:
+        return json.loads(ART_STATE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_art_state(state):
+    ART_STATE.parent.mkdir(parents=True, exist_ok=True)
+    ART_STATE.write_text(json.dumps(state))
+
+
+def web_entry(rows_list, dry):
+    """Injector entry "Beta rows": window.HssBetaRows + beta-rows.js."""
+    if dry:
+        return
+    source = "window.HssBetaRows = " + json.dumps(rows_list) + ";\n" + (HERE / "beta-rows.js").read_text()
+    _module("tracker_link", "tracker-link.py").main([], api=api, source=source, name=WEB_ENTRY, source_file=HERE / "beta-rows.js")
+
+
 def plan(items, day, award_ids):
     """{key: (name, ids)} of every global row this month (rotating ones too, so the counts are complete)."""
-    out = {"awards": (NAMES["awards"], awards(items, award_ids)), "truestory": (NAMES["truestory"], true_story(items)), "binge": (NAMES["binge"], binge(items)),
+    out = {"new": ("New on the Server", new_on_server(items, day)), "awards": (NAMES["awards"], awards(items, award_ids)), "truestory": (NAMES["truestory"], true_story(items)), "binge": (NAMES["binge"], binge(items)),
            "world": (NAMES["world"], by_country(items, WORLD)), "dach": (NAMES["dach"], by_country(items, DACH)), "mind": (NAMES["mind"], mind(items)),
            "animation": (NAMES["animation"], grown_up_animation(items)), "under100": (NAMES["under100"], under_100(items)), "uhd": (NAMES["uhd"], uhd_hdr(items))}
     start = 1980 + 10 * ((day.year * 12 + day.month) % 2)
@@ -326,14 +407,18 @@ def main(argv):
             print(f"user {u['Name'][:2]}…: toppicks {len(top_picks(mine, similar_for(u['Id'])))}, gems {len(hidden_gems(mine))}, watchagain {len(watch_again(mine))}")
         return 0
     sets = {}
+    art_state = load_art_state()
+    arts = 0
     for key, (name, want) in rows.items():
         sid = sync_set(key, name, want, boxes, admin, dry)
         if sid:
             sets[key] = sid
             NAMES[key] = name
+            arts += set_art(sid, name, want[:SIZE], art_state, dry)
     sid = sync_set("sagas", NAMES["sagas"], franchises, boxes, admin, dry)
     if sid:
         sets["sagas"] = sid
+        arts += set_art(sid, NAMES["sagas"], franchises, art_state, dry)
     print(f"global rows: {', '.join(f'{k} {len(rows[k][1])}' for k in sorted(rows))}, sagas {len(franchises)}; this month: {', '.join(rotation)}{', seasonal' if 'seasonal' in rows else ''}")
     hidden = hide_others(users, dry)
     for u in users:
@@ -345,9 +430,13 @@ def main(argv):
             sid = sync_set(key, NAMES[key], want, boxes, admin, dry, owner=u["Id"])
             if sid:
                 own[key] = sid
+                arts += set_art(sid, NAMES[key], want[:SIZE], art_state, dry)
         profiles = write_layout(u["Id"], layout(own, NAMES, rotation, "seasonal" in rows, SERVER), dry)
         print(f"user {u['Name'][:2]}…: {len(own)} rows, profiles {', '.join(profiles)}")
-    print(("would change" if dry else "done") + f"; BlockedTags updated for {hidden} user(s)")
+    web_entry(web_rows(rotation, "seasonal" in rows, NAMES), dry)
+    if not dry:
+        save_art_state(art_state)
+    print(("would change" if dry else "done") + f"; BlockedTags updated for {hidden} user(s), artwork for {arts} collection(s), web rows entry {WEB_ENTRY!r}")
     return 0
 
 

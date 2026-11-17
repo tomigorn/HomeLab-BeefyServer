@@ -54,6 +54,12 @@ class Global(unittest.TestCase):
         self.assertIsNone(rows.seasonal(items, 5))
 
 
+    def test_new_on_the_server_is_the_last_30_days_newest_first(self):
+        day = datetime.date(2026, 11, 17)
+        items = [item("old", DateCreated="2026-09-01T00:00:00Z"), item("a", DateCreated="2026-11-01T00:00:00Z"), item("b", DateCreated="2026-11-10T00:00:00Z")]
+        self.assertEqual(rows.new_on_server(items, day), ["b", "a"])
+
+
 class PerUser(unittest.TestCase):
     def test_hidden_gems_unplayed_best_first(self):
         items = [item("a", CommunityRating=8.0), item("b", CommunityRating=7.6, UserData={"Played": True}), item("c", CommunityRating=7.0), item("d", CommunityRating=9.0)]
@@ -90,13 +96,37 @@ class Layout(unittest.TestCase):
         names = {k: k for k in sets}
         may = rows.layout(sets, names, ["decade", "dach", "under100"], seasonal_on=False, server="https://b")
         kinds = [s.get("pluginDisplayText") or s["type"] for s in may]
-        self.assertEqual(kinds[:5], ["resume", "nextup", "favoritemovies", "favoriteseries", "latestmedia"])
+        self.assertEqual(kinds[:4], ["resume", "favoritemovies", "favoriteseries", "latestmedia"])
+        sets["new"], names["new"] = "id-new", "New on the Server"
+        kinds = [s.get("pluginDisplayText") or s["type"] for s in rows.layout(sets, names, ["decade"], seasonal_on=False, server="https://b")]
+        self.assertEqual(kinds[:4], ["resume", "favoritemovies", "favoriteseries", "New on the Server"])
+        self.assertNotIn("nextup", kinds)
         self.assertNotIn("seasonal", kinds)
         self.assertEqual(kinds.index("binge"), kinds.index("truestory") + 1)
         dec = rows.layout(sets, names, ["decade", "dach", "under100"], seasonal_on=True, server="https://b")
         kinds = [s.get("pluginDisplayText") or s["type"] for s in dec]
         self.assertEqual(kinds.index("seasonal"), kinds.index("truestory") + 1)
         self.assertEqual([s["order"] for s in dec], list(range(len(dec))))
+
+
+class Web(unittest.TestCase):
+    def test_web_rows_follow_the_moonfin_order(self):
+        names = dict(rows.NAMES, seasonal="Christmas", decade="Decade Night: 80s")
+        out = rows.web_rows(["decade", "dach", "under100"], True, names)
+        self.assertEqual([r["key"] for r in out][:2], ["favourites", "new"])
+        self.assertEqual(out[0]["kind"], "favourites")
+        out = out[2:]
+        self.assertEqual([r["key"] for r in out], ["toppicks", "gems", "watchagain", "awards", "sagas", "truestory", "seasonal", "binge", "decade", "dach", "under100"])
+        self.assertEqual(out[6]["name"], "Christmas")
+        self.assertNotIn("seasonal", [r["key"] for r in rows.web_rows(["decade", "dach", "under100"], False, names)])
+
+
+class Art(unittest.TestCase):
+    def test_art_due_when_new_or_first_posters_changed(self):
+        state = {"s1": rows.art_key(["a", "b", "c", "d"])}
+        self.assertFalse(rows.art_due(state, "s1", ["a", "b", "c", "x"]))
+        self.assertTrue(rows.art_due(state, "s1", ["b", "a", "c"]))
+        self.assertTrue(rows.art_due(state, "s2", ["a"]))
 
 
 if __name__ == "__main__":
