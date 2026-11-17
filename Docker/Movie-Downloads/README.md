@@ -201,6 +201,38 @@ Hardlinks still work when a download lands on ssd-hot2 or the HDD: mergerfs crea
 
 original-audio (mkvpropedit edits in place) takes the shared media lock `/run/lock/beefy-media.lock` (`flock -w 1800` in both units), so it never edits a file the mover is copying.
 
+### Disk priority
+
+Goal (owner 2026-11-17): a stream always wins the disk over downloads, imports, scans and the mover. Measured 2026-11-17, test notes below.
+
+| Fact | Consequence |
+|---|---|
+| Data disks run `mq-deadline` (kernel default), NVMe `none`; kernel has `io.prio.class` and `io.cost`, no `io.latency` | `io.weight` / systemd `IOWeight` / Docker `blkio_weight` do nothing (they need BFQ or io.cost); I/O classes (`ionice`, `IOSchedulingClass`, cgroup `io.prio.class`) do work |
+| Every container sees the pool through the one mergerfs process (`system.slice/srv-video.mount`, 2.40.2, no passthrough) | the disk sees all union reads and writes as mergerfs's: a class or weight on SABnzbd, qBittorrent, clamav-queue or the hooks cannot reach the disk |
+| The nightly ClamAV scan and the mover read and write the branches (`/srv/.disks/*`) directly | their own cgroup counts: idle class works |
+
+Live:
+
+| What | How |
+|---|---|
+| Mover at idle class, its writeback too | `beefy-mover.service`: `IOSchedulingClass=idle` + `ExecStartPre=+` writes `idle` to its `io.prio.class` |
+| Nightly scan at idle class | `clamav-scan.service`: `ExecStartPre=+` writes `idle` to the clamav container's `io.prio.class` before each run |
+| Checks | `host.io-sched`, `host.mover-io-idle`, `av.scan-io-idle` (CUSTOMIZATIONS.md) |
+
+Test: 12 GiB "stream" file and an 8 GiB read + 8 GiB write load on `ssd-hot2` (scratch folder, deleted), 3-7 rounds each, nobody playing. Stream = 2 MiB reads at 40 MB/s (latency) then an unthrottled read (MB/s); load = 150 MB/s buffered writes + an unthrottled read.
+
+| Load | Stream reads > 100 ms (of 478) | Stream p99 | Unthrottled read |
+|---|---|---|---|
+| none | 0 | 7 ms | 551 MB/s |
+| through the pool, default | 0-4 | 9-84 ms | 138-529 MB/s, median 272 |
+| through the pool, load cgroup `idle` | 0-4 | 9-96 ms | 141-515 MB/s, median 142: no effect |
+| on the branch, default (scan, mover) | 74-168 | 130-247 ms | 13-509 MB/s |
+| on the branch, load cgroup `idle` | 2-3 | 37-91 ms | 145-523 MB/s |
+| through a second mergerfs instance, default | 0-3 | 9-72 ms | 139-529 MB/s, median 158 |
+| through a second mergerfs instance in its own cgroup, `idle` | 0-4 | 7-8 ms | 473-527 MB/s |
+
+Open, needs the owner's yes (pool change): the downloads get their own mergerfs instance (same branches and options, own systemd unit whose cgroup gets `idle`, `docker.service` `RequiresMountsFor` it), mounted as `/data` in SABnzbd, qBittorrent and clamav-queue (container paths unchanged, Radarr's hardlinks still work: same branch). Measured above as the last row. Jellyfin stays untouched. Alternative: mergerfs ≥ 2.41 with `passthrough.io` (I/O then counts in each container's cgroup; loses `moveonenospc`).
+
 ### Storage retention
 
 Spec `docs/superpowers/specs/2026-11-15-storage-retention-design.md` (owner 2026-11-15). **Observe mode since 2026-11-16: nothing is deleted.** Moves SSD → HDD stay with the existing mover ([The mergerfs catch](#the-mergerfs-catch-and-why-it-matters-here)).
