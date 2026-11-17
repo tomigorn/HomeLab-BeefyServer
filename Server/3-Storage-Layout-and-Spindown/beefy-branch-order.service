@@ -1,0 +1,20 @@
+[Unit]
+Description=Emptier hot SSD first in the mergerfs branch order (/srv/video, /srv/dlpool)
+Documentation=file:///home/buntu/Projects/Server/3-Storage-Layout-and-Spindown.md
+After=srv-video.mount srv-dlpool.mount
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/beefy-branch-order
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/video /srv/dlpool
+PrivateTmp=true
+PrivateNetwork=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true

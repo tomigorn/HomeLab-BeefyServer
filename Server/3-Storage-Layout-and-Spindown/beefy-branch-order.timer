@@ -1,0 +1,11 @@
+[Unit]
+Description=Emptier hot SSD first in the mergerfs branch order, every 15 min
+Documentation=file:///home/buntu/Projects/Server/3-Storage-Layout-and-Spindown.md
+
+[Timer]
+# statvfs of the two SSDs and an xattr on the control file only: the HDD is never touched
+OnBootSec=2min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target

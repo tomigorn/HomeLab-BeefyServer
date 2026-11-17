@@ -12,7 +12,8 @@ check host.timers '^enabled enabled enabled$' "$(systemctl is-enabled beefy-main
 check host.idle-vpn-uplink '^auto ok$' "$(sudo -n python3 "$(dirname "${BASH_SOURCE[0]}")/../../../Server/8-Idle-Watcher/check-vpn-uplink.py" 2>&1)"
 check host.shutdown-notify '^enabled active 600$' "$(systemctl is-enabled beefy-shutdown-notify.service) $(systemctl is-active beefy-shutdown-notify.service) $(sudo -n stat -c %a /etc/beefy-shutdown-notify.conf)"
 check host.idle-disks '^ok$' "$(for d in /srv/.disks/*; do p=$(findmnt -no SOURCE "$d" 2>/dev/null) || continue; k=$(lsblk -no PKNAME "$p" 2>/dev/null); grep -q "^DATA_DISKS=.*\b$k\b" /etc/beefy-idle.conf || echo "missing:$d"; done | xargs | sed 's/^$/ok/')"
-check host.mergerfs-branches '^live=/srv/.disks/ssd-hot=RW,1479G:/srv/.disks/ssd-hot2=RW,1479G:/srv/.disks/hdd-cold=RW,2800G fstab=1$' "live=$(getfattr --only-values -n user.mergerfs.branches /srv/video/.mergerfs 2>/dev/null) fstab=$(grep -c '^/srv/.disks/ssd-hot=RW,1479G:/srv/.disks/ssd-hot2=RW,1479G:/srv/.disks/hdd-cold=RW,2800G ' /etc/fstab)"
+# order-free: beefy-branch-order swaps the two SSDs at runtime (host.branch-order); values and fstab still pinned
+check host.mergerfs-branches '^live=/srv/.disks/hdd-cold=RW,2800G /srv/.disks/ssd-hot2=RW,1479G /srv/.disks/ssd-hot=RW,1479G fstab=1$' "live=$(getfattr --only-values -n user.mergerfs.branches /srv/video/.mergerfs 2>/dev/null | tr : '\n' | LC_ALL=C sort | xargs) fstab=$(awk '$2 == "/srv/video"' /etc/fstab | grep -c '^/srv/.disks/ssd-hot=RW,1479G:/srv/.disks/ssd-hot2=RW,1479G:/srv/.disks/hdd-cold=RW,2800G ')"
 check host.hd-idle '^-i 1200$' "$(ps -o args= -C hd-idle | grep -o 'K1S05Y9M -i [0-9]*' | cut -d' ' -f2-)"
 check host.mover '^enabled 1$' "$(systemctl is-enabled beefy-mover.timer 2>&1) $(sed -n 's/^beefy_mover_last_run_success //p' /var/lib/beefy-mover/mover.prom 2>&1)"
 check host.backup '^enabled success waited$' "$(systemctl is-enabled beefy-backup.timer 2>&1) $(systemctl show -p Result --value beefy-backup.service 2>&1) $(grep -q '^UNITS=.*beefy-backup.service' /usr/local/sbin/beefy-maintenance-window && echo waited || echo missing)"
@@ -24,6 +25,7 @@ root_copies() {
 Server/3-Storage-Layout-and-Spindown/tier-move /usr/local/sbin/tier-move
 Server/3-Storage-Layout-and-Spindown/tier_helper.py /usr/local/sbin/tier-helper
 Server/3-Storage-Layout-and-Spindown/beefy_mover.py /usr/local/sbin/beefy-mover
+Server/3-Storage-Layout-and-Spindown/beefy_branch_order.py /usr/local/sbin/beefy-branch-order
 Server/3-Storage-Layout-and-Spindown/tier-report /usr/local/sbin/tier-report
 Server/3-Storage-Layout-and-Spindown/beefy_promoter.py /usr/local/sbin/beefy_promoter.py
 Server/3-Storage-Layout-and-Spindown/hdd-spinstate.sh /usr/local/sbin/hdd-spinstate
@@ -50,3 +52,5 @@ check host.io-sched '^ok$' "$(for d in /srv/.disks/*; do k=$(lsblk -no PKNAME "$
 check host.mover-io-idle '^installed idle$' "$(cmp -s "$DIR/../../../Server/3-Storage-Layout-and-Spindown/beefy-mover.service" /etc/systemd/system/beefy-mover.service && echo -n installed || echo -n differs) $(systemctl show -p IOSchedulingClass --value beefy-mover.service | sed "s/^3$/idle/")"
 # Download view /srv/dlpool (Movie-Downloads README "Disk priority"): mounted, idle I/O class, same branch set and options as the pool, docker waits for it
 check host.dlpool '^fuse.mergerfs idle same docker$' "$(echo "$(findmnt -no FSTYPE /srv/dlpool) $(cat /sys/fs/cgroup/system.slice/srv-dlpool.mount/io.prio.class 2>&1) $(o() { for k in category.create func.link minfreespace moveonenospc cache.files dropcacheonclose statfs; do getfattr --only-values -n user.mergerfs.$k "$1/.mergerfs" 2>/dev/null; echo; done; getfattr --only-values -n user.mergerfs.branches "$1/.mergerfs" 2>/dev/null | tr : '\n' | LC_ALL=C sort; }; [ "$(o /srv/video)" = "$(o /srv/dlpool)" ] && echo same || echo differs) $(systemctl show -p RequiresMountsFor --value docker.service | grep -q /srv/dlpool && echo docker || echo no-docker-dep)")"
+# Emptier hot SSD first (new files go there, category.create=ff), HDD last, in both views
+check host.branch-order '^enabled /srv/video ok /srv/dlpool ok$' "$(systemctl is-enabled beefy-branch-order.timer 2>&1) $(/usr/local/sbin/beefy-branch-order --check 2>/dev/null | xargs)"
