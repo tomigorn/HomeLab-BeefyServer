@@ -25,6 +25,15 @@ of the time.
 - Hardlinks after an overflow work: a download created on ssd-hot2 or the HDD gets its library hardlink on the same branch (mergerfs clones the folder there; tested 2026-10-28 with 2 and 3 branches).
 - `tier-move`, `tier-report` and the promoter take `HOT` as a space-separated list of hot branches (default both SSDs): demote drains a title from all of them, promote lands on the first with room (above minfreespace), the report shows each branch. The nightly subtitle-check scans both; `host.idle-disks` and `md.subtitle-scan-branches` in the post-update check guard the idle watcher disks and the scan units.
 - "% used" everywhere (bar, mover, alerts, mergerfs) = `1 − f_bavail/f_blocks` per branch; "SSD" = both SSDs together.
+- **SSD rebalance** (`ssd_rebalance.py`, first run 2026-11-17, ssd-hot 80 % → ~46 %, ssd-hot2 11 % → ~46 %): moves whole titles (movie folder, TV season) from the fuller SSD to the emptier one, each file with every hardlink of its inode at the same relative paths, so pool paths and links stay. Copy → verify read back → link into place → source unchanged? → delete; journal `/var/lib/ssd-rebalance/journal.json` for a kill or power cut. Skips open, < 24 h old and conflicting titles; pauses while Jellyfin plays, 03:50–04:50 and while the mover runs; takes the media lock per title; stops within 2 % or at 75 % on the target. Idempotent.
+
+| Step | Command (beefy) |
+|---|---|
+| Plan | `sudo ./ssd_rebalance.py --dry-run` |
+| Run / resume | `sudo install -D -m755 ssd_rebalance.py tier_helper.py -t /usr/local/lib/ssd-rebalance/ && sudo systemd-run --unit=ssd-rebalance -p IOSchedulingClass=idle -p Nice=10 -p TimeoutStopSec=900 -p RuntimeMaxSec=86400 /usr/local/lib/ssd-rebalance/ssd_rebalance.py` |
+| Progress | `tail /var/log/ssd-rebalance.log` |
+| Stop (safe, rolls back the current file) | `sudo systemctl stop ssd-rebalance` |
+| Tests | `./test_ssd_rebalance.py` |
 
 | Limit | Value | Where |
 |---|---|---|
@@ -1106,6 +1115,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313   /srv/.disks/hdd-cold  xfs   noatime,
 - `hdd-spinstate.sh` — one non-waking power-state sample (`hdparm -C` + `/proc/diskstats`).
 - `install-hdd-spinlog.sh` — installs the 1-min spin-state logger timer + `hdd-spinwatch`.
 - `smart_exporter.py` — SMART health of every disk as Prometheus textfile, never wakes a parked disk (copy of the fastpi source, see Services); `install-smart-exporter.sh` installs the root copy `/usr/local/lib/smart-exporter/` and the hardened unit (caps SYS_RAWIO + SYS_ADMIN only, disks read-only, no network).
+- `ssd_rebalance.py` — evens out the two hot SSDs by moving whole titles with their hardlinks (see the top of this doc); tests `test_ssd_rebalance.py`.
 - `hdd-spinwatch` — live view: a constantly-spinning icon + a `checks seen` counter that ticks each minute a check runs (§11.1). Unprivileged.
 
 ### Validation
