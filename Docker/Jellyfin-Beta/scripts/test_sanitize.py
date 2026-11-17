@@ -76,3 +76,17 @@ class Run(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdentityLinkIssuer(unittest.TestCase):
+    CONF = {"client_id": "c", "client_secret": "s", "issuer": "https://sso.example.com/application/o/app-beta/", "public_url": "https://beta.example.com"}
+
+    def test_links_follow_the_beta_issuer_without_trailing_slash(self):
+        text = "<PluginConfiguration><IssuerUrl>https://sso.example.com/application/o/app/</IssuerUrl><IdentityLinks><IdentityLink><Issuer>https://sso.example.com/application/o/app</Issuer><Subject>x</Subject></IdentityLink></IdentityLinks></PluginConfiguration>"
+        out = sanitize.oidc(text, self.CONF)
+        self.assertIn("<Issuer>https://sso.example.com/application/o/app-beta</Issuer>", out)
+        self.assertNotIn("<Issuer>https://sso.example.com/application/o/app</Issuer>", out)
+
+    def test_links_are_fixed_on_a_second_run(self):
+        text = "<PluginConfiguration><IssuerUrl>https://sso.example.com/application/o/app-beta/</IssuerUrl><IdentityLinks><IdentityLink><Issuer>https://sso.example.com/application/o/app</Issuer></IdentityLink></IdentityLinks></PluginConfiguration>"
+        self.assertIn("<Issuer>https://sso.example.com/application/o/app-beta</Issuer>", sanitize.oidc(text, self.CONF))

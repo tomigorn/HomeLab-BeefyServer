@@ -51,11 +51,10 @@ def oidc(text, conf):
     text = set_values(text, {"PasswordLoginMode": "DisableForLinkedUsersOnly"})
     if not conf:
         return set_values(text, {"Enabled": "false"})
-    old_issuer = re.search(r"<IssuerUrl>([^<]*)</IssuerUrl>", text)
     text = set_values(text, {"Enabled": "true", "ClientId": xml_escape(conf["client_id"]), "ClientSecret": xml_escape(conf["client_secret"]),
                              "IssuerUrl": xml_escape(conf["issuer"]), "PublicUrl": xml_escape(conf["public_url"])})
-    if old_issuer and old_issuer.group(1) != conf["issuer"]:
-        text = text.replace(f"<Issuer>{old_issuer.group(1)}</Issuer>", f"<Issuer>{xml_escape(conf['issuer'])}</Issuer>")
+    # The plugin stores link issuers without the trailing slash; the beta has one provider, so every copied link follows it.
+    text = re.sub(r"<Issuer>[^<]*</Issuer>", f"<Issuer>{xml_escape(conf['issuer'].rstrip('/'))}</Issuer>", text)
     # Sessions belong to prod's tokens; the beta starts without them.
     text = re.sub(r"<OidcSessions>.*?</OidcSessions>", "<OidcSessions />", text, flags=re.S)
     return text
