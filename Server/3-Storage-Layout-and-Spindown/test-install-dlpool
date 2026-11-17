@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Tests the fstab line install-dlpool.sh derives from the pool's line (no root, nothing installed).
+set -uo pipefail
+S="$(cd "$(dirname "$0")" && pwd)/install-dlpool.sh"
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+pass=0 fail=0
+ok() { if [ "$2" = "$3" ]; then echo "  ok   $1"; pass=$((pass+1)); else echo "  FAIL $1"; echo "       want: $3"; echo "       got:  $2"; fail=$((fail+1)); fi; }
+POOL='/srv/.disks/a=RW,1G:/srv/.disks/b=RW,2G  /srv/video  fuse.mergerfs  defaults,allow_other,category.create=pfrd,minfreespace=50G,fsname=mergerfs,x-systemd.requires=/srv/.disks/a  0 0'
+printf '# comment\nUUID=x / ext4 defaults 0 1\n%s\n' "$POOL" > "$T/fstab"
+
+ok "same branches and options, own mount point and fsname" \
+  "$(FSTAB=$T/fstab LIVE_CREATE=pfrd bash "$S" --print-line 2>&1)" \
+  '/srv/.disks/a=RW,1G:/srv/.disks/b=RW,2G /srv/dlpool fuse.mergerfs defaults,allow_other,category.create=pfrd,minfreespace=50G,fsname=mergerfs-dl,x-systemd.requires=/srv/.disks/a 0 0'
+
+FSTAB=$T/fstab LIVE_CREATE=ff bash "$S" --print-line >/dev/null 2>&1
+ok "refuses when the live create policy is not persisted" "$?" 1
+
+printf '%s\n/srv/.disks/a=RW,1G /srv/dlpool fuse.mergerfs fsname=mergerfs-dl 0 0\n' "$POOL" > "$T/fstab2"
+ok "an existing view line is not read as the pool" \
+  "$(FSTAB=$T/fstab2 LIVE_CREATE=pfrd bash "$S" --print-line 2>&1 | awk '{print $2}')" /srv/dlpool
+
+printf 'UUID=x / ext4 defaults 0 1\n' > "$T/fstab3"
+FSTAB=$T/fstab3 LIVE_CREATE=pfrd bash "$S" --print-line >/dev/null 2>&1
+ok "refuses without a pool line" "$?" 1
+
+echo "$pass passed, $fail failed"; [ "$fail" = 0 ]

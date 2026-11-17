@@ -1,0 +1,15 @@
+[Unit]
+Description=Download view of the pool (/srv/dlpool) at idle I/O class, so streams win the disks
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+BindsTo=srv-dlpool.mount
+After=srv-dlpool.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# mergerfs does every disk read and write of the view in its own process, so the mount unit's cgroup is what the scheduler sees
+ExecStart=/bin/sh -c 'echo idle > /sys/fs/cgroup/system.slice/srv-dlpool.mount/io.prio.class'
+ExecStop=-/bin/sh -c 'echo no-change > /sys/fs/cgroup/system.slice/srv-dlpool.mount/io.prio.class'
+
+[Install]
+WantedBy=srv-dlpool.mount
