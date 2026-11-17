@@ -205,6 +205,14 @@ original-audio (mkvpropedit edits in place) takes the shared media lock `/run/lo
 
 Goal (owner 2026-11-17): a stream always wins the disk over downloads, imports, scans and the mover. Measured 2026-11-17, test notes below.
 
+**Result (2026-11-17, download view `/srv/dlpool` live):** under full download load a stream reads as if nothing else ran.
+
+| Stream under full download load | Before | Now |
+|---|---|---|
+| Slowest reads (p99) | 51-73 ms | 9 ms |
+| Read speed | 120-158 MB/s | 425-498 MB/s |
+| Without any load (reference) | 7-10 ms, 529-550 MB/s | same |
+
 | Fact | Consequence |
 |---|---|
 | Data disks run `mq-deadline` (kernel default), NVMe `none`; kernel has `io.prio.class` and `io.cost`, no `io.latency` | `io.weight` / systemd `IOWeight` / Docker `blkio_weight` do nothing (they need BFQ or io.cost); I/O classes (`ionice`, `IOSchedulingClass`, cgroup `io.prio.class`) do work |
