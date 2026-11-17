@@ -19,6 +19,8 @@ ExecStart=/usr/local/sbin/beefy-mover
 TimeoutStartSec=3600
 Nice=10
 IOSchedulingClass=idle
+# IOSchedulingClass misses buffered writeback; the cgroup class puts the copy's writeback behind streams too (mq-deadline honours both).
+ExecStartPre=+/bin/sh -c 'echo idle > /sys/fs/cgroup/system.slice/beefy-mover.service/io.prio.class'
 
 # Hardening. Needs real write access to /srv, so ProtectSystem=full rather than
 # strict, and ReadWritePaths for the pool and its metrics file.
