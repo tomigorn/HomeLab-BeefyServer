@@ -33,6 +33,7 @@ sudo docker compose up -d jellyfin-beta
 for _ in $(seq 1 60); do curl -sf -o /dev/null http://127.0.0.1:8196/health && break; sleep 3; done
 python3 scripts/beta_admin.py
 python3 scripts/beta_tasks.py
+python3 scripts/web_home.py
 python3 scripts/rows.py
 sudo python3 scripts/band_render.py
 echo "done. check: ../_global/scripts/post-update-check.sh Jellyfin-Beta"

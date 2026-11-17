@@ -20,6 +20,8 @@ A copy of prod Jellyfin (`../Jellyfin`) to try plugins, home rows and settings b
 | Household member, any device | press **Use Quick Connect**, read the 6-digit code, then on beefy: `python3 scripts/beta_login.py <code> <username>` (`--users` lists them) |
 | Local admin | `beta-admin`, password in `secrets/beta-admin.password` (never printed). Password sign-in is blocked by Traefik: only through `ssh -L 8196:192.168.1.102:8196 fastpi` → http://localhost:8196 |
 
+Not in the beta home: Next Up (not in the plan), Coming soon (needs Radarr/Sonarr, which the beta's network cannot reach by design), Studios, Genres, Recently watched. Top 10 rows stay on the web home (owner's open decision).
+
 Moonfin: add the server `https://jellyfin-beta.holy-grail.ch` (own server id). Moonfin web: `/Moonfin/Web/`.
 Playback over the internet: not yet (the waker's stream check knows only prod's tokens); LAN/VPN plays.
 
@@ -32,10 +34,10 @@ Playback over the internet: not yet (the waker's stream check knows only prod's 
 
 | Experiment | Files | Run |
 |---|---|---|
-| Home rows plan (Moonfin): fixed + per-user + seasonal + 3 rotating rows | `scripts/rows.py` | `python3 scripts/rows.py` (`--dry-run`, `--counts`, `--month YYYY-MM`); timer `jellyfin-beta-rows.timer` daily 12:17 |
+| Home rows plan, Moonfin and classic web: fixed + per-user + seasonal + 3 rotating rows | `scripts/rows.py` (collections with artwork, Moonfin layouts, injector entry "Beta rows"), `scripts/beta-rows.js`, `scripts/web_home.py` (Home Screen Sections: Continue Watching only; prod's home injector entries off) | `python3 scripts/web_home.py && python3 scripts/rows.py` (`--dry-run`, `--counts`, `--month YYYY-MM` simulates a month: run again without it to reset); timer `jellyfin-beta-rows.timer` daily 12:17 |
 | "Not downloaded yet" band in each poster's complement colour (TV images + web) | `scripts/band_colour.py`, `band_render.py`, `band-web.js` | `sudo python3 scripts/band_render.py` (`--check`, `--style classic` reverts) |
 
-Rows: Continue Watching, Next Up, Favourite movies/series, Recently added (built in); Top Picks for You, Hidden Gems (≥ 7.5, unplayed), Watch Again (played + ≥ 7 or ♥) per user (one collection each, others' hidden by `BlockedTags`); Awards Season (Wikidata: Oscar Best Picture, Golden Globe Best Picture, Palme d'Or, won or nominated, or tag `award winner`), Sagas & Franchises, Based on a True Story (TMDB keywords), Christmas (Dec) / Halloween (Oct), Binge in a Weekend (≤ 2 seasons or `miniseries`); rotating: Director Spotlight, Starring, World Cinema, CH/DE/AT, Mind-Benders, Decade Night, Animation for Grown-ups, Under 100 Minutes, 4K HDR.
+Rows: Continue Watching, Favourites (built in; web: own row, the plugin's My List is a playlist), New on the Server (last 30 days); Top Picks for You, Hidden Gems (≥ 7.5, unplayed), Watch Again (played + ≥ 7 or ♥) per user (one collection each, others' hidden by `BlockedTags`); Awards Season (Wikidata: Oscar Best Picture, Golden Globe Best Picture, Palme d'Or, won or nominated, or tag `award winner`), Sagas & Franchises, Based on a True Story (TMDB keywords), Christmas (Dec) / Halloween (Oct), Binge in a Weekend (≤ 2 seasons or `miniseries`); rotating: Director Spotlight, Starring, World Cinema, CH/DE/AT, Mind-Benders, Decade Night, Animation for Grown-ups, Under 100 Minutes, 4K HDR.
 
 ## Refresh from prod
 
@@ -60,4 +62,4 @@ Reset by a refresh: beta watch history and user settings, beta-only collections 
 ## Remove
 `sudo docker compose down`, `systemctl --user disable --now jellyfin-beta-rows.timer`, `sudo rm -r /srv/appdata/jellyfin-beta` (asks first), the Traefik file, the Authentik app (`provision-jellyfin-beta-sso.sh --rollback`), the Cloudflare hostname.
 
-Tests: `cd scripts && python3 -m unittest test_sanitize test_rows test_beta_tasks test_beta_login test_band_colour`.
+Tests: `cd scripts && python3 -m unittest test_sanitize test_rows test_web_home test_beta_tasks test_beta_login test_band_colour`.

@@ -107,6 +107,7 @@ Docker/_global/scripts/test_post_update_check.sh             # framework tests +
 | No timed scheduled tasks | Jellyfin task triggers, `scripts/beta_tasks.py` | `python3 scripts/beta_tasks.py` | `jfb.no-timed-tasks`: → no timed triggers | a new plugin with its own triggers |
 | Own API key and local `beta-admin` | DB, `secrets/api-key`, `secrets/beta-admin.password` | `python3 scripts/beta_admin.py` | `jfb.admin-and-key`: → api key ok, beta-admin ok | a refresh (re-created by it) |
 | Home rows plan (a collection per row, per-user ones hidden by BlockedTags, Moonfin layouts) | DB, Moonfin settings, `scripts/rows.py`, user timer `jellyfin-beta-rows.timer` | `python3 scripts/rows.py` | `jfb.rows-timer`: → enabled | Moonfin layout keys renamed; Jellyfin collection API |
+| Classic web home follows the plan: Home Screen Sections only Continue Watching, prod's home injector entries off, rows from injector entry "Beta rows" | plugin configs, `scripts/web_home.py`, `scripts/beta-rows.js` | `python3 scripts/web_home.py && python3 scripts/rows.py` | `jfb.web-home`: → unchanged | web client markup (`.homeSectionsContainer` flex order); a new prod home injector entry |
 | Complement-colour "Not downloaded yet" band (TV images, web injector entry "Band colours (beta)") | `scripts/band_colour.py`, `band_render.py`, `band-web.js`; originals in `/srv/appdata/jellyfin-beta/band` | `sudo python3 scripts/band_render.py` | `jfb.band`: → would change 0 | prod's `popular.js` band markup (`.hssTopBand`) changes |
 
 ## Movie-Downloads

@@ -10,6 +10,7 @@ if want jellyfin-beta; then
   check jfb.no-timed-tasks '^no timed triggers$' "$(cd "$JFB_DIR/scripts" && python3 beta_tasks.py --check 2>&1 | tail -1)"
   check jfb.own-server-id '^own$' "$(a=$(curl -s -m 5 http://127.0.0.1:8196/System/Info/Public | jq -r .Id); b=$(curl -s -m 5 http://127.0.0.1:8096/System/Info/Public | jq -r .Id); [ -n "$a" ] && [ "$a" != "$b" ] && echo own || echo "same or down")"
   check jfb.admin-and-key '^api key ok, beta-admin ok$' "$(cd "$JFB_DIR/scripts" && python3 beta_admin.py --check 2>&1 | tail -1)"
+  check jfb.web-home '^unchanged$' "$(cd "$JFB_DIR/scripts" && python3 web_home.py --check 2>&1 | tail -1)"
   check jfb.rows-timer '^enabled$' "$(systemctl --user is-enabled jellyfin-beta-rows.timer 2>&1)"
   check jfb.band '^would change 0 placeholder images' "$(cd "$JFB_DIR/scripts" && python3 band_render.py --check 2>&1 | tail -1)"
 fi
