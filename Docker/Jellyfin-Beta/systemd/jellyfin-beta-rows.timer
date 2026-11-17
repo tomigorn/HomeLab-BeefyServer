@@ -1,8 +1,8 @@
 [Unit]
-Description=Jellyfin beta home rows, daily outside the night window (catches up after sleep)
+Description=Jellyfin beta home rows, daily just after midnight (new shuffle of the day; catches up at wake after sleep)
 
 [Timer]
-OnCalendar=*-*-* 12:17
+OnCalendar=*-*-* 00:07
 Persistent=true
 AccuracySec=5min
 
