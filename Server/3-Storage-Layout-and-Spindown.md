@@ -46,7 +46,7 @@ of the time.
 | Soft stop downloads/imports | pool free < 5758 GiB: Radarr/Sonarr refuse imports, SABnzbd pauses, qBittorrent held | Movie-Downloads README "Storage limits" |
 | Alerts (fastpi) | SSD ≥ 80 %, HDD ≥ 80 % warn / ≥ 90 % critical, mover failed/not run, overflow, verify failures | HomeLab-FastPi `Docker/grafana/README.md` |
 | Seerr bar | SSD green < 70, yellow 70-80, red ≥ 80; HDD 80/90 | `Docker/Seerr/README.md` "Indexer bar" |
-| hd-idle | HDD parks after 20 min (1200 s, since 2026-10-28) | `/etc/default/hd-idle` |
+| hd-idle | HDD parks after 5 min (300 s, since 2026-11-18; 20 min 2026-10-28 to 11-18) | `/etc/default/hd-idle` |
 | Retention (observe mode) | SSD 30 days → HDD → temporary titles' files deleted at day 90 (HDD > 85 %: earlier, down to 80 %); computed only, the mover does the moves, nothing deleted | `Docker/Movie-Downloads/README.md` "Storage retention" |
 
 ### The mover (§5, built 2026-10-28)
@@ -79,7 +79,7 @@ Pause it: `DRY_RUN=1` or `MAX_MOVE_GIB=0` in `/etc/beefy-mover.conf`. Install/up
 - ✅ Mounted by **UUID** via the managed `/etc/fstab` block; mergerfs pool `/srv/video`
   reports **35 TB** (8 TB hot + 27 TB cold). The 7.3 TB audio SSD was retired 2026-07-03.
 - ✅ Spin-down: **`hd-idle` active + enabled**, parking only the cold HDD by serial after
-  20 min since 2026-10-28, 5 min before (`-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 1200`).
+  5 min (owner 2026-11-18: every wake from hibernation spins the HDD up; it should not keep spinning 20 min for nothing; 20 min 2026-10-28 to 11-18) (`-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 300`).
 - ✅ `smartd` active (HDD `-n standby`), `fstrim.timer` enabled, `user_allow_other` set.
 - ✅ **Spin-state logger active** — checks via `smartctl` every minute, logs to
   `/var/log/hdd-spinstate.log` **only on state change**, rotates at 15k lines (§11).
@@ -1104,7 +1104,7 @@ UUID=b805bc03-6217-41ea-9161-2b55281e0313   /srv/.disks/hdd-cold  xfs   noatime,
 
 | Item | State |
 |---|---|
-| `hd-idle` | **active + enabled** — `-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 1200 -l /var/log/hd-idle.log` (idle=1200 s / 20 min since 2026-10-28; **full by-id path** required) |
+| `hd-idle` | **active + enabled** — `-s 1 -i 0 -a /dev/disk/by-id/ata-ST30000NM004K-3RM133_K1S05Y9M -i 300 -l /var/log/hd-idle.log` (idle=300 s / 5 min since 2026-11-18; **full by-id path** required) |
 | `smartmontools` (smartd) | active (`-n standby` on the HDD) |
 | `fstrim.timer` | enabled (weekly TRIM, all SSDs) |
 | `user_allow_other` in `/etc/fuse.conf` | set |
