@@ -93,6 +93,7 @@ SERVERS = [{"id": 0, "name": "🌙 Tonight · lower power cost", "isDefault": Tr
 PROFILE = {"id": 0, "name": "Best found release (1080p/2160p)"}
 MOVIE_RE = re.compile(r"movie/[0-9]{1,10}")
 OWNED_MEDIA = {4, 5}
+IMDB_QUERY_RE = re.compile(r"tt[0-9]{1,10}")
 SERVICE_RE = re.compile(r"service/(radarr|sonarr)(?:/([0-9]{1,10}))?")
 QUOTA_RE = re.compile(r"user/([0-9]{1,10})/quota")
 DIGITS_RE = re.compile(r"[0-9]{1,9}")
@@ -270,6 +271,18 @@ def scrub(obj, me_uid, mine, me_name="You"):
                 out[k] = dict(HOUSEHOLD)
             continue
         out[k] = scrub(v, me_uid, mine, me_name)
+    return out
+
+
+def without_available(page, query):
+    """A title search minus the titles already in the library; an IMDb id lookup stays whole, Moonfin resolves owned items through it."""
+    q = urllib.parse.parse_qs(query).get("query", [""])[0].strip()
+    if IMDB_QUERY_RE.fullmatch(q) or not isinstance(page, dict) or not isinstance(page.get("results"), list):
+        return page
+    kept = [r for r in page["results"] if not (isinstance(r, dict) and isinstance(r.get("mediaInfo"), dict) and r["mediaInfo"].get("status") == 5)]
+    out = {**page, "results": kept}
+    if is_int(page.get("totalResults")):
+        out["totalResults"] = max(0, page["totalResults"] - (len(page["results"]) - len(kept)))
     return out
 
 
@@ -462,6 +475,8 @@ class Facade:
             if MOVIE_RE.fullmatch(path_q.partition("?")[0]) and isinstance(out, dict) and isinstance(out.get("mediaInfo"), dict) and out["mediaInfo"].get("status") in OWNED_MEDIA:
                 # Moonfin adopts an owned member's TMDB collection for a list BoxSet and shows the other parts as missing
                 out = {k: v for k, v in out.items() if k != "collection"}
+            if path_q.partition("?")[0] == "search":
+                out = without_available(out, path_q.partition("?")[2])
             if me is None:
                 return 200, scrub(out, 0, set())
             return 200, scrub(out, me["uid"], self.mine(me), me["name"])

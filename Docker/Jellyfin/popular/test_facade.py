@@ -647,6 +647,24 @@ class ReadProxy(FacadeBase):
         self.seerr.answer["/api/v1/tv/1399"] = {"id": 1399, "mediaInfo": {"status": 5}, "collection": dict(lotr)}
         self.assertIn("collection", self.get("tv/1399")[1])
 
+    def test_search_hides_available_titles(self):
+        def hit(i, kind, status):
+            out = {"id": i, "mediaType": kind}
+            if status is not None:
+                out["mediaInfo"] = {"status": status}
+            return out
+        results = [hit(64690, "movie", 5), hit(1, "tv", 4), hit(2, "movie", 3), hit(3, "movie", 2), hit(4, "movie", None), {"id": 5, "mediaType": "person"}, hit(6, "tv", 5)]
+        self.seerr.answer["/api/v1/search?query=drive&page=1"] = {"page": 1, "totalPages": 3, "totalResults": 47, "results": [dict(r) for r in results]}
+        out = self.get("search?query=drive&page=1")[1]
+        self.assertEqual([r["id"] for r in out["results"]], [1, 2, 3, 4, 5])
+        self.assertEqual((out["page"], out["totalPages"], out["totalResults"]), (1, 3, 45))
+        for q, kept in (("tt0780504", [64690]), ("1917", [])):
+            self.seerr.answer[f"/api/v1/search?query={q}&page=1"] = {"page": 1, "totalPages": 1, "totalResults": 1, "results": [hit(64690, "movie", 5)]}
+            out = self.get(f"search?query={q}&page=1")[1]
+            self.assertEqual(([r["id"] for r in out["results"]], out["totalResults"]), (kept, len(kept)), q)
+        self.seerr.answer["/api/v1/discover/movies?page=1"] = {"page": 1, "totalResults": 1, "results": [hit(64690, "movie", 5)]}
+        self.assertEqual(len(self.get("discover/movies?page=1")[1]["results"]), 1)
+
     def test_requested_by_rewritten_mine_vs_household(self):
         jane = {"id": 7, "displayName": "Jane Doe", "email": "jane@example.com"}
         admin = {"id": 1, "displayName": "Admin", "email": "admin@example.com"}
