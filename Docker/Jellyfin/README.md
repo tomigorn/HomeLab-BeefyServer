@@ -764,6 +764,24 @@ The Popular lists on the TV apps, which cannot run the injected page. Same lists
 | Rename | `POST /Library/VirtualFolders/Name?name=Collections%20%26%20Trending&newName=Collections&refreshLibrary=false`, then scan |
 | Library removal | only with a DB restore from `backup-config.sh` (attended, Jellyfin stopped) |
 
+## TMDB primary posters (2026-11-19)
+Every film, series and season poster in Movies and Shows is TMDB's primary poster (Seerr's `posterPath`, en), not Jellyfin's pick (Jellyfin sorts TMDB's images by average rating only: Drive got a 10.0 from 6 votes instead of the primary). Owner decision 2026-11-19.
+
+| | |
+|---|---|
+| Script | `scripts/tmdb-posters.py`: TMDB through Seerr (no own key, cached 7 days in `~/.local/state/jellyfin-tmdb-posters.json`), poster set with `POST /Items/{id}/RemoteImages/Download?Type=Primary` (TMDB `original`) |
+| Already on it | same poster = 24×36 grey thumbnails differ < 2.0 on average (re-encodes ≤ 1.5, title-text variants ≥ 2.9, measured 2026-11-19); then remembered by image tag, not looked at again |
+| Left alone | seasons without a TMDB season poster (they show the series poster), items without TMDB id, a TMDB primary with title text in another language than en (Jellyfin's TMDB list shows the language; logged `… has ja text, kept`), backdrops, logos, thumbs, our collection/list art, the trending libraries |
+| List marks | a title with trending list marks gets the TMDB poster as its kept original (`trending/originals/<id>.jpg`); `trending.py` re-marks it |
+| Placeholders | `trending.py` already renders the `⬇ Not downloaded yet` posters from details `p.en` = Seerr's `posterPath` (TMDB primary; `popular.py` checks it daily, one Seerr call per listed title, `POSTER_TTL`, the rest of the details weekly); the beta band (`Jellyfin-Beta/scripts/band_render.py`) takes prod's placeholder images as its originals, no change there |
+| Nightly | `jellyfin-popular.service` runs it before `trending.py` (04:39 and 22:20), so new titles get it the same night; a failure does not stop the lists (`ExecStart=-`) |
+| Backup | first replaced poster of each item: `~/.local/state/jellyfin-tmdb-posters/backup/<id>.jpg` (kept original of a marked title: `<id>.original.jpg`) |
+| Commands | `scripts/tmdb-posters.py --dry-run` (counts + 10 examples `title: current TMDB file → primary`), `scripts/tmdb-posters.py` (apply), `--check [movie/64690]` (read only) |
+| Rollback | `scripts/tmdb-posters.py --rollback` (backups back, later runs do nothing), then `systemctl --user start jellyfin-trending.service` for marked titles; undo: `--enable` |
+| Check | `jf.tmdb-primary-poster`: Drive's Primary = TMDB primary |
+| Tests | `cd scripts && python3 -m unittest test_tmdb_posters` |
+| Units after a change | `cp systemd/jellyfin-popular.service ~/.config/systemd/user/ && systemctl --user daemon-reload` |
+
 ## Skip intro / credits buttons: Intro Skipper (2026-10-27)
 Episodes and films get **"Skip intro" / "Skip credits"** buttons. Buttons only, nothing is skipped automatically.
 
