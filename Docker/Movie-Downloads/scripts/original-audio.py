@@ -64,6 +64,11 @@ def decide(language, tracks, nlink=1, suffix=".mkv"):
     codes = language_codes(language)
     if not codes:
         return {"action": "skip", "reason": f"unknown language {language!r}"}
+    label = language
+    # Swiss films are listed as German; a Swiss German track is then the original, the German one a dub.
+    swiss = [x for x in tracks if x["lang"] == "gsw" and not (x.get("commentary") or is_commentary(x))] if "ger" in codes else []
+    if swiss:
+        label, codes = "Swiss German", {"gsw"}
     hits = [x for x in tracks if x["lang"] in codes]
     if not hits:
         return {"action": "skip", "reason": f"no {language} audio track (dub only or und)"}
@@ -78,13 +83,16 @@ def decide(language, tracks, nlink=1, suffix=".mkv"):
             if not x["default"]:
                 args.append("flag-default=1")
             name = x["name"]
-            if language.lower() in name.lower():
+            if label.lower() in name.lower():
                 if "original" not in name.lower():
                     args.append(f"name={name} (Original)")
-            elif name != f"{language} (Original)":
-                args.append(f"name={language} (Original)")
-        elif x["default"]:
-            args.append("flag-default=0")
+            elif name != f"{label} (Original)":
+                args.append(f"name={label} (Original)")
+        else:
+            if x["default"]:
+                args.append("flag-default=0")
+            if x["name"].endswith(" (Original)"):
+                args.append(f"name={x['name'][:-len(' (Original)')]}")
         if is_commentary(x) and not x.get("commentary"):
             args.append("flag-commentary=1")
         if args:

@@ -124,6 +124,16 @@ class Decide(unittest.TestCase):
         self.assertEqual(p["track"], 2)
         self.assertEqual(p["candidates"], 2)
 
+    def test_swiss_german_track_is_the_original_of_a_german_title(self):
+        p = oa.decide("German", [t("gsw", "Swiss German 5.1", False, 1), t("deu", "German (Original)", True, 2), t("deu", "German 2.0", False, 3)])
+        self.assertEqual(p["track"], 1)
+        self.assertIn(("a1", ["flag-default=1", "name=Swiss German 5.1 (Original)"]), p["edits"])
+        self.assertIn(("a2", ["flag-default=0", "name=German"]), p["edits"])
+
+    def test_swiss_german_already_original_is_noop(self):
+        p = oa.decide("German", [t("gsw", "Swiss German (Original)", True, 1), t("deu", "German", False, 2)])
+        self.assertEqual(p["action"], "ok")
+
     def test_several_none_default_takes_first(self):
         p = oa.decide("English", [t("eng", "English", False, 1), t("eng", "English 2.0", False, 2)])
         self.assertEqual(p["track"], 1)
