@@ -334,6 +334,20 @@ class Desired(unittest.TestCase):
             self.assertTrue(tr.art.has_band(out["poster.jpg"]), ph.title)
             self.assertTrue(tr.art.has_band(out["landscape.jpg"]), ph.title)
 
+    def test_placeholder_poster_is_drawn_from_tmdb_primary_of_the_english_answer(self):
+        class Seen:
+            def __init__(self):
+                self.asked = []
+
+            def get(self, size, path):
+                self.asked.append((size, path))
+                return None
+        p = tm.plan({"home": {"movies": [entry(1, 1, "Alpha")], "shows": []}, "rows": []}, {"items": []}, {"d1": {"t": {"en": "Alpha"}, "p": {"en": "/primary.jpg", "de": "/german.jpg"}, "ref": "movie/1"}}, {}, {})
+        seen = Seen()
+        tr.desired(next(iter(p.placeholders.values())), seen, {"home-movies": None})
+        self.assertIn(("w780", "/primary.jpg"), seen.asked)
+        self.assertNotIn(("w780", "/german.jpg"), seen.asked)
+
     def test_thumb_from_the_cached_backdrop_and_kept_when_its_download_failed(self):
         class Back:
             def __init__(self, data):

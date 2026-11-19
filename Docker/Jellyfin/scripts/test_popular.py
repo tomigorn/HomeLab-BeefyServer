@@ -427,6 +427,23 @@ class Main(unittest.TestCase):
             self.assertEqual(set(json.loads(sf.with_name("details.json").read_text())["entries"]), dids)
             self.assertEqual([a for a in asked if a.startswith(("/api/v1/movie/", "/api/v1/tv/"))], [])
 
+    def test_poster_of_cached_details_follows_tmdb_primary_daily(self):
+        fake = FakeIo()
+        with tempfile.TemporaryDirectory() as d:
+            sf = pathlib.Path(d) / "s.json"
+            self.run_main(fake, sf)
+            asked = []
+            seerr = fake.seerr
+            fake.seerr = lambda path: asked.append(path) or (dict(seerr(path), posterPath="/new101.jpg") if path == "/api/v1/movie/101?language=en" else seerr(path))
+            self.run_main(fake, sf, now=self.NOW + datetime.timedelta(days=2))
+            side = json.loads(sf.with_name("details.json").read_text())
+            film = self.data(fake)["home"]["movies"][0]
+        self.assertEqual(film["p"]["en"], "/new101.jpg")
+        self.assertEqual(next(e for e in side["entries"].values() if e["ref"] == "movie/101")["p"]["en"], "/new101.jpg")
+        self.assertIn("/api/v1/movie/101?language=en", asked)
+        self.assertNotIn("/api/v1/movie/101?language=de", asked)
+        self.assertNotIn("/api/v1/movie/101/ratingscombined", asked)
+
     def test_details_cached_before_the_overlay_existed_are_fetched_again(self):
         fake = FakeIo()
         with tempfile.TemporaryDirectory() as d:

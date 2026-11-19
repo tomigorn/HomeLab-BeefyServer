@@ -84,6 +84,7 @@ FAIL_MIN = 3
 FAILURES = (OSError, urllib.error.URLError, ValueError, KeyError, TypeError)
 LISTS_TTL = datetime.timedelta(days=7)
 DETAILS_TTL = datetime.timedelta(days=7)
+POSTER_TTL = datetime.timedelta(days=1)
 MIN_GB = {"movie": 1.5, "episode": 0.3, "pack": 1.0}
 SEASON_RE = re.compile(r"\b(?:season|series|staffel)\s+(\d+)\b", re.I)
 BAD = {"cam", "camrip", "hdcam", "ts", "hdts", "telesync", "tc", "hdtc", "telecine", "scr", "screener", "dvdscr", "workprint"}
@@ -387,11 +388,28 @@ def fresh(entry, ttl, now):
     return entry and now - datetime.datetime.fromisoformat(entry["at"]) < ttl
 
 
+def follow_poster(io_, d, kind, tmdb, now):
+    """Cached details keep TMDB's current primary poster (en): checked once per POSTER_TTL, one Seerr call; a failed check keeps the cached one."""
+    if now - datetime.datetime.fromisoformat(d.get("posterAt") or d["at"]) < POSTER_TTL:
+        return d
+    try:
+        poster = tmdb_details._img(io_.seerr(f"/api/v1/{kind}/{int(tmdb)}?language=en").get("posterPath"))
+    except tmdb_details.FAILURES:
+        return d
+    d["posterAt"] = now.isoformat(timespec="seconds")
+    if poster and poster != d.get("poster"):
+        p = d["info"]["p"]
+        if d.get("posterDe") == d.get("poster"):
+            d["posterDe"] = p["de"] = poster
+        d["poster"] = p["en"] = poster
+    return d
+
+
 def details(io_, state, kind, tmdb, now):
     key = f"{kind}/{tmdb}"
     d = state.setdefault("details", {}).get(key)
     if fresh(d, DETAILS_TTL, now) and "info" in d:
-        return d
+        return follow_poster(io_, d, kind, tmdb, now)
     en, info = tmdb_details.fetch(io_.seerr, kind, tmdb)
     de = {"title": info["t"]["de"], "posterPath": info["p"]["de"]}
     ext = en.get("externalIds") or {}
