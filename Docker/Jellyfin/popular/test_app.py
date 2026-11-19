@@ -1354,5 +1354,107 @@ class HookServer(unittest.TestCase):
         self.assertEqual(self.srv.pool._max_workers, 4)
 
 
+class DownloadBlocked(Base):
+    DEVICE = "a4859e97-7caf-4d39-a378-60798b8c22a8"
+    PATH = "/hss-popular/download-blocked"
+
+    def setUp(self):
+        super().setUp()
+        self.calls = []
+        self.sessions = [
+            {"Id": "sess-phone", "DeviceId": self.DEVICE, "UserId": USERS[TOKEN]["Id"]},
+            {"Id": "sess-other-user", "DeviceId": self.DEVICE, "UserId": USERS["b" * 32]["Id"]},
+            {"Id": "sess-other-device", "DeviceId": "other-device", "UserId": USERS[TOKEN]["Id"]},
+        ]
+
+        def admin(method, path, body=None):
+            self.calls.append((method, path, body))
+            if method == "GET" and path.startswith("/Sessions?"):
+                return self.sessions
+            return None
+
+        self.core.jellyfin_admin = admin
+        self.core.spawn = lambda fn: fn()
+
+    def hit(self, query, method="GET"):
+        return self.core.handle(method, f"{self.PATH}?{query}", {}, b"")
+
+    def query(self, device=DEVICE, token=TOKEN, play="84f05907-8109-4bb2-95ab-73e3cc3045e3"):
+        return f"MediaSourceId=x&ApiKey={token}&Static=false&container=mp4&PlaySessionId={play}&DeviceId={device}"
+
+    def messages(self):
+        return [(p, b) for m, p, b in self.calls if m == "POST"]
+
+    def test_refused_and_message_goes_only_to_the_callers_session_on_that_device(self):
+        code, body = self.hit(self.query())
+        self.assertEqual(code, 403)
+        self.assertIn("Original", body["error"])
+        self.assertEqual(self.calls[0][:2], ("GET", f"/Sessions?deviceId={self.DEVICE}"))
+        self.assertEqual(self.messages(), [("/Sessions/sess-phone/Message", {"Header": app.DOWNLOAD_HEADER, "Text": app.DOWNLOAD_TEXT, "TimeoutMs": app.DOWNLOAD_TIMEOUT_MS})])
+
+    def test_message_text_is_fixed(self):
+        self.assertEqual(app.DOWNLOAD_HEADER, "📱 Download")
+        self.assertEqual(app.DOWNLOAD_TEXT, "Converted downloads are switched off. Please choose 'Original'. A smaller phone version will come automatically later.")
+        self.hit(self.query() + "&Header=evil&Text=evil")
+        self.assertEqual(self.messages()[0][1]["Text"], app.DOWNLOAD_TEXT)
+
+    def test_one_message_per_device_within_two_minutes(self):
+        for _ in range(4):
+            self.assertEqual(self.hit(self.query())[0], 403)
+        self.assertEqual(len(self.messages()), 1)
+        self.assertEqual(len(self.calls), 2)
+        self.now = NOW + datetime.timedelta(seconds=119)
+        self.hit(self.query(play="another-play-session"))
+        self.assertEqual(len(self.messages()), 1)
+        self.now = NOW + datetime.timedelta(seconds=121)
+        self.hit(self.query())
+        self.assertEqual(len(self.messages()), 2)
+
+    def test_lowercase_query_keys(self):
+        self.hit(f"api_key={TOKEN}&static=false&deviceId={self.DEVICE}")
+        self.assertEqual(len(self.messages()), 1)
+
+    def test_unknown_device_gets_no_message(self):
+        self.assertEqual(self.hit(self.query(device="fake-device-0000"))[0], 403)
+        self.assertEqual(self.messages(), [])
+
+    def test_no_or_bad_token_no_lookup(self):
+        for token in ("", "z" * 32, "c" * 32):
+            self.assertEqual(self.hit(self.query(token=token))[0], 403)
+        self.assertEqual(self.messages(), [])
+
+    def test_no_or_bad_device_id_no_lookup(self):
+        for q in (f"ApiKey={TOKEN}&Static=false", self.query(device="x" * 200), self.query(device="a%22b"), self.query(device="a%0Ab")):
+            self.assertEqual(self.hit(q)[0], 403)
+        self.assertEqual(self.calls, [])
+
+    def test_any_method_is_refused(self):
+        self.assertEqual(self.hit(self.query(), method="POST")[0], 403)
+
+    def test_jellyfin_errors_still_refuse(self):
+        def down(method, path, body=None):
+            raise OSError("down")
+        self.core.jellyfin_admin = down
+        self.assertEqual(self.hit(self.query())[0], 403)
+
+    def test_cache_is_bounded(self):
+        for i in range(app.DOWNLOAD_NOTICE_CAP + 10):
+            self.hit(self.query(device=f"device-{i}"))
+        self.assertLessEqual(len(self.core.notified), app.DOWNLOAD_NOTICE_CAP)
+
+    def test_without_admin_key_still_refused(self):
+        self.core.jellyfin_admin = None
+        self.assertEqual(self.hit(self.query())[0], 403)
+
+    def test_query_is_not_logged(self):
+        h = app.Handler.__new__(app.Handler)
+        h.command, h.path, h.requestline = "GET", self.PATH + "?" + self.query(), "GET " + self.PATH + "?" + self.query() + " HTTP/1.1"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            h.log_request(403)
+        self.assertIn(self.PATH, out.getvalue())
+        self.assertNotIn(TOKEN, out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

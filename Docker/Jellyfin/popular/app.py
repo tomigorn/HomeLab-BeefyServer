@@ -1,5 +1,5 @@
 """Request backend for "Currently popular" (Jellyfin README "Currently popular"): any signed-in Jellyfin user may request a listed title.
-POST /hss-popular/request {"id": <opaque list entry id>, "mode": "night" | "now", "check": bool}, POST /hss-popular/tv-code {} (one-time Seerr facade sign-in code for the caller), GET /hss-popular/state, GET /hss-popular/details?id=<opaque details id>, GET /hss-popular/health.
+POST /hss-popular/request {"id": <opaque list entry id>, "mode": "night" | "now", "check": bool}, POST /hss-popular/tv-code {} (one-time Seerr facade sign-in code for the caller), GET /hss-popular/state, GET /hss-popular/details?id=<opaque details id>, GET /hss-popular/health, any /hss-popular/download-blocked (always 403, one fixed pop-up to the caller's session on that DeviceId; Jellyfin README "Moonfin converted downloads off").
 Details: only ids of the sidecars details.json (popular.py) and coming.json (upcoming-popularity.py), never a TMDB id, so it is no open TMDB proxy; those ids are never requestable.
 The caller is checked with Jellyfin (/Users/Me with their own token, disabled = refused); only entries of the current allow-list (scripts/popular.py) with a found release can be requested, nothing free-form.
 The request goes to Seerr with its API key as the caller's linked Seerr user, else as the service user "jellyfin-popular". Every decision of a signed-in caller is written to the audit log (rotated);
@@ -53,6 +53,12 @@ SERVICE_TTL = datetime.timedelta(minutes=5)
 NAMES_RETRY = datetime.timedelta(seconds=30)
 RESET_DELAYS = (5, 30)
 RESET_CAP = 500
+DOWNLOAD_HEADER = "\U0001f4f1 Download"
+DOWNLOAD_TEXT = "Converted downloads are switched off. Please choose 'Original'. A smaller phone version will come automatically later."
+DOWNLOAD_TIMEOUT_MS = 15000
+DOWNLOAD_NOTICE_EVERY = datetime.timedelta(minutes=2)
+DOWNLOAD_NOTICE_CAP = 256
+DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 
 class NoServiceUser(Exception):
@@ -136,6 +142,8 @@ class Core:
         self.auth_cache, self.hits, self.cache = {}, {}, {}
         self.noise, self.flushed = collections.Counter(), None
         self.tv_codes = None
+        self.notified = {}
+        self.spawn = lambda fn: threading.Thread(target=fn, daemon=True).start()
         self.db_init()
 
     # --- inputs -------------------------------------------------------
@@ -635,7 +643,44 @@ class Core:
             return self.request(headers, body)
         if path == "/hss-popular/tv-code" and method == "POST":
             return self.tv_code(headers, body)
+        if path == "/hss-popular/download-blocked":
+            return self.download_blocked(query)
         return 404, {"error": "not found"}
+
+    def download_blocked(self, query):
+        """Traefik sends Moonfin's converted downloads here: always 403; the caller's own session on that DeviceId gets one fixed pop-up per DOWNLOAD_NOTICE_EVERY."""
+        q = {k.lower(): v[0] for k, v in urllib.parse.parse_qs(query, max_num_fields=64).items()}
+        device, token = q.get("deviceid") or "", q.get("apikey") or q.get("api_key") or ""
+        if self.jellyfin_admin and DEVICE_ID_RE.match(device) and TOKEN_RE.match(token) and self.mark_notice(device):
+            self.spawn(lambda: self.notify_device(device, token))
+        return 403, {"error": "Converted downloads are switched off, choose Original"}
+
+    def mark_notice(self, device):
+        now = self.clock()
+        with self.lock:
+            for d in [d for d, t in self.notified.items() if now - t >= DOWNLOAD_NOTICE_EVERY]:
+                del self.notified[d]
+            if device in self.notified or len(self.notified) >= DOWNLOAD_NOTICE_CAP:
+                return False
+            self.notified[device] = now
+            return True
+
+    def notify_device(self, device, token):
+        try:
+            user = self.jellyfin(token)
+            if (user.get("Policy") or {}).get("IsDisabled"):
+                return
+            sessions = self.jellyfin_admin("GET", "/Sessions?deviceId=" + urllib.parse.quote(device, safe="")) or []
+            for s in sessions:
+                if s.get("DeviceId") == device and s.get("UserId") == user.get("Id") and s.get("Id"):
+                    self.jellyfin_admin("POST", f"/Sessions/{urllib.parse.quote(str(s['Id']), safe='')}/Message", {"Header": DOWNLOAD_HEADER, "Text": DOWNLOAD_TEXT, "TimeoutMs": DOWNLOAD_TIMEOUT_MS})
+                    print("download notice sent", flush=True)
+                    return
+            print("download notice: no session", flush=True)
+        except Unauthorized:
+            print("download notice: bad token", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"download notice failed {type(e).__name__}", flush=True)
 
     def state(self, headers):
         try:
@@ -1150,6 +1195,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         self._go("POST")
+
+    def log_request(self, code="-", size="-"):
+        # Without the query: download-blocked URLs carry the caller's ApiKey.
+        line = getattr(self, "requestline", "")
+        method, _, rest = line.partition(" ")
+        target, _, proto = rest.partition(" ")
+        self.log_message('"%s" %s %s', " ".join(x for x in (method, target.partition("?")[0], proto) if x), str(code), str(size))
 
     def log_message(self, fmt, *args):
         # The path only, never headers: tokens travel in headers.

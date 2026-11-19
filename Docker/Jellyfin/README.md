@@ -835,6 +835,17 @@ Phone browsers (any browser on iPhone/iPad/Android) that cannot play our usual f
 - Switch off: Dashboard → Plugins → JavaScript Injector → "Moonfin app banner" → disable.
 - Moonbase's "Open Moonfin" button in the web header is hidden in every browser (owner 2026-11-15): injector entry "Hide Moonfin header button" (`app-banner/hide-header-button.js`, CSS `.headerMoonfinButton{display:none!important}`; Moonbase has no setting and re-adds a removed button). Public entry (`RequiresAuthentication` off, only this CSS): index.html loads `public.js` at once, the signed-in bundle arrives seconds after the button. Installed by the same `scripts/app-banner.py`.
 
+## Moonfin converted downloads off (2026-11-19)
+Moonfin's download qualities High/Medium/Low/Mobile (`/Videos/{id}/stream?Static=false`) are refused; Original download, direct play and HLS transcoding stay.
+
+| What | Where |
+|---|---|
+| Refusal | fastpi Traefik router `jellyfin-converted-download-block` (HomeLab-FastPi `Docker/Traefik/traefik/dynamic/jellyfin.yml`) → `jellyfin-popular:8097/hss-popular/download-blocked`, never Jellyfin; beefy asleep or `popular` down → bodiless 403 (no wake) |
+| Pop-up | `popular/app.py` `download_blocked`: always 403; in the background the caller's own session on the request's `DeviceId` (token `ApiKey` checked with `/Users/Me`, session `UserId` must match) gets `POST /Sessions/{id}/Message` "📱 Download / Converted downloads are switched off. Please choose 'Original'. …", 15 s |
+| De-dup | one pop-up per `DeviceId` per 2 min (in memory, max 256 devices); the URL is logged without its query (it holds the `ApiKey`) |
+| Logs | `sudo docker logs jellyfin-popular \| grep "download notice"` → `sent` / `no session` / `bad token` |
+| Tests | `cd popular && python3 -m unittest test_app.DownloadBlocked`; checks `jf.popular-download-blocked`, fastpi `traefik.moonfin-converted-download-block`, `traefik.download-notice` |
+
 ## Moonfin requests (Seerr facade) (2026-10-30)
 Moonfin's Seerr screens (discover, details, request dialog, my requests) talk to the facade instead of Seerr. Every request still follows the Popular rules (allow-list, 10 per user per 7 days, 30 per day, audit). Moonbase's Seerr URL is `http://jellyfin-popular:8099`, set by `scripts/moonbase.py` (live, no Jellyfin restart; check `GET /Moonfin/Seerr/Config`).
 
