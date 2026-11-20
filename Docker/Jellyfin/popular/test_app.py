@@ -1490,9 +1490,23 @@ class PhoneDownload(Base):
     def state(self, **item):
         (self.box / "state.json").write_text(json.dumps({"items": {self.ITEM: item}}))
 
-    def hit(self, token=TOKEN, ip=IP, item=ITEM, extra=""):
+    def hit(self, token=TOKEN, ip=IP, item=ITEM, extra="", headers=None):
         q = f"ApiKey={token}{extra}" if token else extra.lstrip("&")
-        return self.core.handle("GET", f"/Items/{item}/Download?{q}", {"X-Real-Ip": ip} if ip else {}, b"")
+        h = dict({"X-Real-Ip": ip} if ip else {}, **(headers or {}))
+        return self.core.handle("GET", f"/Items/{item}/Download?{q}", h, b"")
+
+    def test_a_browser_of_the_same_user_at_the_same_ip_gets_the_original(self):
+        ua = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36"}
+        self.assertEqual(self.hit(headers=ua), (302, {"location": self.bypass()}))
+        self.assertEqual(self.requests(), [])
+
+    def test_a_named_non_phone_client_gets_the_original(self):
+        auth = {"Authorization": 'MediaBrowser Client="Moonfin for Android TV", Device="TV", DeviceId="tv", Version="1"'}
+        self.assertEqual(self.hit(headers=auth), (302, {"location": self.bypass()}))
+
+    def test_a_named_phone_client_is_a_phone(self):
+        auth = {"X-Emby-Authorization": 'MediaBrowser Client="Moonfin for Android", Device="Pixel", DeviceId="x", Version="1"'}
+        self.assertEqual(self.hit(headers=auth)[0], 409)
 
     def bypass(self, item=ITEM, token=TOKEN):
         return f"/Items/{item}/Download?ApiKey={token}&hssPhone=1"

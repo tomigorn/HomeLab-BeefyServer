@@ -49,6 +49,7 @@ KEEP_DAYS = 30
 # Phone versions (Movie-Downloads README "Phone versions"): only these apps get the smaller second version on an Original download
 PHONE_CLIENTS = {"Moonfin for Android", "Moonfin for iOS", "Jellyfin Android", "Jellyfin iOS", "Swiftfin iOS", "Findroid"}
 ITEM_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+CLIENT_RE = re.compile(r'Client="([^"]*)"')
 # the original path, untouched by Traefik, so its failover can hand the same request to Jellyfin when this service is down
 ITEM_DOWNLOAD_RE = re.compile(r"(?i)^(?:/emby|/mediabrowser)?/items/([^/]+)/download$")
 PHONE_REQUEST_EVERY = 300
@@ -724,6 +725,12 @@ class Core:
         return e[7:] if e.startswith("::ffff:") else e
 
     def phone_session(self, user, headers):
+        # the request's own client name decides when it sends one; a browser (any web client, also on TVs) never counts as a phone app
+        named = CLIENT_RE.search(headers.get("x-emby-authorization") or headers.get("authorization") or "")
+        if named and named.group(1) not in PHONE_CLIENTS:
+            return None
+        if not named and (headers.get("user-agent") or "").startswith("Mozilla/"):
+            return None
         ip = self.bare_ip(self.client_ip(headers))
         if not ip:
             return None
