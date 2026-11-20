@@ -1185,7 +1185,7 @@ Owner 2026-11-19 (fastpi `reports/specs/2026-11-19-phone-versions-design.md`): a
 | Ready | Jellyfin lists it as a version ("Phone 1080p"; the 2160p server copy stays the default, Jellyfin sorts versions by resolution) → state `ready` with the version's item id → pop-up "✅ Phone version ready" to every device that asked; its next Download gets the phone version |
 | States | `downloading` (%), `checking`, `placing`, `ready`, `nothing` (no smaller release; asked again after 24 h), `not-needed` (server copy not 4K), `failed` (download failed, quality check failed: the job is removed) · `~/.local/state/movie-downloads/phone-fetch.json`, per Jellyfin item for the popular service in `/srv/appdata/phone-versions/state.json` |
 | Not yet | the "📱 My phone downloads" row, retention counting all versions together (a phone version is a plain extra file: the mover/promoter may move it with its title; deleting the title in Radarr/Sonarr deletes the whole folder, phone version included) |
-| Arr side | Radarr/Sonarr see the extra file on a disk scan and reject it as "not an upgrade" (lower quality) while the server copy exists; if the server copy is gone they could take it over (Jellyfin/Radarr source research 2026-11-20) |
+| Arr side | Radarr/Sonarr see the extra file on a disk scan and reject it as "not an upgrade" (lower quality) while the server copy exists; if the server copy is gone they could take it over (Jellyfin/Radarr source research 2026-11-20). `phone-fetch.py run` checks every ready phone version hourly and notes it in `status` (and the journal) when an app tracks the phone file |
 
 ```bash
 scripts/phone-fetch.py status                       # every request and its state
