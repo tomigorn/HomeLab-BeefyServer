@@ -50,6 +50,16 @@ KEEP_DAYS = 30
 PHONE_CLIENTS = {"Moonfin for Android", "Moonfin for iOS", "Jellyfin Android", "Jellyfin iOS", "Swiftfin iOS", "Findroid"}
 ITEM_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 CLIENT_RE = re.compile(r'Client="([^"]*)"')
+PHONE_ACTIVE = datetime.timedelta(minutes=15)
+
+
+def jf_time(value):
+    """Jellyfin's UTC time (7 decimals, Z) as an aware datetime, None if unreadable."""
+    m = re.match(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?Z?$", str(value or ""))
+    if not m:
+        return None
+    frac = (m.group(2) or ".0")[1:7].ljust(6, "0")
+    return datetime.datetime.fromisoformat(m.group(1)).replace(microsecond=int(frac), tzinfo=datetime.timezone.utc)
 # the original path, untouched by Traefik, so its failover can hand the same request to Jellyfin when this service is down
 ITEM_DOWNLOAD_RE = re.compile(r"(?i)^(?:/emby|/mediabrowser)?/items/([^/]+)/download$")
 PHONE_REQUEST_EVERY = 300
@@ -710,34 +720,28 @@ class Core:
             print(f"phone download: {type(e).__name__}, original sent", flush=True)
             return to(item)
 
-    @staticmethod
-    def client_ip(headers):
-        ip = headers.get("x-real-ip") or (headers.get("x-forwarded-for") or "").split(",")[0]
-        return ip.strip()
-
-    @staticmethod
-    def bare_ip(endpoint):
-        e = str(endpoint or "").strip()
-        if e.startswith("["):
-            e = e[1:].split("]")[0]
-        elif e.count(":") == 1:
-            e = e.split(":")[0]
-        return e[7:] if e.startswith("::ffff:") else e
-
     def phone_session(self, user, headers):
+        """{"DeviceId", "Id" (its live session or None)} when this download comes from a phone app, else None.
+        Phone apps keep no Jellyfin session while idle (Moonfin for Android, 2026-11-20), so the user's devices decide: the most recently active one
+        within PHONE_ACTIVE (the app asks for the item's details right before it downloads) must be a phone app."""
         # the request's own client name decides when it sends one; a browser (any web client, also on TVs) never counts as a phone app
         named = CLIENT_RE.search(headers.get("x-emby-authorization") or headers.get("authorization") or "")
         if named and named.group(1) not in PHONE_CLIENTS:
             return None
         if not named and (headers.get("user-agent") or "").startswith("Mozilla/"):
             return None
-        ip = self.bare_ip(self.client_ip(headers))
-        if not ip:
+        uid = urllib.parse.quote(str(user.get("Id") or ""), safe="")
+        devices = (self.jellyfin_admin("GET", f"/Devices?userId={uid}") or {}).get("Items") or []
+        now = self.clock()
+        recent = [(t, d) for d in devices if d.get("LastUserId") == user.get("Id") for t in [jf_time(d.get("DateLastActivity"))] if t and now - t <= PHONE_ACTIVE]
+        if not recent:
             return None
-        for s in self.jellyfin_admin("GET", "/Sessions?activeWithinSeconds=900") or []:
-            if s.get("UserId") == user.get("Id") and s.get("Client") in PHONE_CLIENTS and self.bare_ip(s.get("RemoteEndPoint")) == ip and s.get("Id"):
-                return s
-        return None
+        _, device = max(recent, key=lambda x: x[0])
+        if device.get("AppName") not in PHONE_CLIENTS or not device.get("Id"):
+            return None
+        sessions = self.jellyfin_admin("GET", "/Sessions?deviceId=" + urllib.parse.quote(str(device["Id"]), safe="")) or []
+        live = next((x for x in sessions if x.get("DeviceId") == device["Id"] and x.get("UserId") == user.get("Id") and x.get("Id")), None)
+        return {"DeviceId": device["Id"], "Id": live.get("Id") if live else None}
 
     def phone_state(self, item):
         try:
@@ -772,6 +776,8 @@ class Core:
         return True
 
     def phone_message(self, session, text):
+        if not session.get("Id"):
+            return
         sid = urllib.parse.quote(str(session["Id"]), safe="")
         self.spawn(lambda: self.jellyfin_admin("POST", f"/Sessions/{sid}/Message", {"Header": PHONE_HEADER, "Text": text, "TimeoutMs": DOWNLOAD_TIMEOUT_MS}))
 

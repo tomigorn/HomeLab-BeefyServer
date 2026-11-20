@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import app  # noqa: E402
@@ -1470,14 +1471,18 @@ class PhoneDownload(Base):
         self.core.cfg.phone_box = str(self.box)
         self.calls = []
         self.height = 2160
-        self.sessions = [{"Id": "sess-phone", "DeviceId": self.DEVICE, "UserId": USERS[TOKEN]["Id"], "Client": "Moonfin for Android", "RemoteEndPoint": self.IP,
-                          "LastActivityDate": "2026-11-20T03:00:00Z"},
-                         {"Id": "sess-tv", "DeviceId": "tv", "UserId": USERS[TOKEN]["Id"], "Client": "Moonfin for Android TV", "RemoteEndPoint": "203.0.113.9"}]
+        self.sessions = [{"Id": "sess-phone", "DeviceId": self.DEVICE, "UserId": USERS[TOKEN]["Id"], "Client": "Moonfin for Android"}]
+        uid = USERS[TOKEN]["Id"]
+        self.devices = [{"Id": "tv", "AppName": "Moonfin for Android TV", "LastUserId": uid, "DateLastActivity": self.iso(-3600)},
+                        {"Id": self.DEVICE, "AppName": "Moonfin for Android", "LastUserId": uid, "DateLastActivity": self.iso(-40, digits=7)},
+                        {"Id": "web", "AppName": "Jellyfin Web", "LastUserId": USERS["b" * 32]["Id"], "DateLastActivity": self.iso(-1)}]
 
         def admin(method, path, body=None):
             self.calls.append((method, path, body))
             if method == "GET" and path.startswith("/Sessions"):
                 return self.sessions
+            if method == "GET" and path.startswith("/Devices"):
+                return {"Items": [d for d in self.devices if d["LastUserId"] == urllib.parse.parse_qs(path.partition("?")[2]).get("userId", [None])[0]]}
             if method == "GET" and path.startswith("/Users"):
                 return [{"Id": "admin-id", "Policy": {"IsAdministrator": True}}]
             if method == "GET" and path.startswith("/Items?"):
@@ -1486,6 +1491,10 @@ class PhoneDownload(Base):
 
         self.core.jellyfin_admin = admin
         self.core.spawn = lambda fn: fn()
+
+    def iso(self, seconds, digits=6):
+        t = (self.now + datetime.timedelta(seconds=seconds)).astimezone(datetime.timezone.utc)
+        return t.strftime("%Y-%m-%dT%H:%M:%S.") + ("%07d" % (t.microsecond * 10) if digits == 7 else "%06d" % t.microsecond) + "Z"
 
     def state(self, **item):
         (self.box / "state.json").write_text(json.dumps({"items": {self.ITEM: item}}))
@@ -1546,10 +1555,19 @@ class PhoneDownload(Base):
         self.assertEqual(self.requests(), [])
 
     def test_not_a_phone_app_downloads_the_original(self):
-        self.assertEqual(self.hit(ip="198.51.100.1"), (302, {"location": self.bypass()}))
-        self.sessions[0]["Client"] = "Jellyfin Web"
+        self.devices[0]["DateLastActivity"] = self.iso(-5)
         self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
         self.assertEqual(self.requests(), [])
+
+    def test_no_device_active_lately_downloads_the_original(self):
+        self.devices[1]["DateLastActivity"] = self.iso(-3600)
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
+
+    def test_phone_without_a_live_session_still_starts_the_phone_version(self):
+        self.sessions = []
+        self.assertEqual(self.hit()[0], 409)
+        self.assertEqual(self.requests(), [{"item": self.ITEM, "user": USERS[TOKEN]["Id"], "device": self.DEVICE}])
+        self.assertEqual(self.messages(), [])
 
     def test_bad_or_missing_token_goes_to_jellyfin_which_refuses_it(self):
         self.assertEqual(self.hit(token="z" * 32)[1], {"location": self.bypass(token="z" * 32)})
