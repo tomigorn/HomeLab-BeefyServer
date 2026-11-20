@@ -1174,7 +1174,31 @@ sudo install -m 0644 systemd/quality-block.{service,path,timer} /etc/systemd/sys
 
 #### Phone versions
 
-Owner 2026-11-19 (fastpi `reports/specs/2026-11-19-phone-versions-design.md`): a phone download of a 4K title gets a smaller second download (never an own conversion). **Status 2026-11-20: only the release picker is built**; fetching, placing the file as a second Jellyfin version, the download hook and the "📱 My phone downloads" row are not. Until then phone downloads work with "Original" only (Jellyfin README "Moonfin converted downloads off").
+Owner 2026-11-19 (fastpi `reports/specs/2026-11-19-phone-versions-design.md`): a phone download of a 4K title gets a smaller second download (never an own conversion), kept on the HDD as a second Jellyfin version of the same item.
+
+| Step | What |
+|---|---|
+| Ask | a phone app taps Download (Original) on a 4K film or episode: fastpi Traefik router `jellyfin-phone-download` → `jellyfin-popular` (Jellyfin README "Phone versions") → one JSON in `/srv/appdata/phone-versions/requests/` + pop-up "being prepared", answer 409. By hand: `scripts/phone-fetch.py request --movie <radarr id>` / `--episode <sonarr episode id>` / `--item <jellyfin id>` |
+| Pick | `scripts/phone-version.py` (below) on Radarr/Sonarr's release search, **usenet only** (beefy never seeds) |
+| Fetch | SABnzbd category `phone` (folder `/data/usenet/complete/phone`, priority High), at once, day or night; the usual completion hook: integrity, virus scan, quality check (Antivirus README "Quality check"); `quality-block.py` leaves these paths alone |
+| Place | `scripts/phone-fetch.py run` (`systemd/phone-fetch.path`: a request file or a new quality result; `phone-fetch.timer` every 2 min while awake; buntu, media lock): the checked video copied onto the HDD branch `/srv/.disks/hdd-cold/media/…/<title folder>/` as `<folder> - Phone 1080p.mkv` (films) or `<episode file name up to SxxEyy> - Phone 1080p.mkv` (episodes, season folder), dirs 2775, file 0664 group media; the download job and its SABnzbd history entry removed; Jellyfin told (`/Library/Media/Updated`) |
+| Ready | Jellyfin lists it as a version ("Phone 1080p"; the 2160p server copy stays the default, Jellyfin sorts versions by resolution) → state `ready` with the version's item id → pop-up "✅ Phone version ready" to every device that asked; its next Download gets the phone version |
+| States | `downloading` (%), `checking`, `placing`, `ready`, `nothing` (no smaller release; asked again after 24 h), `not-needed` (server copy not 4K), `failed` (download failed, quality check failed: the job is removed) · `~/.local/state/movie-downloads/phone-fetch.json`, per Jellyfin item for the popular service in `/srv/appdata/phone-versions/state.json` |
+| Not yet | the "📱 My phone downloads" row, retention counting all versions together (a phone version is a plain extra file: the mover/promoter may move it with its title; deleting the title in Radarr/Sonarr deletes the whole folder, phone version included) |
+| Arr side | Radarr/Sonarr see the extra file on a disk scan and reject it as "not an upgrade" (lower quality) while the server copy exists; if the server copy is gone they could take it over (Jellyfin/Radarr source research 2026-11-20) |
+
+```bash
+scripts/phone-fetch.py status                       # every request and its state
+scripts/phone-fetch.py request --episode 130        # by hand (one release search, then a download)
+journalctl -u phone-fetch -n 20
+sudo install -m 0644 systemd/phone-fetch.{service,path,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now phone-fetch.path phone-fetch.timer
+```
+
+- Shared folder: `sudo install -d -o buntu -g 65128 -m 2775 /srv/appdata/phone-versions /srv/appdata/phone-versions/requests` (65128 = jellyfin-popular). SABnzbd category: `mode=set_config&section=categories&keyword=phone&dir=phone&priority=1&script=Default`.
+- First real run 2026-11-20 03:12–03:20: Money Heist S02E01 (server copy 6.3 GB 4K DV) → `La.Casa.De.Papel.S02E01.1080p.NF.WEB-DL.DDP5.1.HDR.HEVC` 2.3 GB, downloaded, checked ok, placed, Jellyfin version "Phone 1080p", direct download of that version 206 ok.
+- Tests: `python3 tests/test_phone_fetch.py`, `python3 tests/test_phone_version.py`.
+
+#### Phone version release picker
 
 | Option (strict order) | Rule |
 |---|---|

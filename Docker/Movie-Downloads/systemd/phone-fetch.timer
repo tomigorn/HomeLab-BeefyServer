@@ -1,0 +1,10 @@
+[Unit]
+Description=Phone versions: download progress every 2 min while beefy is awake
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target

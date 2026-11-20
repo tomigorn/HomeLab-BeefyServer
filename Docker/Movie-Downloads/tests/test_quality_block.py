@@ -155,6 +155,11 @@ class Broken(Base):
         status, e = self.handle({"radarr": arr}, line(), now=NOW + qb.PENDING_HOURS * 3600 + 1)
         self.assertEqual((status, e["file"], e["blocked"]), ("done", "not found", False))
 
+    def test_phone_versions_are_left_to_phone_fetch(self):
+        arr = FakeArr()
+        self.assertEqual(self.handle({"radarr": arr}, line(path="/data/usenet/complete/phone/phone radarr-12 X/X.mkv")), ("done", None))
+        self.assertEqual(arr.calls, [])
+
     def test_api_down_stays_pending(self):
         arr = FakeArr(fail={("GET", "queue")})
         self.assertEqual(self.handle({"radarr": arr}, line())[0], "pending")

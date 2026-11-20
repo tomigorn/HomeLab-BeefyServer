@@ -1,0 +1,11 @@
+[Unit]
+Description=Phone versions: a phone asked for one, or the clamav-queue worker checked a download
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Path]
+PathExistsGlob=/srv/appdata/phone-versions/requests/*.json
+PathChanged=/var/lib/clamav-scan/textfile/quality-results.jsonl
+Unit=phone-fetch.service
+
+[Install]
+WantedBy=multi-user.target

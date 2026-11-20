@@ -1,0 +1,13 @@
+[Unit]
+Description=Phone versions: start requested downloads, follow them through the checks, place them as a second Jellyfin version (README Phone versions)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+# writes into the library: one shared media lock with the mover, original-audio, language-block and quality-block
+Type=oneshot
+User=buntu
+ExecStart=/usr/bin/flock -w 1800 /run/lock/beefy-media.lock /home/buntu/Projects/Docker/Movie-Downloads/scripts/phone-fetch.py run
+NoNewPrivileges=true
+PrivateTmp=true

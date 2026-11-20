@@ -24,6 +24,8 @@ IMPORTS_KEEP_DAYS = 14
 SEEN_KEEP_DAYS = 30
 DURATION_SHARE = 0.10
 DURATION_MINUTES = 5
+# phone versions (README "Phone versions") are no Radarr/Sonarr downloads: scripts/phone-fetch.py acts on their results
+PHONE_DIR = "/data/usenet/complete/phone/"
 
 
 def load_state(path):
@@ -147,7 +149,7 @@ def file_item(app, api, title, rec, imports):
 def handle(apis, x, imports, state, now=None, dry=False, action=ACTION, probe=None, host=None, tmdb=None):
     """One result line: ("done", entry or None) or ("pending", None) while neither app knows the file yet."""
     now = time.time() if now is None else now
-    if x.get("verdict") not in ("ok", "broken"):
+    if x.get("verdict") not in ("ok", "broken") or x["path"].startswith(PHONE_DIR):
         return "done", None
     path = x["path"]
     try:
