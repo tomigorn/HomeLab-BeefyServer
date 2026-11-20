@@ -1512,7 +1512,7 @@ class PhoneDownload(Base):
 
     def test_the_phone_downloader_user_agent_does_not_matter(self):
         ua = {"User-Agent": "Mozilla/5.0 (Linux; Android 14; 2312DRA50G Build/UKQ1) AppleWebKit/537.36"}
-        self.assertEqual(self.hit(headers=ua)[0], 409)
+        self.assertEqual(self.hit(headers=ua)[0], 503)
 
     def test_a_named_non_phone_client_gets_the_original(self):
         auth = {"Authorization": 'MediaBrowser Client="Moonfin for Android TV", Device="TV", DeviceId="tv", Version="1"'}
@@ -1520,7 +1520,7 @@ class PhoneDownload(Base):
 
     def test_a_named_phone_client_is_a_phone(self):
         auth = {"X-Emby-Authorization": 'MediaBrowser Client="Moonfin for Android", Device="Pixel", DeviceId="x", Version="1"'}
-        self.assertEqual(self.hit(headers=auth)[0], 409)
+        self.assertEqual(self.hit(headers=auth)[0], 503)
 
     def bypass(self, item=ITEM, token=TOKEN):
         return f"/Items/{item}/Download?ApiKey={token}&hssPhone=1"
@@ -1537,7 +1537,7 @@ class PhoneDownload(Base):
 
     def test_first_download_starts_the_phone_version_with_a_pop_up(self):
         code, body = self.hit()
-        self.assertEqual(code, 409)
+        self.assertEqual(code, 503)
         self.assertEqual(self.requests(), [{"item": self.ITEM, "user": USERS[TOKEN]["Id"], "device": self.DEVICE}])
         [m] = self.messages()
         self.assertIn("being prepared", m["Text"])
@@ -1545,7 +1545,7 @@ class PhoneDownload(Base):
     def test_a_second_tap_while_preparing_shows_progress_without_a_new_request(self):
         self.state(state="downloading", percent=42)
         code, _ = self.hit()
-        self.assertEqual(code, 409)
+        self.assertEqual(code, 503)
         self.assertEqual(self.requests(), [])
         self.assertIn("42", self.messages()[0]["Text"])
 
@@ -1570,7 +1570,7 @@ class PhoneDownload(Base):
 
     def test_phone_without_a_live_session_still_starts_the_phone_version(self):
         self.sessions = []
-        self.assertEqual(self.hit()[0], 409)
+        self.assertEqual(self.hit()[0], 503)
         self.assertEqual(self.requests(), [{"item": self.ITEM, "user": USERS[TOKEN]["Id"], "device": self.DEVICE}])
         self.assertEqual(self.messages(), [])
 
@@ -1592,7 +1592,7 @@ class PhoneDownload(Base):
 
     def test_file_endpoint_while_preparing_is_refused_too(self):
         self.state(state="downloading", percent=10)
-        self.assertEqual(self.core.handle("GET", f"/Items/{self.ITEM}/File?ApiKey={TOKEN}", {}, b"")[0], 409)
+        self.assertEqual(self.core.handle("GET", f"/Items/{self.ITEM}/File?ApiKey={TOKEN}", {}, b"")[0], 503)
 
     def test_file_endpoint_bypass_keeps_the_endpoint(self):
         self.state(state="nothing")
@@ -1602,6 +1602,10 @@ class PhoneDownload(Base):
         self.state(state="ready", phoneItem=self.PHONE)
         got = self.hit(extra=f"&MediaSourceId={self.ITEM}")
         self.assertEqual(got, (302, {"location": f"/Items/{self.PHONE}/Download?ApiKey={TOKEN}&MediaSourceId={self.PHONE}&hssPhone=1"}))
+
+    def test_being_prepared_is_a_503_so_moonfin_stops_without_falling_back_to_the_4k_file(self):
+        code, body = self.hit()
+        self.assertEqual((code, body["error"]), (503, "phone version being prepared"))
 
     def test_emby_prefix_and_any_case(self):
         self.state(state="ready", phoneItem=self.PHONE)

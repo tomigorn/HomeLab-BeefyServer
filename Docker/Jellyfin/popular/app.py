@@ -686,7 +686,8 @@ class Core:
 
     def phone_download(self, item, headers, query, endpoint="Download"):
         """Traefik sends Original downloads (/Items/<id>/Download, path unchanged) here. A phone app (PHONE_CLIENTS, the session of the token's user at the request's IP) on a 4K title gets the
-        phone version (302 to its own item) when it is ready; else the request is queued for Movie-Downloads' phone-fetch.py, the phone gets a pop-up and 409. Everything else,
+        phone version (302 to its own item) when it is ready; else the request is queued for Movie-Downloads' phone-fetch.py, the phone gets a pop-up and 503
+        (Moonfin falls back to /File and the static stream on any 4xx, but stops after 3 retries on a 5xx: Moonfin-Core download_service.dart _shouldRetryWithFallback). Everything else,
         and any error, gets the original: 302 back to Jellyfin with hssPhone=1, which Traefik passes straight through."""
         if not ITEM_ID_RE.match(item):
             return 404, {"error": "not found"}
@@ -712,12 +713,12 @@ class Core:
             if st.get("state") in PHONE_PREPARING:
                 what = f"{st.get('percent') or 0} % downloaded" if st.get("state") == "downloading" else "virus and quality check" if st.get("state") == "checking" else "almost done"
                 self.phone_message(session, PHONE_TEXT_WAIT.format(what=what))
-                return 409, {"error": "phone version being prepared"}
+                return 503, {"error": "phone version being prepared"}
             if st.get("state") or not self.is_4k(item):
                 return to(item)
             if self.ask_phone(item, user, session):
                 self.phone_message(session, PHONE_TEXT_NEW)
-            return 409, {"error": "phone version being prepared"}
+            return 503, {"error": "phone version being prepared"}
         except Unauthorized:
             return to(item)
         except Exception as e:  # noqa: BLE001
