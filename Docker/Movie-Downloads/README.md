@@ -1131,7 +1131,7 @@ Owner 2026-11-16: an imported file's real audio must have German, English or one
 
 | Part | What |
 |---|---|
-| Trigger | `scripts/original-audio-hook.sh` (Connect On Import/Upgrade, already registered) also writes `<id> <path> <file id> <download id> <isupgrade> <deleted paths> <recycle-bin paths>` to `/config/language-block.queue`; `systemd/language-block-import.path` → `scripts/language-block.py --queue` (buntu, media lock) |
+| Trigger | `scripts/original-audio-hook.sh` (Connect On Import/Upgrade, already registered) also writes `<id> <path> <file id> <download id> <isupgrade> <deleted paths> <recycle-bin paths>` to `/config/language-block.queue` (and, with the time, to `quality-block.imports`, "Quality check"); `systemd/language-block-import.path` → `scripts/language-block.py --queue` (buntu, media lock) |
 | Tracks | `mkvmerge -J` on the library file (no ffprobe on the host; same track data); `und`/empty tags: the track name (`languages.tsv` patterns, language names), else unknown |
 | Counts | German (`ger`, `deu`, `gsw`, `de-CH`: Swiss German too), English, the original language (Radarr/Sonarr `originalLanguage`; unknown → only German/English; anime: Japanese), TMDB's `original_language` and `spoken_languages` (e.g. Palestine 36: Arabic, Navalny: Russian, where Radarr says English); commentary tracks never |
 | TMDB | asked only for a file that would be blocked: Seerr `GET /api/v1/movie/<tmdb>` or `/tv/<tmdb>` (Seerr proxies TMDB, key `Seerr/secrets/api-key`), cached per title 30 days in `~/.local/state/movie-downloads/language-block-tmdb.json`; Seerr not readable → unknown, not blocked |
@@ -1148,6 +1148,29 @@ sudo install -m 0644 systemd/language-block-import.{service,path} /etc/systemd/s
 
 - Tests: `python3 tests/test_language_block.py`, `tests/test_original_audio_hook.sh`.
 - Library dry run 2026-11-16: with TMDB languages ok 1063, unknown 15 (no audio / `und` tags), block 0; before: block 2 (Palestine 36, Navalny).
+
+#### Quality check
+
+Owner 2026-11-18 (fastpi `reports/specs/2026-11-18-media-quality-check-design.md`, part 1): a broken download (2026-11-17: VisionQuest S01E08 by "cakes", timestamps jumped back from 280.9 s to 118.0 s, every player hung) never stays in the library.
+
+| Part | What |
+|---|---|
+| Check | the `clamav-queue` worker, after the virus scan of each video (Antivirus README "Quality check") → `/var/lib/clamav-scan/textfile/quality-results.jsonl` |
+| Trigger | `systemd/quality-block.path` (that file changed) and `quality-block.timer` (every 15 min while awake, for files Radarr/Sonarr have not picked up yet) → `scripts/quality-block.py` (buntu, media lock) |
+| Blocks | `broken` (timestamp jump back > 1 s, no video, no audio): still in the Radarr/Sonarr queue → `DELETE /queue/<id>?removeFromClient=true&blocklist=true&skipRedownload=false`, never imported, searched again; already imported → the language block's undo (`block_release` in `language-block.py`): new file deleted, or after an upgrade the previous file back from the recycle bin, release blocklisted, `MoviesSearch` / `EpisodeSearch` |
+| Import data | `scripts/original-audio-hook.sh` also writes `<epoch> <language-block queue line>` to `/config/quality-block.imports` (file id, upgrade, deleted and recycle-bin paths); pruned after 14 days. No line → the file id from the app, no previous file put back (noted) |
+| Notes only | a container read error; a duration off the TMDB/TVDB runtime (Radarr `runtime`, Sonarr per-episode `runtime`, summed for multi-episode files) by more than 10 % **and** more than 5 min (measured 2.5 % false hits: extended cuts, re-cut episodes) |
+| Never blocked | the test film, a file without a download id (imported by hand), a download without a grab event; not found in either app for 24 h → recorded, nothing done |
+| Shown | `~/.local/state/movie-downloads/quality-block.json` (180 days) → Seerr Manual page, Done tab: "Blocked automatically: the file is broken — searching again" or "Quality note" (`../Seerr/README.md` "Manual interaction") |
+| Decide only | `QB_ACTION=log` (e.g. `sudo systemctl edit quality-block.service` → `Environment=QB_ACTION=log`): records what it would do, touches nothing |
+
+```bash
+scripts/quality-block.py --dry-run          # what the unread results would get, state left as it is
+journalctl -u quality-block -n 20           # what real downloads got
+sudo install -m 0644 systemd/quality-block.{service,path,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now quality-block.path quality-block.timer
+```
+
+- Tests: `python3 tests/test_quality_block.py`, `tests/test_original_audio_hook.sh`, `python3 tests/test_language_block.py` (shared block code).
 - Library 2026-11-16 (`--library`): 1082 files, 2 would be blocked (only Arabic / only Russian audio where Radarr says English: *Palestine 36*, *Navalny*; left alone, only new imports act), 15 unknown (no or untagged audio in the arr's media info).
 
 ### Swiss German

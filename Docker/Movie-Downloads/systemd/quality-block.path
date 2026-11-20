@@ -1,0 +1,10 @@
+[Unit]
+Description=Quality block: the clamav-queue worker checked a downloaded video
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Path]
+PathChanged=/var/lib/clamav-scan/textfile/quality-results.jsonl
+Unit=quality-block.service
+
+[Install]
+WantedBy=multi-user.target

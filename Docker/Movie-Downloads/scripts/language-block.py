@@ -396,6 +396,14 @@ def act(app, api, item, title, probe, state, host=None, dry=False, now=None, tmd
     if dry:
         entry["file"] = "dry run"
         return entry
+    block_release(app, api, item, title, grab, probe, state, entry, notes, host, now, tmdb)
+    return finish()
+
+
+def block_release(app, api, item, title, grab, probe, state, entry, notes, host=None, now=None, tmdb=None):
+    """Remove the new file (or put the previous one back from the recycle bin), blocklist its grab once per download, search again; fills entry's file, blocked and searched, appends to notes. Shared with quality-block.py."""
+    host = host or oa.host_path
+    now = time.time() if now is None else now
     file_api = "/moviefile/" if app == "radarr" else "/episodefile/"
     episodes = []
     if app == "sonarr":
@@ -438,7 +446,6 @@ def act(app, api, item, title, probe, state, host=None, dry=False, now=None, tmd
         entry["searched"] = app == "radarr" or bool(episodes)
     except ApiError as e:
         notes.append(f"search failed: {e}")
-    return finish()
 
 
 def client(config):

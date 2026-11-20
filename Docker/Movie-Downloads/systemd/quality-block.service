@@ -1,0 +1,13 @@
+[Unit]
+Description=Blocks a broken download before or after its import and searches again; notes container errors and odd durations (README Quality check)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+# puts a previous file back from the recycle bin: one shared media lock with the SSD->HDD mover, original-audio and language-block
+Type=oneshot
+User=buntu
+ExecStart=/usr/bin/flock -w 1800 /run/lock/beefy-media.lock /home/buntu/Projects/Docker/Movie-Downloads/scripts/quality-block.py
+NoNewPrivileges=true
+PrivateTmp=true
