@@ -709,6 +709,7 @@ class Core:
             st = self.phone_state(item)
             if st.get("state") == "ready" and st.get("phoneItem") and ITEM_ID_RE.match(str(st["phoneItem"])):
                 print("phone download: phone version sent", flush=True)
+                self.record_sent(item, st["phoneItem"], user, session)
                 return to(st["phoneItem"])
             if st.get("state") in PHONE_PREPARING:
                 what = f"{st.get('percent') or 0} % downloaded" if st.get("state") == "downloading" else "virus and quality check" if st.get("state") == "checking" else "almost done"
@@ -780,6 +781,16 @@ class Core:
         os.replace(tmp, d / f"{item}-{int(now.timestamp())}.json")
         print("phone download: requested", flush=True)
         return True
+
+    def record_sent(self, item, phone_item, user, session):
+        """One line per phone version handed to a phone, for the "On your phone" home row (Jellyfin/scripts/phone-lists.py)."""
+        at = self.clock().astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        line = json.dumps({"at": at, "user": user.get("Id"), "device": session.get("DeviceId"), "item": item, "phoneItem": phone_item})
+        try:
+            with open(pathlib.Path(self.cfg.phone_box, "sent.jsonl"), "a") as f:
+                f.write(line + "\n")
+        except OSError as e:
+            print(f"phone download: not recorded ({type(e).__name__})", flush=True)
 
     def phone_message(self, session, text):
         if not session.get("Id"):

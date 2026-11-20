@@ -1535,6 +1535,18 @@ class PhoneDownload(Base):
         self.state(state="ready", phoneItem=self.PHONE)
         self.assertEqual(self.hit(), (302, {"location": self.bypass(self.PHONE)}))
 
+    def test_a_sent_phone_version_is_recorded_per_user_and_device(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        self.hit()
+        [rec] = [json.loads(l) for l in (self.box / "sent.jsonl").read_text().splitlines()]
+        self.assertEqual(rec, {"at": self.now.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "user": USERS[TOKEN]["Id"], "device": self.DEVICE,
+                               "item": self.ITEM, "phoneItem": self.PHONE})
+
+    def test_an_unwritable_record_still_sends_the_phone_version(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        (self.box / "sent.jsonl").mkdir()
+        self.assertEqual(self.hit(), (302, {"location": self.bypass(self.PHONE)}))
+
     def test_first_download_starts_the_phone_version_with_a_pop_up(self):
         code, body = self.hit()
         self.assertEqual(code, 503)
