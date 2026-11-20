@@ -1207,7 +1207,7 @@ sudo install -m 0644 systemd/phone-fetch.{service,path,timer} /etc/systemd/syste
 | 3 | 1080p encode: a TRaSH tier format (`… Tier 0x`), `10bit` + x265/HEVC, ≥ 15 MB per minute of runtime, `Bluray-1080p` or `WEBDL-1080p` |
 | 4 | a 4K release ≤ 60 % of the server copy's size |
 | 5 | the server copy (also when it is not 4K) |
-| Every option | no remux, no audio-description release, no hardcoded subtitles (`HC`, `KORSUB`, `hardsub` in the name; no custom format for it here), none of the title profile's negative formats (LQ, Upscaled, AV1, bad groups, …; the ones the order decides itself excluded), German, English or the original language present, not another title (the arr's "Unknown Movie" rejection). Inside an option: highest custom-format score, then the smaller file |
+| Every option | smaller than the server copy (a 1080p WEB-DL can be bigger than a 4K encode: Rings of Power S01E01 12.3 GB vs 9.6 GB, 2026-11-20), no remux, no audio-description release, no hardcoded subtitles (`HC`, `KORSUB`, `hardsub` in the name; no custom format for it here), none of the title profile's negative formats (LQ, Upscaled, AV1, bad groups, …; the ones the order decides itself excluded), German, English or the original language present, not another title (the arr's "Unknown Movie" rejection). Inside an option: highest custom-format score, then the smaller file |
 
 ```bash
 scripts/phone-version.py --movie <radarr id>       # one release search (indexer bar counts it), prints the pick and why the others failed; grabs nothing

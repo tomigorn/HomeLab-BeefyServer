@@ -214,6 +214,19 @@ class Run(Base):
         self.assertFalse(job.exists())
         self.assertFalse((self.hdd / "media").exists())
 
+    def test_waits_while_the_video_is_not_there_yet(self):
+        self.start()
+        d = self.dl / "usenet/complete/phone/phone radarr-12 X"
+        d.mkdir(parents=True)
+        (d / "x.nfo").write_text("nfo")
+        self.sab.history.append({"nzo_id": "SABnzbd_nzo_1", "status": "Completed", "storage": "/data/usenet/complete/phone/phone radarr-12 X"})
+        pf.run(self.deps, self.state)
+        self.assertEqual(self.state["requests"]["radarr-12"]["state"], "checking")
+        self.assertTrue(d.exists())
+        self.now += pf.CHECK_HOURS * 3600 + 1
+        pf.run(self.deps, self.state)
+        self.assertEqual((self.state["requests"]["radarr-12"]["state"], self.state["requests"]["radarr-12"]["note"]), ("failed", "no video file in the download"))
+
     def test_waits_for_the_quality_check(self):
         self.start()
         self.finish_download()

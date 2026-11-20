@@ -6,7 +6,7 @@ Strict order, a failed rule falls through to the next option:
 3. 1080p encode: trusted group (a TRaSH tier format), HEVC 10-bit, at least 15 MB per minute, source Blu-ray or WEB-DL
 4. a 4K release at least 40 % smaller than the server copy
 5. the server copy itself
-Every option: no remux, no audio-description release, no hardcoded subtitles (HC, KORSUB, hardsub in the name), none of the title profile's negative formats (LQ, Upscaled, bad groups, DV without fallback, ...), German, English or the original language present, the right title.
+Every option: smaller than the server copy, no remux, no audio-description release, no hardcoded subtitles (HC, KORSUB, hardsub in the name), none of the title profile's negative formats (LQ, Upscaled, bad groups, DV without fallback, ...), German, English or the original language present, the right title.
 The candidates are Radarr/Sonarr's own release search (GET /release): their parsed quality, formats and languages. Nothing is grabbed here.
 Usage: scripts/phone-version.py --movie <radarr id> | --episode <sonarr episode id>   (one indexer search, prints the pick and why the others failed) | -h"""
 import importlib.util
@@ -86,6 +86,8 @@ def option(r, title):
         return None, "4K, not 40 % smaller than the server copy"
     if q.get("resolution") != 1080:
         return None, f"{q['name']}: not 1080p or 4K"
+    if title.get("size") and r.get("size", 0) >= title["size"]:
+        return None, "not smaller than the server copy"
     if q["name"] == "WEBDL-1080p" and is_hdr(cfs):
         return 1, None
     if q["name"] == "WEBDL-1080p" and "x265 (no HDR/DV)" not in cfs:

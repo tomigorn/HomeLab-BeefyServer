@@ -273,8 +273,10 @@ def step(deps, r):
         local = host(deps, r["storage"], deps.dl_host)
         video = biggest_video(local)
         if not video:
-            r.update(state="failed", note="no video file in the download", updated=ts(now))
-            remove_job(deps, r)
+            # SABnzbd can report the job done while its post-processing still renames or moves the file
+            if since > CHECK_HOURS * 3600:
+                r.update(state="failed", note="no video file in the download", updated=ts(now))
+                remove_job(deps, r)
             return
         v = quality_verdict(deps, PHONE_DIR + os.path.relpath(video, host(deps, PHONE_DIR, deps.dl_host)))
         if v is None:

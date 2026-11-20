@@ -1585,6 +1585,24 @@ class PhoneDownload(Base):
     def test_bad_item_id_is_refused(self):
         self.assertEqual(self.hit(item="../x")[0], 404)
 
+    def test_the_file_endpoint_moonfin_falls_back_to_is_handled_too(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        got = self.core.handle("GET", f"/Items/{self.ITEM}/File?MediaSourceId={self.ITEM}&ApiKey={TOKEN}", {}, b"")
+        self.assertEqual(got, (302, {"location": f"/Items/{self.PHONE}/File?MediaSourceId={self.PHONE}&ApiKey={TOKEN}&hssPhone=1"}))
+
+    def test_file_endpoint_while_preparing_is_refused_too(self):
+        self.state(state="downloading", percent=10)
+        self.assertEqual(self.core.handle("GET", f"/Items/{self.ITEM}/File?ApiKey={TOKEN}", {}, b"")[0], 409)
+
+    def test_file_endpoint_bypass_keeps_the_endpoint(self):
+        self.state(state="nothing")
+        self.assertEqual(self.core.handle("GET", f"/Items/{self.ITEM}/File?ApiKey={TOKEN}", {}, b"")[1], {"location": f"/Items/{self.ITEM}/File?ApiKey={TOKEN}&hssPhone=1"})
+
+    def test_media_source_id_follows_the_phone_version_on_download_too(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        got = self.hit(extra=f"&MediaSourceId={self.ITEM}")
+        self.assertEqual(got, (302, {"location": f"/Items/{self.PHONE}/Download?ApiKey={TOKEN}&MediaSourceId={self.PHONE}&hssPhone=1"}))
+
     def test_emby_prefix_and_any_case(self):
         self.state(state="ready", phoneItem=self.PHONE)
         got = self.core.handle("GET", f"/emby/items/{self.ITEM}/download?ApiKey={TOKEN}", {"X-Real-Ip": self.IP}, b"")

@@ -61,7 +61,8 @@ def jf_time(value):
     frac = (m.group(2) or ".0")[1:7].ljust(6, "0")
     return datetime.datetime.fromisoformat(m.group(1)).replace(microsecond=int(frac), tzinfo=datetime.timezone.utc)
 # the original path, untouched by Traefik, so its failover can hand the same request to Jellyfin when this service is down
-ITEM_DOWNLOAD_RE = re.compile(r"(?i)^(?:/emby|/mediabrowser)?/items/([^/]+)/download$")
+# /File: Moonfin falls back to it when /Download is refused (2026-11-20)
+ITEM_DOWNLOAD_RE = re.compile(r"(?i)^(?:/emby|/mediabrowser)?/items/([^/]+)/(download|file)$")
 PHONE_REQUEST_EVERY = 300
 PHONE_PREPARING = {"downloading", "checking", "placing", "searching"}
 PHONE_HEADER = "\U0001f4f1 Phone version"
@@ -670,7 +671,7 @@ class Core:
             return self.tv_code(headers, body)
         m = ITEM_DOWNLOAD_RE.match(path)
         if m and method == "GET":
-            return self.phone_download(m.group(1).lower(), headers, query)
+            return self.phone_download(m.group(1).lower(), headers, query, "File" if m.group(2).lower() == "file" else "Download")
         if path == "/hss-popular/download-blocked":
             return self.download_blocked(query)
         return 404, {"error": "not found"}
@@ -683,7 +684,7 @@ class Core:
             self.spawn(lambda: self.notify_device(device, token))
         return 403, {"error": "Converted downloads are switched off, choose Original"}
 
-    def phone_download(self, item, headers, query):
+    def phone_download(self, item, headers, query, endpoint="Download"):
         """Traefik sends Original downloads (/Items/<id>/Download, path unchanged) here. A phone app (PHONE_CLIENTS, the session of the token's user at the request's IP) on a 4K title gets the
         phone version (302 to its own item) when it is ready; else the request is queued for Movie-Downloads' phone-fetch.py, the phone gets a pop-up and 409. Everything else,
         and any error, gets the original: 302 back to Jellyfin with hssPhone=1, which Traefik passes straight through."""
@@ -692,7 +693,9 @@ class Core:
         pairs = [(k, v) for k, v in urllib.parse.parse_qsl(query, keep_blank_values=True, max_num_fields=64) if k.lower() != "hssphone"]
 
         def to(target):
-            return 302, {"location": f"/Items/{target}/Download?" + urllib.parse.urlencode(pairs + [("hssPhone", "1")])}
+            # a MediaSourceId names the version: it follows the target
+            kept = [(k, target if k.lower() == "mediasourceid" and v.lower() == item else v) for k, v in pairs]
+            return 302, {"location": f"/Items/{target}/{endpoint}?" + urllib.parse.urlencode(kept + [("hssPhone", "1")])}
         q = {k.lower(): v for k, v in pairs}
         token = q.get("apikey") or q.get("api_key") or self.token(headers) or ""
         if not self.cfg.phone_box or not self.jellyfin_admin or not TOKEN_RE.match(token):

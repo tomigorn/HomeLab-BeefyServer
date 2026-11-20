@@ -74,6 +74,10 @@ class Order(unittest.TestCase):
         self.assertEqual(pick([rel("WEBDL-2160p", size=36 * GB)])["option"], 4)
         self.assertEqual(pick([rel("WEBDL-2160p", size=36 * GB + 1)])["option"], 5)
 
+    def test_a_1080p_release_bigger_than_the_server_copy_is_never_a_phone_version(self):
+        r = pick([rel(size=12 * GB)], dict(TITLE, size=10 * GB))
+        self.assertEqual((r["option"], r["rejected"][0]["why"]), (5, "not smaller than the server copy"))
+
     def test_remux_never(self):
         self.assertEqual(pick([rel("Remux-1080p", size=20 * GB), rel("Remux-2160p", size=30 * GB)])["option"], 5)
 
