@@ -704,6 +704,7 @@ class Core:
                 return to(item)
             st = self.phone_state(item)
             if st.get("state") == "ready" and st.get("phoneItem") and ITEM_ID_RE.match(str(st["phoneItem"])):
+                print("phone download: phone version sent", flush=True)
                 return to(st["phoneItem"])
             if st.get("state") in PHONE_PREPARING:
                 what = f"{st.get('percent') or 0} % downloaded" if st.get("state") == "downloading" else "virus and quality check" if st.get("state") == "checking" else "almost done"
@@ -724,20 +725,21 @@ class Core:
         """{"DeviceId", "Id" (its live session or None)} when this download comes from a phone app, else None.
         Phone apps keep no Jellyfin session while idle (Moonfin for Android, 2026-11-20), so the user's devices decide: the most recently active one
         within PHONE_ACTIVE (the app asks for the item's details right before it downloads) must be a phone app."""
-        # the request's own client name decides when it sends one; a browser (any web client, also on TVs) never counts as a phone app
+        # the request's own client name decides when it sends one (Moonfin's downloader sends none and a browser-like User-Agent, so that is no signal)
         named = CLIENT_RE.search(headers.get("x-emby-authorization") or headers.get("authorization") or "")
         if named and named.group(1) not in PHONE_CLIENTS:
-            return None
-        if not named and (headers.get("user-agent") or "").startswith("Mozilla/"):
+            print("phone download: original (client is no phone app)", flush=True)
             return None
         uid = urllib.parse.quote(str(user.get("Id") or ""), safe="")
         devices = (self.jellyfin_admin("GET", f"/Devices?userId={uid}") or {}).get("Items") or []
         now = self.clock()
         recent = [(t, d) for d in devices if d.get("LastUserId") == user.get("Id") for t in [jf_time(d.get("DateLastActivity"))] if t and now - t <= PHONE_ACTIVE]
         if not recent:
+            print("phone download: original (no device active lately)", flush=True)
             return None
         _, device = max(recent, key=lambda x: x[0])
         if device.get("AppName") not in PHONE_CLIENTS or not device.get("Id"):
+            print(f"phone download: original (latest device is {str(device.get('AppName'))[:40]})", flush=True)
             return None
         sessions = self.jellyfin_admin("GET", "/Sessions?deviceId=" + urllib.parse.quote(str(device["Id"]), safe="")) or []
         live = next((x for x in sessions if x.get("DeviceId") == device["Id"] and x.get("UserId") == user.get("Id") and x.get("Id")), None)

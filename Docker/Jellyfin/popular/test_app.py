@@ -1504,10 +1504,15 @@ class PhoneDownload(Base):
         h = dict({"X-Real-Ip": ip} if ip else {}, **(headers or {}))
         return self.core.handle("GET", f"/Items/{item}/Download?{q}", h, b"")
 
-    def test_a_browser_of_the_same_user_at_the_same_ip_gets_the_original(self):
-        ua = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36"}
-        self.assertEqual(self.hit(headers=ua), (302, {"location": self.bypass()}))
+    def test_a_browser_used_last_gets_the_original(self):
+        uid = USERS[TOKEN]["Id"]
+        self.devices.append({"Id": "chrome", "AppName": "Jellyfin Web", "LastUserId": uid, "DateLastActivity": self.iso(-2)})
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
         self.assertEqual(self.requests(), [])
+
+    def test_the_phone_downloader_user_agent_does_not_matter(self):
+        ua = {"User-Agent": "Mozilla/5.0 (Linux; Android 14; 2312DRA50G Build/UKQ1) AppleWebKit/537.36"}
+        self.assertEqual(self.hit(headers=ua)[0], 409)
 
     def test_a_named_non_phone_client_gets_the_original(self):
         auth = {"Authorization": 'MediaBrowser Client="Moonfin for Android TV", Device="TV", DeviceId="tv", Version="1"'}
