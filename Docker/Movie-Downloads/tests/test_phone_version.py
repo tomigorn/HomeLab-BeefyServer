@@ -110,6 +110,13 @@ class Rules(unittest.TestCase):
         self.assertEqual(r["release"]["title"], plain["title"])
         self.assertEqual(r["rejected"], [{"title": ad["title"], "why": "audio description"}])
 
+    def test_hardcoded_subtitles_never(self):
+        for t in ("A.Film.2026.HC.1080p.WEB-DL-GRP", "A.Film.2026.1080p.WEB-DL.KORSUB-GRP", "A.Film.2026.1080p.HardSub.WEB-DL-GRP", "A.Film.2026.1080p.Hardcoded.Subs.WEB-DL-GRP"):
+            self.assertEqual(pick([rel(title=t)])["rejected"], [{"title": t, "why": "hardcoded subtitles"}], t)
+
+    def test_hc_inside_a_word_is_no_tag(self):
+        self.assertEqual(pick([rel(title="A.Film.HCMC.2026.1080p.WEB-DL-GRP")])["option"], 2)
+
     def test_best_score_wins_inside_an_option(self):
         a, b = rel(score=100, title="a"), rel(score=900, title="b")
         self.assertEqual(pick([a, b])["release"]["title"], "b")

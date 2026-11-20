@@ -6,7 +6,7 @@ Strict order, a failed rule falls through to the next option:
 3. 1080p encode: trusted group (a TRaSH tier format), HEVC 10-bit, at least 15 MB per minute, source Blu-ray or WEB-DL
 4. a 4K release at least 40 % smaller than the server copy
 5. the server copy itself
-Every option: no remux, no audio-description release, none of the title profile's negative formats (LQ, Upscaled, bad groups, DV without fallback, ...), German, English or the original language present, the right title.
+Every option: no remux, no audio-description release, no hardcoded subtitles (HC, KORSUB, hardsub in the name), none of the title profile's negative formats (LQ, Upscaled, bad groups, DV without fallback, ...), German, English or the original language present, the right title.
 The candidates are Radarr/Sonarr's own release search (GET /release): their parsed quality, formats and languages. Nothing is grabbed here.
 Usage: scripts/phone-version.py --movie <radarr id> | --episode <sonarr episode id>   (one indexer search, prints the pick and why the others failed) | -h"""
 import importlib.util
@@ -28,6 +28,7 @@ NOT_HDR = {"SDR", "x265 (no HDR/DV)", "Generated Dynamic HDR", "DV (w/o HDR fall
 TIER = re.compile(r"\bTier 0\d$")
 HEVC = re.compile(r"\b(x265|h\.?265|hevc)\b", re.I)
 AUDIO_DESCRIPTION = re.compile(r"audio[ ._-]?description|\bdescriptive[ ._-]?audio\b", re.I)
+HARDCODED_SUBS = re.compile(r"(?<![a-z0-9])(hc|hc[ ._-]?subs?|hardsubs?|hardsubbed|hard[ ._-]?coded([ ._-]?subs?)?|korsub|kor[ ._-]?sub)(?![a-z0-9])", re.I)
 WRONG_TITLE = re.compile(r"unknown (movie|series)|unable to match|wrong (movie|series|episode)", re.I)
 SPEAKABLE = {"German", "English", "Swiss German"}
 OPTIONS = {1: "1080p WEB-DL with HDR", 2: "1080p WEB-DL", 3: "1080p encode (strict rules)", 4: "smaller 4K release", 5: "the server copy"}
@@ -50,6 +51,8 @@ def common(r, title, bad):
         return "another title"
     if AUDIO_DESCRIPTION.search(r.get("title") or ""):
         return "audio description"
+    if HARDCODED_SUBS.search(r.get("title") or ""):
+        return "hardcoded subtitles"
     hit = sorted(set(r.get("customFormats") or []) & (bad - HANDLED))
     if hit:
         return "bad tag: " + ", ".join(hit)
