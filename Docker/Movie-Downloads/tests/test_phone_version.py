@@ -111,7 +111,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(r["rejected"], [{"title": ad["title"], "why": "audio description"}])
 
     def test_hardcoded_subtitles_never(self):
-        for t in ("A.Film.2026.HC.1080p.WEB-DL-GRP", "A.Film.2026.1080p.WEB-DL.KORSUB-GRP", "A.Film.2026.1080p.HardSub.WEB-DL-GRP", "A.Film.2026.1080p.Hardcoded.Subs.WEB-DL-GRP"):
+        for t in ("A.Film.2026.HC.1080p.WEB-DL-GRP", "A.Film.2026.1080p.WEB-DL.KORSUB-GRP", "A.Film.2026.1080p.HardSub.WEB-DL-GRP", "A.Film.2026.1080p.Hardcoded.Subs.WEB-DL-GRP", "A.Film.2026.1080p.Hard.Subbed.WEB-DL-GRP"):
             self.assertEqual(pick([rel(title=t)])["rejected"], [{"title": t, "why": "hardcoded subtitles"}], t)
 
     def test_hc_inside_a_word_is_no_tag(self):
