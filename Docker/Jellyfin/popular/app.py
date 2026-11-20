@@ -1,5 +1,5 @@
 """Request backend for "Currently popular" (Jellyfin README "Currently popular"): any signed-in Jellyfin user may request a listed title.
-POST /hss-popular/request {"id": <opaque list entry id>, "mode": "night" | "now", "check": bool}, POST /hss-popular/tv-code {} (one-time Seerr facade sign-in code for the caller), GET /hss-popular/state, GET /hss-popular/details?id=<opaque details id>, GET /hss-popular/health, any /hss-popular/download-blocked (always 403, one fixed pop-up to the caller's session on that DeviceId; Jellyfin README "Moonfin converted downloads off").
+POST /hss-popular/request {"id": <opaque list entry id>, "mode": "night" | "now", "check": bool}, POST /hss-popular/tv-code {} (one-time Seerr facade sign-in code for the caller), GET /hss-popular/state, GET /hss-popular/details?id=<opaque details id>, GET /hss-popular/health, any /hss-popular/download-blocked (always 403, one fixed pop-up to the caller's session on that DeviceId; Jellyfin README "Moonfin converted downloads off"). GET /Items/<id>/Download (Traefik, Original downloads: a phone app on a 4K title gets the phone version; Jellyfin README "Phone versions").
 Details: only ids of the sidecars details.json (popular.py) and coming.json (upcoming-popularity.py), never a TMDB id, so it is no open TMDB proxy; those ids are never requestable.
 The caller is checked with Jellyfin (/Users/Me with their own token, disabled = refused); only entries of the current allow-list (scripts/popular.py) with a found release can be requested, nothing free-form.
 The request goes to Seerr with its API key as the caller's linked Seerr user, else as the service user "jellyfin-popular". Every decision of a signed-in caller is written to the audit log (rotated);
@@ -46,6 +46,16 @@ STATE_FRESH = datetime.timedelta(minutes=10)
 AUDIT_MAX_BYTES = 1 << 20
 AUDIT_KEEP = 3
 KEEP_DAYS = 30
+# Phone versions (Movie-Downloads README "Phone versions"): only these apps get the smaller second version on an Original download
+PHONE_CLIENTS = {"Moonfin for Android", "Moonfin for iOS", "Jellyfin Android", "Jellyfin iOS", "Swiftfin iOS", "Findroid"}
+ITEM_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+# the original path, untouched by Traefik, so its failover can hand the same request to Jellyfin when this service is down
+ITEM_DOWNLOAD_RE = re.compile(r"(?i)^(?:/emby|/mediabrowser)?/items/([^/]+)/download$")
+PHONE_REQUEST_EVERY = 300
+PHONE_PREPARING = {"downloading", "checking", "placing", "searching"}
+PHONE_HEADER = "\U0001f4f1 Phone version"
+PHONE_TEXT_NEW = "A smaller phone version is being prepared, usually 5 to 30 minutes. You get a \u2705 message when it is ready; then tap Download again."
+PHONE_TEXT_WAIT = "The phone version is being prepared ({what}). You get a \u2705 message when it is ready; then tap Download again."
 FLUSH_EVERY = datetime.timedelta(minutes=1)
 AUTH_TTL = datetime.timedelta(seconds=30)
 UPSTREAM_TIMEOUT = 8
@@ -71,7 +81,8 @@ class Unauthorized(Exception):
 
 class Config:
     def __init__(self, allow_file, audit_file, request_state, origins, limit=10, days=7, daily_max=30, rate_per_min=10, list_max_age_days=9, tz="Europe/Zurich", state_db=None, audit_max_bytes=AUDIT_MAX_BYTES,
-                 details_files=None, details_per_min=60, index_file=None, hook_secret=None, signal_file=None, dry_flag=None, export_file=None, identity_file=None):
+                 details_files=None, details_per_min=60, index_file=None, hook_secret=None, signal_file=None, dry_flag=None, export_file=None, identity_file=None,
+                 phone_box=None):
         self.allow_file, self.audit_file, self.request_state = pathlib.Path(allow_file), pathlib.Path(audit_file), pathlib.Path(request_state)
         self.details_files = [pathlib.Path(f) for f in details_files] if details_files else [self.allow_file.with_name("details.json"), self.allow_file.with_name("coming.json")]
         self.details_per_min = details_per_min
@@ -84,6 +95,7 @@ class Config:
         self.dry_flag = pathlib.Path(dry_flag) if dry_flag else self.audit_file.with_name("hook-dry-run")
         self.export_file = pathlib.Path(export_file) if export_file else None
         self.identity_file = pathlib.Path(identity_file) if identity_file else None
+        self.phone_box = phone_box or None
 
 
 def seerr_status(kind, season, media):
@@ -143,6 +155,8 @@ class Core:
         self.noise, self.flushed = collections.Counter(), None
         self.tv_codes = None
         self.notified = {}
+        self.phone_asked = {}
+        self.admin_id = None
         self.spawn = lambda fn: threading.Thread(target=fn, daemon=True).start()
         self.db_init()
 
@@ -643,6 +657,9 @@ class Core:
             return self.request(headers, body)
         if path == "/hss-popular/tv-code" and method == "POST":
             return self.tv_code(headers, body)
+        m = ITEM_DOWNLOAD_RE.match(path)
+        if m and method == "GET":
+            return self.phone_download(m.group(1).lower(), headers, query)
         if path == "/hss-popular/download-blocked":
             return self.download_blocked(query)
         return 404, {"error": "not found"}
@@ -654,6 +671,102 @@ class Core:
         if self.jellyfin_admin and DEVICE_ID_RE.match(device) and TOKEN_RE.match(token) and self.mark_notice(device):
             self.spawn(lambda: self.notify_device(device, token))
         return 403, {"error": "Converted downloads are switched off, choose Original"}
+
+    def phone_download(self, item, headers, query):
+        """Traefik sends Original downloads (/Items/<id>/Download, path unchanged) here. A phone app (PHONE_CLIENTS, the session of the token's user at the request's IP) on a 4K title gets the
+        phone version (302 to its own item) when it is ready; else the request is queued for Movie-Downloads' phone-fetch.py, the phone gets a pop-up and 409. Everything else,
+        and any error, gets the original: 302 back to Jellyfin with hssPhone=1, which Traefik passes straight through."""
+        if not ITEM_ID_RE.match(item):
+            return 404, {"error": "not found"}
+        pairs = [(k, v) for k, v in urllib.parse.parse_qsl(query, keep_blank_values=True, max_num_fields=64) if k.lower() != "hssphone"]
+
+        def to(target):
+            return 302, {"location": f"/Items/{target}/Download?" + urllib.parse.urlencode(pairs + [("hssPhone", "1")])}
+        q = {k.lower(): v for k, v in pairs}
+        token = q.get("apikey") or q.get("api_key") or self.token(headers) or ""
+        if not self.cfg.phone_box or not self.jellyfin_admin or not TOKEN_RE.match(token):
+            return to(item)
+        try:
+            user = self.jellyfin(token)
+            session = self.phone_session(user, headers)
+            if not session:
+                return to(item)
+            st = self.phone_state(item)
+            if st.get("state") == "ready" and st.get("phoneItem") and ITEM_ID_RE.match(str(st["phoneItem"])):
+                return to(st["phoneItem"])
+            if st.get("state") in PHONE_PREPARING:
+                what = f"{st.get('percent') or 0} % downloaded" if st.get("state") == "downloading" else "virus and quality check" if st.get("state") == "checking" else "almost done"
+                self.phone_message(session, PHONE_TEXT_WAIT.format(what=what))
+                return 409, {"error": "phone version being prepared"}
+            if st.get("state") or not self.is_4k(item):
+                return to(item)
+            if self.ask_phone(item, user, session):
+                self.phone_message(session, PHONE_TEXT_NEW)
+            return 409, {"error": "phone version being prepared"}
+        except Unauthorized:
+            return to(item)
+        except Exception as e:  # noqa: BLE001
+            print(f"phone download: {type(e).__name__}, original sent", flush=True)
+            return to(item)
+
+    @staticmethod
+    def client_ip(headers):
+        ip = headers.get("x-real-ip") or (headers.get("x-forwarded-for") or "").split(",")[0]
+        return ip.strip()
+
+    @staticmethod
+    def bare_ip(endpoint):
+        e = str(endpoint or "").strip()
+        if e.startswith("["):
+            e = e[1:].split("]")[0]
+        elif e.count(":") == 1:
+            e = e.split(":")[0]
+        return e[7:] if e.startswith("::ffff:") else e
+
+    def phone_session(self, user, headers):
+        ip = self.bare_ip(self.client_ip(headers))
+        if not ip:
+            return None
+        for s in self.jellyfin_admin("GET", "/Sessions?activeWithinSeconds=900") or []:
+            if s.get("UserId") == user.get("Id") and s.get("Client") in PHONE_CLIENTS and self.bare_ip(s.get("RemoteEndPoint")) == ip and s.get("Id"):
+                return s
+        return None
+
+    def phone_state(self, item):
+        try:
+            data = json.loads(pathlib.Path(self.cfg.phone_box, "state.json").read_text())
+        except (OSError, ValueError):
+            return {}
+        x = (data.get("items") or {}).get(item) if isinstance(data, dict) else None
+        return x if isinstance(x, dict) else {}
+
+    def is_4k(self, item):
+        if not self.admin_id:
+            self.admin_id = next(u["Id"] for u in self.jellyfin_admin("GET", "/Users") or [] if (u.get("Policy") or {}).get("IsAdministrator"))
+        got = self.jellyfin_admin("GET", f"/Items?ids={item}&userId={self.admin_id}&Fields=MediaStreams") or {}
+        found = (got.get("Items") or [{}])[0]
+        if found.get("Type") not in ("Movie", "Episode"):
+            return False
+        # 4K scope films are 3840 x 1600 or less: the width decides
+        return any((m.get("Width") or 0) >= 3200 or (m.get("Height") or 0) >= 2000 for m in found.get("MediaStreams") or [] if m.get("Type") == "Video")
+
+    def ask_phone(self, item, user, session):
+        now = self.clock()
+        with self.lock:
+            last = self.phone_asked.get(item)
+            if last and now - last < datetime.timedelta(seconds=PHONE_REQUEST_EVERY):
+                return False
+            self.phone_asked[item] = now
+        d = pathlib.Path(self.cfg.phone_box, "requests")
+        tmp = d / f".{item}.tmp"
+        tmp.write_text(json.dumps({"item": item, "user": user.get("Id"), "device": session.get("DeviceId")}))
+        os.replace(tmp, d / f"{item}-{int(now.timestamp())}.json")
+        print("phone download: requested", flush=True)
+        return True
+
+    def phone_message(self, session, text):
+        sid = urllib.parse.quote(str(session["Id"]), safe="")
+        self.spawn(lambda: self.jellyfin_admin("POST", f"/Sessions/{sid}/Message", {"Header": PHONE_HEADER, "Text": text, "TimeoutMs": DOWNLOAD_TIMEOUT_MS}))
 
     def mark_notice(self, device):
         now = self.clock()
@@ -1141,7 +1254,8 @@ def make_core():
                  request_state=env.get("POP_REQUEST_STATE", "/indexer-bar/request-state.json"), origins=[o for o in env.get("POP_ORIGINS", "").split(",") if o],
                  limit=int(env.get("POP_LIMIT", "10")), days=int(env.get("POP_DAYS", "7")), daily_max=int(env.get("POP_DAILY_MAX", "30")), tz=env.get("TZ") or "Europe/Zurich",
                  hook_secret=secret_file(env.get("POP_HOOK_SECRET_FILE", "/run/secrets/popular/hook.secret")), signal_file=env.get("POP_SIGNAL", "/signal/requested"),
-                 export_file=env.get("POP_EXPORT_FILE") or None, identity_file=env.get("POP_IDENTITY_FILE", "/data/identity.json"))
+                 export_file=env.get("POP_EXPORT_FILE") or None, identity_file=env.get("POP_IDENTITY_FILE", "/data/identity.json"),
+                 phone_box=env.get("POP_PHONE_BOX") or None)
     return Core(cfg, seerr, jellyfin, jellyfin_admin=jellyfin_admin if jf_key else None)
 
 
@@ -1182,8 +1296,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 self.log_message("error %s", type(e).__name__)
                 code, data = 500, {"error": "internal"}
+        location = data.pop("location", None) if code == 302 and isinstance(data, dict) else None
         raw = json.dumps(data).encode()
         self.send_response(code)
+        if location:
+            self.send_header("Location", location)
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(raw)))

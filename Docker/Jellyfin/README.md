@@ -853,6 +853,17 @@ Phone browsers (any browser on iPhone/iPad/Android) that cannot play our usual f
 - Switch off: Dashboard → Plugins → JavaScript Injector → "Moonfin app banner" → disable.
 - Moonbase's "Open Moonfin" button in the web header is hidden in every browser (owner 2026-11-15): injector entry "Hide Moonfin header button" (`app-banner/hide-header-button.js`, CSS `.headerMoonfinButton{display:none!important}`; Moonbase has no setting and re-adds a removed button). Public entry (`RequiresAuthentication` off, only this CSS): index.html loads `public.js` at once, the signed-in bundle arrives seconds after the button. Installed by the same `scripts/app-banner.py`.
 
+## Phone versions (2026-11-20)
+Original downloads from a phone app of a 4K film or episode get a smaller second version (Movie-Downloads README "Phone versions": pick, fetch, check, place).
+
+| What | Where |
+|---|---|
+| Route | fastpi Traefik router `jellyfin-phone-download` (HomeLab-FastPi `Docker/Traefik/traefik/dynamic/jellyfin-phone.yml`): `/Items/<id>/Download` without `hssPhone=1` → `jellyfin-popular:8097`, path unchanged; failover to Jellyfin itself while popular is down (health `/hss-popular/health`) |
+| Decision | `popular/app.py` `phone_download`: token user + a session of that user from a phone app (`PHONE_CLIENTS`: Moonfin for Android/iOS, Jellyfin Android/iOS, Swiftfin iOS, Findroid) at the request's IP (`X-Real-Ip`) on a 4K item (video width ≥ 3200 or height ≥ 2000). Phone version ready → 302 to `/Items/<phone version>/Download?…&hssPhone=1`; being prepared → pop-up with the progress, 409; new → request file in `/phone/requests`, pop-up "📱 Phone version … being prepared", 409 (one request per item per 5 min); everything else (no phone app, not 4K, nothing smaller, any error) → 302 to the same download with `hssPhone=1`, which Traefik passes to Jellyfin |
+| Mount | `/srv/appdata/phone-versions` → `/phone` (state.json read, requests/ written; 65128 group-writable), env `POP_PHONE_BOX=/phone` |
+| Open | whether Moonfin (Android/iOS) and the official apps follow the 302 and save the phone version, and show the 409 as a failed download plus our pop-up: to test by hand on a phone |
+| Tests | `cd popular && python3 -m unittest test_app.PhoneDownload`; check `jf.popular-phone-download` |
+
 ## Moonfin converted downloads off (2026-11-19)
 Moonfin's download qualities High/Medium/Low/Mobile (`/Videos/{id}/stream?Static=false`) are refused; Original download, direct play and HLS transcoding stay.
 

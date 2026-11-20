@@ -99,6 +99,7 @@ services:
       - POP_FACADE_PORT=8099
       - POP_FACADE_SECRET_FILE=/run/secrets/popular/facade.secret
       - POP_EXPORT_FILE=/export/origins.json
+      - POP_PHONE_BOX=/phone   # phone versions: state.json read, requests/ written (Movie-Downloads README "Phone versions")
     volumes:
       - ./popular:/app:ro
       - ./secrets/popular:/run/secrets/popular:ro
@@ -112,6 +113,8 @@ services:
       - ${APPDATA_ROOT}/jellyfin-popular-signal:/signal
       # origins.json: source + requester of each request, read by Seerr's download-now (Seerr README "Request origin")
       - ${APPDATA_ROOT}/jellyfin-popular-export:/export
+      # phone versions: Movie-Downloads phone-fetch.py state.json (read) and requests/ (one JSON per asked title)
+      - ${APPDATA_ROOT}/phone-versions:/phone
     ports:
       - "${POPULAR_PORT}:8097"
     networks:

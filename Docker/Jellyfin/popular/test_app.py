@@ -1456,5 +1456,127 @@ class DownloadBlocked(Base):
         self.assertNotIn(TOKEN, out.getvalue())
 
 
+class PhoneDownload(Base):
+    """Original downloads (/Items/<id>/Download, rewritten by Traefik): a phone app on a 4K title gets the phone version (Movie-Downloads README "Phone versions")."""
+    ITEM = "72a1b6d4112a1f5f68e7b23409a9069f"
+    PHONE = "0123456789abcdef0123456789abcdef"
+    DEVICE = "a4859e97-7caf-4d39-a378-60798b8c22a8"
+    IP = "203.0.113.7"
+
+    def setUp(self):
+        super().setUp()
+        self.box = pathlib.Path(self.tmp.name) / "phone"
+        (self.box / "requests").mkdir(parents=True)
+        self.core.cfg.phone_box = str(self.box)
+        self.calls = []
+        self.height = 2160
+        self.sessions = [{"Id": "sess-phone", "DeviceId": self.DEVICE, "UserId": USERS[TOKEN]["Id"], "Client": "Moonfin for Android", "RemoteEndPoint": self.IP,
+                          "LastActivityDate": "2026-11-20T03:00:00Z"},
+                         {"Id": "sess-tv", "DeviceId": "tv", "UserId": USERS[TOKEN]["Id"], "Client": "Moonfin for Android TV", "RemoteEndPoint": "203.0.113.9"}]
+
+        def admin(method, path, body=None):
+            self.calls.append((method, path, body))
+            if method == "GET" and path.startswith("/Sessions"):
+                return self.sessions
+            if method == "GET" and path.startswith("/Users"):
+                return [{"Id": "admin-id", "Policy": {"IsAdministrator": True}}]
+            if method == "GET" and path.startswith("/Items?"):
+                return {"Items": [{"Id": self.ITEM, "Type": "Episode", "MediaStreams": [{"Type": "Video", "Height": self.height, "Width": 3840 if self.height > 1080 else 1920}]}]}
+            return None
+
+        self.core.jellyfin_admin = admin
+        self.core.spawn = lambda fn: fn()
+
+    def state(self, **item):
+        (self.box / "state.json").write_text(json.dumps({"items": {self.ITEM: item}}))
+
+    def hit(self, token=TOKEN, ip=IP, item=ITEM, extra=""):
+        q = f"ApiKey={token}{extra}" if token else extra.lstrip("&")
+        return self.core.handle("GET", f"/Items/{item}/Download?{q}", {"X-Real-Ip": ip} if ip else {}, b"")
+
+    def bypass(self, item=ITEM, token=TOKEN):
+        return f"/Items/{item}/Download?ApiKey={token}&hssPhone=1"
+
+    def messages(self):
+        return [b for m, p, b in self.calls if m == "POST" and p.endswith("/Message")]
+
+    def requests(self):
+        return [json.loads(f.read_text()) for f in sorted((self.box / "requests").glob("*.json"))]
+
+    def test_ready_phone_version_is_sent_instead(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        self.assertEqual(self.hit(), (302, {"location": self.bypass(self.PHONE)}))
+
+    def test_first_download_starts_the_phone_version_with_a_pop_up(self):
+        code, body = self.hit()
+        self.assertEqual(code, 409)
+        self.assertEqual(self.requests(), [{"item": self.ITEM, "user": USERS[TOKEN]["Id"], "device": self.DEVICE}])
+        [m] = self.messages()
+        self.assertIn("being prepared", m["Text"])
+
+    def test_a_second_tap_while_preparing_shows_progress_without_a_new_request(self):
+        self.state(state="downloading", percent=42)
+        code, _ = self.hit()
+        self.assertEqual(code, 409)
+        self.assertEqual(self.requests(), [])
+        self.assertIn("42", self.messages()[0]["Text"])
+
+    def test_nothing_smaller_or_not_needed_downloads_the_original(self):
+        for st in ("nothing", "not-needed"):
+            self.state(state=st)
+            self.assertEqual(self.hit(), (302, {"location": self.bypass()}), st)
+
+    def test_not_4k_downloads_the_original(self):
+        self.height = 1080
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
+        self.assertEqual(self.requests(), [])
+
+    def test_not_a_phone_app_downloads_the_original(self):
+        self.assertEqual(self.hit(ip="198.51.100.1"), (302, {"location": self.bypass()}))
+        self.sessions[0]["Client"] = "Jellyfin Web"
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
+        self.assertEqual(self.requests(), [])
+
+    def test_bad_or_missing_token_goes_to_jellyfin_which_refuses_it(self):
+        self.assertEqual(self.hit(token="z" * 32)[1], {"location": self.bypass(token="z" * 32)})
+        self.assertEqual(self.hit(token=None), (302, {"location": f"/Items/{self.ITEM}/Download?hssPhone=1"}))
+
+    def test_other_query_parameters_are_kept(self):
+        self.state(state="nothing")
+        self.assertEqual(self.hit(extra="&mediaSourceId=x")[1], {"location": f"/Items/{self.ITEM}/Download?ApiKey={TOKEN}&mediaSourceId=x&hssPhone=1"})
+
+    def test_bad_item_id_is_refused(self):
+        self.assertEqual(self.hit(item="../x")[0], 404)
+
+    def test_emby_prefix_and_any_case(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        got = self.core.handle("GET", f"/emby/items/{self.ITEM}/download?ApiKey={TOKEN}", {"X-Real-Ip": self.IP}, b"")
+        self.assertEqual(got, (302, {"location": self.bypass(self.PHONE)}))
+
+    def test_one_request_file_per_item_while_waiting(self):
+        self.hit()
+        self.hit()
+        self.assertEqual(len(self.requests()), 1)
+
+    def test_jellyfin_down_downloads_the_original(self):
+        def down(method, path, body=None):
+            raise OSError("down")
+        self.core.jellyfin_admin = down
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
+
+    def test_redirect_is_sent_as_a_location_header(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        app.Handler.core = self.core
+        h = app.Handler.__new__(app.Handler)
+        sent = {}
+        h.headers, h.path, h.rfile, h.wfile = {}, f"/Items/{self.ITEM}/Download?ApiKey={TOKEN}", io.BytesIO(), io.BytesIO()
+        h.headers = {"X-Real-Ip": self.IP}
+        h.send_response = lambda code: sent.setdefault("code", code)
+        h.send_header = lambda k, v: sent.setdefault(k, v)
+        h.end_headers = lambda: None
+        h._go("GET")
+        self.assertEqual((sent["code"], sent["Location"]), (302, self.bypass(self.PHONE)))
+
+
 if __name__ == "__main__":
     unittest.main()
