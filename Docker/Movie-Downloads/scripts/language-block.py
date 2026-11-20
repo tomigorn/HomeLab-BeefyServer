@@ -448,7 +448,7 @@ def block_release(app, api, item, title, grab, probe, state, entry, notes, host=
         notes.append(f"search failed: {e}")
 
 
-def client(config):
+def client(config, timeout=120):
     xml = pathlib.Path(config).read_text()
     get = lambda k: (re.search(f"<{k}>([^<]*)</{k}>", xml) or [None, ""])[1]
     base = f"http://localhost:{get('Port')}{get('UrlBase')}/api/v3"
@@ -460,7 +460,7 @@ def client(config):
         if body is not None:
             data, headers["Content-Type"] = json.dumps(body).encode(), "application/json"
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, data=data, method=method, headers=headers), timeout=120) as r:
+            with urllib.request.urlopen(urllib.request.Request(url, data=data, method=method, headers=headers), timeout=timeout) as r:
                 raw = r.read()
                 return json.loads(raw) if raw.strip() else None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:

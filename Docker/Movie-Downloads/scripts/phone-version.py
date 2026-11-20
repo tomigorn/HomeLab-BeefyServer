@@ -20,6 +20,8 @@ _spec = importlib.util.spec_from_file_location("language_block", HERE / "languag
 lb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lb)
 
+# a release search asks every indexer through the arr and can take minutes
+RELEASE_TIMEOUT = 600
 MIN_BYTES_PER_MINUTE = 15_000_000
 MAX_4K_SHARE = 0.60
 # negative profile formats the order itself decides on (x265 re-encodes go to option 3, languages to the language rule)
@@ -146,7 +148,7 @@ def main(argv):
         print("usage: scripts/phone-version.py --movie <radarr id> | --episode <sonarr episode id> | -h", file=sys.stderr)
         return 2
     app = "radarr" if argv[0] == "--movie" else "sonarr"
-    api = lb.client(os.environ.get(f"LB_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml"))
+    api = lb.client(os.environ.get(f"LB_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml"), timeout=RELEASE_TIMEOUT)
     try:
         title, profile_id, query = server_title(app, api, int(argv[1]))
         bad = bad_formats(api("GET", f"/qualityprofile/{profile_id}"))

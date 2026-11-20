@@ -34,6 +34,8 @@ SAB_URL = os.environ.get("PF_SAB_URL", "http://127.0.0.1:8081")
 SAB_KEY = pathlib.Path(os.environ.get("PF_SAB_KEY", HERE.parent / "secrets" / "hook" / "sabnzbd.apikey"))
 JELLYFIN = os.environ.get("PF_JELLYFIN", "http://127.0.0.1:8096")
 JELLYFIN_KEY = pathlib.Path(os.environ.get("PF_JELLYFIN_KEY", HERE.parent.parent / "Jellyfin" / "secrets" / "api-key"))
+# a release search asks every indexer through the arr and can take minutes
+RELEASE_TIMEOUT = 600
 CATEGORY = "phone"
 PHONE_DIR = "/data/usenet/complete/phone/"
 RETRY_HOURS = 24
@@ -423,7 +425,7 @@ def jf_client():
 
 
 def real_deps():
-    arr = {app: lb.client(os.environ.get(f"LB_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml")) for app in ("radarr", "sonarr")}
+    arr = {app: lb.client(os.environ.get(f"LB_{app.upper()}_CONFIG", f"/srv/appdata/{app}/config.xml"), timeout=RELEASE_TIMEOUT) for app in ("radarr", "sonarr")}
     return Deps(arr, sab_client(), jf_client())
 
 
