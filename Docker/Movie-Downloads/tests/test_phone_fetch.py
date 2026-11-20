@@ -309,6 +309,13 @@ class Run(Base):
         self.assertEqual(out["items"]["jf-film"]["state"], "downloading")
         self.assertNotIn("downloadUrl", json.dumps(out))
 
+    def test_export_names_who_asked_and_when(self):
+        (self.box / "requests" / "x.json").write_text(json.dumps({"item": "jf-film", "user": "u1", "device": "d1"}))
+        pf.run(self.deps, self.state)
+        x = json.loads((self.box / "state.json").read_text())["items"]["jf-film"]
+        at = self.state["requests"]["radarr-12"]["at"]
+        self.assertEqual((x["at"], x["requestedBy"], x["note"]), (at, [{"user": "u1", "at": at}], ""))
+
 
 class Store(unittest.TestCase):
     def test_round_trip(self):

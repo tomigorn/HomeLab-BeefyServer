@@ -352,7 +352,8 @@ def export(deps, state):
     items = {}
     for r in state["requests"].values():
         if r.get("jfItem"):
-            items[r["jfItem"]] = {k: r.get(k) for k in ("state", "percent", "phoneItem", "option", "title", "updated")}
+            items[r["jfItem"]] = {k: r.get(k) for k in ("state", "percent", "phoneItem", "option", "title", "updated", "at", "note")}
+            items[r["jfItem"]]["requestedBy"] = [{"user": x["user"], "at": x.get("at")} for x in r.get("requestedBy") or [] if x.get("user")]
     out = pathlib.Path(deps.box) / "state.json"
     try:
         tmp = out.with_name(".state.json.tmp")
