@@ -89,7 +89,7 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 | Queue | `/srv/.disks/ssd-hot/.clamav-queue` and `/srv/.disks/ssd-hot2/.clamav-queue` (`/data/.clamav-queue` in the apps), 65112:media 2770, made by `install.sh`. One folder per job: hardlinks `0001…` + `job.json` (title, torrent hash, original paths); written as `<job>.tmp`, renamed when complete |
 | Worker | container `clamav-queue`: `clamav-local` image, `/srv/video` union as `/data`, one file at a time, oldest job first, polls every 5 s |
 | Why hardlinks | Sonarr/Radarr import (move or hardlink) right after the hook returns. The queue link keeps the same inode, so the worker always scans the very file that was imported, wherever it went; nothing to look up by path |
-| Clean | link removed; empty job folder removed |
+| Clean | a video gets the quality check ("Quality check" below), then the link is removed; empty job folder removed |
 | Hit | the worker finds the other links of the inode (library, seeding copy) under `/data`, moves the file to the quarantine under its library name, removes the other links, writes `index.txt` and `clamav_infected_last_run{mode="queue"}`, stops + tags the torrent (qBit whitelists `172.28.10.204`); log line `INFECTED <title>: <path> (<signature>)` |
 | clamd down | the job stays, retried every 30 s; no verdict (connection lost) 3 times: dropped, `clamav_scan_errors{mode="queue"}`. A link it cannot remove is an error too (log `ERROR`) |
 | Restart | jobs are on disk; a link leaves only with a verdict, a half-written `.tmp` job is taken over after 1 h. Re-scanning after a crash is harmless |
@@ -101,6 +101,22 @@ ClamAV on beefy: a completion scan of every SABnzbd/qBittorrent download and a n
 - A hit makes Sonarr/Radarr see a missing file; they do not re-grab on their own.
 - The hit search walks the union and may spin up the cold HDD; only on a hit.
 - `scan.sh restore` puts the file back to the library path; other removed links (seeding copy) are not restored.
+
+### Quality check
+
+Owner-approved 2026-11-18 (fastpi `reports/specs/2026-11-18-media-quality-check-design.md`, part 1). After a **clean** verdict the worker checks every video (`VIDEO_EXT`) once more with ffprobe, demux only (no decode, `nice 19`, through the idle-class `/srv/dlpool`, ~0.5 GB/s): `hook/quality_check.py`.
+
+| Finding | Effect |
+|---|---|
+| video timestamp jumps back > 1 s (segments out of order, the 2026-11-17 VisionQuest S01E08 case) | `broken`: blocked |
+| no video stream (cover art does not count) / no audio stream / container not readable (`Invalid data found`) | `broken`: blocked |
+| read error in the container (e.g. `File ended prematurely`) | note only, until the library scan (spec part 4) shows it never hits healthy files |
+| ffprobe missing, crashed, killed after its time limit | `error`: nothing done |
+
+- Result: one line per video in `/var/lib/clamav-scan/textfile/quality-results.jsonl` (`path` as the apps see it, `title`, `hash`, `verdict`, `reasons`, `notes`, `duration`); rotated like `clamav-results.jsonl`. The worker never acts: Movie-Downloads' `scripts/quality-block.py` does (Movie-Downloads README "Quality check").
+- The check runs in its own `try` after the scan verdict: it never changes or delays the virus verdict. Off: `QUALITY_CHECK=0` in the compose file, `sudo docker compose up -d clamav-queue`.
+- Jellyfin's keyframe warning is no signal (VisionQuest S01E05 has it and is clean).
+- Tests: `python3 tests/test_quality.py` (fake ffprobe), real samples built from ffmpeg's own test pattern in the worker image: `sudo docker run --rm --network none --user 65112 -v "$PWD/Docker/Antivirus:/src:ro" --entrypoint python3 clamav-local:latest /src/tests/test_quality.py`.
 
 ## VirusTotal fingerprint check
 
@@ -161,6 +177,7 @@ beefy has no node-exporter: fastpi pulls both files (and `clamav-hits.tsv`, `ind
 ```sh
 Docker/Antivirus/tests/test_scan.sh
 python3 Docker/Antivirus/tests/test_hook.py
+python3 Docker/Antivirus/tests/test_quality.py   # fake ffprobe; real samples: README "Quality check"
 python3 Docker/Antivirus/tests/test_virustotal.py   # fake clock and API, no network
 python3 Docker/Antivirus/tests/test_integrity.py   # download-integrity.py, Movie-Downloads README "Download integrity"
 sudo docker run --rm --entrypoint sh -v "$PWD/Docker/Antivirus:/src:ro" clamav-local:latest /src/tests/test_scan.sh   # busybox

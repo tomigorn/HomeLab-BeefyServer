@@ -871,6 +871,78 @@ if "-map" in a and b"SUBS:" in data:
         self.assertEqual(self.metric("clamav_infected_last_run", "queue"), "1")
         self.assertEqual(self.metric("clamav_infected_last_run", "hook"), "0")
 
+    # Quality check (README "Quality check"): a fake ffprobe; "NOAUDIO" in the file means no audio stream, "JUMP" a timestamp jump back.
+    def qc_probe(self, crash=False):
+        p = os.path.join(self.t, "qc-ffprobe")
+        with open(p, "w") as f:
+            f.write("""#!%s
+import json, sys
+if %r:
+    sys.exit(3)
+data = open(sys.argv[-1], "rb").read()
+if "packet=pts_time" in sys.argv:
+    print("0.0\\n280.9\\n118.0" if b"JUMP" in data else "0.0\\n1.0")
+    sys.exit(0)
+streams = [{"index": 0, "codec_type": "video"}] + ([] if b"NOAUDIO" in data else [{"index": 1, "codec_type": "audio"}])
+print(json.dumps({"streams": streams, "format": {"duration": "5400"}}))
+""" % (sys.executable, crash))
+        os.chmod(p, 0o755)
+        return {"FFPROBE_BIN": p}
+
+    def quality(self):
+        p = os.path.join(self.textfile, "quality-results.jsonl")
+        if not os.path.exists(p):
+            return []
+        with open(p) as f:
+            return [json.loads(x) for x in f]
+
+    def test_worker_quality_checks_a_clean_video_under_its_original_path(self):
+        mkv = self.write("movie.mkv", b"clean video")
+        self.queued()
+        self.worker(**self.qc_probe())
+        q = self.quality()
+        self.assertEqual([(x["path"], x["verdict"], x["title"], x["duration"]) for x in q], [(mkv, "ok", "Some Movie", 5400.0)])
+        self.assertEqual(self.jobs(), [])
+
+    def test_worker_records_a_broken_video_and_still_reports_it_clean(self):
+        mkv = self.write("movie.mkv", b"clean JUMP video")
+        self.queued()
+        r = self.worker(**self.qc_probe())
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual([(x["path"], x["verdict"], x["reasons"]) for x in self.quality()], [(mkv, "broken", ["timestamp jump 280.9 s -> 118.0 s"])])
+        self.assertEqual(self.results()[-1]["verdict"], "clean")
+        self.assertTrue(os.path.exists(mkv))
+        self.assertIn("broken", r.stdout)
+
+    def test_worker_records_the_torrent_hash_for_the_block(self):
+        mkv = self.write("movie.mkv", b"clean NOAUDIO video")
+        os.makedirs(self.queue)
+        self.run_hook("--qbit", "abc123", self.job, QUEUE=self.queue)
+        self.worker(**self.qc_probe())
+        self.assertEqual([(x["path"], x["verdict"], x["hash"], x["reasons"]) for x in self.quality()], [(mkv, "broken", "abc123", ["no audio stream"])])
+
+    def test_worker_does_not_quality_check_infected_or_non_video_files(self):
+        self.write("movie.mkv", EICAR)
+        self.write("song.flac", b"clean audio")
+        self.queued()
+        self.worker(**self.qc_probe())
+        self.assertEqual(self.quality(), [])
+
+    def test_a_crashing_quality_check_is_an_error_line_and_changes_nothing_else(self):
+        mkv = self.write("movie.mkv", b"clean video")
+        self.queued()
+        r = self.worker(**self.qc_probe(crash=True))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual([(x["path"], x["verdict"]) for x in self.quality()], [(mkv, "error")])
+        self.assertEqual(self.results()[-1]["verdict"], "clean")
+        self.assertEqual(self.jobs(), [])
+
+    def test_quality_check_off(self):
+        self.write("movie.mkv", b"clean JUMP video")
+        self.queued()
+        self.worker(QUALITY_CHECK="0", **self.qc_probe())
+        self.assertEqual(self.quality(), [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

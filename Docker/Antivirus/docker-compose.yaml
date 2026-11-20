@@ -100,6 +100,7 @@ services:
       - QBIT_API=http://gluetun:8080
       - PARTS_TMP=/tmp/parts
       - VT_API_KEY_FILE=/run/secrets/vt_api_key   # VirusTotal fingerprint check: SHA-256 lookups only, never an upload (README "VirusTotal fingerprint check")
+      - QUALITY_CHECK=1   # ffprobe check of every clean video, result in quality-results.jsonl for Movie-Downloads' quality-block.py (README "Quality check"); 0 = off
       - PYTHONUNBUFFERED=1
     # Touched before every file; one file takes at most a few minutes.
     healthcheck:

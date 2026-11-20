@@ -26,6 +26,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from qbit_session import Qbit  # noqa: E402
 import virustotal  # noqa: E402
+import quality_check  # noqa: E402
 
 CLAMD_HOST = os.environ.get("CLAMD_HOST", "clamav")
 CLAMD_PORT = int(os.environ.get("CLAMD_PORT", "3310"))
@@ -56,6 +57,7 @@ PARTS_TIMEOUT = int(os.environ.get("PARTS_TIMEOUT", "300"))
 PROBE_FORMATS = "matroska,webm,mov,mp4,m4a,3gp,3g2,mj2,avi,mpegts"
 VIDEO_EXT = {"mkv", "mp4", "m4v", "avi", "mov", "wmv", "ts", "m2ts", "webm"}
 CHUNK = 1 << 20
+QUALITY_CHECK = os.environ.get("QUALITY_CHECK", "1") == "1"
 VT_KEY_FILE = os.environ.get("VT_API_KEY_FILE", "/run/secrets/vt_api_key")
 
 MEDIA_EXT = {
@@ -219,6 +221,30 @@ def record(path, verdict, mode, sig=None, size=None, **extra):
         append_line(out, json.dumps(line) + "\n")
     except OSError as e:
         print("results log not written (%s): %s %s" % (e, verdict, path))
+
+
+def quality(link, orig, job):
+    """Quality check of a clean video (README "Quality check"): one line in TEXTFILE/quality-results.jsonl for Movie-Downloads' quality-block.py. Never stops or changes the scan."""
+    if not QUALITY_CHECK or orig.rsplit(".", 1)[-1].lower() not in VIDEO_EXT:
+        return
+    alive()
+    try:
+        r = quality_check.check(link, ffprobe=FFPROBE_BIN, tmp=PARTS_TMP if os.path.isdir(PARTS_TMP) else None)
+    except Exception as e:
+        r = {"verdict": "error", "reasons": [], "notes": [], "duration": None, "why": "%s: %s" % (type(e).__name__, e)}
+    line = {"at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "path": orig, "title": job.get("title"), "hash": job.get("hash"), **r}
+    out = os.path.join(TEXTFILE, "quality-results.jsonl")
+    try:
+        try:
+            if os.path.getsize(out) > RESULTS_MAX_BYTES:
+                os.replace(out, out + ".1")
+        except FileNotFoundError:
+            pass
+        append_line(out, json.dumps(line) + "\n")
+    except OSError as e:
+        print("quality results not written (%s): %s %s" % (e, r["verdict"], orig))
+    if r["verdict"] != "ok" or r["notes"]:
+        print("Quality check: %s: %s %s" % (orig, r["verdict"], "; ".join(r["reasons"] + r["notes"]) or r.get("why", "")))
 
 
 def is_video(path, name=None):
@@ -649,6 +675,7 @@ def process_job(jobdir):
             else:
                 if verdict == "parts-error":
                     print("ClamAV queue: %s: parts scan not possible (%s)" % (orig, extra.get("why")))
+                quality(link, orig, job)
                 os.unlink(link)
             continue
         fp = Fingerprint()
@@ -684,6 +711,7 @@ def process_job(jobdir):
                     metrics("queue", {"clamav_files_scanned": scanned, "clamav_scan_errors": errors + 1}, hits)
                 return False
         else:
+            quality(link, orig, job)
             os.unlink(link)
     try:
         os.unlink(os.path.join(jobdir, "job.json"))
