@@ -40,6 +40,7 @@ RETRY_HOURS = 24
 CHECK_HOURS = 6
 PLACE_HOURS = 2
 KEEP_DAYS = 180
+GUARD_HOURS = 1
 VIDEO = {".mkv", ".mp4", ".m4v", ".avi", ".ts", ".m2ts", ".webm"}
 ACTIVE = ("downloading", "checking", "placing", "ready")
 READY_HEADER = "✅ Phone version ready"
@@ -303,6 +304,23 @@ def step(deps, r):
             r.update(state="ready", updated=ts(now))
 
 
+def guard(deps, r):
+    """Hourly per ready phone version: Radarr/Sonarr import a stray video on a disk scan once their own file is gone; if one now tracks the phone file, say so."""
+    now = deps.clock()
+    if now - (lb.epoch(r.get("guarded")) or 0) < GUARD_HOURS * 3600:
+        return
+    r["guarded"] = ts(now)
+    api = deps.arr[r["app"]]
+    if r["app"] == "radarr":
+        tracked = ((api("GET", f"/movie/{r['arrId']}") or {}).get("movieFile") or {}).get("path") or ""
+    else:
+        e = api("GET", f"/episode/{r['arrId']}") or {}
+        tracked = ((api("GET", f"/episodefile/{e['episodeFileId']}") if e.get("episodeFileId") else {}) or {}).get("path") or ""
+    if " - Phone " in posixpath.basename(tracked):
+        r.update(guard=True, note=f"{r['app'].capitalize()} now tracks the phone version as its own file (server copy gone?): check the title")
+        print(f"phone-fetch: {r['key']}: {r['note']}", file=sys.stderr)
+
+
 def take_inbox(deps, state):
     d = pathlib.Path(deps.box) / "requests"
     try:
@@ -344,9 +362,9 @@ def export(deps, state):
 def run(deps, state):
     take_inbox(deps, state)
     for r in list(state["requests"].values()):
-        if r["state"] in ("downloading", "checking", "placing"):
+        if r["state"] in ("downloading", "checking", "placing", "ready"):
             try:
-                step(deps, r)
+                step(deps, r) if r["state"] != "ready" else guard(deps, r)
             except (lb.ApiError, OSError, Refused) as e:
                 print(f"phone-fetch: {r['key']}: {e}, retried next run", file=sys.stderr)
     now = deps.clock()

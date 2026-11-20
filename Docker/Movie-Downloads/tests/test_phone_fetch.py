@@ -27,12 +27,13 @@ def release(title="A.Film.2026.1080p.WEB-DL.DDP5.1-GRP", name="WEBDL-1080p", res
 class FakeArr:
     def __init__(self, app="radarr", releases=(), resolution=2160):
         self.app, self.calls, self.releases, self.resolution = app, [], list(releases), resolution
+        self.tracked = f"/data/media/movies/{FOLDER}/{FOLDER} - [WEBDL-2160p].mkv"
 
     def __call__(self, method, path, query=None, body=None):
         self.calls.append((method, path, query))
         if path == "/movie/12":
             return {"id": 12, "title": "A Film", "year": 2026, "tmdbId": 4242, "runtime": 120, "originalLanguage": {"name": "English"}, "qualityProfileId": 7,
-                    "path": f"/data/media/movies/{FOLDER}", "movieFile": {"size": 40 * GB, "quality": {"quality": {"resolution": self.resolution}}}}
+                    "path": f"/data/media/movies/{FOLDER}", "movieFile": {"size": 40 * GB, "path": self.tracked, "quality": {"quality": {"resolution": self.resolution}}}}
         if path == "/movie":
             return [{"id": 12}] if (query or {}).get("tmdbId") == 4242 else []
         if path == "/episode/31":
@@ -244,6 +245,25 @@ class Run(Base):
         t = self.state["requests"]["sonarr-31"]["target"]
         self.assertEqual(t, str(self.hdd / "media/tv/A Show (2017) [tvdbid-99]/Season 02/A Show (2017) - S02E01 - Phone 1080p.mkv"))
         self.assertEqual(oct(pathlib.Path(t).parent.stat().st_mode & 0o7777), "0o2775")
+
+    def test_guard_flags_a_phone_file_the_arr_took_over(self):
+        r = self.start()
+        r.update(state="ready", target=str(self.hdd / "media/movies" / FOLDER / f"{FOLDER} - Phone 1080p.mkv"), updated=pf.ts(NOW))
+        self.radarr.tracked = f"/data/media/movies/{FOLDER}/{FOLDER} - Phone 1080p.mkv"
+        self.now += pf.GUARD_HOURS * 3600 + 1
+        pf.run(self.deps, self.state)
+        self.assertIn("Radarr now tracks the phone version", r["note"])
+        self.assertTrue(r["guard"])
+
+    def test_guard_quiet_while_the_server_copy_is_tracked(self):
+        r = self.start()
+        r.update(state="ready", updated=pf.ts(NOW))
+        self.now += pf.GUARD_HOURS * 3600 + 1
+        pf.run(self.deps, self.state)
+        self.assertEqual(r["note"], "")
+        calls = len(self.radarr.calls)
+        pf.run(self.deps, self.state)
+        self.assertEqual(len(self.radarr.calls), calls)
 
     def test_inbox_requests_are_taken_and_removed(self):
         (self.box / "requests" / "x.json").write_text(json.dumps({"item": "jf-film", "user": "u1", "device": "d1"}))
