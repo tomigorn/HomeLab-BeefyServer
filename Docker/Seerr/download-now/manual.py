@@ -971,6 +971,30 @@ def auto_blocks(deps, records, now):
             r["details"] = details
 
 
+def quality_blocks(deps, records, now):
+    """Movie-Downloads' quality-block.py: a blocked broken download is an auto-block record; a note, or a broken file it could not block, a quality-note record (Done tab only)."""
+    for e in scout_files(deps)["quality-block.json"].get("entries") or []:
+        if not isinstance(e, dict) or e.get("verdict") not in ("broken", "note") or now - (epoch(e.get("at")) or 0) > KEEP_DAYS * DAY:
+            continue
+        name = str(e.get("fileName") or "")[:200]
+        key = e["key"] if isinstance(e.get("key"), str) else f"file/{name}"
+        blocked = e.get("verdict") == "broken" and e.get("blocked") is True
+        kind = "auto-block" if blocked else "quality-note"
+        ident = f"quality|{e.get('app')}|{e.get('downloadId')}" if blocked else f"quality-note|{e.get('app')}|{e.get('checkedAt')}|{name}"
+        pid = pid_of(kind, key, ident)
+        details = {"reason": "broken-file" if blocked else "broken-kept" if e.get("verdict") == "broken" else "quality-note", "release": str(e.get("release") or "")[:200],
+                   "file": e.get("file"), "searched": bool(e.get("searched")), "problems": clean_lines((e.get("reasons") or []) + (e.get("notes") or [])), "fileName": name}
+        if not blocked:
+            details["note"] = str(e.get("note") or "")[:300]
+        r = records.get(pid)
+        if r is None:
+            records[pid] = {"id": pid, "type": kind, "key": key, "ident": ident, "title": e.get("title") or name, "year": e.get("year"), "requesters": [],
+                            "details": details, "firstSeen": e.get("at"), "lastSeen": e.get("at"), "resolved": {"at": e.get("at"), "how": kind},
+                            "actions": [{"at": e.get("at"), "user": None, "userId": None, "action": kind, "result": e.get("file")}]}
+        else:
+            r["details"] = details
+
+
 def merge(records, found, complete, now, imported=(), unsure=()):
     for pid in imported:
         r = records.get(pid)
@@ -1298,6 +1322,7 @@ def refresh(dn, deps, force=False):
         if readable:
             merge(records, found, complete, now, imported, unsure)
             auto_blocks(deps, records, now)
+            quality_blocks(deps, records, now)
             track(deps, records, now)
             track_replacements(dn, deps, records, now)
             releases_known(dn, deps, records, now)
@@ -1610,10 +1635,10 @@ def request_id(x):
 
 
 def scout_files(deps):
-    """Movie-Downloads' state (read-only mount): the NFO scout's releases, the description scout's entries and the language block's log, re-read when they change."""
+    """Movie-Downloads' state (read-only mount): the NFO scout's releases, the description scout's entries and the language and quality blocks' logs, re-read when they change."""
     d = getattr(deps, "scout_dir", None)
     out = {}
-    for name in ("nfo-scout.json", "description-scout.json", "language-block.json"):
+    for name in ("nfo-scout.json", "description-scout.json", "language-block.json", "quality-block.json"):
         path = os.path.join(d, name) if d else None
         try:
             st = os.stat(path) if path else None

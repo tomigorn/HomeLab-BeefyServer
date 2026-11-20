@@ -2430,6 +2430,74 @@ class AutoBlock(unittest.TestCase):
         self.assertEqual(self.done(), [])
 
 
+
+class QualityBlock(unittest.TestCase):
+    """Movie-Downloads' quality-block.py (broken downloads blocked, notes that never block) on the Done tab."""
+
+    def setUp(self):
+        reset()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.scouts = pathlib.Path(self.tmp.name, "scouts")
+        self.scouts.mkdir()
+        self.w = World()
+        self.deps = self.w.deps()
+        self.deps.scout_dir = str(self.scouts)
+
+    def entries(self, *entries):
+        (self.scouts / "quality-block.json").write_text(json.dumps({"entries": list(entries), "downloads": [], "seen": {}, "pending": {}}))
+
+    def entry(self, **kw):
+        e = {"at": "2026-11-20T02:00:00Z", "app": "sonarr", "key": "tv/99", "arrId": 5, "title": "Some Show", "year": 2025, "fileName": "Some Show - S01E08.mkv",
+             "downloadId": "DL7", "verdict": "broken", "reasons": ["timestamp jump 280.9 s -> 118.0 s"], "notes": ["container error: [matroska,webm] File ended prematurely"],
+             "release": "Some.Show.S01E08.1080p-GRP", "file": "removed", "blocked": True, "searched": True, "note": "", "checkedAt": "2026-11-20T01:58:00Z"}
+        e.update(kw)
+        return e
+
+    def done(self):
+        status, out = dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", self.deps)
+        self.assertEqual(status, 200)
+        return [d for d in out["done"] if d["type"] in ("auto-block", "quality-note")]
+
+    def test_blocked_broken_file_is_an_auto_block_record(self):
+        self.entries(self.entry())
+        [d] = self.done()
+        self.assertEqual((d["type"], d["key"], d["title"], d["resolved"]["how"]), ("auto-block", "tv/99", "Some Show", "auto-block"))
+        self.assertEqual(d["details"], {"reason": "broken-file", "release": "Some.Show.S01E08.1080p-GRP", "file": "removed", "searched": True,
+                                        "problems": ["timestamp jump 280.9 s -> 118.0 s", "container error: [matroska,webm] File ended prematurely"], "fileName": "Some Show - S01E08.mkv"})
+
+    def test_never_imported_block(self):
+        self.entries(self.entry(file="never imported"))
+        self.assertEqual(self.done()[0]["details"]["file"], "never imported")
+
+    def test_note_is_a_quality_note_record(self):
+        self.entries(self.entry(verdict="note", reasons=[], notes=["duration 90 min, expected 120 min"], blocked=False, searched=False, file="kept"))
+        [d] = self.done()
+        self.assertEqual((d["type"], d["resolved"]["how"], d["details"]["reason"], d["details"]["problems"]), ("quality-note", "quality-note", "quality-note", ["duration 90 min, expected 120 min"]))
+
+    def test_broken_but_not_blocked_says_why(self):
+        self.entries(self.entry(blocked=False, searched=False, file="kept", note="imported by hand (no download id): not blocked"))
+        [d] = self.done()
+        self.assertEqual((d["type"], d["details"]["reason"], d["details"]["note"]), ("quality-note", "broken-kept", "imported by hand (no download id): not blocked"))
+
+    def test_not_found_has_the_file_name_as_title(self):
+        self.entries(self.entry(app=None, key=None, title="Some.Show.S01E08.1080p-GRP", blocked=False, searched=False, file="not found", note="neither"))
+        [d] = self.done()
+        self.assertEqual((d["key"], d["title"], d["details"]["file"]), ("file/Some Show - S01E08.mkv", "Some.Show.S01E08.1080p-GRP", "not found"))
+
+    def test_same_entries_again_are_the_same_records(self):
+        self.entries(self.entry(), self.entry(verdict="note", reasons=[], blocked=False, file="kept", fileName="other.mkv", checkedAt="2026-11-20T01:59:00Z"))
+        first = self.done()
+        manual.CACHE.clear()
+        self.assertEqual(sorted(d["id"] for d in self.done()), sorted(d["id"] for d in first))
+        self.assertEqual(len(first), 2)
+
+    def test_no_file_or_broken_file_shows_nothing(self):
+        self.assertEqual(self.done(), [])
+        (self.scouts / "quality-block.json").write_text("{broken")
+        manual.CACHE.clear()
+        self.assertEqual(self.done(), [])
+
 WRONG_SHOW = {"id": 61, "title": "Behind the Scenes of Company Retreat", "year": 2025, "tmdbId": 319013, "tvdbId": 476659}
 RIGHT_SHOW = {"id": 34, "title": "Jury Duty", "year": 2023, "tmdbId": 222023, "tvdbId": 432093}
 

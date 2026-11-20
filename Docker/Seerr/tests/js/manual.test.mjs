@@ -114,6 +114,44 @@ test("German: automatisch gesperrt, previous file put back", async () => {
   assert.match($("[data-problem] [data-auto-block]").textContent, /Ton: Russian · die vorherige Datei ist wieder da/);
 });
 
+test("done tab: a broken download blocked by the quality check, with the problems found and what happened", async () => {
+  const d = problem({ type: "auto-block", key: "tv/99", title: "Some Show", year: 2025, requesters: [], resolved: { at: "2026-11-20T02:00:00Z", how: "auto-block" },
+    details: { reason: "broken-file", release: "Some.Show.S01E08.1080p-GRP", file: "never imported", searched: true, problems: ["timestamp jump 280.9 s -> 118.0 s"], fileName: "Some Show - S01E08.mkv" },
+    actions: [{ at: "2026-11-20T02:00:00Z", user: null, action: "auto-block", result: "never imported" }] });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [d], admin: false } } });
+  $('[data-tab="done"]').click();
+  await settle();
+  assert.match($("[data-problem]").textContent, /Blocked automatically: the file is broken — searching again/);
+  assert.match($("[data-problem] [data-auto-block]").textContent, /Found: timestamp jump 280\.9 s -> 118\.0 s · it never reached the library/);
+});
+
+test("done tab: a quality note blocks nothing and says so; German", async () => {
+  const d = problem({ type: "quality-note", key: "movie/4242", title: "Some Film", year: 2020, requesters: [], resolved: { at: "2026-11-20T02:00:00Z", how: "quality-note" },
+    details: { reason: "quality-note", release: "Some.Film.2020.1080p-GRP", file: "kept", searched: false, problems: ["duration 90 min, expected 120 min"], fileName: "Some Film.mkv", note: "" } });
+  const en = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [d], admin: false } } });
+  en.$('[data-tab="done"]').click();
+  await settle();
+  assert.match(en.$("[data-problem] [data-type]").textContent, /Quality note/);
+  assert.match(en.$("[data-problem]").textContent, /Note from the quality check on download — nothing was blocked/);
+  assert.match(en.$("[data-problem] [data-auto-block]").textContent, /Found: duration 90 min, expected 120 min/);
+  assert.match(en.$("[data-problem] [data-resolved]").textContent, /Checked on download/);
+  const de = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [d], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
+  de.$('[data-tab="done"]').click();
+  await settle();
+  assert.match(de.$("[data-problem]").textContent, /Hinweis der Qualitätsprüfung beim Download — nichts gesperrt/);
+  assert.match(de.$("[data-problem] [data-auto-block]").textContent, /Gefunden: duration 90 min, expected 120 min/);
+});
+
+test("done tab: a broken file the quality check could not block shows why", async () => {
+  const d = problem({ type: "quality-note", key: "movie/4242", requesters: [], resolved: { at: "2026-11-20T02:00:00Z", how: "quality-note" },
+    details: { reason: "broken-kept", release: "", file: "kept", searched: false, problems: ["no audio stream"], fileName: "x.mkv", note: "imported by hand (no download id): not blocked" } });
+  const { $ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [d], admin: false } } });
+  $('[data-tab="done"]').click();
+  await settle();
+  assert.match($("[data-problem]").textContent, /The file is broken, but it was not blocked — please check it/);
+  assert.match($("[data-problem] [data-auto-block]").textContent, /Found: no audio stream · imported by hand \(no download id\): not blocked/);
+});
+
 const MISMATCH = { reason: "mismatch", seerr: { title: "Jury Duty Presents: Company Retreat", year: 2025, tmdb: 312697, tvdb: null },
   arr: { app: "sonarr", title: "Behind the Scenes of Company Retreat", year: 2025, tmdb: 319013, tvdb: 476659 } };
 
