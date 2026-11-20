@@ -1171,6 +1171,29 @@ sudo install -m 0644 systemd/quality-block.{service,path,timer} /etc/systemd/sys
 ```
 
 - Tests: `python3 tests/test_quality_block.py`, `tests/test_original_audio_hook.sh`, `python3 tests/test_language_block.py` (shared block code).
+
+#### Phone versions
+
+Owner 2026-11-19 (fastpi `reports/specs/2026-11-19-phone-versions-design.md`): a phone download of a 4K title gets a smaller second download (never an own conversion). **Status 2026-11-20: only the release picker is built**; fetching, placing the file as a second Jellyfin version, the download hook and the "📱 My phone downloads" row are not. Until then phone downloads work with "Original" only (Jellyfin README "Moonfin converted downloads off").
+
+| Option (strict order) | Rule |
+|---|---|
+| 1 | `WEBDL-1080p` with HDR (an HDR or DV-with-HDR10 format; `DV (w/o HDR fallback)` is a bad tag) |
+| 2 | `WEBDL-1080p` without HDR, not an x265 re-encode (`x265 (no HDR/DV)`) |
+| 3 | 1080p encode: a TRaSH tier format (`… Tier 0x`), `10bit` + x265/HEVC, ≥ 15 MB per minute of runtime, `Bluray-1080p` or `WEBDL-1080p` |
+| 4 | a 4K release ≤ 60 % of the server copy's size |
+| 5 | the server copy (also when it is not 4K) |
+| Every option | no remux, no audio-description release, none of the title profile's negative formats (LQ, Upscaled, AV1, bad groups, …; the ones the order decides itself excluded), German, English or the original language present, not another title (the arr's "Unknown Movie" rejection). Inside an option: highest custom-format score, then the smaller file |
+
+```bash
+scripts/phone-version.py --movie <radarr id>       # one release search (indexer bar counts it), prints the pick and why the others failed; grabs nothing
+scripts/phone-version.py --episode <sonarr episode id>
+```
+
+- Candidates: Radarr/Sonarr's own `GET /release` (their parsed quality, formats, languages); the picker never uses the arr's own rejections except a wrong title, since "existing file is better" is beside the point for a second version.
+- Real runs 2026-11-20: Bad Apples (2026, 11.8 GB 4K) → option 2, 1080p AMZN WEB-DL 8.0 GB; Money Heist S02E01 (6.3 GB 4K) → option 1, 1080p NF WEB-DL HDR 2.5 GB.
+- Open for the fetch step: season packs show up as candidates for one episode (a pack grab for one phone episode needs a rule), indexer budget per request.
+- Tests: `python3 tests/test_phone_version.py`.
 - Library 2026-11-16 (`--library`): 1082 files, 2 would be blocked (only Arabic / only Russian audio where Radarr says English: *Palestine 36*, *Navalny*; left alone, only new imports act), 15 unknown (no or untagged audio in the arr's media info).
 
 ### Swiss German
