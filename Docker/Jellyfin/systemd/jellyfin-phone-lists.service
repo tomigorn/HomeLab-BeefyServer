@@ -1,0 +1,9 @@
+[Unit]
+Description=Phone lists: the per-user home rows "Your phone version requests" and "On your phone" in the Moonfin phone and tablet apps
+
+[Service]
+Type=oneshot
+ExecStart=%h/Projects/Docker/Jellyfin/scripts/phone-lists.py
+Environment=PYTHONUNBUFFERED=1
+Nice=10
+TimeoutStartSec=10min

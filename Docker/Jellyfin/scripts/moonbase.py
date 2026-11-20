@@ -4,15 +4,21 @@ Users whose stored value is still the previous default follow the new default; t
 A lost (after markers were written: sibling .written), corrupt or odd state file counts every marker as done. A failed user write is retried next run against the defaults it was compared with (state "pending"); with a lost state the markers are kept for it too, so no app default is adopted later. An empty list and null count as equal. One run at a time (sibling .lock).
 Idempotent. Usage: moonbase.py [--dry-run | --check]  (--check exits 1 when the config or a user differs)"""
 import copy
+import importlib.util
 import json
 import pathlib
 import re
 import sys
 import urllib.error
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 from jellyfin_api import api, file_lock  # noqa: E402
 from trending_model import COMING, HOME, LIBRARIES  # noqa: E402
+
+_spec = importlib.util.spec_from_file_location("phone_lists", HERE / "phone-lists.py")
+phone_lists = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(phone_lists)
 
 PLUGIN_ID = "8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b"
 SERVER_URL = "https://jellyfin.holy-grail.ch"
@@ -126,7 +132,9 @@ def changed(old, new):
 
 
 def layout(rows):
-    return [(r.get("type"), r.get("pluginSource"), r.get("pluginAdditionalData")) for r in sorted(rows or [], key=lambda r: r.get("order") or 0) if r.get("enabled", True)]
+    """The enabled rows in order; phone-lists.py's per-user rows on top are no own choice."""
+    return [(r.get("type"), r.get("pluginSource"), r.get("pluginAdditionalData")) for r in sorted(rows or [], key=lambda r: r.get("order") or 0)
+            if r.get("enabled", True) and not phone_lists.is_phone_row(r)]
 
 
 def adopt(settings, old, new, done=frozenset()):
@@ -145,7 +153,12 @@ def adopt(settings, old, new, done=frozenset()):
                 untouched = layout(have) == layout(old.get(key))
             else:
                 untouched = have == old.get(key) or (key in CLIENT_DEFAULTS and f"{name}:{key}" not in done and have == CLIENT_DEFAULTS[key])
-            if untouched:
+            if untouched and key == "homeSections":
+                phone = [r for r in sorted(have, key=lambda r: r.get("order") or 0) if phone_lists.is_phone_row(r)]
+                rows = [dict(r, order=n) for n, r in enumerate(phone + sorted(value, key=lambda r: r.get("order") or 0))]
+                if rows != have:
+                    change[key] = rows
+            elif untouched:
                 change[key] = value
         if change:
             out[name] = change

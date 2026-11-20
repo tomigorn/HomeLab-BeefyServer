@@ -865,6 +865,26 @@ Original downloads from a phone app of a 4K film or episode get a smaller second
 | Tested | Moonfin for Android (owner phone 2026-11-20 08:32): Original download of Money Heist S02E01 got the phone version (2.1 GiB instead of 5.8), log `phone download: phone version sent`. Still to test: a 4K title without a phone version (409 + pop-ups without a live session), iPhone and the official apps |
 | Tests | `cd popular && python3 -m unittest test_app.PhoneDownload`; check `jf.popular-phone-download` |
 
+## Phone lists (2026-11-20)
+Two private rows on top of the home in the Moonfin phone and tablet apps.
+
+| Row | Shows | Order | Gone when |
+|---|---|---|---|
+| 📱 Your phone version requests · 📱 Deine angefragten Handy-Versionen | titles **you** asked a phone version of: being prepared (entry with ⏳ band: searching / downloading x % / checking / almost ready), ready (the title itself), nothing smaller found (band "No smaller version") | newest request first | you downloaded it (moves to the next row), 14 days after ready; nothing smaller: 2 days |
+| 📲 On your phone · 📲 Auf deinem Handy | what the download hook sent to **your** phone (`/phone/sent.jsonl`) | newest first | 14 days after the download |
+
+| What | Where |
+|---|---|
+| Sync | `scripts/phone-lists.py` (`--dry-run`, `--check`): inputs `/srv/appdata/phone-versions/state.json` (Movie-Downloads `phone-fetch.py` export, with `requestedBy`) and `sent.jsonl`; one BoxSet per user and row (made on the first entry, then kept: Moonfin hides an empty collection row), private like "For you" (owner tag `hss-phone-u-<userId>` in every other user's `BlockedTags`); a title being prepared is its own small entry set (the real title inside) with an uploaded poster + thumb carrying the status band, so no shared poster changes. Lock shared with `moonbase.py` / `media-bar.py` |
+| Where it shows | Moonfin's `mobile` profile `homeSections`, rows 1–2: Moonfin uses `mobile` on every Android and iOS phone **and tablet**, `tv` on TV (Moonfin-Core `plugin_sync_service.dart`, `platform_detection.dart`, read 2026-11-20); a profile's own `homeSections` replace the global ones (Moonbase `ResolveHomeLayout`), so TV, web and desktop never see them. Empty rows are hidden by the app (`home_view_model.dart`). `moonbase.py` counts the two rows as no own choice and keeps them on top when it moves a user to a new default layout. Jellyfin's own phone apps (web client) share the web home: not there |
+| Tap | ready title: its own page, Download → Original gets the phone version; an entry being prepared: a page with the title in it (one more tap) and the status in its text |
+| Language | row names per user from the Jellyfin display language (web Settings → Display, `DisplayPreferences` `language`): German = DE, else EN; the poster bands and entry texts are English for everyone (owner 2026-11-20) |
+| Updates | `jellyfin-phone-lists.path` after each `state.json` export (phone-fetch runs every 2 min while awake) or a new `sent.jsonl` line; `jellyfin-phone-lists.timer` hourly (expiry). Same inputs within 50 min = skipped. The app reloads the rows' content on start and on return to the app; a row new to the layout (a user's first entry) shows only after the app is fully closed and reopened (owner phone 2026-11-20: resume fetched the sets but did not draw them) |
+| Install | `cp systemd/jellyfin-phone-lists.* ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now jellyfin-phone-lists.path jellyfin-phone-lists.timer`; log `journalctl --user -u jellyfin-phone-lists.service` |
+| Tested | Moonfin for Android (owner phone 2026-11-20 12:22): both rows on top after an app restart, newest first, MaXXXine (failed release) with the "No smaller version" band, Rings of Power S03E06 ready |
+| Tests | `cd scripts && python3 -m unittest test_phone_lists test_moonbase test_media_bar test_trending_art`; checks `jf.phone-lists`, `jf.phone-lists-units`, `jf.popular-phone-sent` |
+| Undo | `systemctl --user disable --now jellyfin-phone-lists.path jellyfin-phone-lists.timer`; delete the BoxSets tagged `hss-phone` and drop the two rows from each user's `mobile.homeSections` (backup `~/backups/jellyfin/*-phone-lists`) |
+
 ## Moonfin converted downloads off (2026-11-19)
 Moonfin's download qualities High/Medium/Low/Mobile (`/Videos/{id}/stream?Static=false`) are refused; Original download, direct play and HLS transcoding stay.
 

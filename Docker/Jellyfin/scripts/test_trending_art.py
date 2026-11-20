@@ -363,5 +363,23 @@ class Clips(unittest.TestCase):
             self.assertEqual(tc.frame(name, 10).size, (1920, 1080), name)
 
 
+
+@unittest.skipUnless(HAVE_PIL, "needs Pillow")
+class StatusArtTest(unittest.TestCase):
+    def test_status_poster_and_thumb_sizes_with_the_band(self):
+        for icon in ("hourglass", "none"):
+            p = Image.open(io.BytesIO(ta.status_poster(img(), "Downloading 42 %", icon)))
+            t = Image.open(io.BytesIO(ta.status_thumb(img(size=(1920, 1080)), "Title", "Downloading 42 %", icon)))
+            self.assertEqual((p.size, t.size), ((ta.W, ta.H), (ta.TW, ta.TH)))
+            self.assertTrue(ta.has_band(ta.status_poster(img(), "x", icon)))
+
+    def test_missing_art_still_gives_a_poster(self):
+        for data in (None, b"junk"):
+            self.assertEqual(Image.open(io.BytesIO(ta.status_poster(data, "Searching…", "hourglass", title="Some film"))).size, (ta.W, ta.H))
+            self.assertEqual(Image.open(io.BytesIO(ta.status_thumb(data, "Some film", "Searching…", "hourglass"))).size, (ta.TW, ta.TH))
+
+    def test_the_text_changes_the_image(self):
+        self.assertNotEqual(ta.status_poster(img(), "Downloading 10 %", "hourglass"), ta.status_poster(img(), "Downloading 90 %", "hourglass"))
+
 if __name__ == "__main__":
     unittest.main()

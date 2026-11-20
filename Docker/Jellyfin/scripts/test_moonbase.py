@@ -82,6 +82,17 @@ class AdoptTest(unittest.TestCase):
         stored = OLD["homeSections"] + [{"type": "genres", "enabled": False, "order": 2}]
         self.assertEqual(mb.adopt({"tv": {"homeSections": stored}}, OLD, NEW), {"tv": {"homeSections": NEW["homeSections"]}})
 
+    def test_phone_rows_on_top_are_no_own_choice_and_stay_on_top(self):
+        phone = [{"kind": "pluginDynamic", "pluginSource": "collections", "type": "none", "enabled": True, "order": 0, "pluginAdditionalData": "p1", "pluginDisplayText": "📱 Ready for your phone"}]
+        stored = phone + [dict(r, order=r["order"] + 1) for r in OLD["homeSections"]]
+        got = mb.adopt({"mobile": {"homeSections": stored}}, OLD, NEW)["mobile"]["homeSections"]
+        self.assertEqual([(r.get("pluginAdditionalData") or r["type"], r["order"]) for r in got], [("p1", 0), ("resume", 1), ("studios", 2)])
+
+    def test_current_layout_with_phone_rows_is_left_alone(self):
+        phone = [{"kind": "pluginDynamic", "pluginSource": "collections", "type": "none", "enabled": True, "order": 0, "pluginAdditionalData": "p1", "pluginDisplayText": "📲 On your phone"}]
+        stored = phone + [dict(r, order=r["order"] + 1) for r in NEW["homeSections"]]
+        self.assertEqual(mb.adopt({"mobile": {"homeSections": stored}}, NEW, NEW), {})
+
     def test_own_layout_kept(self):
         own = [{"type": "nextup", "enabled": True, "order": 0}]
         self.assertEqual(mb.adopt({"global": {"homeSections": own}}, OLD, NEW), {})

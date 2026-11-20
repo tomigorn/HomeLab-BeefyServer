@@ -1,0 +1,11 @@
+[Unit]
+Description=Phone lists: hourly pass for entries that expire
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Unit=jellyfin-phone-lists.service
+
+[Install]
+WantedBy=timers.target

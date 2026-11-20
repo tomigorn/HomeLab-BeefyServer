@@ -545,16 +545,28 @@ BAND_FILL = (8, 8, 12, 224)
 BAND_ACCENT = (255, 183, 3)
 
 
-def band_font(room, biggest):
+def band_font(room, biggest, text=BAND_TEXT):
     """The largest narrow bold size up to biggest that fits room."""
     for size in range(biggest, 30, -2):
-        if font(size, NARROW).getlength(BAND_TEXT) <= room:
+        if font(size, NARROW).getlength(text) <= room:
             return font(size, NARROW)
     return font(30, NARROW)
 
 
-def band(im, h=BAND_H):
-    """Bottom band of a placeholder, h high: amber top edge, dark translucent fill, a white circle with a down arrow and "Not downloaded yet"."""
+def hourglass(draw, cx, cy, s, fill=WHITE):
+    draw.polygon([(cx - s * 0.36, cy - s * 0.46), (cx + s * 0.36, cy - s * 0.46), (cx, cy)], fill=fill)
+    draw.polygon([(cx, cy), (cx + s * 0.36, cy + s * 0.46), (cx - s * 0.36, cy + s * 0.46)], fill=fill)
+
+
+def dash(draw, cx, cy, s, fill=WHITE):
+    draw.rectangle((cx - s * 0.4, cy - s * 0.1, cx + s * 0.4, cy + s * 0.1), fill=fill)
+
+
+ICONS = {"arrow": arrow_down, "hourglass": hourglass, "none": dash}
+
+
+def band(im, h=BAND_H, text=BAND_TEXT, icon="arrow"):
+    """Bottom band of a placeholder, h high: amber top edge, dark translucent fill, a white circle with an icon (a down arrow) and the text ("Not downloaded yet")."""
     w, ih = im.size
     layer = Image.new("RGBA", im.size, (0, 0, 0, 0))
     d = ImageDraw.Draw(layer)
@@ -565,8 +577,8 @@ def band(im, h=BAND_H):
     r = round(h * 0.27)
     cx = 24 + r
     d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=WHITE)
-    arrow_down(d, cx, cy - 1, round(r * 1.18), (16, 16, 20))
-    d.text((cx + r + 18, cy + 1), BAND_TEXT, font=band_font(w - cx - r - 18 - 24, round(h * 0.55)), fill=WHITE, anchor="lm")
+    ICONS[icon](d, cx, cy - 1, round(r * 1.18), (16, 16, 20))
+    d.text((cx + r + 18, cy + 1), text, font=band_font(w - cx - r - 18 - 24, round(h * 0.55), text), fill=WHITE, anchor="lm")
     return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
 
 
@@ -610,6 +622,23 @@ def thumb(back, title):
         im = gradient((TW, TH), (45, 52, 72), (14, 16, 24))
         draw_text_block(ImageDraw.Draw(im), title, (80, 60, TW - 80, TH - TBAND_H - 40), 80)
     return to_jpeg(band(im, TBAND_H))
+
+
+def status_poster(base, text, icon, title=""):
+    """2:3 poster of a phone-list entry: the title's poster (the title on a dark gradient without one) with a status band."""
+    pic = decode(base)
+    im = cover(pic, (W, H)) if pic is not None else title_poster(title)
+    return to_jpeg(band(im, BAND_H, text, icon))
+
+
+def status_thumb(back, title, text, icon):
+    pic = decode(back)
+    if pic is not None:
+        im = cover(pic, (TW, TH))
+    else:
+        im = gradient((TW, TH), (45, 52, 72), (14, 16, 24))
+        draw_text_block(ImageDraw.Draw(im), title, (80, 60, TW - 80, TH - TBAND_H - 40), 80)
+    return to_jpeg(band(im, TBAND_H, text, icon))
 
 
 def title_box(badge, n_marks=0, placeholder=False):

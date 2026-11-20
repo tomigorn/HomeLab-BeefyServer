@@ -1,0 +1,10 @@
+[Unit]
+Description=Phone lists: sync after each phone-version state export or phone download
+
+[Path]
+PathChanged=/srv/appdata/phone-versions/state.json
+PathChanged=/srv/appdata/phone-versions/sent.jsonl
+Unit=jellyfin-phone-lists.service
+
+[Install]
+WantedBy=default.target
