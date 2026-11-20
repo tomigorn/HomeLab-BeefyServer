@@ -61,6 +61,10 @@ class BlockedTagsTest(unittest.TestCase):
         have = ["kids", "hss-media-bar-gone"]
         self.assertEqual(mbar.blocked_tags(have, "u1", {"u1", "u2", "u3"}), ["kids", "hss-media-bar-u2", "hss-media-bar-u3"])
 
+    def test_existing_order_kept(self):
+        have = ["hss-media-bar-u2", "kids", "hss-phone-u-u2"]
+        self.assertEqual(mbar.blocked_tags(have, "u1", {"u1", "u2", "u3"}), ["hss-media-bar-u2", "kids", "hss-phone-u-u2", "hss-media-bar-u3"])
+
     def test_own_tag_never_blocked(self):
         self.assertEqual(mbar.blocked_tags(["hss-media-bar-u1"], "u1", {"u1"}), [])
 

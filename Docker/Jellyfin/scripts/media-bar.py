@@ -50,8 +50,10 @@ def choose(have, pool, size, rng, resample):
 
 
 def blocked_tags(have, uid, owners):
-    foreign = [t for t in have or [] if not t.startswith(TAG + "-")]
-    return foreign + [owner_tag(o) for o in sorted(owners) if o != uid]
+    """The policy's blocked tags with every other owner's tag; the existing order stays (phone-lists.py edits the same list)."""
+    want = [owner_tag(o) for o in sorted(owners) if o != uid]
+    kept = [t for t in have or [] if not t.startswith(TAG + "-") or t in want]
+    return kept + [t for t in want if t not in kept]
 
 
 def settings_change(settings, sid, ours, libraries):
