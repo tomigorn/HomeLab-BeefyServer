@@ -64,7 +64,7 @@ def jf_time(value):
 # /File: Moonfin falls back to it when /Download is refused (2026-11-20)
 ITEM_DOWNLOAD_RE = re.compile(r"(?i)^(?:/emby|/mediabrowser)?/items/([^/]+)/(download|file)$")
 PHONE_REQUEST_EVERY = 300
-PHONE_PREPARING = {"downloading", "checking", "placing", "searching"}
+PHONE_PREPARING = {"downloading", "checking", "placing", "searching", "queued", "converting"}
 PHONE_HEADER = "\U0001f4f1 Phone version"
 PHONE_TEXT_NEW = "A smaller phone version is being prepared, usually 5 to 30 minutes. You get a \u2705 message when it is ready; then tap Download again."
 PHONE_TEXT_WAIT = "The phone version is being prepared ({what}). You get a \u2705 message when it is ready; then tap Download again."
@@ -712,7 +712,8 @@ class Core:
                 self.record_sent(item, st["phoneItem"], user, session)
                 return to(st["phoneItem"])
             if st.get("state") in PHONE_PREPARING:
-                what = f"{st.get('percent') or 0} % downloaded" if st.get("state") == "downloading" else "virus and quality check" if st.get("state") == "checking" else "almost done"
+                what = {"downloading": f"{st.get('percent') or 0} % downloaded", "converting": f"{st.get('percent') or 0} % converted", "queued": "conversion starts soon",
+                        "checking": "virus and quality check", "searching": "searching"}.get(st.get("state"), "almost done")
                 self.phone_message(session, PHONE_TEXT_WAIT.format(what=what))
                 return 503, {"error": "phone version being prepared"}
             if st.get("state") or not self.is_4k(item):

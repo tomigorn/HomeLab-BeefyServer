@@ -60,7 +60,7 @@ class ReadyRowTest(unittest.TestCase):
             self.assertEqual(pl.ready_row(gone, [], "u1", NOW), [], state)
 
     def test_preparing_states_stay_however_old(self):
-        for state in ("searching", "downloading", "checking", "placing"):
+        for state in ("searching", "downloading", "checking", "placing", "queued", "converting"):
             self.assertEqual([e["kind"] for e in pl.ready_row({"a": req(state, {"u1": ts(days=30)}, updated=ts(days=30))}, [], "u1", NOW)], ["preparing"])
 
     def test_unknown_state_or_broken_entry_skipped(self):
@@ -125,7 +125,7 @@ class SentRowTest(unittest.TestCase):
 class LabelTest(unittest.TestCase):
     def test_band_texts(self):
         cases = [("searching", 0, "en", "Searching…"), ("downloading", 42, "en", "Downloading 42 %"), ("checking", 100, "en", "Checking"),
-                 ("placing", 100, "en", "Almost ready"), ("nothing", 0, "en", "No smaller version"),
+                 ("placing", 100, "en", "Almost ready"), ("queued", 0, "en", "Converting soon"), ("converting", 37, "en", "Converting 37 %"), ("nothing", 0, "en", "No smaller version"),
                  ("failed", 0, "en", "No smaller version")]
         for state, pct, lang, want in cases:
             kind = "none" if state in ("nothing", "failed") else "preparing"

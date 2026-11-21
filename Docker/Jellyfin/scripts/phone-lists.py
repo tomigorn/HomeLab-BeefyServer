@@ -33,14 +33,14 @@ OWNER = "hss-phone-u-"
 KIND = "hss-phone-kind-"
 ITEM = "hss-phone-item-"
 HINT = "Tap the title, then Download → Original: your phone gets the smaller phone version once it is ready."
-PREPARING = ("searching", "downloading", "checking", "placing")
+PREPARING = ("searching", "queued", "converting", "downloading", "checking", "placing")
 GAVE_UP = ("nothing", "failed", "not-needed")
 READY_DAYS, SENT_DAYS, GAVE_UP_DAYS = 14, 14, 2
 NAMES = {"ready": {"en": "📱 Your phone version requests", "de": "📱 Deine angefragten Handy-Versionen"}, "sent": {"en": "📲 On your phone", "de": "📲 Auf deinem Handy"}}
 # earlier row names, still recognised so their rows are renamed in place
 OLD_NAMES = ("📱 Ready for your phone", "📱 Bereit fürs Handy")
 # Bands and entry texts stay English for everyone (owner 2026-11-20); only the row names follow the display language.
-BANDS = {"searching": "Searching…", "downloading": "Downloading {p} %", "checking": "Checking", "placing": "Almost ready", "none": "No smaller version"}
+BANDS = {"searching": "Searching…", "queued": "Converting soon", "converting": "Converting {p} %", "downloading": "Downloading {p} %", "checking": "Checking", "placing": "Almost ready", "none": "No smaller version"}
 
 
 def when(text):

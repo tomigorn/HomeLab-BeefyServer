@@ -870,7 +870,7 @@ Two private rows on top of the home in the Moonfin phone and tablet apps.
 
 | Row | Shows | Order | Gone when |
 |---|---|---|---|
-| 📱 Your phone version requests · 📱 Deine angefragten Handy-Versionen | titles **you** asked a phone version of: being prepared (entry with ⏳ band: searching / downloading x % / checking / almost ready), ready (the title itself), nothing smaller found (band "No smaller version") | newest request first | you downloaded it (moves to the next row), 14 days after ready; nothing smaller: 2 days |
+| 📱 Your phone version requests · 📱 Deine angefragten Handy-Versionen | titles **you** asked a phone version of: being prepared (entry with ⏳ band: searching / downloading x % / converting soon / converting x % / checking / almost ready), ready (the title itself), nothing smaller found (band "No smaller version") | newest request first | you downloaded it (moves to the next row), 14 days after ready; nothing smaller: 2 days |
 | 📲 On your phone · 📲 Auf deinem Handy | what the download hook sent to **your** phone (`/phone/sent.jsonl`) | newest first | 14 days after the download |
 
 | What | Where |

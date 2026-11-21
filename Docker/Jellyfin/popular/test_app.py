@@ -1561,6 +1561,13 @@ class PhoneDownload(Base):
         self.assertEqual(self.requests(), [])
         self.assertIn("42", self.messages()[0]["Text"])
 
+    def test_a_tap_while_converting_shows_the_conversion(self):
+        for st, pct, want in (("converting", 37, "37 % converted"), ("queued", 0, "conversion starts soon")):
+            self.state(state=st, percent=pct)
+            self.assertEqual(self.hit()[0], 503, st)
+            self.assertIn(want, self.messages()[-1]["Text"])
+        self.assertEqual(self.requests(), [])
+
     def test_nothing_smaller_or_not_needed_downloads_the_original(self):
         for st in ("nothing", "not-needed"):
             self.state(state=st)
