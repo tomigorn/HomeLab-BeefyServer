@@ -491,6 +491,17 @@ Film, series, season and episode pages in Jellyfin web get a "Rate in Tracker" l
 | Push a changed script | `python3 scripts/tracker-link.py` → `upserted Rate in Tracker`, then reload the browser |
 | Check it is served | `curl -s localhost:8096/web/index.html \| grep -c -i injector` → ≥ 1 |
 
+### "Report a problem" link
+Film, series, season and episode pages in Jellyfin web get a "⚠ Report a problem" link (DE "⚠ Problem melden", by the page language) next to the TMDB/IMDb links. It opens `https://report.holy-grail.ch/?type=movie&tmdb=<id>` or `?type=tv&tvdb=…&tmdb=…&season=…&episode=…` (episodes pre-select their episode, seasons and series the series); the report site (Seerr README "Problem reports") resolves it to the library title. No TMDB/TVDB id = no link. Web only, apps and TV have none (phone: open report.holy-grail.ch directly).
+
+- Script: `report-link/report-problem.js`, served by JavaScript Injector from `private.js` (signed-in users only), next to "Rate in Tracker".
+
+| Task | Command (in `Docker/Jellyfin/`) |
+|---|---|
+| Tests (JS) | `sudo docker run --rm -v "$PWD":/w -w /w node:24-alpine node --test "report-link/*.test.mjs"` |
+| Tests (upsert) | `cd scripts && python3 -m unittest -v test_report_link` |
+| Push a changed script | `python3 scripts/report-link.py` → `upserted Report a problem`, then reload the browser |
+
 ### Rating on TV and phone
 Jellyfin's TV and phone apps have only the heart (favourite) and "played"; no app has stars (jellyfin-androidtv `ItemMutationRepository.kt`), and Floppy has no native app.
 
