@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Phone lists: two private home rows per user in the phone and tablet apps (Moonfin "mobile" profile), on top of the home (spec fastpi reports/specs/2026-11-19-phone-versions-design.md "Phone lists").
-"📱 Your phone version requests": the titles this user asked a phone version of (Movie-Downloads scripts/phone-fetch.py, <box>/state.json): being prepared (an entry set with a ⏳ band poster), ready (the title itself), nothing smaller found (entry set, 2 days); a ready title leaves once this user downloaded it or 14 days after it got ready.
+"📱 Your phone version requests": the titles this user asked a phone version of (Movie-Downloads scripts/phone-fetch.py, <box>/state.json): being prepared (an entry set with a ⏳ band poster), ready (the title itself), nothing smaller found (entry set, 2 days); a ready title leaves once this user downloaded it or 14 days after it got ready. 2+ episodes of one season are one card for the season in both rows.
 "📲 On your phone": what the download hook sent to this user's phone in the last 14 days (<box>/sent.jsonl, popular/app.py).
 Each row is a BoxSet tagged hss-phone + hss-phone-u-<userId>, kept once made (Moonfin hides an empty collection row); every other user's policy blocks that owner tag (like media-bar.py), entry sets too.
 Moonfin phones and tablets read the "mobile" profile; its own homeSections replace the global ones, so the rows go there only (TV, web and desktop never get them).
@@ -88,7 +88,49 @@ def sent_row(sent, uid, now):
 
 
 def band_text(entry):
+    if "band" in entry:
+        return entry["band"]
     return BANDS["none"] if entry["kind"] == "none" else BANDS[entry["state"]].format(p=entry["percent"])
+
+
+def by_season(entries, info):
+    """2+ episodes of one season become one entry for the season (all ready: the season itself, else a band "r of n ready · …" naming the slowest episode); newest first."""
+    seasons = {}
+    for e in entries:
+        x = info.get(e["item"]) or {}
+        if x.get("Type") == "Episode" and x.get("SeasonId"):
+            seasons.setdefault(x["SeasonId"], []).append(e)
+    out = [e for e in entries if len(seasons.get((info.get(e["item"]) or {}).get("SeasonId"), ())) < 2]
+    for sid, eps in seasons.items():
+        if len(eps) < 2:
+            continue
+        x = info[eps[0]["item"]]
+        group = {"item": sid, "title": f"{x.get('SeriesName') or ''} S{x.get('ParentIndexNumber') or 0:02}".strip(), "at": max(e["at"] for e in eps)}
+        ready = sum(e["kind"] == "ready" for e in eps)
+        busy = sorted((e for e in eps if e["kind"] == "preparing"), key=lambda e: (PREPARING.index(e["state"]), e["percent"]))
+        if busy:
+            group.update(kind="preparing", band=f"{ready} of {len(eps)} ready · {band_text(busy[0])}")
+        elif ready < len(eps):
+            group.update(kind="none", band=f"{ready} of {len(eps)} ready · {len(eps) - ready} no smaller version")
+        else:
+            group.update(kind="ready")
+        out.append(group)
+    return sorted(out, key=lambda e: e["at"], reverse=True)
+
+
+def fold_seasons(ids, info):
+    """Ids newest first; 2+ episodes of one season become that season, at the place of its newest."""
+    count = {}
+    for i in ids:
+        sid = (info.get(i) or {}).get("SeasonId")
+        count[sid] = count.get(sid, 0) + 1
+    out = []
+    for i in ids:
+        sid = (info.get(i) or {}).get("SeasonId")
+        i = sid if sid and count[sid] > 1 else i
+        if i not in out:
+            out.append(i)
+    return out
 
 
 def language(prefs):
@@ -213,11 +255,11 @@ class Sync:
         return sets, extra
 
     def found(self, uid, ids):
-        """The ids this user can see (gone or blocked titles drop out)."""
+        """{id: item} for the ids this user can see (gone or blocked titles drop out); an episode carries its SeasonId."""
         if not ids:
-            return set()
+            return {}
         got = self.api("GET", f"/Items?ids={','.join(ids)}&userId={uid}&EnableImages=false&EnableUserData=false")["Items"]
-        return {i["Id"] for i in got}
+        return {i["Id"]: i for i in got}
 
     def ensure(self, sid, name, tags, overview, members, ordered, uid):
         """Create (sid None) or update one set; returns its id (None in a dry run that would create it)."""
@@ -251,9 +293,10 @@ class Sync:
     def entry_art(self, sid, entry, text, admin, art):
         got = self.api("GET", f"/Items?ids={entry['item']}&userId={admin}&Fields=SeriesId&EnableUserData=false")["Items"]
         item = got[0] if got else {}
-        episode = item.get("Type") == "Episode"
-        base = self.image(item.get("SeriesId") if episode and item.get("SeriesId") else entry["item"], "Primary", 600)
-        back = self.image(entry["item"], "Primary" if episode else "Backdrop/0", 1280)
+        episode, season = item.get("Type") == "Episode", item.get("Type") == "Season"
+        series = item.get("SeriesId") if episode or season else None
+        base = self.image(series or entry["item"], "Primary", 600)
+        back = self.image(entry["item"], "Primary", 1280) if episode else self.image(series or entry["item"], "Backdrop/0", 1280)
         icon = "none" if entry["kind"] == "none" else "hourglass"
         self.raw("POST", f"/Items/{sid}/Images/Primary", base64.b64encode(art.status_poster(base, text, icon, title=entry["title"])), "image/jpeg")
         self.raw("POST", f"/Items/{sid}/Images/Thumb", base64.b64encode(art.status_thumb(back, entry["title"], text, icon)), "image/jpeg")
@@ -269,7 +312,7 @@ def run(argv, api=jf_api, raw=jf_raw, box=BOX, state_path=STATE, now=None, log=p
         log(f"phone state unreadable ({type(e).__name__}), lists left as they are; next: ls -l {box}")
         return 1
     state = load_state(state_path)
-    fingerprint = hashlib.sha256(raw_in + json.dumps([NAMES, BANDS, HINT], sort_keys=True).encode()).hexdigest()
+    fingerprint = hashlib.sha256(raw_in + json.dumps([NAMES, BANDS, HINT], sort_keys=True).encode() + pathlib.Path(__file__).read_bytes()).hexdigest()
     last = when(state.get("full"))
     if write and state.get("fingerprint") == fingerprint and last and now - last < datetime.timedelta(minutes=SKIP_MINUTES):
         log("unchanged inputs, skipped")
@@ -286,8 +329,8 @@ def run(argv, api=jf_api, raw=jf_raw, box=BOX, state_path=STATE, now=None, log=p
         ready = ready_row(items, sent, uid, now)
         sent_ids = sent_row(sent, uid, now)
         seen = sync.found(uid, sorted({e["item"] for e in ready} | set(sent_ids)))
-        ready = [e for e in ready if e["item"] in seen]
-        sent_ids = [i for i in sent_ids if i in seen]
+        ready = by_season([e for e in ready if e["item"] in seen], seen)
+        sent_ids = fold_seasons([i for i in sent_ids if i in seen], seen)
         if ready or sent_ids or any(k[0] == uid for k in sets):
             lang = language(api("GET", f"/DisplayPreferences/usersettings?userId={uid}&client=emby"))
             plans[uid] = (ready, sent_ids, lang)

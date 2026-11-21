@@ -68,6 +68,42 @@ class ReadyRowTest(unittest.TestCase):
         self.assertEqual(pl.ready_row(items, [], "u1", NOW), [])
 
 
+EPS = {"e1": {"Type": "Episode", "SeasonId": "s1", "SeriesName": "Show", "ParentIndexNumber": 1},
+       "e2": {"Type": "Episode", "SeasonId": "s1", "SeriesName": "Show", "ParentIndexNumber": 1},
+       "e3": {"Type": "Episode", "SeasonId": "s1", "SeriesName": "Show", "ParentIndexNumber": 1},
+       "f1": {"Type": "Episode", "SeasonId": "s2", "SeriesName": "Show", "ParentIndexNumber": 2},
+       "m": {"Type": "Movie"}}
+
+
+def entry(item, kind, minutes, state=None, percent=0):
+    return {"item": item, "kind": kind, "state": state or {"ready": "ready", "none": "nothing"}.get(kind, "downloading"), "percent": percent, "title": item, "at": NOW - datetime.timedelta(minutes=minutes)}
+
+
+class SeasonGroupTest(unittest.TestCase):
+    def test_two_episodes_of_a_season_become_one_season_entry(self):
+        out = pl.by_season([entry("e1", "preparing", 30, percent=40), entry("m", "ready", 20), entry("e2", "ready", 10)], EPS)
+        self.assertEqual([(e["item"], e["kind"]) for e in out], [("s1", "preparing"), ("m", "ready")])
+        self.assertEqual((out[0]["title"], pl.band_text(out[0]), out[0]["at"]), ("Show S01", "1 of 2 ready · Downloading 40 %", NOW - datetime.timedelta(minutes=10)))
+
+    def test_all_ready_is_the_season_itself(self):
+        self.assertEqual([(e["item"], e["kind"]) for e in pl.by_season([entry("e1", "ready", 5), entry("e2", "ready", 6)], EPS)], [("s1", "ready")])
+
+    def test_nothing_smaller_is_counted(self):
+        [e] = pl.by_season([entry("e1", "ready", 5), entry("e2", "ready", 6), entry("e3", "none", 7)], EPS)
+        self.assertEqual((e["kind"], pl.band_text(e)), ("none", "2 of 3 ready · 1 no smaller version"))
+
+    def test_the_slowest_episode_names_the_state(self):
+        eps = [entry("e1", "preparing", 5, "checking"), entry("e2", "preparing", 6, percent=70), entry("e3", "preparing", 7, percent=30)]
+        self.assertEqual(pl.band_text(pl.by_season(eps, EPS)[0]), "0 of 3 ready · Downloading 30 %")
+
+    def test_single_episodes_and_other_seasons_stay_apart(self):
+        out = pl.by_season([entry("e1", "ready", 5), entry("f1", "ready", 6), entry("m", "ready", 7)], EPS)
+        self.assertEqual([e["item"] for e in out], ["e1", "f1", "m"])
+
+    def test_sent_episodes_fold_into_their_season_at_the_newest_place(self):
+        self.assertEqual(pl.fold_seasons(["m", "e2", "f1", "e1"], EPS), ["m", "s1", "f1"])
+
+
 class SentRowTest(unittest.TestCase):
     def test_mine_newest_first_once_per_title_14_days(self):
         recs = [sent("u1", "a", days=3), sent("u1", "b", days=1), sent("u1", "a", hours=2), sent("u2", "c", hours=1), sent("u1", "d", days=14, minutes=1)]
@@ -132,7 +168,7 @@ class FakeJellyfin:
 
     def __init__(self):
         self.users = {"u1": {"IsAdministrator": True, "BlockedTags": ["kids"]}, "u2": {"IsAdministrator": False, "BlockedTags": []}}
-        self.titles = {"a": "Movie", "b": "Episode", "c": "Movie"}
+        self.titles = {"a": "Movie", "b": "Episode", "c": "Movie", "e1": "Episode", "e2": "Episode", "s1": "Season"}
         self.sets = {}
         self.images = []
         self.moonfin = {"u1": {"syncEnabled": True, "mobile": {"homeSections": [section("resume", 0), section("nextup", 1)]}, "tv": {"homeSections": [section("resume", 0)]}},
@@ -195,7 +231,8 @@ class FakeJellyfin:
         if p == "/Items" and "ParentId" in q:
             return {"Items": [{"Id": i} for i in self.sets[q["ParentId"]]["Members"]]}
         if p == "/Items" and "ids" in q:
-            return {"Items": [{"Id": i, "Type": self.titles[i], "SeriesId": "ser"} for i in q["ids"].split(",") if i in self.titles]}
+            return {"Items": [{"Id": i, "Type": self.titles[i], "SeriesId": "ser", **({"SeasonId": "s1", "SeriesName": "Show", "ParentIndexNumber": 1} if i.startswith("e") else {})}
+                              for i in q["ids"].split(",") if i in self.titles]}
         if p == "/Items" and q.get("IncludeItemTypes") == "BoxSet":
             return {"Items": [{"Id": s["Id"], "Tags": list(s["Tags"])} for s in self.sets.values() if q["Tags"] in s["Tags"]]}
         raise AssertionError(f"unexpected {method} {path}")
@@ -280,6 +317,20 @@ class RunTest(unittest.TestCase):
         self.run_lists(now=NOW + datetime.timedelta(minutes=6))
         self.assertEqual(self.jf.by_kind("u1", "ready")[0]["Members"], [])
         self.assertEqual(self.jf.by_kind("u1", "sent")[0]["Members"], ["a"])
+
+    def test_a_season_is_one_card_from_request_to_phone(self):
+        self.inputs({"e1": req("downloading", {"u1": ts(hours=1)}, percent=40), "e2": req("ready", {"u1": ts(hours=1)})})
+        self.run_lists()
+        [entry] = self.jf.by_kind("u1", "entry")
+        self.assertEqual((entry["Name"], entry["Members"], self.jf.by_kind("u1", "ready")[0]["Members"]), ("Show S01", ["s1"], [entry["Id"]]))
+        self.assertTrue(entry["Overview"].startswith("1 of 2 ready · Downloading 40 %"))
+        self.inputs({"e1": req("ready", {"u1": ts(hours=1)}), "e2": req("ready", {"u1": ts(hours=1)})})
+        self.run_lists(now=NOW + datetime.timedelta(minutes=2))
+        self.assertEqual((self.jf.by_kind("u1", "entry"), self.jf.by_kind("u1", "ready")[0]["Members"]), ([], ["s1"]))
+        self.inputs({"e1": req("ready", {"u1": ts(hours=1)}), "e2": req("ready", {"u1": ts(hours=1)})}, [sent("u1", "e1", minutes=0), sent("u1", "e2", minutes=0)])
+        self.run_lists(now=NOW + datetime.timedelta(minutes=4))
+        self.assertEqual((self.jf.by_kind("u1", "ready")[0]["Members"], self.jf.by_kind("u1", "sent")[0]["Members"]), ([], ["s1"]))
+        self.assertEqual(self.run_lists("--check", now=NOW + datetime.timedelta(minutes=4)), 0, self.logs[-1])
 
     def test_check_needs_no_local_state(self):
         self.inputs({"a": req("downloading", {"u1": ts(hours=1)}, percent=40)})
