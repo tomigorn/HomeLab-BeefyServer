@@ -1,10 +1,11 @@
 [Unit]
-Description=Phone versions: a phone asked for one, or the clamav-queue worker checked a download
+Description=Phone versions: a phone asked for one, the clamav-queue worker checked a download, or a conversion finished
 Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
 
 [Path]
 PathExistsGlob=/srv/appdata/phone-versions/requests/*.json
 PathChanged=/var/lib/clamav-scan/textfile/quality-results.jsonl
+PathChanged=/srv/dlpool/usenet/complete/phone/convert/.done
 Unit=phone-fetch.service
 
 [Install]

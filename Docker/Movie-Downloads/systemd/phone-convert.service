@@ -1,0 +1,19 @@
+[Unit]
+Description=Phone versions: convert the waiting server copies, one at a time (Quick Sync, throw-away container of the Jellyfin image; README Phone versions)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+RequiresMountsFor=/srv/video /srv/dlpool
+After=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+# root for docker only; the conversion itself runs as Jellyfin's uid without network or capabilities, the library read-only
+Type=oneshot
+# Hold beefy awake only when nobody holds it, release only what this run took (same pattern as subtitle-translate).
+ExecStartPre=/bin/sh -c 'rm -f /run/phone-convert-keep-awake; [ -e /run/beefy-keep-awake ] || { /usr/local/sbin/beefy-keep-awake on && touch /run/phone-convert-keep-awake; }'
+ExecStartPre=-/usr/bin/docker rm -f phone-convert
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/phone-fetch.py convert
+ExecStopPost=-/usr/bin/docker rm -f phone-convert
+ExecStopPost=/bin/sh -c '[ -e /run/phone-convert-keep-awake ] && /usr/local/sbin/beefy-keep-awake off; rm -f /run/phone-convert-keep-awake'
+TimeoutStartSec=6h
+UMask=0002
+PrivateTmp=true

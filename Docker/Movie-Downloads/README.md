@@ -1174,16 +1174,18 @@ sudo install -m 0644 systemd/quality-block.{service,path,timer} /etc/systemd/sys
 
 #### Phone versions
 
-Owner 2026-11-19 (fastpi `reports/specs/2026-11-19-phone-versions-design.md`): a phone download of a 4K title gets a smaller second download (never an own conversion), kept on the HDD as a second Jellyfin version of the same item.
+Owner 2026-11-19 (fastpi `reports/specs/2026-11-19-phone-versions-design.md`): a phone download of a 4K title gets a smaller second download, kept on the HDD as a second Jellyfin version of the same item. Owner 2026-11-20/21: when no release fits or 3 fitting ones failed, beefy converts the server copy itself (fallback only).
 
 | Step | What |
 |---|---|
 | Ask | a phone app taps Download (Original) on a 4K film or episode: fastpi Traefik router `jellyfin-phone-download` → `jellyfin-popular` (Jellyfin README "Phone versions") → one JSON in `/srv/appdata/phone-versions/requests/` + pop-up "being prepared", answer 409. By hand: `scripts/phone-fetch.py request --movie <radarr id>` / `--episode <sonarr episode id>` / `--item <jellyfin id>` |
 | Pick | `scripts/phone-version.py` (below) on Radarr/Sonarr's release search, **usenet only** (beefy never seeds) |
+| Retry | a failed download, no video, a failed or missing quality check: the job is removed and the next fitting release (not tried before) is grabbed at once, at most 3 per title (`tried`, `failures` in the state) |
+| Convert | none fits or 3 failed: job `/srv/dlpool/usenet/complete/phone/convert/<key>/job.json` → `systemd/phone-convert.path` → `phone-convert.service` (root for docker, beefy held awake while it runs) → `phone-fetch.py convert`: oldest job first, one at a time, a throw-away container of the Jellyfin image (`--network none`, Jellyfin's uid, no capabilities, library read-only, `/dev/dri`): Quick Sync HEVC low-power slow 5 Mbit/s (max 7.5), 1920 wide 10-bit, HDR10 kept (Dolby Vision dropped), lossy audio (EAC3/AC3/AAC) copied, a language without one gets its best track as EAC3 5.1 640 kbit/s, subtitles and fonts copied, chapters kept. Check: one video, ≥ 1 audio, duration within 1 %. Dolby Vision without HDR10 layer (profile 5): not converted (`nothing`). Result → `result.json` + `convert/.done` → `phone-fetch.path` places it like a download |
 | Fetch | SABnzbd category `phone` (folder `/data/usenet/complete/phone`, priority High), at once, day or night; the usual completion hook: integrity, virus scan, quality check (Antivirus README "Quality check"); `quality-block.py` leaves these paths alone |
 | Place | `scripts/phone-fetch.py run` (`systemd/phone-fetch.path`: a request file or a new quality result; `phone-fetch.timer` every 2 min while awake; buntu, media lock): the checked video copied onto the HDD branch `/srv/.disks/hdd-cold/media/…/<title folder>/` as `<folder> - Phone 1080p.mkv` (films) or `<episode file name up to SxxEyy> - Phone 1080p.mkv` (episodes, season folder), dirs 2775, file 0664 group media; the download job and its SABnzbd history entry removed; Jellyfin told (`/Library/Media/Updated`) |
 | Ready | Jellyfin lists it as a version ("Phone 1080p"; the 2160p server copy stays the default, Jellyfin sorts versions by resolution) → state `ready` with the version's item id → pop-up "✅ Phone version ready" to every device that asked; its next Download gets the phone version |
-| States | `downloading` (%), `checking`, `placing`, `ready`, `nothing` (no smaller release; asked again after 24 h), `not-needed` (server copy not 4K), `failed` (download failed, quality check failed: the job is removed) · `~/.local/state/movie-downloads/phone-fetch.json`, per Jellyfin item for the popular service and the Jellyfin phone lists in `/srv/appdata/phone-versions/state.json` (state, %, phone item, request time, who asked: `requestedBy` user + time) |
+| States | `searching`, `downloading` (%), `checking`, `placing`, `ready`, `queued` (waits for the converter), `converting` (%), `nothing` (Dolby Vision profile 5 or no server copy; asked again after 24 h), `not-needed` (server copy not 4K), `failed` (the conversion failed; asked again after 24 h) · `~/.local/state/movie-downloads/phone-fetch.json`, per Jellyfin item for the popular service and the Jellyfin phone lists in `/srv/appdata/phone-versions/state.json` (state, %, phone item, request time, who asked: `requestedBy` user + time) |
 | Not yet | retention counting all versions together (a phone version is a plain extra file: the mover/promoter may move it with its title; deleting the title in Radarr/Sonarr deletes the whole folder, phone version included) |
 | Arr side | Radarr/Sonarr see the extra file on a disk scan and reject it as "not an upgrade" (lower quality) while the server copy exists; if the server copy is gone they could take it over (Jellyfin/Radarr source research 2026-11-20). `phone-fetch.py run` checks every ready phone version hourly and notes it in `status` (and the journal) when an app tracks the phone file |
 
@@ -1191,7 +1193,9 @@ Owner 2026-11-19 (fastpi `reports/specs/2026-11-19-phone-versions-design.md`): a
 scripts/phone-fetch.py status                       # every request and its state
 scripts/phone-fetch.py request --episode 130        # by hand (one release search, then a download)
 journalctl -u phone-fetch -n 20
-sudo install -m 0644 systemd/phone-fetch.{service,path,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now phone-fetch.path phone-fetch.timer
+sudo install -m 0644 systemd/phone-fetch.{service,path,timer} systemd/phone-convert.{service,path} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now phone-fetch.path phone-fetch.timer phone-convert.path
+sudo install -d -o buntu -g media -m 2775 /srv/dlpool/usenet/complete/phone/convert
+journalctl -u phone-convert -n 20                   # conversions
 ```
 
 - Shared folder: `sudo install -d -o buntu -g 65128 -m 2775 /srv/appdata/phone-versions /srv/appdata/phone-versions/requests` (65128 = jellyfin-popular). SABnzbd category: `mode=set_config&section=categories&keyword=phone&dir=phone&priority=1&script=Default`.
@@ -1200,14 +1204,14 @@ sudo install -m 0644 systemd/phone-fetch.{service,path,timer} /etc/systemd/syste
 
 #### Phone version release picker
 
-| Option (strict order) | Rule |
+| Option (strict order, owner 2026-11-20 15:00) | Rule |
 |---|---|
 | 1 | `WEBDL-1080p` with HDR (an HDR or DV-with-HDR10 format; `DV (w/o HDR fallback)` is a bad tag) |
-| 2 | `WEBDL-1080p` without HDR, not an x265 re-encode (`x265 (no HDR/DV)`) |
-| 3 | 1080p encode: a TRaSH tier format (`… Tier 0x`), `10bit` + x265/HEVC, ≥ 15 MB per minute of runtime, `Bluray-1080p` or `WEBDL-1080p` |
-| 4 | a 4K release ≤ 60 % of the server copy's size |
-| 5 | the server copy (also when it is not 4K) |
-| Every option | smaller than the server copy (a 1080p WEB-DL can be bigger than a 4K encode: Rings of Power S01E01 12.3 GB vs 9.6 GB, 2026-11-20), no remux, no audio-description release, no hardcoded subtitles (`HC`, `KORSUB`, `hardsub` in the name; no custom format for it here), none of the title profile's negative formats (LQ, Upscaled, AV1, bad groups, …; the ones the order decides itself excluded), German, English or the original language present, not another title (the arr's "Unknown Movie" rejection). Inside an option: highest custom-format score, then the smaller file |
+| 2 | 1080p HDR encode: a TRaSH tier format (`… Tier 0x`), `10bit` + x265/HEVC, ≥ 15 MB per minute of runtime, `Bluray-1080p` or `WEBDL-1080p` |
+| 3 | none fits: own conversion of the server copy (Phone versions, Convert) |
+| 4 | the server copy, when it is not 4K |
+| Never | 1080p without HDR, any 4K release (dropped 2026-11-20) |
+| Every option | 1080p with HDR, not tried before for this title, smaller than the server copy (a 1080p WEB-DL can be bigger than a 4K encode: Rings of Power S01E01 12.3 GB vs 9.6 GB, 2026-11-20), no remux, no audio-description release, no hardcoded subtitles (`HC`, `KORSUB`, `hardsub` in the name; no custom format for it here), none of the title profile's negative formats (LQ, Upscaled, AV1, bad groups, …; the ones the order decides itself excluded), German, English or the original language present, not another title (the arr's "Unknown Movie" rejection). Inside an option: highest custom-format score, then the smaller file |
 
 ```bash
 scripts/phone-version.py --movie <radarr id>       # one release search (indexer bar counts it), prints the pick and why the others failed; grabs nothing
@@ -1215,7 +1219,7 @@ scripts/phone-version.py --episode <sonarr episode id>
 ```
 
 - Candidates: Radarr/Sonarr's own `GET /release` (their parsed quality, formats, languages); the picker never uses the arr's own rejections except a wrong title, since "existing file is better" is beside the point for a second version.
-- Real runs 2026-11-20: Bad Apples (2026, 11.8 GB 4K) → option 2, 1080p AMZN WEB-DL 8.0 GB; Money Heist S02E01 (6.3 GB 4K) → option 1, 1080p NF WEB-DL HDR 2.5 GB.
+- Real runs 2026-11-20 (old order): Bad Apples (2026, 11.8 GB 4K) → 1080p AMZN WEB-DL without HDR 8.0 GB (no longer taken); Money Heist S02E01 (6.3 GB 4K) → option 1, 1080p NF WEB-DL HDR 2.5 GB.
 - Open for the fetch step: season packs show up as candidates for one episode (a pack grab for one phone episode needs a rule), indexer budget per request.
 - Tests: `python3 tests/test_phone_version.py`.
 - Library 2026-11-16 (`--library`): 1082 files, 2 would be blocked (only Arabic / only Russian audio where Radarr says English: *Palestine 36*, *Navalny*; left alone, only new imports act), 15 unknown (no or untagged audio in the arr's media info).

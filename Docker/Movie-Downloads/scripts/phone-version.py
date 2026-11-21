@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Phone version release picker (README "Phone versions", owner 2026-11-19, fastpi reports/specs/2026-11-19-phone-versions-design.md): which release a phone gets instead of a big 4K server copy. A smaller version is always a second download, never an own conversion.
+"""Phone version release picker (README "Phone versions", owner 2026-11-19 and 2026-11-20 15:00, fastpi reports/specs/2026-11-19-phone-versions-design.md): which release a phone gets instead of a big 4K server copy.
 Strict order, a failed rule falls through to the next option:
 1. 1080p WEB-DL with HDR (HDR10 or Dolby Vision with an HDR10 fallback)
-2. 1080p WEB-DL without HDR (not an x265 re-encode)
-3. 1080p encode: trusted group (a TRaSH tier format), HEVC 10-bit, at least 15 MB per minute, source Blu-ray or WEB-DL
-4. a 4K release at least 40 % smaller than the server copy
-5. the server copy itself
-Every option: smaller than the server copy, no remux, no audio-description release, no hardcoded subtitles (HC, KORSUB, hardsub in the name), none of the title profile's negative formats (LQ, Upscaled, bad groups, DV without fallback, ...), German, English or the original language present, the right title.
+2. 1080p HDR encode: trusted group (a TRaSH tier format), HEVC 10-bit, at least 15 MB per minute, source Blu-ray or WEB-DL
+3. none fits: beefy converts the server copy itself (phone-fetch.py)
+4. the server copy itself, when it is not 4K
+Every option: 1080p with HDR, smaller than the server copy, no remux, no audio-description release, no hardcoded subtitles (HC, KORSUB, hardsub in the name), none of the title profile's negative formats (LQ, Upscaled, bad groups, DV without fallback, ...), German, English or the original language present, the right title, not tried before.
 The candidates are Radarr/Sonarr's own release search (GET /release): their parsed quality, formats and languages. Nothing is grabbed here.
 Usage: scripts/phone-version.py --movie <radarr id> | --episode <sonarr episode id>   (one indexer search, prints the pick and why the others failed) | -h"""
 import importlib.util
@@ -23,7 +22,6 @@ _spec.loader.exec_module(lb)
 # a release search asks every indexer through the arr and can take minutes
 RELEASE_TIMEOUT = 600
 MIN_BYTES_PER_MINUTE = 15_000_000
-MAX_4K_SHARE = 0.60
 # negative profile formats the order itself decides on (x265 re-encodes go to option 3, languages to the language rule)
 HANDLED = {"x265 (no HDR/DV)", "x265 (HD)", "Remux: smaller encode wins", "SDR", "German", "Language: Not Original", "Language: Not Original (sound film)", "v0"}
 NOT_HDR = {"SDR", "x265 (no HDR/DV)", "Generated Dynamic HDR", "DV (w/o HDR fallback)"}
@@ -33,7 +31,7 @@ AUDIO_DESCRIPTION = re.compile(r"audio[ ._-]?description|\bdescriptive[ ._-]?aud
 HARDCODED_SUBS = re.compile(r"(?<![a-z0-9])(hc|hc[ ._-]?subs?|hard[ ._-]?subs?|hard[ ._-]?subbed|hard[ ._-]?coded([ ._-]?subs?)?|korsub|kor[ ._-]?sub)(?![a-z0-9])", re.I)
 WRONG_TITLE = re.compile(r"unknown (movie|series)|unable to match|wrong (movie|series|episode)", re.I)
 SPEAKABLE = {"German", "English", "Swiss German"}
-OPTIONS = {1: "1080p WEB-DL with HDR", 2: "1080p WEB-DL", 3: "1080p encode (strict rules)", 4: "smaller 4K release", 5: "the server copy"}
+OPTIONS = {1: "1080p WEB-DL with HDR", 2: "1080p HDR encode (strict rules)", 3: "own conversion", 4: "the server copy"}
 
 
 def bad_formats(profile):
@@ -80,29 +78,25 @@ def encode_fails(r, title):
 def option(r, title):
     """(option, None) or (None, why) for a release that passed the common rules."""
     q, cfs = r["quality"], set(r.get("customFormats") or [])
-    if q.get("resolution") == 2160:
-        if title.get("size") and r.get("size", 0) <= MAX_4K_SHARE * title["size"]:
-            return 4, None
-        return None, "4K, not 40 % smaller than the server copy"
     if q.get("resolution") != 1080:
-        return None, f"{q['name']}: not 1080p or 4K"
+        return None, f"{q['name']}: not 1080p"
     if title.get("size") and r.get("size", 0) >= title["size"]:
         return None, "not smaller than the server copy"
-    if q["name"] == "WEBDL-1080p" and is_hdr(cfs):
+    if not is_hdr(cfs):
+        return None, "1080p without HDR"
+    if q["name"] == "WEBDL-1080p":
         return 1, None
-    if q["name"] == "WEBDL-1080p" and "x265 (no HDR/DV)" not in cfs:
-        return 2, None
     why = encode_fails(r, title)
-    return (3, None) if not why else (None, "encode: " + ", ".join(why))
+    return (2, None) if not why else (None, "encode: " + ", ".join(why))
 
 
-def pick(releases, title, bad):
-    """{"option", "label", "release" (None = the server copy), "why", "rejected": [{"title", "why"}]}."""
+def pick(releases, title, bad, tried=()):
+    """{"option", "label", "release" (None = own conversion or the server copy), "why", "rejected": [{"title", "why"}]}."""
     if title.get("resolution") != 2160:
-        return {"option": 5, "label": OPTIONS[5], "release": None, "why": "the server copy is not 4K", "rejected": []}
+        return {"option": 4, "label": OPTIONS[4], "release": None, "why": "the server copy is not 4K", "rejected": []}
     found, rejected = {}, []
     for r in releases:
-        why = common(r, title, bad)
+        why = "tried before" if r.get("title") in tried else common(r, title, bad)
         n = None
         if why is None:
             n, why = option(r, title)
@@ -113,7 +107,7 @@ def pick(releases, title, bad):
     for n in sorted(found):
         best = sorted(found[n], key=lambda r: (-(r.get("customFormatScore") or 0), r.get("size") or 0))[0]
         return {"option": n, "label": OPTIONS[n], "release": best, "why": None, "rejected": rejected}
-    return {"option": 5, "label": OPTIONS[5], "release": None, "why": "no smaller release passed the rules", "rejected": rejected}
+    return {"option": 3, "label": OPTIONS[3], "release": None, "why": "no smaller release passed the rules", "rejected": rejected}
 
 
 def flatten(r):
@@ -164,12 +158,12 @@ def main(argv):
         r = p["release"]
         print(f"pick: option {p['option']} ({p['label']}): {r['title']} · {r['size'] / 1e9:.1f} GB · {r['indexer']} · score {r['customFormatScore']}")
     else:
-        print(f"pick: option 5 ({p['label']}): {p['why']}")
+        print(f"pick: option {p['option']} ({p['label']}): {p['why']}")
     for x in p["rejected"][:15]:
         print(f"  not: {x['title']}: {x['why']}")
     if len(p["rejected"]) > 15:
         print(f"  … {len(p['rejected']) - 15} more not taken")
-    print("next: nothing is grabbed; the fetch step is not built yet (README \"Phone versions\")")
+    print("next: nothing is grabbed here; scripts/phone-fetch.py request --movie <radarr id> fetches it")
     return 0
 
 

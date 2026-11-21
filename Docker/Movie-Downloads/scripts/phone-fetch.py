@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Phone versions, fetch and place (README "Phone versions", owner 2026-11-19, fastpi reports/specs/2026-11-19-phone-versions-design.md).
 request: the title's release search through Radarr/Sonarr, the pick of scripts/phone-version.py (usenet only), sent to SABnzbd category `phone` at high priority, at once (never a night download).
+A failed download or check takes the next fitting release at once, up to 3; none fits or all failed → a conversion job for the server copy.
+convert (root, systemd/phone-convert.service): one job at a time, Quick Sync HEVC 5 Mbit/s 1080p HDR10, lossy audio only, in a throw-away container of the Jellyfin image; run places the result like a download.
 run: SABnzbd progress → the clamav-queue worker's virus scan and quality check (quality-results.jsonl) → the file copied onto the HDD branch into the title's folder as `<folder> - Phone <res>p.mkv` (episodes `<series folder> - SxxEyy - Phone <res>p.mkv` in the season folder), so Jellyfin lists it as a second version of the same item → Jellyfin told about the new file → ready, a pop-up to every device that asked.
 Requests come from Jellyfin's popular service as JSON files in <box>/requests (or by hand); the state per Jellyfin item is exported to <box>/state.json for it.
 Usage: scripts/phone-fetch.py request --movie <radarr id> | --episode <sonarr episode id> | --item <jellyfin item id>
        scripts/phone-fetch.py run      (systemd/phone-fetch.path and .timer)
+       scripts/phone-fetch.py convert  (systemd/phone-convert.path, root)
        scripts/phone-fetch.py status   | -h"""
 import importlib.util
 import json
@@ -13,6 +16,7 @@ import pathlib
 import posixpath
 import re
 import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -29,6 +33,7 @@ STATE = pathlib.Path(os.environ.get("PF_STATE", lb.STATE_DIR / "phone-fetch.json
 BOX = os.environ.get("PF_BOX", "/srv/appdata/phone-versions")
 DL_HOST = os.environ.get("PF_DL_HOST", "/srv/dlpool")
 HDD = os.environ.get("PF_HDD", "/srv/.disks/hdd-cold")
+MEDIA_HOST = os.environ.get("PF_MEDIA_HOST", "/srv/video/media")
 RESULTS = os.environ.get("PF_RESULTS", "/var/lib/clamav-scan/textfile/quality-results.jsonl")
 SAB_URL = os.environ.get("PF_SAB_URL", "http://127.0.0.1:8081")
 SAB_KEY = pathlib.Path(os.environ.get("PF_SAB_KEY", HERE.parent / "secrets" / "hook" / "sabnzbd.apikey"))
@@ -38,13 +43,24 @@ JELLYFIN_KEY = pathlib.Path(os.environ.get("PF_JELLYFIN_KEY", HERE.parent.parent
 RELEASE_TIMEOUT = 600
 CATEGORY = "phone"
 PHONE_DIR = "/data/usenet/complete/phone/"
+CONVERT_DIR = PHONE_DIR + "convert/"
+MAX_RELEASES = 3
 RETRY_HOURS = 24
 CHECK_HOURS = 6
 PLACE_HOURS = 2
 KEEP_DAYS = 180
 GUARD_HOURS = 1
 VIDEO = {".mkv", ".mp4", ".m4v", ".avi", ".ts", ".m2ts", ".webm"}
-ACTIVE = ("downloading", "checking", "placing", "ready")
+ACTIVE = ("searching", "downloading", "checking", "placing", "ready", "queued", "converting")
+STEPPED = ("searching", "downloading", "checking", "placing", "queued", "converting")
+# Jellyfin's container user and the shared media group: the output is readable and removable by buntu
+CONVERT_USER = os.environ.get("PF_CONVERT_USER", "65108:1100")
+FFMPEG = "/usr/lib/jellyfin-ffmpeg/ffmpeg"
+FFPROBE = "/usr/lib/jellyfin-ffmpeg/ffprobe"
+LOSSY = {"eac3", "ac3", "aac"}
+TEXT_OR_IMAGE_SUBS = {"subrip", "ass", "ssa", "hdmv_pgs_subtitle", "dvd_subtitle", "webvtt"}
+COLOUR = re.compile(r"^[a-z0-9-]{1,20}$")
+JOB_KEY = re.compile(r"^(radarr|sonarr)-[0-9]+$")
 READY_HEADER = "✅ Phone version ready"
 READY_TEXT = "{title}: the phone version is ready. Tap Download again (Original)."
 
@@ -54,8 +70,9 @@ class Refused(Exception):
 
 
 class Deps:
-    def __init__(self, arr, sab, jf, dl_host=DL_HOST, hdd=HDD, results=RESULTS, box=BOX, clock=time.time):
+    def __init__(self, arr, sab, jf, dl_host=DL_HOST, hdd=HDD, results=RESULTS, box=BOX, clock=time.time, media_host=MEDIA_HOST, docker=None, image=None):
         self.arr, self.sab, self.jf, self.dl_host, self.hdd, self.results, self.box, self.clock = arr, sab, jf, dl_host, hdd, results, box, clock
+        self.media_host, self.docker, self.image = media_host, docker, image
 
 
 def ts(now):
@@ -133,20 +150,72 @@ def start(deps, state, app, ident, jf_item, key, asker, now):
     if title["resolution"] != 2160:
         r.update(state="not-needed", option=5, note="the server copy is not 4K")
         return r
-    raw = [x for x in api("GET", "/release", query) or [] if x.get("protocol") == "usenet"]
-    flat = [dict(pv.flatten(x), _i=i) for i, x in enumerate(raw)]
-    p = pv.pick(flat, title, pv.bad_formats(api("GET", f"/qualityprofile/{profile_id}")))
-    if not p["release"]:
-        r.update(state="nothing", option=5, note=p["why"])
+    return fetch_next(deps, r)
+
+
+def fetch_next(deps, r):
+    """The next fitting release not tried yet into SABnzbd, or the conversion job once none is left."""
+    now = deps.clock()
+    api = deps.arr[r["app"]]
+    r.update(state="searching", updated=ts(now))
+    tried = r.setdefault("tried", [])
+    while len(tried) < MAX_RELEASES:
+        title, profile_id, query = pv.server_title(r["app"], api, r["arrId"])
+        raw = [x for x in api("GET", "/release", query) or [] if x.get("protocol") == "usenet"]
+        flat = [dict(pv.flatten(x), _i=i) for i, x in enumerate(raw)]
+        p = pv.pick(flat, title, pv.bad_formats(api("GET", f"/qualityprofile/{profile_id}")), tried)
+        if not p["release"]:
+            break
+        rel = raw[p["release"]["_i"]]
+        tried.append(rel["title"])
+        got = deps.sab({"mode": "addurl", "name": rel["downloadUrl"], "cat": CATEGORY, "priority": "1", "nzbname": f"phone {r['key']} {rel['title']}"[:200]})
+        ids = (got or {}).get("nzo_ids") or []
+        if not ids:
+            r.setdefault("failures", []).append(f"SABnzbd refused the release: {got}")
+            continue
+        res = (rel.get("quality") or {}).get("quality", {}).get("resolution") or 0
+        r.update(state="downloading", option=p["option"], release=rel["title"], size=rel.get("size"), nzo=ids[0], resolution=res, percent=0, storage=None, updated=ts(now))
         return r
-    rel = raw[p["release"]["_i"]]
-    got = deps.sab({"mode": "addurl", "name": rel["downloadUrl"], "cat": CATEGORY, "priority": "1", "nzbname": f"phone {key} {rel['title']}"[:200]})
-    ids = (got or {}).get("nzo_ids") or []
-    if not ids:
-        r.update(state="failed", note=f"SABnzbd refused the release: {got}")
+    return queue_convert(deps, r)
+
+
+def fail(deps, r, note):
+    r.setdefault("failures", []).append(note)
+    r["note"] = note
+    fetch_next(deps, r)
+
+
+def server_file(app, api, ident):
+    if app == "radarr":
+        return ((api("GET", f"/movie/{ident}") or {}).get("movieFile") or {}).get("path")
+    e = api("GET", f"/episode/{ident}") or {}
+    return ((api("GET", f"/episodefile/{e['episodeFileId']}") if e.get("episodeFileId") else {}) or {}).get("path")
+
+
+def job_dir(deps, key):
+    return host(deps, CONVERT_DIR + key, deps.dl_host)
+
+
+def queue_convert(deps, r):
+    now = deps.clock()
+    src = server_file(r["app"], deps.arr[r["app"]], r["arrId"])
+    if not src:
+        r.update(state="nothing", option=3, note="no server copy to convert", updated=ts(now))
         return r
-    res = (rel.get("quality") or {}).get("quality", {}).get("resolution") or 0
-    r.update(state="downloading", option=p["option"], release=rel["title"], size=rel.get("size"), nzo=ids[0], resolution=res)
+    d = job_dir(deps, r["key"])
+    shutil.rmtree(d, ignore_errors=True)
+    made = []
+    p = d
+    while not os.path.isdir(p):
+        made.append(p)
+        p = os.path.dirname(p)
+    for p in reversed(made):
+        os.mkdir(p)
+        os.chmod(p, 0o2775)
+    with open(os.path.join(d, ".job.json"), "w") as f:
+        json.dump({"key": r["key"], "src": src, "at": ts(now)}, f)
+    os.replace(os.path.join(d, ".job.json"), os.path.join(d, "job.json"))
+    r.update(state="queued", option=3, percent=0, release=None, nzo=None, resolution=1080, updated=ts(now))
     return r
 
 
@@ -248,8 +317,47 @@ def notify(deps, r, header, text):
             print(f"phone-fetch: pop-up for {r['key']} not sent: {type(e).__name__}", file=sys.stderr)
 
 
+def follow_convert(deps, r):
+    now = deps.clock()
+    d = job_dir(deps, r["key"])
+    if not os.path.isdir(d):
+        r.update(state="failed", note="the conversion job vanished", updated=ts(now))
+        return
+    try:
+        res = json.loads(pathlib.Path(d, "result.json").read_text())
+    except (OSError, ValueError):
+        res = None
+    if res is None:
+        try:
+            status = json.loads(pathlib.Path(d, "status.json").read_text())
+            lines = pathlib.Path(d, "progress").read_text().splitlines()
+        except (OSError, ValueError):
+            return
+        # out_time lags far behind the video when a file has many subtitle tracks: frames when the frame count is known
+        frames = [int(x[6:]) for x in lines if x.startswith("frame=") and x[6:].isdigit()]
+        us = [int(x[12:]) for x in lines if x.startswith("out_time_us=") and x[12:].isdigit()]
+        total, duration = status.get("frames") or 0, status.get("duration") or 0
+        share = frames[-1] / total if frames and total else us[-1] / 1e6 / duration if us and duration else None
+        if share is not None:
+            r.update(state="converting", percent=max(0, min(99, int(share * 100))))
+        return
+    if not res.get("ok"):
+        shutil.rmtree(d, ignore_errors=True)
+        if res.get("skip"):
+            r.update(state="nothing", note=res.get("why") or "not converted", updated=ts(now))
+        else:
+            r.update(state="failed", note=f"conversion failed: {res.get('why') or 'unknown'}", updated=ts(now))
+        return
+    dest, jf_path = place(deps, r, os.path.join(d, os.path.basename(res.get("file") or "phone.mkv")))
+    deps.jf("POST", "/Library/Media/Updated", {"Updates": [{"Path": jf_path, "UpdateType": "Created"}]})
+    shutil.rmtree(d, ignore_errors=True)
+    r.update(state="placing", percent=100, target=dest, jfPath=jf_path, updated=ts(now))
+
+
 def step(deps, r):
     now = deps.clock()
+    if r["state"] == "searching":
+        return fetch_next(deps, r)
     since = now - (lb.epoch(r.get("updated")) or now)
     if r["state"] == "downloading":
         q = (deps.sab({"mode": "queue", "nzo_ids": r["nzo"]}) or {}).get("queue", {}).get("slots") or []
@@ -260,14 +368,13 @@ def step(deps, r):
         if not h:
             return
         if h[0].get("status") == "Failed":
-            r.update(state="failed", note=f"download failed: {h[0].get('fail_message') or 'unknown'}", updated=ts(now))
-            return
+            remove_job(deps, r)
+            return fail(deps, r, f"download failed: {h[0].get('fail_message') or 'unknown'}")
         if h[0].get("status") != "Completed":
             return
         storage = h[0].get("storage") or ""
-        if not storage.startswith(PHONE_DIR):
-            r.update(state="failed", note=f"finished outside the phone folder: {storage}", updated=ts(now))
-            return
+        if not storage.startswith(PHONE_DIR) or storage.startswith(CONVERT_DIR):
+            return fail(deps, r, f"finished outside the phone folder: {storage}")
         r.update(state="checking", storage=storage, percent=100, updated=ts(now))
     if r["state"] == "checking":
         local = host(deps, r["storage"], deps.dl_host)
@@ -275,26 +382,27 @@ def step(deps, r):
         if not video:
             # SABnzbd can report the job done while its post-processing still renames or moves the file
             if since > CHECK_HOURS * 3600:
-                r.update(state="failed", note="no video file in the download", updated=ts(now))
                 remove_job(deps, r)
+                fail(deps, r, "no video file in the download")
             return
         v = quality_verdict(deps, PHONE_DIR + os.path.relpath(video, host(deps, PHONE_DIR, deps.dl_host)))
         if v is None:
             if since > CHECK_HOURS * 3600:
-                r.update(state="failed", note=f"no virus/quality check result after {CHECK_HOURS} h", updated=ts(now))
+                remove_job(deps, r)
+                fail(deps, r, f"no virus/quality check result after {CHECK_HOURS} h")
             return
         if v.get("verdict") != "ok":
-            r.update(state="failed", note="quality check: " + ("; ".join(v.get("reasons") or []) or v.get("verdict")), updated=ts(now))
             remove_job(deps, r)
-            return
+            return fail(deps, r, "quality check: " + ("; ".join(v.get("reasons") or []) or v.get("verdict")))
         if not os.path.exists(video):
-            r.update(state="failed", note="the download vanished (virus quarantine?)", updated=ts(now))
-            return
+            return fail(deps, r, "the download vanished (virus quarantine?)")
         dest, jf_path = place(deps, r, video)
         deps.jf("POST", "/Library/Media/Updated", {"Updates": [{"Path": jf_path, "UpdateType": "Created"}]})
         remove_job(deps, r)
         r.update(state="placing", target=dest, jfPath=jf_path, updated=ts(now))
         return
+    if r["state"] in ("queued", "converting"):
+        return follow_convert(deps, r)
     if r["state"] == "placing":
         if r.get("jfItem"):
             item = deps.jf("GET", f"/Items/{urllib.parse.quote(r['jfItem'], safe='')}?Fields=MediaSources") or {}
@@ -367,7 +475,7 @@ def export(deps, state):
 def run(deps, state):
     take_inbox(deps, state)
     for r in list(state["requests"].values()):
-        if r["state"] in ("downloading", "checking", "placing", "ready"):
+        if r["state"] in STEPPED + ("ready",):
             try:
                 step(deps, r) if r["state"] != "ready" else guard(deps, r)
             except (lb.ApiError, OSError, Refused) as e:
@@ -377,6 +485,165 @@ def run(deps, state):
         if r["state"] not in ACTIVE and now - (lb.epoch(r.get("updated")) or now) > KEEP_DAYS * 86400:
             del state["requests"][k]
     export(deps, state)
+
+
+HW_INPUT = ["-init_hw_device", "vaapi=va:,vendor_id=0x8086,driver=iHD", "-init_hw_device", "qsv=qs@va", "-filter_hw_device", "qs", "-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi"]
+
+
+def plan(probe):
+    """The ffmpeg arguments after the input for one source (owner 2026-11-20 15:00 and 2026-11-21), or {"skip": True, "why"}."""
+    streams = probe.get("streams") or []
+    video = next((x for x in streams if x.get("codec_type") == "video" and not (x.get("disposition") or {}).get("attached_pic")), None)
+    if not video:
+        return {"skip": True, "why": "no video stream"}
+    dovi = next((d for d in video.get("side_data_list") or [] if "dv_profile" in d), None)
+    if dovi and not dovi.get("dv_bl_signal_compatibility_id"):
+        return {"skip": True, "why": "Dolby Vision without an HDR10 layer"}
+    audio = [x for x in streams if x.get("codec_type") == "audio"]
+    langs = {}
+    for x in audio:
+        langs.setdefault((x.get("tags") or {}).get("language") or "und", []).append(x)
+    keep, convert = set(), set()
+    for tracks in langs.values():
+        lossy = [x["index"] for x in tracks if x.get("codec_name") in LOSSY]
+        if lossy:
+            keep.update(lossy)
+        else:
+            convert.add(max(tracks, key=lambda x: (x.get("channels") or 0, -x["index"]))["index"])
+    args = ["-map", f"0:{video['index']}"]
+    codecs = []
+    for x in audio:
+        if x["index"] in keep or x["index"] in convert:
+            args += ["-map", f"0:{x['index']}"]
+            n = sum(c.startswith("-c:a:") for c in codecs)
+            codecs += [f"-c:a:{n}", "copy"] if x["index"] in keep else [f"-c:a:{n}", "eac3", f"-b:a:{n}", "640k", f"-ac:a:{n}", str(min(6, x.get("channels") or 6))]
+    for x in streams:
+        if (x.get("codec_type") == "subtitle" and x.get("codec_name") in TEXT_OR_IMAGE_SUBS) or x.get("codec_type") == "attachment":
+            args += ["-map", f"0:{x['index']}"]
+    colour = []
+    for flag, key in (("-color_primaries", "color_primaries"), ("-color_trc", "color_transfer"), ("-colorspace", "color_space")):
+        if COLOUR.match(str(video.get(key) or "")):
+            colour += [flag, video[key]]
+    args += ["-map_chapters", "0", "-map_metadata", "0",
+             "-vf", "scale_vaapi=w=1920:h=-2:format=p010,hwmap=derive_device=qsv,format=qsv",
+             "-c:v", "hevc_qsv", "-low_power", "1", "-preset", "slow", "-b:v", "5M", "-maxrate", "7500k", "-bufsize", "15M", "-fps_mode", "passthrough", *colour,
+             *codecs, "-c:s", "copy", "-c:t", "copy"]
+    duration = float((probe.get("format") or {}).get("duration") or 0)
+    num, _, den = str(video.get("avg_frame_rate") or "0/1").partition("/")
+    try:
+        fps = float(num) / float(den or 1)
+    except (ValueError, ZeroDivisionError):
+        fps = 0
+    return {"input": HW_INPUT, "args": args, "duration": duration, "frames": int(duration * fps)}
+
+
+def check(src, out):
+    """Why the converted file is not fit, or None."""
+    want = float((src.get("format") or {}).get("duration") or 0)
+    got = float((out.get("format") or {}).get("duration") or 0)
+    kinds = [x.get("codec_type") for x in out.get("streams") or []]
+    if kinds.count("video") != 1:
+        return f"{kinds.count('video')} video streams"
+    if "audio" not in kinds:
+        return "no audio stream"
+    if not want or abs(got - want) > want * 0.01:
+        return f"duration {got:.0f} s instead of {want:.0f} s"
+    return None
+
+
+def container(deps, d, entry, *args, name=None):
+    return ["run", "--rm", *(["--name", name] if name else []), "--network", "none", "--user", CONVERT_USER, "--group-add", str(render_gid()), "--device", "/dev/dri", "--security-opt", "no-new-privileges",
+            "--cap-drop", "ALL", "-v", f"{deps.media_host}:/media:ro", "-v", f"{d}:/out", "--entrypoint", entry, deps.image(), *args]
+
+
+def render_gid():
+    import grp
+    try:
+        return grp.getgrnam("render").gr_gid
+    except KeyError:
+        return 0
+
+
+def ffprobe(deps, d, path):
+    rc, out, err = deps.docker(container(deps, d, FFPROBE, "-v", "error", "-show_format", "-show_streams", "-of", "json", path))
+    if rc:
+        raise Refused(f"ffprobe: {err.strip()[-300:]}")
+    return json.loads(out)
+
+
+def convert_one(deps, d, job):
+    src = posixpath.normpath(job.get("src") or "")
+    if not src.startswith("/data/media/") or not JOB_KEY.match(job.get("key") or ""):
+        return {"ok": False, "why": f"refused job {job.get('key')}: {src}"}
+    inside = "/media/" + src[len("/data/media/"):]
+    try:
+        probe = ffprobe(deps, d, inside)
+        p = plan(probe)
+        if p.get("skip"):
+            return {"ok": False, "skip": True, "why": p["why"]}
+        with open(os.path.join(d, "status.json"), "w") as f:
+            json.dump({"duration": p["duration"], "frames": p["frames"]}, f)
+        rc, _, err = deps.docker(container(deps, d, FFMPEG, "-hide_banner", "-loglevel", "error", "-nostats", "-y", *p["input"], "-i", inside, *p["args"],
+                                           "-progress", "/out/progress", "-f", "matroska", "/out/phone.partial.mkv", name="phone-convert"))
+        if rc:
+            return {"ok": False, "why": f"ffmpeg exit {rc}: {err.strip()[-300:]}"}
+        why = check(probe, ffprobe(deps, d, "/out/phone.partial.mkv"))
+        if why:
+            return {"ok": False, "why": why}
+    except (Refused, ValueError, OSError) as e:
+        return {"ok": False, "why": str(e)}
+    os.replace(os.path.join(d, "phone.partial.mkv"), os.path.join(d, "phone.mkv"))
+    return {"ok": True, "file": "phone.mkv"}
+
+
+def write_result(d, res):
+    if not res["ok"]:
+        pathlib.Path(d, "phone.partial.mkv").unlink(missing_ok=True)
+    tmp = os.path.join(d, ".result.json")
+    with open(tmp, "w") as f:
+        json.dump(res, f)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, os.path.join(d, "result.json"))
+
+
+def convert(deps):
+    """Every waiting conversion job, oldest first, one at a time (root: docker)."""
+    root = host(deps, CONVERT_DIR, deps.dl_host)
+    if not os.path.isdir(root):
+        return
+    # the folder name becomes part of a docker mount: only real job keys
+    for name in sorted(filter(JOB_KEY.match, os.listdir(root))):
+        d = os.path.join(root, name)
+        if os.path.exists(os.path.join(d, "running.json")) and not os.path.exists(os.path.join(d, "result.json")):
+            os.unlink(os.path.join(d, "running.json"))
+            write_result(d, {"ok": False, "why": "interrupted"})
+    while True:
+        jobs = []
+        for name in filter(JOB_KEY.match, os.listdir(root)):
+            try:
+                jobs.append((json.loads(pathlib.Path(root, name, "job.json").read_text()), os.path.join(root, name)))
+            except (OSError, ValueError):
+                continue
+        if not jobs:
+            return
+        job, d = min(jobs, key=lambda x: str(x[0].get("at")))
+        os.replace(os.path.join(d, "job.json"), os.path.join(d, "running.json"))
+        print(f"phone-fetch: converting {job.get('key')}", flush=True)
+        res = convert_one(deps, d, job)
+        write_result(d, res)
+        os.unlink(os.path.join(d, "running.json"))
+        # phone-fetch.path watches this file: it places the result at once
+        pathlib.Path(root, ".done").write_text(job.get("key") or "")
+        print(f"phone-fetch: {job.get('key')}: {'ok' if res['ok'] else res['why']}", flush=True)
+
+
+def docker_client(argv):
+    p = subprocess.run(["docker", *argv], capture_output=True, text=True)
+    return p.returncode, p.stdout, p.stderr
+
+
+def jellyfin_image():
+    return subprocess.run(["docker", "inspect", "jellyfin", "--format", "{{.Config.Image}}"], capture_output=True, text=True, check=True).stdout.strip()
 
 
 def sab_client():
@@ -444,9 +711,13 @@ def main(argv):
         return 1
     if cmd == "status" and len(argv) == 1:
         for r in sorted(state["requests"].values(), key=lambda r: r.get("at") or ""):
-            print(f"{r['at']} {r['title']}: {r['state']}{' ' + str(r['percent']) + ' %' if r['state'] == 'downloading' else ''} · option {r.get('option')} · {r.get('release') or ''}"
+            print(f"{r['at']} {r['title']}: {r['state']}{' ' + str(r['percent']) + ' %' if r['state'] in ('downloading', 'converting') else ''} · option {r.get('option')} · {r.get('release') or ''}"
                   f"{' · ' + r['note'] if r.get('note') else ''}")
         print("next: scripts/phone-fetch.py request --movie <radarr id>")
+        return 0
+    if cmd == "convert" and len(argv) == 1:
+        convert(Deps(None, None, None, docker=docker_client, image=jellyfin_image))
+        print("next: journalctl -u phone-fetch -n 5   (placing), scripts/phone-fetch.py status")
         return 0
     deps = real_deps()
     if cmd == "run" and len(argv) == 1:
@@ -461,7 +732,7 @@ def main(argv):
         print(f"{r['title']}: {r['state']} · option {r.get('option')} · {r.get('release') or r.get('note')}")
         print("next: journalctl -u phone-fetch -f   (progress), scripts/phone-fetch.py status")
     else:
-        print("usage: scripts/phone-fetch.py request --movie <id> | --episode <id> | --item <jellyfin id> | run | status | -h", file=sys.stderr)
+        print("usage: scripts/phone-fetch.py request --movie <id> | --episode <id> | --item <jellyfin id> | run | convert | status | -h", file=sys.stderr)
         return 2
     save_state(STATE, state)
     return 0

@@ -107,6 +107,8 @@ if want jellyfin; then
   check jf.phone-lists '^ok [0-9]+ users$' "$(python3 "$DIR/../../Jellyfin/scripts/phone-lists.py" --check 2>&1 | tail -1)"
   check jf.phone-lists-units '^active active$' "$(jf_user_systemctl is-active jellyfin-phone-lists.path jellyfin-phone-lists.timer 2>&1 | xargs)"
   check jf.popular-phone-sent '^writable$' "$(docker exec jellyfin-popular sh -c 'test -w /phone && { test ! -e /phone/sent.jsonl || test -w /phone/sent.jsonl; } && echo writable' 2>&1)"
+  # Phone conversion (Movie-Downloads phone-fetch.py convert) runs the Jellyfin image's ffmpeg: its path and the Quick Sync HEVC encoder are still there
+  check jf.phone-convert-ffmpeg '^1$' "$(docker run --rm --network none --entrypoint /usr/lib/jellyfin-ffmpeg/ffmpeg "$(docker inspect jellyfin --format '{{.Config.Image}}')" -hide_banner -encoders 2>&1 | grep -c ' hevc_qsv ')"
   # Franchise BoxSets (own TMDB id): every member's TmdbCollection is the set's id (LOTR had the "Making of" collection 1173608, fixed 2026-10-30)
   check jf.franchise-collection-ids '^[1-9][0-9]* sets, 0 members of another franchise$' "$(u=$(jf_api /Users | jq -r '[.[] | select(.Policy.IsAdministrator)][0].Id'); jf_api '/Items?IncludeItemTypes=BoxSet&Recursive=true&Fields=ProviderIds' | jq -r '.Items[] | select(.ProviderIds.Tmdb) | "\(.Id) \(.ProviderIds.Tmdb)"' | while read -r id t; do jf_api "/Users/$u/Items?ParentId=$id&Fields=ProviderIds" | jq --arg t "$t" '[.Items[] | .ProviderIds.TmdbCollection // empty | select(. != $t)] | length'; done | awk '{n++; b += $1} END {print n " sets, " b " members of another franchise"}' 2>&1)"
 fi
