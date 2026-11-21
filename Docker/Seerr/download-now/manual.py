@@ -1220,6 +1220,11 @@ def force_import(deps, arr, o, blocked, now):
     return "importing", "import started, it replaces the current file"
 
 
+def held_as_not_better(q):
+    msgs = [str(m) for sm in q.get("statusMessages") or [] for m in sm.get("messages") or [] if m]
+    return bool(msgs) and all(NOT_BETTER.search(m) for m in msgs)
+
+
 def step_replacement(deps, arr, o, queue, now):
     """One look at a pick or a block: (state, result)."""
     since = epoch(o.get("at")) or 0
@@ -1247,7 +1252,9 @@ def step_replacement(deps, arr, o, queue, now):
         return "done", f"{o.get('release')} imported, it replaced {o.get('from')}"
     if any(q.get("status") == "failed" or q.get("trackedDownloadState") in FAILED_STATES for q in own):
         return "failed", "the download failed; the current file stays"
-    blocked = [q for q in own if q.get("trackedDownloadState") in ("importBlocked", "importFailed")]
+    # Radarr/Sonarr leave a download whose files are "not an upgrade" in importPending with a warning: held back just the same
+    blocked = [q for q in own if q.get("trackedDownloadState") in ("importBlocked", "importFailed") or q.get("trackedDownloadState") == "importPending"
+               and q.get("trackedDownloadStatus") == "warning" and held_as_not_better(q)]
     if blocked:
         return force_import(deps, arr, o, blocked, now)
     if own:

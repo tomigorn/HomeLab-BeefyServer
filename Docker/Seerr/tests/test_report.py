@@ -467,6 +467,34 @@ class ManualPage(unittest.TestCase):
         with self.assertRaises(manual.Refused):
             manual.dismiss_report(self.w.deps(), me, rid)
 
+    def test_pending_import_held_back_as_not_an_upgrade_is_forced(self):
+        o = {"kind": "movie", "arrId": 12, "release": "Some.Film.2004.2160p-NEW", "at": "2026-11-20T12:00:00Z", "downloadIds": ["dlnew"], "mode": "replace", "from": "old", "runtime": 100}
+        q = [{"movieId": 12, "downloadId": "DLNEW", "title": "Some.Film.2004.2160p-NEW", "trackedDownloadState": "importPending", "trackedDownloadStatus": "warning",
+              "statusMessages": [{"messages": ["Not a Custom Format upgrade for existing movie file(s). New: [German DL] (2000000) do not improve on Existing: [German DL] (2002750)"]}]},
+             {"movieId": 12, "downloadId": "DLOTHER", "title": "x", "trackedDownloadState": "importPending", "trackedDownloadStatus": "ok", "statusMessages": []}]
+        sent = []
+
+        def arr(path, method="GET", body=None, timeout=None):
+            if method == "POST":
+                sent.append(body)
+                return {}
+            if path.startswith("/history/"):
+                return []
+            return [{"path": "/data/usenet/complete/new/film.mkv", "downloadId": "DLNEW", "rejections": ["Not a Custom Format upgrade for existing movie file(s)"]}]
+        old_virus = manual.virus
+        manual.virus = lambda deps, path: {"state": "clean"}
+        try:
+            state, result = manual.step_replacement(self.w.deps(), arr, o, q, T)
+        finally:
+            manual.virus = old_virus
+        self.assertEqual((state, sent[0]["name"]), ("importing", "ManualImport"))
+        q[0]["trackedDownloadStatus"] = "ok"
+        q[0]["statusMessages"] = []
+        sent.clear()
+        o.pop("importAt", None)
+        self.assertEqual(manual.step_replacement(self.w.deps(), arr, o, q, T)[0], "downloading")
+        self.assertEqual(sent, [])
+
     def test_force_import_only_the_reported_episode(self):
         o = {"kind": "tv", "arrId": 5, "only": [502], "runtime": 30}
         props = [{"path": "/data/torrents/pack/S01E07.mkv", "downloadId": "DLP", "episodes": [{"id": 501}], "rejections": ["Not an upgrade"]},
