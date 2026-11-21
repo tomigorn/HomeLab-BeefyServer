@@ -68,10 +68,11 @@ class ReadyRowTest(unittest.TestCase):
         self.assertEqual(pl.ready_row(items, [], "u1", NOW), [])
 
 
-EPS = {"e1": {"Type": "Episode", "SeasonId": "s1", "SeriesName": "Show", "ParentIndexNumber": 1},
-       "e2": {"Type": "Episode", "SeasonId": "s1", "SeriesName": "Show", "ParentIndexNumber": 1},
-       "e3": {"Type": "Episode", "SeasonId": "s1", "SeriesName": "Show", "ParentIndexNumber": 1},
-       "f1": {"Type": "Episode", "SeasonId": "s2", "SeriesName": "Show", "ParentIndexNumber": 2},
+EPS = {"e1": {"Type": "Episode", "SeriesId": "sh", "SeasonId": "s1", "SeriesName": "Show", "ParentIndexNumber": 1},
+       "e2": {"Type": "Episode", "SeriesId": "sh", "SeasonId": "s1", "SeriesName": "Show", "ParentIndexNumber": 1},
+       "e3": {"Type": "Episode", "SeriesId": "sh", "SeasonId": "s1", "SeriesName": "Show", "ParentIndexNumber": 1},
+       "f1": {"Type": "Episode", "SeriesId": "sh", "SeasonId": "s2", "SeriesName": "Show", "ParentIndexNumber": 2},
+       "g1": {"Type": "Episode", "SeriesId": "other", "SeasonId": "o1", "SeriesName": "Other", "ParentIndexNumber": 1},
        "m": {"Type": "Movie"}}
 
 
@@ -81,27 +82,38 @@ def entry(item, kind, minutes, state=None, percent=0):
 
 class SeasonGroupTest(unittest.TestCase):
     def test_two_episodes_of_a_season_become_one_season_entry(self):
-        out = pl.by_season([entry("e1", "preparing", 30, percent=40), entry("m", "ready", 20), entry("e2", "ready", 10)], EPS)
+        out = pl.by_show([entry("e1", "preparing", 30, percent=40), entry("m", "ready", 20), entry("e2", "ready", 10)], EPS)
         self.assertEqual([(e["item"], e["kind"]) for e in out], [("s1", "preparing"), ("m", "ready")])
         self.assertEqual((out[0]["title"], pl.band_text(out[0]), out[0]["at"]), ("Show S01", "1 of 2 ready · Downloading 40 %", NOW - datetime.timedelta(minutes=10)))
 
     def test_all_ready_is_the_season_itself(self):
-        self.assertEqual([(e["item"], e["kind"]) for e in pl.by_season([entry("e1", "ready", 5), entry("e2", "ready", 6)], EPS)], [("s1", "ready")])
+        self.assertEqual([(e["item"], e["kind"]) for e in pl.by_show([entry("e1", "ready", 5), entry("e2", "ready", 6)], EPS)], [("s1", "ready")])
 
     def test_nothing_smaller_is_counted(self):
-        [e] = pl.by_season([entry("e1", "ready", 5), entry("e2", "ready", 6), entry("e3", "none", 7)], EPS)
+        [e] = pl.by_show([entry("e1", "ready", 5), entry("e2", "ready", 6), entry("e3", "none", 7)], EPS)
         self.assertEqual((e["kind"], pl.band_text(e)), ("none", "2 of 3 ready · 1 no smaller version"))
 
     def test_the_slowest_episode_names_the_state(self):
         eps = [entry("e1", "preparing", 5, "checking"), entry("e2", "preparing", 6, percent=70), entry("e3", "preparing", 7, percent=30)]
-        self.assertEqual(pl.band_text(pl.by_season(eps, EPS)[0]), "0 of 3 ready · Downloading 30 %")
+        self.assertEqual(pl.band_text(pl.by_show(eps, EPS)[0]), "0 of 3 ready · Downloading 30 %")
 
-    def test_single_episodes_and_other_seasons_stay_apart(self):
-        out = pl.by_season([entry("e1", "ready", 5), entry("f1", "ready", 6), entry("m", "ready", 7)], EPS)
-        self.assertEqual([e["item"] for e in out], ["e1", "f1", "m"])
+    def test_single_episodes_of_other_series_stay_apart(self):
+        out = pl.by_show([entry("e1", "ready", 5), entry("g1", "ready", 6), entry("m", "ready", 7)], EPS)
+        self.assertEqual([e["item"] for e in out], ["e1", "g1", "m"])
 
-    def test_sent_episodes_fold_into_their_season_at_the_newest_place(self):
-        self.assertEqual(pl.fold_seasons(["m", "e2", "f1", "e1"], EPS), ["m", "s1", "f1"])
+    def test_episodes_of_several_seasons_become_one_series_entry(self):
+        out = pl.by_show([entry("e1", "ready", 5), entry("g1", "ready", 6), entry("f1", "preparing", 7, percent=20)], EPS)
+        self.assertEqual([(e["item"], e["kind"]) for e in out], [("sh", "preparing"), ("g1", "ready")])
+        self.assertEqual((out[0]["title"], pl.band_text(out[0])), ("Show", "1 of 2 ready · Downloading 20 %"))
+
+    def test_all_ready_across_seasons_is_the_series_itself(self):
+        self.assertEqual([(e["item"], e["kind"]) for e in pl.by_show([entry("e1", "ready", 5), entry("f1", "ready", 6)], EPS)], [("sh", "ready")])
+
+    def test_sent_episodes_of_one_season_fold_into_the_season_at_the_newest_place(self):
+        self.assertEqual(pl.fold_shows(["m", "e2", "g1", "e1"], EPS), ["m", "s1", "g1"])
+
+    def test_sent_episodes_of_several_seasons_fold_into_the_series(self):
+        self.assertEqual(pl.fold_shows(["m", "e2", "f1", "e1"], EPS), ["m", "sh"])
 
 
 class SentRowTest(unittest.TestCase):

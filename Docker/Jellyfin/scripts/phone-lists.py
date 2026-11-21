@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Phone lists: two private home rows per user in the phone and tablet apps (Moonfin "mobile" profile), on top of the home (spec fastpi reports/specs/2026-11-19-phone-versions-design.md "Phone lists").
-"📱 Your phone version requests": the titles this user asked a phone version of (Movie-Downloads scripts/phone-fetch.py, <box>/state.json): being prepared (an entry set with a ⏳ band poster), ready (the title itself), nothing smaller found (entry set, 2 days); a ready title leaves once this user downloaded it or 14 days after it got ready. 2+ episodes of one season are one card for the season in both rows.
+"📱 Your phone version requests": the titles this user asked a phone version of (Movie-Downloads scripts/phone-fetch.py, <box>/state.json): being prepared (an entry set with a ⏳ band poster), ready (the title itself), nothing smaller found (entry set, 2 days); a ready title leaves once this user downloaded it or 14 days after it got ready. 2+ episodes of one series are one card in both rows: the season when all are from one season, else the series.
 "📲 On your phone": what the download hook sent to this user's phone in the last 14 days (<box>/sent.jsonl, popular/app.py).
 Each row is a BoxSet tagged hss-phone + hss-phone-u-<userId>, kept once made (Moonfin hides an empty collection row); every other user's policy blocks that owner tag (like media-bar.py), entry sets too.
 Moonfin phones and tablets read the "mobile" profile; its own homeSections replace the global ones, so the rows go there only (TV, web and desktop never get them).
@@ -93,19 +93,46 @@ def band_text(entry):
     return BANDS["none"] if entry["kind"] == "none" else BANDS[entry["state"]].format(p=entry["percent"])
 
 
-def by_season(entries, info):
-    """2+ episodes of one season become one entry for the season (all ready: the season itself, else a band "r of n ready · …" naming the slowest episode); newest first."""
-    seasons = {}
-    for e in entries:
-        x = info.get(e["item"]) or {}
-        if x.get("Type") == "Episode" and x.get("SeasonId"):
-            seasons.setdefault(x["SeasonId"], []).append(e)
-    out = [e for e in entries if len(seasons.get((info.get(e["item"]) or {}).get("SeasonId"), ())) < 2]
-    for sid, eps in seasons.items():
+def show_of(x):
+    """The series id of an episode (its season id when it has none); None for anything else."""
+    if x.get("Type") == "Episode" and (x.get("SeriesId") or x.get("SeasonId")):
+        return x.get("SeriesId") or x["SeasonId"]
+    return None
+
+
+def groups(ids, info):
+    """{group id: (item id, title)} for every series with 2+ of the ids: the season when all are from one season, else the series."""
+    shows = {}
+    for i in ids:
+        x = info.get(i) or {}
+        if key := show_of(x):
+            shows.setdefault(key, []).append(x)
+    out = {}
+    for key, eps in shows.items():
         if len(eps) < 2:
             continue
-        x = info[eps[0]["item"]]
-        group = {"item": sid, "title": f"{x.get('SeriesName') or ''} S{x.get('ParentIndexNumber') or 0:02}".strip(), "at": max(e["at"] for e in eps)}
+        seasons = {x.get("SeasonId") for x in eps}
+        x = eps[0]
+        if len(seasons) == 1 and x.get("SeasonId"):
+            out[key] = (x["SeasonId"], f"{x.get('SeriesName') or ''} S{x.get('ParentIndexNumber') or 0:02}".strip())
+        else:
+            out[key] = (key, x.get("SeriesName") or "")
+    return out
+
+
+def by_show(entries, info):
+    """2+ episodes of one series become one entry for the series, or for the season when all are from one (all ready: that item itself, else a band "r of n ready · …" naming the slowest episode); newest first."""
+    found = groups([e["item"] for e in entries], info)
+    out, shows = [], {}
+    for e in entries:
+        key = show_of(info.get(e["item"]) or {})
+        if key in found:
+            shows.setdefault(key, []).append(e)
+        else:
+            out.append(e)
+    for key, eps in shows.items():
+        item, title = found[key]
+        group = {"item": item, "title": title, "at": max(e["at"] for e in eps)}
         ready = sum(e["kind"] == "ready" for e in eps)
         busy = sorted((e for e in eps if e["kind"] == "preparing"), key=lambda e: (PREPARING.index(e["state"]), e["percent"]))
         if busy:
@@ -118,16 +145,13 @@ def by_season(entries, info):
     return sorted(out, key=lambda e: e["at"], reverse=True)
 
 
-def fold_seasons(ids, info):
-    """Ids newest first; 2+ episodes of one season become that season, at the place of its newest."""
-    count = {}
-    for i in ids:
-        sid = (info.get(i) or {}).get("SeasonId")
-        count[sid] = count.get(sid, 0) + 1
+def fold_shows(ids, info):
+    """Ids newest first; 2+ episodes of one series become the series (or the season when all are from one), at the place of its newest."""
+    found = groups(ids, info)
     out = []
     for i in ids:
-        sid = (info.get(i) or {}).get("SeasonId")
-        i = sid if sid and count[sid] > 1 else i
+        key = show_of(info.get(i) or {})
+        i = found[key][0] if key in found else i
         if i not in out:
             out.append(i)
     return out
@@ -255,7 +279,7 @@ class Sync:
         return sets, extra
 
     def found(self, uid, ids):
-        """{id: item} for the ids this user can see (gone or blocked titles drop out); an episode carries its SeasonId."""
+        """{id: item} for the ids this user can see (gone or blocked titles drop out); an episode carries its SeriesId and SeasonId."""
         if not ids:
             return {}
         got = self.api("GET", f"/Items?ids={','.join(ids)}&userId={uid}&EnableImages=false&EnableUserData=false")["Items"]
@@ -329,8 +353,8 @@ def run(argv, api=jf_api, raw=jf_raw, box=BOX, state_path=STATE, now=None, log=p
         ready = ready_row(items, sent, uid, now)
         sent_ids = sent_row(sent, uid, now)
         seen = sync.found(uid, sorted({e["item"] for e in ready} | set(sent_ids)))
-        ready = by_season([e for e in ready if e["item"] in seen], seen)
-        sent_ids = fold_seasons([i for i in sent_ids if i in seen], seen)
+        ready = by_show([e for e in ready if e["item"] in seen], seen)
+        sent_ids = fold_shows([i for i in sent_ids if i in seen], seen)
         if ready or sent_ids or any(k[0] == uid for k in sets):
             lang = language(api("GET", f"/DisplayPreferences/usersettings?userId={uid}&client=emby"))
             plans[uid] = (ready, sent_ids, lang)
