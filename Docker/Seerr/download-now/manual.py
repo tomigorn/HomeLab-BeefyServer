@@ -995,6 +995,32 @@ def quality_blocks(deps, records, now):
             r["details"] = details
 
 
+LIBRARY_ORDER = {"broken": 0, "note": 1, "error": 2}
+LIBRARY_MAX = 500
+
+
+def library_check(deps):
+    """Movie-Downloads' library-check.py (one-off library check, report only): progress and every file that is not ok; never a problem record, file names only."""
+    data = scout_files(deps)["library-check.json"]
+    run, files = data.get("run"), data.get("files")
+    if not isinstance(run, dict) or not isinstance(files, dict):
+        return None
+    counts, out = {"ok": 0, "note": 0, "broken": 0, "error": 0}, []
+    for path, e in files.items():
+        if not isinstance(e, dict) or e.get("verdict") not in counts:
+            continue
+        counts[e["verdict"]] += 1
+        if e["verdict"] == "ok":
+            continue
+        out.append({"verdict": e["verdict"], "fileName": posixpath.basename(str(path))[:200], "key": e["key"] if isinstance(e.get("key"), str) else None,
+                    "title": str(e.get("title") or "")[:200] or None, "year": e.get("year") if is_int(e.get("year")) else None,
+                    "problems": clean_lines((e.get("reasons") or []) + (e.get("notes") or [])) or clean_lines([e.get("why")]), "checkedAt": e.get("checkedAt")})
+    out.sort(key=lambda f: (LIBRARY_ORDER[f["verdict"]], str(f["title"] or ""), f["fileName"]))
+    num = lambda v: v if is_int(v) else 0
+    return {"state": str(run.get("state") or ""), "since": run.get("since"), "updated": run.get("updated"), "total": num(run.get("total")), "checked": num(run.get("checked")),
+            "counts": counts, "files": out[:LIBRARY_MAX]}
+
+
 def merge(records, found, complete, now, imported=(), unsure=()):
     for pid in imported:
         r = records.get(pid)
@@ -1638,7 +1664,7 @@ def scout_files(deps):
     """Movie-Downloads' state (read-only mount): the NFO scout's releases, the description scout's entries and the language and quality blocks' logs, re-read when they change."""
     d = getattr(deps, "scout_dir", None)
     out = {}
-    for name in ("nfo-scout.json", "description-scout.json", "language-block.json", "quality-block.json"):
+    for name in ("nfo-scout.json", "description-scout.json", "language-block.json", "quality-block.json", "library-check.json"):
         path = os.path.join(d, name) if d else None
         try:
             st = os.stat(path) if path else None
@@ -2309,7 +2335,11 @@ def view(deps, admin):
         if ref in seen:
             r["offers"] = [a for a in r["offers"] if a not in ("reject", "replace")]
         seen.add(ref)
-    return {"open": open_, "done": done, "admin": admin, "updated": ts(CACHE.get("scan", (NOW(),))[0])}
+    out = {"open": open_, "done": done, "admin": admin, "updated": ts(CACHE.get("scan", (NOW(),))[0])}
+    lib = library_check(deps) if admin else None
+    if lib:
+        out["library"] = lib
+    return out
 
 
 def handle(dn, method, path, headers, body, deps):

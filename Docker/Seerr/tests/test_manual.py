@@ -2660,5 +2660,74 @@ class ImportedTwice(unittest.TestCase):
         self.assertEqual(self.w.gets.count(("sonarr", "/series")), n)
 
 
+class LibraryCheck(unittest.TestCase):
+    """Movie-Downloads' library-check.py (one-off library check, report only) as the Library check tab, admins only."""
+
+    def setUp(self):
+        reset()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.scouts = pathlib.Path(self.tmp.name, "scouts")
+        self.scouts.mkdir()
+        self.w = World(me=ADMIN)
+
+    def write(self, files, **run):
+        r = {"state": "checking", "since": "2026-11-15T02:00:00Z", "started": "2026-11-15T01:00:00Z", "updated": "2026-11-15T02:30:00Z", "total": 4, "checked": 3, "bytes": 40}
+        r.update(run)
+        (self.scouts / "library-check.json").write_text(json.dumps({"run": r, "files": files}))
+
+    def entry(self, verdict="ok", **kw):
+        e = {"size": 10, "mtime": 1, "verdict": verdict, "reasons": [], "notes": [], "duration": 2700.0, "checkedAt": "2026-11-15T02:10:00Z", "seconds": 4.0,
+             "app": "sonarr", "key": "tv/99", "title": "Some Show", "year": 2025}
+        e.update(kw)
+        return e
+
+    def library(self):
+        deps = self.w.deps()
+        deps.scout_dir = str(self.scouts)
+        status, out = dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)
+        self.assertEqual(status, 200)
+        return out.get("library")
+
+    def test_progress_counts_and_only_the_files_that_are_not_ok(self):
+        self.write({"/data/media/tv/Some Show (2025)/Season 01/Some Show - S01E08.mkv": self.entry("broken", reasons=["timestamp jump 280.9 s -> 118.0 s"]),
+                    "/data/media/tv/Some Show (2025)/Season 01/Some Show - S01E09.mkv": self.entry("note", notes=["container error: [matroska,webm] File ended prematurely"]),
+                    "/data/media/movies/A Film (2020)/A Film (2020).mkv": self.entry("ok", app="radarr", key="movie/4242", title="A Film"),
+                    "/data/media/movies/B Film (2019)/B Film (2019).mkv": self.entry("error", why="ffprobe: killed after 600 s", key=None, title="B Film")})
+        lib = self.library()
+        self.assertEqual({k: lib[k] for k in ("state", "since", "updated", "total", "checked")},
+                         {"state": "checking", "since": "2026-11-15T02:00:00Z", "updated": "2026-11-15T02:30:00Z", "total": 4, "checked": 3})
+        self.assertEqual(lib["counts"], {"ok": 1, "note": 1, "broken": 1, "error": 1})
+        self.assertEqual([(f["verdict"], f["fileName"]) for f in lib["files"]],
+                         [("broken", "Some Show - S01E08.mkv"), ("note", "Some Show - S01E09.mkv"), ("error", "B Film (2019).mkv")])
+        self.assertEqual(lib["files"][0], {"verdict": "broken", "fileName": "Some Show - S01E08.mkv", "key": "tv/99", "title": "Some Show", "year": 2025,
+                                           "problems": ["timestamp jump 280.9 s -> 118.0 s"], "checkedAt": "2026-11-15T02:10:00Z"})
+        self.assertEqual(lib["files"][2]["problems"], ["ffprobe: killed after 600 s"])
+
+    def test_no_paths_reach_the_browser(self):
+        self.write({"/data/media/movies/A Film (2020)/A Film (2020).mkv": self.entry("broken", reasons=["no audio stream"])})
+        lib = self.library()
+        self.assertEqual(len(lib["files"]), 1)
+        self.assertNotIn("/data/", json.dumps(lib))
+
+    def test_not_for_other_users(self):
+        self.write({"/data/media/movies/A Film (2020)/A Film (2020).mkv": self.entry("broken", reasons=["no audio stream"])})
+        self.w.me = USER
+        self.assertIsNone(self.library())
+
+    def test_no_file_or_a_broken_one_shows_no_tab(self):
+        self.assertIsNone(self.library())
+        (self.scouts / "library-check.json").write_text("{broken")
+        manual.CACHE.clear()
+        self.assertIsNone(self.library())
+
+    def test_nothing_goes_into_the_problem_list(self):
+        self.write({"/data/media/movies/A Film (2020)/A Film (2020).mkv": self.entry("broken", reasons=["no audio stream"])})
+        deps = self.w.deps()
+        deps.scout_dir = str(self.scouts)
+        self.assertEqual(dn.handle("GET", "/_download-now/manual/problems", {"Cookie": "connect.sid=s%3Aabc"}, b"", deps)[1]["library"]["counts"]["broken"], 1)
+        self.assertEqual(json.loads(self.w.store.read_text())["problems"] if self.w.store.exists() else {}, {})
+
+
 if __name__ == "__main__":
     unittest.main()

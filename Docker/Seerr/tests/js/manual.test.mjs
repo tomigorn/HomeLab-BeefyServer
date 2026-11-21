@@ -1094,3 +1094,38 @@ test("a refused file delete of a Keep forever title says why, EN and DE", async 
   assert.match(src, /"kept forever": "Kept forever \(storage retention\): the file stays/);
   assert.match(src, /"kept forever": "Für immer behalten \(Speicher-Aufräumung\): die Datei bleibt/);
 });
+
+const LIBRARY = { state: "paused-playback", since: "2026-11-21T20:00:00Z", updated: "2026-11-21T20:05:00Z", total: 1270, checked: 412, counts: { ok: 409, note: 1, broken: 1, error: 1 },
+  files: [{ verdict: "broken", fileName: "Some Show - S01E08.mkv", key: "tv/99", title: "Some Show", year: 2025, problems: ["timestamp jump 280.9 s -> 118.0 s"], checkedAt: "2026-11-21T19:00:00Z" },
+    { verdict: "note", fileName: "Some Film.mkv", key: "movie/4242", title: "Some Film", year: 2020, problems: ["container error: [matroska,webm] File ended prematurely"], checkedAt: "2026-11-21T19:10:00Z" },
+    { verdict: "error", fileName: "Other.mkv", key: null, title: "Other", year: null, problems: ["ffprobe: killed after 600 s"], checkedAt: "2026-11-21T19:20:00Z" }] };
+
+test("library check tab (admins): progress, counts, each file that is not ok, report only — no buttons", async () => {
+  const { $, $$ } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [], admin: true, library: LIBRARY } } });
+  assert.match($('[data-tab="library"]').textContent, /Library check \(3\)/);
+  $('[data-tab="library"]').click();
+  await settle();
+  assert.match($("[data-lib-progress]").textContent, /412 of 1270 files checked · paused: someone is playing in Jellyfin/);
+  assert.match($("[data-lib-counts]").textContent, /1 broken · 1 note · 1 could not be checked/);
+  assert.match($("[data-lib-report-only]").textContent, /Report only: nothing was replaced, blocked or deleted/);
+  assert.equal($$("[data-lib-file]").length, 3);
+  const first = $$("[data-lib-file]")[0];
+  assert.equal(first.querySelector("[data-title] a").getAttribute("href"), "/tv/99");
+  assert.match(first.querySelector("[data-type]").textContent, /Broken/);
+  assert.match(first.querySelector("[data-file-name]").textContent, /Some Show - S01E08\.mkv/);
+  assert.match(first.querySelector("[data-lib-problems]").textContent, /timestamp jump 280\.9 s -> 118\.0 s/);
+  assert.equal($$("[data-lib-file]")[2].querySelector("[data-title] a"), null);
+  assert.equal($$("#hg-manual button:not([data-tab])").length, 0);
+});
+
+test("library check tab: none for other users; empty and German", async () => {
+  const user = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [], admin: false } } });
+  assert.equal(user.$('[data-tab="library"]'), null);
+  const empty = Object.assign({}, LIBRARY, { state: "done", checked: 1270, counts: { ok: 1270, note: 0, broken: 0, error: 0 }, files: [] });
+  const de = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [], admin: true, library: empty } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
+  assert.match(de.$('[data-tab="library"]').textContent, /Bibliothek prüfen \(0\)/);
+  de.$('[data-tab="library"]').click();
+  await settle();
+  assert.match(de.$("[data-lib-progress]").textContent, /1270 von 1270 Dateien geprüft · fertig/);
+  assert.match(de.$("[data-empty]").textContent, /Keine defekten Dateien gefunden/);
+});

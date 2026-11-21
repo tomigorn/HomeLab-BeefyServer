@@ -194,7 +194,13 @@
       autoBlocked: "Blocked automatically, searching again", originalIs: "original language ", qualityNoted: "Checked on download", problemsFound: "Found",
       autoFile: { removed: "the file was removed", "previous restored": "the previous file is back", kept: "the file stays until a better one arrives",
         "never imported": "it never reached the library", "not found": "Radarr/Sonarr did not know the download", "log only": "test mode: nothing was done" },
-      fileCount: function (n) { return n + (n === 1 ? " file" : " files"); }
+      fileCount: function (n) { return n + (n === 1 ? " file" : " files"); },
+      library: "Library check", libEmpty: "No broken files found so far.",
+      libProgress: function (c, t) { return c + " of " + t + " files checked"; },
+      libStates: { checking: "checking", "paused-playback": "paused: someone is playing in Jellyfin", "paused-night": "paused: night window (03:50–04:50)", done: "done", stopped: "stopped, resumes when started again", error: "stopped by an error" },
+      libCounts: function (c) { return c.broken + " broken · " + c.note + (c.note === 1 ? " note" : " notes") + " · " + c.error + " could not be checked"; },
+      libReportOnly: "Report only: nothing was replaced, blocked or deleted. Broken files are replaced only after you confirm them (a later step, at night).",
+      libVerdicts: { broken: "Broken", note: "Note — nothing wrong for sure", error: "Could not be checked (tried again on the next run)" }, libUpdated: "updated", libChecked: "checked"
     },
     de: {
       locale: "de-CH", title: "Manuell beheben", intro: "Downloads, die Hilfe brauchen. Alle können helfen, auch bei Anfragen von anderen.", back: "← Zurück zu Seerr",
@@ -318,7 +324,13 @@
       autoFile: { removed: "die Datei wurde entfernt", "previous restored": "die vorherige Datei ist wieder da", kept: "die Datei bleibt, bis eine bessere da ist",
         "never imported": "sie kam nie in die Bibliothek", "not found": "Radarr/Sonarr kannten den Download nicht", "log only": "Testmodus: nichts unternommen" },
       qualityNoted: "Beim Download geprüft", problemsFound: "Gefunden",
-      fileCount: function (n) { return n + (n === 1 ? " Datei" : " Dateien"); }
+      fileCount: function (n) { return n + (n === 1 ? " Datei" : " Dateien"); },
+      library: "Bibliothek prüfen", libEmpty: "Keine defekten Dateien gefunden bisher.",
+      libProgress: function (c, t) { return c + " von " + t + " Dateien geprüft"; },
+      libStates: { checking: "prüft", "paused-playback": "Pause: jemand schaut in Jellyfin", "paused-night": "Pause: Nachtfenster (03:50–04:50)", done: "fertig", stopped: "gestoppt, geht beim nächsten Start weiter", error: "wegen eines Fehlers gestoppt" },
+      libCounts: function (c) { return c.broken + " defekt · " + c.note + (c.note === 1 ? " Hinweis" : " Hinweise") + " · " + c.error + " nicht prüfbar"; },
+      libReportOnly: "Nur Bericht: nichts wurde ersetzt, gesperrt oder gelöscht. Defekte Dateien werden erst ersetzt, wenn du sie bestätigst (späterer Schritt, nachts).",
+      libVerdicts: { broken: "Defekt", note: "Hinweis — nicht sicher defekt", error: "Nicht prüfbar (beim nächsten Lauf nochmals)" }, libUpdated: "aktualisiert", libChecked: "geprüft"
     }
   };
 
@@ -494,18 +506,46 @@
     this.data = r.body;
     if (flash) this.root.appendChild(el(d, "p", { "class": "hg-m-flash", "data-flash": true, role: "status" }, flash));
     var tabs = el(d, "div", { "class": "hg-m-tabs", role: "tablist" });
-    ["open", "done"].forEach(function (name) {
-      var b = el(d, "button", { type: "button", role: "tab", "data-tab": name, "aria-selected": String(self.tab === name), "class": self.tab === name ? "hg-m-tab hg-m-on" : "hg-m-tab" }, t[name] + " (" + (r.body[name] || []).length + ")");
+    var lib = r.body.library && typeof r.body.library === "object" ? r.body.library : null;
+    if (!lib && this.tab === "library") this.tab = "open";
+    ["open", "done"].concat(lib ? ["library"] : []).forEach(function (name) {
+      var n = name === "library" ? (lib.files || []).length : (r.body[name] || []).length;
+      var b = el(d, "button", { type: "button", role: "tab", "data-tab": name, "aria-selected": String(self.tab === name), "class": self.tab === name ? "hg-m-tab hg-m-on" : "hg-m-tab" }, t[name] + " (" + n + ")");
       b.addEventListener("click", function () { self.tab = name; self.show(r); });
       tabs.appendChild(b);
     });
     this.root.appendChild(tabs);
+    if (this.tab === "library") return this.library(lib);
     var list = r.body[this.tab] || [];
     if (!list.length) {
       this.root.appendChild(el(d, "p", { "class": "hg-m-empty", "data-empty": true }, this.tab === "open" ? t.empty : t.emptyDone));
       return;
     }
     groups(list).forEach(function (g) { self.root.appendChild(self.card(g, self.tab === "open")); });
+  };
+
+  // the one-off library check (Movie-Downloads library-check.py): progress and each file that is not ok, report only, no buttons
+  App.prototype.library = function (lib) {
+    var t = this.t, d = this.doc, root = this.root, c = lib.counts || {};
+    root.appendChild(el(d, "p", { "class": "hg-m-meta", "data-lib-progress": true }, t.libProgress(Number(lib.checked) || 0, Number(lib.total) || 0) + " · " + (t.libStates[lib.state] || String(lib.state || ""))
+      + " · " + t.libUpdated + " " + when(t, lib.updated)));
+    root.appendChild(el(d, "p", { "class": "hg-m-meta", "data-lib-counts": true }, t.libCounts({ broken: Number(c.broken) || 0, note: Number(c.note) || 0, error: Number(c.error) || 0 })));
+    root.appendChild(el(d, "p", { "class": "hg-m-hint", "data-lib-report-only": true }, t.libReportOnly));
+    var files = lib.files || [];
+    if (!files.length) {
+      root.appendChild(el(d, "p", { "class": "hg-m-empty", "data-empty": true }, t.libEmpty));
+      return;
+    }
+    files.forEach(function (f) {
+      var card = el(d, "section", { "class": "hg-m-card", "data-lib-file": f.verdict });
+      var title = String(f.title || f.fileName || "") + (f.year ? " (" + f.year + ")" : "");
+      card.appendChild(el(d, "h2", { "data-title": true }, /^(movie|tv)\/\d+$/.test(String(f.key || "")) ? el(d, "a", { href: "/" + f.key }, title) : title));
+      card.appendChild(el(d, "p", { "class": "hg-m-type", "data-type": true }, t.libVerdicts[f.verdict] || String(f.verdict)));
+      card.appendChild(el(d, "p", { "class": "hg-m-file" }, breakable(d, "hg-m-filename", f.fileName, { "data-file-name": true })));
+      if ((f.problems || []).length) card.appendChild(el(d, "p", { "class": "hg-m-media", "data-lib-problems": true }, t.problemsFound + ": " + f.problems.map(String).join("; ")));
+      card.appendChild(el(d, "p", { "class": "hg-m-meta" }, t.libChecked + " " + when(t, f.checkedAt)));
+      root.appendChild(card);
+    });
   };
 
   // one card per title (movie|tv/<tmdb>): several downloads of a series are items inside it
