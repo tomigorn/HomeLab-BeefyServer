@@ -562,6 +562,7 @@ Sidebar → **Manual interaction** (German **Manuell beheben**, amber count of o
 
 | Problem | Found by | Actions |
 |---|---|---|
+| Problem reported (admins only) | a household member on report.holy-grail.ch ("Problem reports" below): reporter, reason, episode, note, the old file's check, what the site did | **Mark as handled** (admins) |
 | Removed from Radarr/Sonarr | `request-state.json` `removed` | **Add again** (request's profile/folder, else Seerr's default; monitored, searched; the add hook applies the profile rules). **Delete request**: admins / Manage Requests only, second tap + warning: `DELETE /api/v1/request/<id>` for each of the title's requests; never the media row (that would run `clear-data-wipe.sh`), title data and files stay (owner 2026-11-15); a delete failing halfway logs which requests already went |
 | Not matched (Seerr could not hand it over) | `queue` code `seerr` | Radarr/Sonarr lookup (search box, most probable result preselected: title similarity + year) → **Use this one**: added as above unless already there; same id as Seerr's → the failed Seerr request is retried. Only the requested title (film: same TMDB id; series: Seerr's TVDB id or the same TMDB id); another title: admins only (logged) |
 | Downloaded, not importable | Radarr/Sonarr queue `importBlocked` / `importFailed` (incl. "matched by ID", year fits) | **Check files to finish importing**: the arr's manual-import proposals for that download only (`/manualimport?downloadId=<id>&filterExistingFiles=true`, no `seriesId`/`movieId`: with one Sonarr lists the series' library folder instead, seen 2026-11-15; proposals of another download are dropped), probable episode/film preselected (arr's match, else `S01E02` / `1x02` in the name, else the queue item's episode; films: biggest file), every episode of the series to pick from (specials last) → **Import** (`ManualImport`, mode auto). A file the arr rejected for another reason than "could not tell which title/episode" (not an upgrade, …), any sample, or an episode that already has a file: admins only (override logged). **Wrong release — block it and search again** as for the wrong film (e.g. a fake) |
@@ -636,6 +637,38 @@ A Done entry whose title's current file came from a known release (owner 2026-11
 | Guards | as every action: session, Origin + JSON, 20 s per entry; pick: the user's own release list token of that entry (10 min), bound to the title (app + arr id) and re-checked; block: `"confirm":"reject"` and the `ref` of the release the page showed; block with the file deleted is refused (403 `kept forever`, nothing done) for a Keep forever title, the test film, a title not in `retention.json` or without retention data ([Storage retention](#storage-retention)); block keeping the file stays allowed; the current release read again before acting (changed → 409 `release changed`) |
 | Log | `manual:` line per press (user, action, title, result); `manual replace <id>` when a pick or block ends; Done history "other release picked" / "release blocked", then "release replaced" / "replacement failed" |
 | Tests | `python3 tests/test_manual.py` (class `ReleaseActions`); JS `manual.test.mjs` (Pick another release, Block this release, EN/DE) |
+
+## Problem reports
+
+`https://report.holy-grail.ch` (owner spec 2026-11-18 part 2): a household member reports a broken film or episode, the server replaces it without an admin. Phone-friendly, EN/DE by the browser language. Jellyfin web's details pages link to it with the item pre-selected (Jellyfin README "Report a problem").
+
+- Who: Authentik app `report` (forward auth, groups `streaming-users`, `streaming-admins`; fastpi `Authentik/scripts/provision-report-sso.py`, route `Traefik/traefik/dynamic/report.yml`). Admins (`streaming-admins`): no daily limit, every report, the old file's check.
+- Flow: search the library (Radarr/Sonarr titles with a file = what Jellyfin shows and what can be replaced) → season → episode → what is wrong → optional note (required for Other) → status page (refreshes every 10 s).
+- Limits: **2 reports per user per day** (local day), **1 open report per film/episode** (a second one points to the first one's status).
+- Backend: `download-now/report.py` in the download-now container, own port `REPORT_PORT` (8098 → 8091), published for fastpi only (DOCKER-USER). It trusts `X-authentik-username/-groups` only together with `X-Report-Secret` (`secrets/report/secret`, Traefik adds it); POST needs `Origin: https://report.holy-grail.ch`.
+- Store: each report is a record of type `report` in Manual interaction's `manual.json`; admins see it on the Manual page (Open until handled, **Mark as handled**), everyone else does not. The scan never closes it; a replacement is tracked like a picked release (**Replace or block a release**).
+
+| Reason | What happens |
+|---|---|
+| Doesn't start / stops, video glitches, audio glitches, wrong title / episode | file check of the old file (background); current release blocked (`history/failed`, blocklisted); best other release (the arr's order: not rejected, custom format score, seeders) grabbed at once, title tagged `download-now` (normal categories, not night); episode: single-episode releases first, else the season pack, of which only that episode is imported. Nothing found: stays open for admins |
+| Bad video quality | a release with a higher resolution, or the same with a better source (Blu-ray > WEB > WEBRip > TV > DVD), else "no better version found"; the current release is not blocked |
+| No sound / wrong audio track, wrong language | language check: the file's audio (Radarr/Sonarr media info) has German, English or the original language → open for admins; else replaced like above, only with a release in one of those languages |
+| Subtitles missing / wrong / out of sync | Bazarr searches the title's missing subtitles again (`PATCH /api/movies` or `/api/series`, `action=search-missing`); no file replacement |
+| Other (note required) | open for admins on the Manual page, nothing automatic |
+
+- The old file stays until the replacement is imported (a "not an upgrade" import is forced as for a picked release, after the virus gates). Download failed or gone: status failed, the old file stays.
+- File check: `../Antivirus/hook/quality_check.py` (timestamp jump back > 1 s, no video, no audio; container error = note) on the old file through `/srv/dlpool/media` (read-only mount, nice 19), result on the record (`details.fileCheck`, `problems`), shown to admins only. It decides nothing.
+- Never touched: Nosferatu (TMDB 653, the test film) → admin review only. Seerr media rows are never deleted.
+- Dry run: `REPORT_DRY_RUN=1` in `.env` + `sudo docker compose up -d download-now`: searches and checks, but blocks, tags and grabs nothing (status "Test mode").
+
+| Task | Command (in `Docker/Seerr/`) |
+|---|---|
+| Set up (secret, Bazarr key) | `scripts/report-setup.sh && scripts/download-now-setup.sh && sudo docker compose up -d download-now` |
+| Secret for fastpi's Traefik | `scripts/report-setup.sh --print-for-traefik` piped into fastpi `Traefik/traefik/dynamic/report-secret.yml` (mode 640, group 65026) |
+| Tests | `python3 tests/test_report.py`; JS `node --test tests/js/report.test.mjs tests/js/manual.test.mjs` |
+| Log | `sudo docker logs seerr-download-now 2>&1 \| grep report` |
+| Reports | `sudo jq '.problems[] \| select(.type=="report") \| {title, details, report, replace: .replace.state}' /srv/appdata/seerr-download-now/manual.json` |
+| Check | `../_global/scripts/post-update-check.sh Seerr` (`seerr.report-*`) |
 
 ## Collections
 

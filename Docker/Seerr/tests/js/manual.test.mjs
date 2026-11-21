@@ -1129,3 +1129,25 @@ test("library check tab: none for other users; empty and German", async () => {
   assert.match(de.$("[data-lib-progress]").textContent, /1270 von 1270 Dateien geprüft · fertig/);
   assert.match(de.$("[data-empty]").textContent, /Keine defekten Dateien gefunden/);
 });
+
+test("open tab: a problem report shows reporter, reason, note and file check; admins can mark it handled; German", async () => {
+  const r = problem({ type: "report", key: "sonarr:5", title: "Company Retreat", year: 2026, requesters: ["jane"], offers: ["dismiss"],
+    details: { reason: "report", report: "video", note: "blocks at minute 5", user: "jane", season: 1, episode: 8, problems: ["timestamp jump 280.9 s -> 118.0 s"], release: "Company.Retreat.S01E08.1080p-GRP" },
+    report: { status: "nothing-found", result: "no other version found yet, an admin will look at it" } });
+  const { $, calls } = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [r], done: [], admin: true } },
+    "/_download-now/manual/action": { status: 200, body: { ok: true, result: "handled", problem: Object.assign({}, r, { resolved: { at: "2026-11-21T10:00:00Z", how: "dismiss" } }) } } });
+  assert.match($("[data-problem] [data-type]").textContent, /Problem reported/);
+  const line = $("[data-problem] [data-report]").textContent;
+  assert.match(line, /Reported by jane · Video glitches/);
+  assert.match(line, /S01E08/);
+  assert.match(line, /“blocks at minute 5”/);
+  assert.match(line, /Found: timestamp jump 280\.9 s -> 118\.0 s/);
+  assert.match(line, /no other version found yet/);
+  $('[data-act="dismiss"]').click();
+  await settle();
+  assert.deepEqual(posts(calls).map((p) => p.body.action), ["dismiss"]);
+  const de = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [r], done: [], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
+  assert.match(de.$("[data-problem] [data-type]").textContent, /Problem gemeldet/);
+  assert.match(de.$("[data-problem] [data-report]").textContent, /Gemeldet von jane · Bildfehler/);
+  assert.equal(de.$('[data-act="dismiss"]'), null);
+});

@@ -70,6 +70,11 @@ class Deps:
     night_downloads: object = None
     retention_file: object = None
     retention_keep: object = None
+    report_secret: object = None
+    report_origin: object = None
+    report_dry_run: bool = False
+    bazarr: object = None
+    file_check: object = None
 
 
 def redact(text):
@@ -485,6 +490,30 @@ def seerr_admin_client(base, key):
     return call
 
 
+def bazarr_client(base, key):
+    def call(path, method="GET"):
+        return _open(urllib.request.Request(base + path, method=method, headers={"X-API-KEY": key, "Accept": "application/json"}), 60)
+    return call
+
+
+def file_checker(path):
+    """Antivirus' download quality check (hook/quality_check.py, mounted read-only) for the problem report site; None when not mounted."""
+    if not path or not pathlib.Path(path).is_file():
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("quality_check", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.check
+
+
+def read_secret(path):
+    try:
+        return pathlib.Path(path).read_text().strip() or None
+    except OSError:
+        return None
+
+
 def secret(name):
     return pathlib.Path(os.environ.get("DN_SECRETS", "/run/secrets/download-now"), name).read_text().strip()
 
@@ -509,6 +538,11 @@ def deps_from_env(env):
         night_downloads=env.get("DN_NIGHT_DOWNLOADS") or (str(pathlib.Path(env["DN_SCOUT_DIR"], "night-downloads.json")) if env.get("DN_SCOUT_DIR") else None),
         retention_file=env.get("DN_RETENTION") or (str(pathlib.Path(env["DN_REQUEST_STATE"]).with_name("retention.json")) if env.get("DN_REQUEST_STATE") else None),
         retention_keep=env.get("DN_RETENTION_KEEP") or None,
+        report_secret=read_secret(env["RP_SECRET_FILE"]) if env.get("RP_SECRET_FILE") else None,
+        report_origin=env.get("RP_ORIGIN") or None,
+        report_dry_run=env.get("RP_DRY_RUN") == "1",
+        bazarr=bazarr_client(env.get("DN_BAZARR", "http://movie-bazarr:6767"), secret("bazarr.apikey")) if pathlib.Path(env.get("DN_SECRETS", "/run/secrets/download-now"), "bazarr.apikey").is_file() else None,
+        file_check=file_checker(env.get("RP_QUALITY_CHECK")),
         seerr_admin=seerr_admin_client(env.get("DN_SEERR", "http://seerr:5055"), secret("seerr.apikey")) if pathlib.Path(env.get("DN_SECRETS", "/run/secrets/download-now"), "seerr.apikey").is_file() else None,
     )
 
@@ -552,6 +586,9 @@ def main():
     if Handler.deps.collections_file:
         import collections_page
         threading.Thread(target=collections_page.loop, args=(sys.modules[__name__], Handler.deps), daemon=True).start()
+    if os.environ.get("RP_PORT") and Handler.deps.report_secret and Handler.deps.manual_file:
+        import report
+        report.serve(sys.modules[__name__], Handler.deps, int(os.environ["RP_PORT"]))
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("DN_PORT", "8090"))), Handler)
     print(f"download-now listening on {srv.server_address[1]}", flush=True)
     srv.serve_forever()

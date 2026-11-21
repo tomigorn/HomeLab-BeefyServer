@@ -102,6 +102,8 @@ services:
 # Holds the Radarr/Sonarr/SABnzbd keys (secrets/download-now, scripts/download-now-setup.sh); qBittorrent
 # lets 172.28.10.205 in without a password. Publishes nothing. Also the Manual interaction backend
 # (README "Manual interaction"): reads request-state.json, keeps its problem list in the state volume. And the Collections backend (README "Collections") and the storage retention backend (README "Storage retention").
+# And the problem report site report.holy-grail.ch (README "Problem reports", report.py) on REPORT_PORT: published for fastpi's Traefik only (DOCKER-USER), which
+# adds Authentik's user headers and the shared secret in secrets/report; reports live in manual.json, the old file's check reads the library read-only.
   download-now:
     # python alpine + ffprobe (Manual interaction reads resolution, codecs, audio and subtitle tracks of finished downloads)
     build:
@@ -117,6 +119,9 @@ services:
     cap_drop:
       - ALL
     command: ["python3", "/app/download_now.py"]
+    # the problem reports' file check keeps ffprobe's error output in a temp file
+    tmpfs:
+      - /tmp:uid=65127,gid=65127,mode=0700,size=16m
     environment:
       - TZ=${TZ}
       - PYTHONDONTWRITEBYTECODE=1
@@ -130,6 +135,11 @@ services:
       - DN_SCOUT_REQUESTS=/run/scout-requests
       - DN_COLLECTIONS=/collections/lists.json
       - DN_RETENTION_KEEP=/retention/keep.json
+      - RP_PORT=8091
+      - RP_ORIGIN=https://report.holy-grail.ch
+      - RP_SECRET_FILE=/run/secrets/report/secret
+      - RP_QUALITY_CHECK=/opt/quality/quality_check.py
+      - RP_DRY_RUN=${REPORT_DRY_RUN:-0}
     volumes:
       - ./download-now:/app:ro
       - ./secrets/download-now:/run/secrets/download-now:ro
@@ -152,6 +162,13 @@ services:
       - /srv/appdata/seerr-collections:/collections
       # Storage retention (README "Storage retention"): the "Keep forever" choices, read by Movie-Downloads retention.py as buntu (65127:buntu 2750, keep.json 0640); retention.json comes with /run/indexer-bar
       - /srv/appdata/seerr-retention:/retention
+      # Problem reports (README "Problem reports"): Traefik's shared secret (scripts/report-setup.sh), the download quality check of ../Antivirus, and the library
+      # read-only through the idle-I/O pool, only for that check of a reported file (ffprobe demux, nice 19)
+      - ./secrets/report:/run/secrets/report:ro
+      - ../Antivirus/hook/quality_check.py:/opt/quality/quality_check.py:ro
+      - /srv/dlpool/media:/data/media:ro
+    ports:
+      - "${REPORT_PORT}:8091"
     networks:
       seerr-front: {}
       movie-downloads:

@@ -77,8 +77,9 @@
       locale: "en-GB", title: "Manual interaction", intro: "Downloads that need a hand. Everyone can help, also with other people's requests.", back: "← Back to Seerr",
       open: "Open", done: "Done", empty: "Nothing needs a hand right now.", emptyDone: "Nothing done yet.", signin: "Sign in to Seerr first", loadError: "Could not load the list. Try again later.",
       types: { removed: "Removed from Radarr/Sonarr", unmatched: "Not matched — Seerr could not hand it over", "import": "Downloaded, but not importable", "wrong-film": "Wrong film downloaded", failed: "Download failed", "no-release": "Nothing found for days", "auto-block": "Blocked automatically", "quality-note": "Quality note",
-        mismatch: "Linked to a different show in Sonarr/Radarr", duplicate: "Imported twice" },
+        mismatch: "Linked to a different show in Sonarr/Radarr", duplicate: "Imported twice", report: "Problem reported" },
       hints: {
+        report: "Read the note and the file check below. Fix it by hand if needed (e.g. pick another release in Radarr/Sonarr), then mark it as handled.",
         removed: "The request is still open in Seerr, but the title is gone from Radarr/Sonarr, so nothing searches for it.",
         unmatched: "Pick the right title; it is added to Radarr/Sonarr with the usual quality rules.",
         "import": "Check which file is which episode or film, then import.",
@@ -89,6 +90,7 @@
         duplicate: "Check which title the files belong to and delete the wrong copy in Sonarr/Radarr by hand — nothing is deleted automatically."
       },
       reasons: {
+        report: "A household member reported a problem on report.holy-grail.ch.",
         "id-match": "The release name doesn't match the title (e.g. a foreign-language name), so it isn't imported automatically. Check the episode or film, then import.",
         "no-eligible": "The download holds no file that can be imported (no video file, or only extras).",
         "not-upgrade": "The library already has this in the same or a better quality, so it isn't imported.",
@@ -175,7 +177,7 @@
       files: "Check files to finish importing", hideFiles: "Hide files", "import": "Import", detected: "as detected", noEpisode: "—", needEpisode: "Pick an episode for every checked file.",
       history: "What happened", gone: "Went away by itself", imported: "Imported", found: "Found and downloaded",
       removedBy: function (u) { return "Removed by admin" + (u ? " (" + u + ")" : ""); }, fixedBy: function (u, a) { return "Fixed by " + (u || "someone") + " (" + a + ")"; },
-      actions: { readd: "added again", "delete": "deleted", block: "blocked, searched again", profile: "older versions allowed", grab: "release picked", link: "matched", "import": "imported", reopened: "back again",
+      actions: { report: "reported", dismiss: "handled", subtitles: "subtitles searched again", "nothing-better": "nothing better found", readd: "added again", "delete": "deleted", block: "blocked, searched again", profile: "older versions allowed", grab: "release picked", link: "matched", "import": "imported", reopened: "back again",
         replace: "other release picked", reject: "release blocked, searching again", "auto-block": "blocked automatically (audio)", replaced: "release replaced", "replace-failed": "replacement failed",
         override: "downloaded anyway", "override-downloading": "downloading", "override-finished": "download finished", "override-replacing": "better version found", "override-replaced": "replaced by a version the profile allows" },
       errors: { 429: "Too many tries — wait a moment and try again.", 403: "Not allowed — an admin can do this.", 400: "That does not fit any more — reload the page.", 404: "Already solved — reload the page.", other: "Radarr/Sonarr not reachable — try again later." },
@@ -191,7 +193,8 @@
       rejectingLine: function (rel, u, keep) { return "🚫 " + rel + " blocked by " + (u || "someone") + ", searching for another release — " + (keep ? "the current file stays until a replacement arrives" : "the current file was deleted"); },
       replacedBy: function (u) { return "Release replaced (picked by " + (u || "someone") + ")"; }, replacedAfterBlock: function (u) { return "Another release replaced the blocked one (blocked by " + (u || "someone") + ")"; },
       replaceFailed: "Replacement failed — the current file stays",
-      autoBlocked: "Blocked automatically, searching again", originalIs: "original language ", qualityNoted: "Checked on download", problemsFound: "Found",
+      autoBlocked: "Blocked automatically, searching again", originalIs: "original language ", qualityNoted: "Checked on download", problemsFound: "Found", reportBy: "Reported by", dismiss: "Mark as handled",
+      reportReasons: { start: "Doesn't start / stops", video: "Video glitches", audio: "Audio glitches", quality: "Bad video quality", sound: "No sound / wrong audio track", language: "Wrong language", subtitles: "Subtitles", wrong: "Wrong title / episode", other: "Other" },
       autoFile: { removed: "the file was removed", "previous restored": "the previous file is back", kept: "the file stays until a better one arrives",
         "never imported": "it never reached the library", "not found": "Radarr/Sonarr did not know the download", "log only": "test mode: nothing was done" },
       fileCount: function (n) { return n + (n === 1 ? " file" : " files"); },
@@ -206,8 +209,9 @@
       locale: "de-CH", title: "Manuell beheben", intro: "Downloads, die Hilfe brauchen. Alle können helfen, auch bei Anfragen von anderen.", back: "← Zurück zu Seerr",
       open: "Offen", done: "Erledigt", empty: "Gerade braucht nichts Hilfe.", emptyDone: "Noch nichts erledigt.", signin: "Zuerst bei Seerr anmelden", loadError: "Liste nicht ladbar. Später nochmals versuchen.",
       types: { removed: "Aus Radarr/Sonarr entfernt", unmatched: "Nicht zugeordnet — Seerr konnte es nicht übergeben", "import": "Heruntergeladen, aber nicht importierbar", "wrong-film": "Falscher Film heruntergeladen", failed: "Download fehlgeschlagen", "no-release": "Seit Tagen nichts gefunden", "auto-block": "Automatisch gesperrt", "quality-note": "Qualitätshinweis",
-        mismatch: "Mit einem anderen Titel in Sonarr/Radarr verknüpft", duplicate: "Doppelt importiert" },
+        mismatch: "Mit einem anderen Titel in Sonarr/Radarr verknüpft", duplicate: "Doppelt importiert", report: "Problem gemeldet" },
       hints: {
+        report: "Lies die Bemerkung und die Dateiprüfung unten. Wenn nötig von Hand beheben (z. B. in Radarr/Sonarr ein anderes Release wählen), dann als erledigt markieren.",
         removed: "Die Anfrage ist in Seerr noch offen, der Titel fehlt aber in Radarr/Sonarr, darum sucht nichts danach.",
         unmatched: "Den richtigen Titel wählen; er kommt mit den üblichen Qualitätsregeln in Radarr/Sonarr.",
         "import": "Prüfen, welche Datei welche Folge oder welcher Film ist, dann importieren.",
@@ -218,6 +222,7 @@
         duplicate: "Prüfen, zu welchem Titel die Dateien gehören, und die falsche Kopie in Sonarr/Radarr von Hand löschen — automatisch wird nichts gelöscht."
       },
       reasons: {
+        report: "Jemand aus dem Haushalt hat auf report.holy-grail.ch ein Problem gemeldet.",
         "id-match": "Der Release-Name passt nicht zum Titel (z. B. ein Name in einer anderen Sprache), darum wird er nicht automatisch importiert. Folge bzw. Film prüfen, dann importieren.",
         "no-eligible": "Der Download enthält keine importierbare Datei (keine Videodatei oder nur Extras).",
         "not-upgrade": "Die Bibliothek hat das schon in gleicher oder besserer Qualität, darum wird es nicht importiert.",
@@ -304,7 +309,7 @@
       files: "Dateien prüfen und Import abschliessen", hideFiles: "Dateien ausblenden", "import": "Importieren", detected: "wie erkannt", noEpisode: "—", needEpisode: "Für jede gewählte Datei eine Folge wählen.",
       history: "Verlauf", gone: "Hat sich von selbst erledigt", imported: "Importiert", found: "Gefunden und heruntergeladen",
       removedBy: function (u) { return "Von Admin entfernt" + (u ? " (" + u + ")" : ""); }, fixedBy: function (u, a) { return "Behoben von " + (u || "jemandem") + " (" + a + ")"; },
-      actions: { readd: "wieder hinzugefügt", "delete": "gelöscht", block: "gesperrt, neu gesucht", profile: "ältere Versionen erlaubt", grab: "Release gewählt", link: "zugeordnet", "import": "importiert", reopened: "wieder da",
+      actions: { report: "gemeldet", dismiss: "erledigt", subtitles: "Untertitel neu gesucht", "nothing-better": "nichts Besseres gefunden", readd: "wieder hinzugefügt", "delete": "gelöscht", block: "gesperrt, neu gesucht", profile: "ältere Versionen erlaubt", grab: "Release gewählt", link: "zugeordnet", "import": "importiert", reopened: "wieder da",
         replace: "anderes Release gewählt", reject: "Release gesperrt, neu gesucht", "auto-block": "automatisch gesperrt (Ton)", replaced: "Release ersetzt", "replace-failed": "Ersetzen fehlgeschlagen",
         override: "trotzdem heruntergeladen", "override-downloading": "lädt herunter", "override-finished": "Download fertig", "override-replacing": "bessere Version gefunden", "override-replaced": "ersetzt durch eine vom Profil erlaubte Version" },
       errors: { 429: "Zu viele Versuche — kurz warten und nochmals versuchen.", 403: "Nicht erlaubt — das kann ein Admin.", 400: "Das passt nicht mehr — Seite neu laden.", 404: "Schon gelöst — Seite neu laden.", other: "Radarr/Sonarr nicht erreichbar — später nochmals versuchen." },
@@ -323,7 +328,8 @@
       autoBlocked: "Automatisch gesperrt, wird neu gesucht", originalIs: "Originalsprache ",
       autoFile: { removed: "die Datei wurde entfernt", "previous restored": "die vorherige Datei ist wieder da", kept: "die Datei bleibt, bis eine bessere da ist",
         "never imported": "sie kam nie in die Bibliothek", "not found": "Radarr/Sonarr kannten den Download nicht", "log only": "Testmodus: nichts unternommen" },
-      qualityNoted: "Beim Download geprüft", problemsFound: "Gefunden",
+      qualityNoted: "Beim Download geprüft", problemsFound: "Gefunden", reportBy: "Gemeldet von", dismiss: "Als erledigt markieren",
+      reportReasons: { start: "Startet nicht / bricht ab", video: "Bildfehler", audio: "Tonfehler", quality: "Schlechte Bildqualität", sound: "Kein Ton / falsche Tonspur", language: "Falsche Sprache", subtitles: "Untertitel", wrong: "Falscher Titel / falsche Folge", other: "Anderes" },
       fileCount: function (n) { return n + (n === 1 ? " Datei" : " Dateien"); },
       library: "Bibliothek prüfen", libEmpty: "Keine defekten Dateien gefunden bisher.",
       libProgress: function (c, t) { return c + " von " + t + " Dateien geprüft"; },
@@ -620,6 +626,16 @@
     return parts.join(" · ");
   }
 
+  // a problem report from report.holy-grail.ch (download-now report.py): who, what, which episode, the note, the old file's check, what the site did
+  function reportLine(t, x, p) {
+    var parts = [t.reportBy + " " + String(x.user || "?") + " · " + (t.reportReasons[x.report] || String(x.report || ""))];
+    if (x.season != null && x.episode != null) parts.push("S" + (x.season < 10 ? "0" : "") + x.season + "E" + (x.episode < 10 ? "0" : "") + x.episode);
+    if (x.note) parts.push("“" + String(x.note) + "”");
+    if ((x.problems || []).length) parts.push(t.problemsFound + ": " + x.problems.map(String).join("; "));
+    if (p.report && p.report.result) parts.push(String(p.report.result));
+    return parts.join(" · ");
+  }
+
   App.prototype.section = function (head, attrs) {
     var d = this.doc, s = el(d, "div", Object.assign({ "class": "hg-m-section" }, attrs || {}));
     s.appendChild(el(d, "h3", { "class": "hg-m-head" }, head));
@@ -650,6 +666,7 @@
       if (x.nameMatch && x.nameMatch.name) dl.appendChild(el(d, "p", { "class": "hg-m-media", "data-name-match": true }, t.nameMatch(String(x.nameMatch.name), !!x.nameMatch.original)));
       c.appendChild(dl);
     }
+    if (p.type === "report") c.appendChild(el(d, "p", { "class": "hg-m-media", "data-report": true }, reportLine(t, x, p)));
     if (p.type === "auto-block" || p.type === "quality-note") c.appendChild(el(d, "p", { "class": "hg-m-media", "data-auto-block": true }, autoBlockLine(t, x)));
     if (p.type === "mismatch" && x.seerr && x.arr) {
       var mm = el(d, "div", { "class": "hg-m-media", "data-mismatch": true });
@@ -827,6 +844,12 @@
         var del = this.button("delete", t.del, "hg-m-danger");
         this.twice(del, t.delAgain, t.delWarn, box, function () { self.act(card(), p, { action: "delete", confirm: "delete" }); });
         box.appendChild(del);
+      }
+    } else if (p.type === "report") {
+      if (offers(p, "dismiss") && this.data && this.data.admin) {
+        var dm = this.button("dismiss", t.dismiss, "hg-m-primary");
+        dm.addEventListener("click", function () { self.act(card(), p, { action: "dismiss" }); });
+        box.appendChild(dm);
       }
     } else if (p.type === "wrong-film" || p.type === "failed") {
       if (blocks(p)) box.appendChild(this.blockButton(p, box, "hg-m-primary"));

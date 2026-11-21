@@ -66,7 +66,7 @@ PROBLEM_STATES = {"importBlocked", "importFailed", "failedPending", "failed"}
 FAILED_STATES = {"failedPending", "failed"}
 PID = re.compile(r"^[0-9a-f]{12}$")
 ACTIONS = {"unmatched": {"link"}, "import": {"import", "block"}, "wrong-film": {"block"}, "failed": {"block"}, "no-release": {"profile", "grab", "override"}, "removed": {"readd", "delete"},
-           "mismatch": {"link", "delete"}, "duplicate": set()}
+           "mismatch": {"link", "delete"}, "duplicate": set(), "report": {"dismiss"}}
 LIBRARY_TTL = 600
 DUP_MIN_SIZE = 50 * 2 ** 20
 RESOLVING = {"link", "import", "block", "grab", "override", "readd", "delete"}
@@ -1039,7 +1039,8 @@ def merge(records, found, complete, now, imported=(), unsure=()):
             r["resolved"] = None
             r.setdefault("actions", []).append({"at": ts(now), "user": None, "userId": None, "action": "reopened", "result": None})
     for pid, r in list(records.items()):
-        if complete and r.get("resolved") is None and pid not in found and not replacing(r) and r.get("type") not in unsure:
+        # problem reports (report.py) are no scan finding: only their replacement, an admin or the report site closes them
+        if complete and r.get("resolved") is None and pid not in found and not replacing(r) and r.get("type") not in unsure and r.get("type") != "report":
             r["resolved"] = {"at": ts(now), "how": GONE.get(r.get("type"), "gone")}
         res = r.get("resolved")
         if res and now - (epoch(res.get("at")) or now) > KEEP_DAYS * DAY and not open_override(r):
@@ -1152,7 +1153,7 @@ def releases_known(dn, deps, records, now):
     """Which Done entries' files came from a known release (offers: pick another, block it); rechecked at most hourly, CURRENT_MAX per scan."""
     n = 0
     for pid, r in records.items():
-        if not isinstance(r, dict) or not r.get("resolved") or r["resolved"].get("how") == "delete" or open_override(r) or replacing(r) or r.get("type") in ("mismatch", "duplicate"):
+        if not isinstance(r, dict) or not r.get("resolved") or r["resolved"].get("how") == "delete" or open_override(r) or replacing(r) or r.get("type") in ("mismatch", "duplicate", "report"):
             continue
         if now - (epoch(r.get("currentChecked")) or 0) < CURRENT_TTL:
             continue
@@ -1190,6 +1191,9 @@ def force_import(deps, arr, o, blocked, now):
     for x in props:
         name = os.path.basename(str(x["path"])).lower()
         if not name.endswith(VIDEO) or "sample" in name:
+            continue
+        # a season pack grabbed for one reported episode: only that episode is imported
+        if o.get("only") and not {e.get("id") for e in x.get("episodes") or [] if isinstance(e, dict)} & set(o["only"]):
             continue
         if not all(NOT_BETTER.search(str(rj.get("reason") if isinstance(rj, dict) else rj)) for rj in x.get("rejections") or []):
             return "failed", "a file was rejected for another reason, see the Open tab; the current file stays"
@@ -2200,6 +2204,20 @@ def override_from(r):
     return (r.get("details") or {}).get("overrideFrom") or ts((epoch(r.get("firstSeen")) or NOW()) + OVERRIDE_DAYS * DAY)
 
 
+def dismiss_report(deps, me, pid):
+    """An open problem report (report.py) an admin has handled: closed, the reporter's status page shows it as closed."""
+    with STORE_LOCK:
+        try:
+            r = load(deps).get(pid)
+        except StoreUnreadable:
+            r = None
+    if not isinstance(r, dict) or r.get("type") != "report" or r.get("resolved") is not None or replacing(r):
+        raise Refused(404, "no such problem")
+    rec = record(deps, pid, me, "dismiss", "handled by an admin", True)
+    print(f"manual: user {me.get('id')} dismiss report {r.get('key')} ({r.get('title')})", flush=True)
+    return {"ok": True, "result": "handled", "problem": rec}
+
+
 def replace_problem(deps, pid):
     """A Done entry with a known current release, shaped as a problem for the release list."""
     with STORE_LOCK:
@@ -2276,6 +2294,10 @@ def act(dn, deps, me, req):
     except Refused as e:
         if e.status == 404 and action == "block":
             return block_override(deps, me, req["id"])
+        if e.status == 404 and action == "dismiss":
+            if not dn.allowed(me):
+                raise Refused(403, "forbidden")
+            return dismiss_report(deps, me, req["id"])
         if e.status == 404 and action in ("replace", "reject"):
             return release_action(dn, deps, me, req)
         raise
@@ -2323,7 +2345,7 @@ def public_record(r, admin):
 def view(deps, admin):
     with STORE_LOCK:
         try:
-            records = [public_record(r, admin) for r in load(deps).values() if isinstance(r, dict)]
+            records = [public_record(r, admin) for r in load(deps).values() if isinstance(r, dict) and (admin or r.get("type") != "report")]
         except StoreUnreadable:
             records = []
     open_ = sorted((r for r in records if r.get("resolved") is None), key=lambda r: r.get("firstSeen") or "")
