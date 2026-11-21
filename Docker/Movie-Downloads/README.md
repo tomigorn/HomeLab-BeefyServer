@@ -1172,6 +1172,31 @@ sudo install -m 0644 systemd/quality-block.{service,path,timer} /etc/systemd/sys
 
 - Tests: `python3 tests/test_quality_block.py`, `tests/test_original_audio_hook.sh`, `python3 tests/test_language_block.py` (shared block code).
 
+#### Library check
+
+Owner 2026-11-18 (fastpi `reports/specs/2026-11-18-media-quality-check-design.md`, part 4): every video already in the library gets the download quality check ("Quality check" above) once. **Report only**: nothing is replaced, blocked or deleted; the owner confirms on the Manual page, replacing comes later (night policy).
+
+| Part | What |
+|---|---|
+| Files | every video on the two SSD branches (`/srv/.disks/ssd-hot{,2}/media`, read through `/srv/dlpool` at the apps' path `/data/media/...`); the HDD stays parked and is never read |
+| Check | `Antivirus/hook/quality_check.py`: broken = timestamp jump back > 1 s, no video, no audio; note = container read error, duration off the Radarr/Sonarr runtime by more than 10 % and 5 min; error = ffprobe failed (retried on the next run) |
+| How | `scripts/library-check.py run` via `systemd/library-check.service` (root for docker only, not enabled): ffprobe as Jellyfin's uid in a throw-away container `library-check` of the Jellyfin image, `nice 19`, `ionice -c 3`, no network, read-only, the library read-only; demux only, ~0.35 GB/s, 7.6 TB ≈ 6 h of reading |
+| Pauses | before each file: while anyone plays in Jellyfin (`/Sessions`, a paused player too; sessions unreadable = pause) and 03:50-04:50 (night window); checks again every 60 s |
+| Resume | a file already checked is skipped unless its size or mtime changed; files gone from the library leave the list. Stopped or beefy asleep: start it again |
+| Awake | no keep-awake marker: the reads keep the idle watcher busy (data-disk probe), playback keeps beefy up during a pause; if beefy sleeps anyway, the next start goes on where it stopped |
+| Result | `~/.local/state/movie-downloads/library-check.json` (`run`: state, total, checked; `files`: per path verdict, reasons, notes, title) → Seerr Manual page, tab **Library check** (admins; `../Seerr/README.md` "Manual interaction") |
+
+```bash
+sudo install -m 0644 systemd/library-check.service /etc/systemd/system/ && sudo systemctl daemon-reload
+sudo systemctl start library-check            # start or resume
+scripts/library-check.py status               # progress, time left, every file that is not ok
+journalctl -u library-check -f                # watch (one line per broken file or note)
+sudo systemctl stop library-check             # stop; start again to resume
+sudo scripts/library-check.py run --limit 2   # by hand: two files, then stop
+```
+
+- Tests: `python3 tests/test_library_check.py` (fakes); real samples from ffmpeg's test pattern in the Jellyfin image (good, segments out of order, no audio, truncated tail): `sudo LC_REAL=1 python3 tests/test_library_check.py Real`.
+
 #### Phone versions
 
 Owner 2026-11-19 (fastpi `reports/specs/2026-11-19-phone-versions-design.md`): a phone download of a 4K title gets a smaller second download, kept on the HDD as a second Jellyfin version of the same item. Owner 2026-11-20/21: when no release fits or 3 fitting ones failed, beefy converts the server copy itself (fallback only).

@@ -1,0 +1,22 @@
+[Unit]
+Description=One-off library check: the download quality check on every library video on the SSDs, report only (README Library check)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+RequiresMountsFor=/srv/video /srv/dlpool
+After=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+# root for docker only; ffprobe runs as Jellyfin's uid in a throw-away container of the Jellyfin image, no network, library read-only. Not enabled: started by hand, resumes where it stopped.
+Type=exec
+ExecStartPre=-/usr/bin/docker rm -f library-check
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/library-check.py run
+ExecStopPost=-/usr/bin/docker rm -f library-check
+Nice=19
+IOSchedulingClass=idle
+TimeoutStopSec=60
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/buntu/.local/state/movie-downloads /run/lock
+UMask=0022
