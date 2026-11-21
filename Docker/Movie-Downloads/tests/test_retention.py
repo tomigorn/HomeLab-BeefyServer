@@ -70,10 +70,24 @@ def sonarr(path, method="GET", body=None):
     return {"/series": SERIES, "/qualityprofile": PROFILES, "/tag": TAGS}[path]
 
 
-def jellyfin(resume=(), played=(), nextup=(), paths=None):
+def jellyfin(resume=(), played=(), nextup=(), paths=None, versions=None):
+    """versions: {primary path: [(other version id, its path, its UserData)]}: Jellyfin hides the other versions (a phone version) from item lists, only a GET by id shows them."""
+    versions = versions or {}
+    ids = {f"p{i}": p for i, p in enumerate(versions)}
+    alts = {a[0]: a for vs in versions.values() for a in vs}
+
     def call(path):
         if path == "/Users":
             return [{"Id": "u1", "Name": "jane"}]
+        if path.startswith("/Users/u1/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path,MediaSourceCount"):
+            return {"Items": [{"Id": i, "Path": p, "MediaSourceCount": 1 + len(versions[p])} for i, p in ids.items()] + [{"Id": "solo", "Path": "/media/movies/Old Film (1990)/Old Film (1990).mkv", "MediaSourceCount": 1}]}
+        if path.startswith("/Users/u1/Items/") and "?" not in path:
+            i = path.rsplit("/", 1)[1]
+            if i in ids:
+                return {"Id": i, "Path": ids[i], "MediaSources": [{"Id": i}] + [{"Id": a[0]} for a in versions[ids[i]]]}
+            if i in alts:
+                return {"Id": i, "Path": alts[i][1], "UserData": alts[i][2]}
+            raise AssertionError(path)
         if path.startswith("/Users/u1/Items/Resume"):
             return {"Items": [{"Path": p} for p in resume]}
         if path.startswith("/Shows/NextUp?userId=u1"):
@@ -257,6 +271,39 @@ class Plays(unittest.TestCase):
                               ("/elsewhere/x.mkv", "2026-12-19T09:00:00Z")])
         got = rt.last_plays(jf, lib.titles)
         self.assertEqual(got, {"movie/1001": datetime.datetime(2026, 12, 10, 9, tzinfo=datetime.timezone.utc), "tv/2001": datetime.datetime(2026, 12, 15, 9, tzinfo=datetime.timezone.utc)})
+
+
+class Versions(unittest.TestCase):
+    """A phone version is a second Jellyfin version with its own item id; a play recorded on it counts for the title (owner: a play of any version is a play of the title)."""
+    FILM = "/media/movies/New Film (2025)/New Film (2025).mkv"
+    EP = "/media/tv/New Show (2025)/Season 01/New Show S01E01.mkv"
+
+    def jf(self, film_ud, ep_ud=None, played=()):
+        v = {self.FILM: [("a1", "/media/movies/New Film (2025)/New Film (2025) - Phone 1080p.mkv", film_ud)],
+             "/media/movies/Wanted (2025)/Wanted (2025) - ⬇ Download movie now.mp4": [("a9", "/media/movies/Wanted (2025)/x.mp4", {"LastPlayedDate": "2026-12-19T09:00:00Z"})]}
+        if ep_ud is not None:
+            v[self.EP] = [("a2", "/media/tv/New Show (2025)/Season 01/New Show (2025) - S01E01 - Phone 1080p.mkv", ep_ud)]
+        return jellyfin(played=played, versions=v)
+
+    def test_only_other_versions_of_library_titles_are_fetched(self):
+        lib = library()
+        got = rt.other_versions(self.jf({}), lib.titles)
+        self.assertEqual([it["Id"] for it in got["u1"]], ["a1"])
+
+    def test_a_play_of_the_phone_version_is_a_play_of_the_title(self):
+        lib = library()
+        jf = self.jf({"LastPlayedDate": "2026-12-12T09:00:00Z"}, {"LastPlayedDate": "2026-12-14T09:00:00Z"},
+                     played=[(self.FILM, "2026-12-10T09:00:00Z"), (self.EP, "2026-12-16T09:00:00Z")])
+        got = rt.last_plays(jf, lib.titles, rt.other_versions(jf, lib.titles))
+        self.assertEqual(got["movie/1001"], datetime.datetime(2026, 12, 12, 9, tzinfo=datetime.timezone.utc))
+        self.assertEqual(got["tv/2001"], datetime.datetime(2026, 12, 16, 9, tzinfo=datetime.timezone.utc))
+
+    def test_a_phone_version_being_watched_or_played_lately_is_in_progress(self):
+        lib = library()
+        jf = self.jf({"PlaybackPositionTicks": 600000000}, {"LastPlayedDate": "2026-12-15T09:00:00Z"})
+        self.assertEqual(rt.in_progress(jf, lib.titles, NOW, rt.other_versions(jf, lib.titles)), {"movie/1001", "tv/2001"})
+        jf = self.jf({"LastPlayedDate": "2026-11-01T09:00:00Z"})
+        self.assertEqual(rt.in_progress(jf, lib.titles, NOW, rt.other_versions(jf, lib.titles)), set())
 
 
 class Pool(unittest.TestCase):
@@ -558,6 +605,75 @@ class Delete(unittest.TestCase):
         self.assertTrue(any("did not drop" in l for l in self.logs))
         self.assertEqual(self.run_it(n=night(last={"spaceDeleted": 1, "hddUsed": 50}, hdd_used=40))[1], 3)
 
+    def library_pool(self, d):
+        pool = pathlib.Path(d)
+        film = pool / "media/movies/New Film (2025)"
+        season = pool / "media/tv/New Show (2025)/Season 01"
+        kept = pool / "media/movies/Old Film (1990)"
+        for f in (film / "New Film (2025).mkv", film / "New Film (2025) - Phone 1080p.mkv", film / "notes.txt", film / ".New Film (2025) - Phone 1080p.mkv.partial",
+                  season / "New Show (2025) - S01E01 - Phone 1080p.mkv", season / "New Show S01E01.mkv", kept / "Old Film (1990) - Phone 1080p.mkv"):
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(b"x")
+        (pool / ".recyclebin").mkdir()
+        return pool
+
+    def test_phone_versions_go_to_the_same_recycle_bin_with_the_title(self):
+        with tempfile.TemporaryDirectory() as d:
+            pool = self.library_pool(d)
+            old = pool / ".recyclebin/New Film (2025)/New Film (2025) - Phone 1080p.mkv"
+            old.parent.mkdir()
+            old.write_bytes(b"earlier")
+            self.run_it(pool=pool)
+            self.assertFalse((pool / "media/movies/New Film (2025)/New Film (2025) - Phone 1080p.mkv").exists())
+            self.assertTrue((pool / ".recyclebin/New Film (2025)/New Film (2025) - Phone 1080p_2.mkv").exists())
+            self.assertEqual(old.read_bytes(), b"earlier")
+            self.assertTrue((pool / ".recyclebin/New Show (2025)/Season 01/New Show (2025) - S01E01 - Phone 1080p.mkv").exists())
+            # the arr's own files are the arr's job; other files and a phone copy still being placed stay; a kept title keeps its phone version
+            for f in ("media/movies/New Film (2025)/New Film (2025).mkv", "media/movies/New Film (2025)/notes.txt", "media/movies/New Film (2025)/.New Film (2025) - Phone 1080p.mkv.partial",
+                      "media/tv/New Show (2025)/Season 01/New Show S01E01.mkv", "media/movies/Old Film (1990)/Old Film (1990) - Phone 1080p.mkv"):
+                self.assertTrue((pool / f).exists(), f)
+            self.assertTrue(any("phone version" in l and "recycle bin" in l for l in self.logs))
+
+    def test_a_phone_version_on_another_disk_is_copied_then_removed_like_the_arrs_do(self):
+        # the pool answers EXDEV for a rename off the HDD branch (the bin lives on the SSDs)
+        with tempfile.TemporaryDirectory() as d:
+            pool = self.library_pool(d)
+            src = pool / "media/movies/New Film (2025)/New Film (2025) - Phone 1080p.mkv"
+            src.write_bytes(b"phone")
+            real = os.rename
+
+            def rename(a, b):
+                if ".partial" not in str(a):
+                    raise OSError(18, "Invalid cross-device link")
+                return real(a, b)
+            rt.os.rename = rename
+            try:
+                dest = rt.recycle(src, pool)
+            finally:
+                rt.os.rename = real
+            self.assertEqual(dest, pool / ".recyclebin/New Film (2025)/New Film (2025) - Phone 1080p.mkv")
+            self.assertEqual(dest.read_bytes(), b"phone")
+            self.assertFalse(src.exists())
+            self.assertEqual([f.name for f in dest.parent.iterdir()], [dest.name])
+
+    def test_phone_versions_stay_when_the_arr_delete_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            pool = self.library_pool(d)
+            self.run_it(arr=Fake(fail=("DELETE", "/moviefile/101")), pool=pool)
+            self.assertTrue((pool / "media/movies/New Film (2025)/New Film (2025) - Phone 1080p.mkv").exists())
+            self.assertEqual(list((pool / ".recyclebin").iterdir()), [])
+
+    def test_a_phone_version_that_cannot_be_moved_stops_the_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            pool = self.library_pool(d)
+            (pool / ".recyclebin").rmdir()
+            (pool / ".recyclebin").write_bytes(b"not a folder")
+            self.assertEqual(self.run_it(pool=pool, gone_file=pool / "gone.json")[0], 1)
+            self.assertFalse(any(c[0] == "sonarr" for c in self.arr.calls))
+            # its arr files are already gone: the title is recorded as gone all the same
+            self.assertEqual([g["key"] for g in rt.read_gone(pool / "gone.json")], ["movie/1001"])
+            self.assertTrue(any("phone version" in l and "stopped" in l for l in self.logs))
+
     def test_deletions_are_recorded_with_seerr_keys(self):
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d, "gone.json")
@@ -571,6 +687,7 @@ class Units(unittest.TestCase):
         d = HERE.parent / "systemd"
         self.assertIn("OnCalendar=*-*-* 04:31:00 Europe/Zurich", (d / "retention-delete.timer").read_text())
         self.assertIn(" /run/lock", (d / "retention-delete.service").read_text())
+        self.assertIn(" /srv/video/media /srv/video/.recyclebin", (d / "retention-delete.service").read_text())
         self.assertTrue(rt.in_night(datetime.datetime(2027, 1, 1, 4, 31, tzinfo=TZ)))
         self.assertLess(rt.LOCK_WAIT, 9 * 60)
 

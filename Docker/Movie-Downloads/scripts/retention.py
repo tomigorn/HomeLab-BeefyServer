@@ -8,12 +8,14 @@ import argparse
 import contextlib
 import dataclasses
 import datetime
+import errno
 import fcntl
 import importlib.util
 import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -48,6 +50,9 @@ GONE_CAP = 500
 JF_LISTS = {"leaving": ("user-retention-leaving", "Leaving soon", "temporary titles that leave within 7 days"),
             "gone": ("user-retention-gone", "Left the server", "files deleted by the storage cleanup; request again to download")}
 SEASON = re.compile(r"/Season (\d+)/")
+PHONE = re.compile(r" - Phone \d+p\.[^./]+$")
+POOL = "/srv/video"
+BIN = ".recyclebin"
 
 
 @dataclasses.dataclass
@@ -248,8 +253,20 @@ def jf_rel(path):
     return "media/" + (rel_of(path, "/media/") or "")
 
 
-def in_progress(jf, titles, now):
-    """Keys someone is watching: Continue Watching, Next Up, or played in the last PLAYED_DAYS days (binge watching)."""
+def other_versions(jf, titles):
+    """{user id: [item]}: the other versions of library titles (a phone version, Movie-Downloads README "Phone versions"). Jellyfin hides them from item lists and keeps their own UserData, so a play recorded on one is only seen by a GET of its id."""
+    units, out = by_unit(titles), {}
+    for user in jf("/Users"):
+        uid, ids = user["Id"], []
+        for it in jf(f"/Users/{uid}/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path,MediaSourceCount&EnableImages=false")["Items"]:
+            if (it.get("MediaSourceCount") or 1) > 1 and units.get(unit(jf_rel(it.get("Path")))):
+                ids += [m["Id"] for m in jf(f"/Users/{uid}/Items/{it['Id']}").get("MediaSources") or [] if m.get("Id") and m["Id"] != it["Id"]]
+        out[uid] = [jf(f"/Users/{uid}/Items/{i}") for i in dict.fromkeys(ids)]
+    return out
+
+
+def in_progress(jf, titles, now, versions=None):
+    """Keys someone is watching: Continue Watching, Next Up, or played in the last PLAYED_DAYS days (binge watching); any version of the title (versions: other_versions)."""
     units, out, since = by_unit(titles), set(), now - datetime.timedelta(days=PLAYED_DAYS)
     for user in jf("/Users"):
         uid = user["Id"]
@@ -257,6 +274,8 @@ def in_progress(jf, titles, now):
         items += jf(f"/Shows/NextUp?userId={uid}&Limit=500&Fields=Path&EnableImages=false")["Items"]
         q = "SortBy=DatePlayed&SortOrder=Descending&IncludeItemTypes=Movie,Episode&Recursive=true&Limit=500&Fields=Path&EnableImages=false&EnableUserData=true&Filters=IsPlayed"
         items += [it for it in jf(f"/Users/{uid}/Items?{q}")["Items"] if (stamp((it.get("UserData") or {}).get("LastPlayedDate")) or since) > since]
+        items += [it for it in (versions or {}).get(uid, []) if ((it.get("UserData") or {}).get("PlaybackPositionTicks") or 0) > 0
+                  or (stamp((it.get("UserData") or {}).get("LastPlayedDate")) or since) > since]
         for it in items:
             t = units.get(unit(jf_rel(it.get("Path"))))
             if t:
@@ -264,11 +283,12 @@ def in_progress(jf, titles, now):
     return out
 
 
-def last_plays(jf, titles):
-    """{key: last play by any user} from Jellyfin's per-user LastPlayedDate (series: any episode). Read-only; a title nobody played is missing (its clock stays at the import)."""
+def last_plays(jf, titles, versions=None):
+    """{key: last play by any user} from Jellyfin's per-user LastPlayedDate (series: any episode; any version, versions: other_versions). Read-only; a title nobody played is missing (its clock stays at the import)."""
     units, out = by_unit(titles), {}
     for user in jf("/Users"):
-        for it in jf(f"/Users/{user['Id']}/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path&EnableImages=false&EnableUserData=true")["Items"]:
+        items = jf(f"/Users/{user['Id']}/Items?Recursive=true&IncludeItemTypes=Movie,Episode&Fields=Path&EnableImages=false&EnableUserData=true")["Items"]
+        for it in items + (versions or {}).get(user["Id"], []):
             t = units.get(unit(jf_rel(it.get("Path"))))
             when = stamp((it.get("UserData") or {}).get("LastPlayedDate"))
             if t and when and when.year > 1 and (t.key not in out or when > out[t.key]):
@@ -530,6 +550,47 @@ def jellyfin_lists(entries, overrides, gone, today, since):
     return {"updated": datetime.datetime.now(TZ).isoformat(timespec="seconds"), "lists": rows}
 
 
+def phone_files(t, pool):
+    """Host paths of the title's phone versions (README "Phone versions": `… - Phone 1080p.mkv` next to the film, in the season folders of a series); a copy still being placed (dot name) is left alone."""
+    base = pathlib.Path(pool, t.rel)
+    found = []
+    for dirpath, dirs, files in os.walk(base):
+        if t.kind == "movie":
+            dirs[:] = []
+        found += [pathlib.Path(dirpath, f) for f in files if not f.startswith(".") and PHONE.search(f) and os.path.splitext(f)[1].lower() in VIDEO]
+    return sorted(found)
+
+
+def recycle(path, pool):
+    """Moves a library file into the arrs' recycle bin the way they do it (the path below the root folder, `_2` when the name is taken; the pool refuses a rename off the HDD branch, the bin lives on the SSDs: copy, then remove); the bin cleanup counts 7 days from this move."""
+    rel = pathlib.Path(path).relative_to(pathlib.Path(pool, "media"))
+    dest_dir = pathlib.Path(pool, BIN, *rel.parts[1:-1])
+    dest_dir.mkdir(mode=0o2775, parents=True, exist_ok=True)
+    stem, ext = os.path.splitext(rel.name)
+    dest, n = dest_dir / rel.name, 1
+    while os.path.lexists(dest):
+        n += 1
+        dest = dest_dir / f"{stem}_{n}{ext}"
+    try:
+        os.rename(path, dest)
+    except OSError as e:
+        if e.errno != errno.EXDEV:
+            raise
+        tmp = dest_dir / f".{dest.name}.partial"
+        try:
+            shutil.copyfile(path, tmp)
+            os.chmod(tmp, 0o664)
+            with open(tmp, "rb") as f:
+                os.fsync(f.fileno())
+            os.rename(tmp, dest)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+        os.unlink(path)
+    return dest
+
+
 def in_night(now):
     return NIGHT[0] <= now.astimezone(TZ).time() < NIGHT[1]
 
@@ -586,8 +647,8 @@ def refusal(switch, now, night):
     return None
 
 
-def delete_due(titles, entries, overrides, now, switch, arr, log, night, cap=DELETE_CAP, space_cap=SPACE_CAP, gone_file=None, clock=None):
-    """Delete the media files of temporary titles whose date has come and that showed "Leaving soon" for 7 days since switch-on. Returns (attempts, space-rule attempts). clock: the time now (re-read before every title)."""
+def delete_due(titles, entries, overrides, now, switch, arr, log, night, cap=DELETE_CAP, space_cap=SPACE_CAP, gone_file=None, clock=None, pool=None):
+    """Delete the media files of temporary titles whose date has come and that showed "Leaving soon" for 7 days since switch-on, their phone versions too (pool: the mergerfs pool, same 7-day recycle bin). Returns (attempts, space-rule attempts). clock: the time now (re-read before every title)."""
     clock = clock or (lambda: now)
     why = refusal(switch, clock(), night)
     if why:
@@ -648,6 +709,10 @@ def delete_due(titles, entries, overrides, now, switch, arr, log, night, cap=DEL
                     call("/episodefile/bulk", "DELETE", {"episodeFileIds": ids})
             if gone_file:
                 record_gone(gone_file, t.key, t.title, t.year, today, hdd_bytes=e.get("hddBytes") or 0, tvdb=t.tvdb)
+            if pool:
+                step = "move phone versions"
+                for f in phone_files(t, pool):
+                    log(f"retention: {t.key} ({t.title}) phone version moved to the 7-day recycle bin: {recycle(f, pool)}")
             log(f"retention: {t.key} ({t.title}) files deleted to the 7-day recycle bin ({st['why']} {st['deleteOn']}); title kept")
         except Exception as ex:
             log(f"retention: {t.key} ({t.title}) failed at '{step}': {type(ex).__name__}: {ex} - run stopped")
@@ -756,8 +821,9 @@ def main(argv=None):
         problems.append(f"Seerr media list unreadable ({type(e).__name__}): every series protected")
     lib = collect(apis, rows)
     try:
-        progress = in_progress(apis.jf, lib.titles, now)
-        played = last_plays(apis.jf, lib.titles)
+        versions = other_versions(apis.jf, lib.titles)
+        progress = in_progress(apis.jf, lib.titles, now, versions)
+        played = last_plays(apis.jf, lib.titles, versions)
         plays = recent_plays(apis.jf, lib.titles, now - datetime.timedelta(hours=PROMOTE_HOURS))
         cov = coverage(apis.jf, lib.titles, now)
         if cov is not None and cov < COVERAGE_MIN:
@@ -825,7 +891,7 @@ def main(argv=None):
                 done, space = 0, 0
             else:
                 done, space = delete_due(lib.titles, entries, overrides, now, switch, lambda app: arr[app], say, night, gone_file=state / "retention-gone.json",
-                                         clock=lambda: datetime.datetime.now(TZ))
+                                         clock=lambda: datetime.datetime.now(TZ), pool=env.get("RT_POOL", POOL))
         if done:
             write_atomic(night_file, {**last, "date": now.date().isoformat(), "hddUsed": hdd[1], "deleted": done, "spaceDeleted": space})
     if switch.on:
