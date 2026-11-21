@@ -32,8 +32,8 @@ For end-to-end tests of the download pipeline (request → download → import �
 | Title | TMDB | Last test | Notes |
 |---|---|---|---|
 | Nosferatu (1922) | 653 | 2026-11-12 | **permanent, never delete**; usenet, German 1080p Blu-ray |
-| Battleship Potemkin (1925) | 643 | 2026-10-31 | usenet, no 4K exists |
-| The Cabinet of Dr. Caligari (1920) | 234 | 2026-10-31 | usenet, German DL 2160p |
+| Battleship Potemkin (1925) | 643 | 2026-11-21 | usenet, no 4K exists. 2026-11-21 problem report test (Seerr README "Problem reports"): Radarr 224, imported `…1080p.BluRay.x264-CINEFILE`; "video glitches" report blocked it and grabbed a dead Spanish XviD torrent (led to the resolution-first order) and then the same encode as a 1-seed torrent (led to skipping the same release under another spelling); both removed by hand, the CINEFILE file stays |
+| The Cabinet of Dr. Caligari (1920) | 234 | 2026-11-22 | usenet, German DL 2160p. 2026-11-22 problem report test through report.holy-grail.ch (canary): Radarr 225, imported `…2160p.UHD.BluRay.H265-GAZPROM`; "video glitches" report blocked it, grabbed `…2160p.UHD.BluRay.x265-SURCODE` (usenet), moved out of the night category, imported over GAZPROM at 00:39 (forced: "not a Custom Format upgrade"). Potemkin (224) and Caligari (225) stay in Radarr until the owner deletes them |
 
 ### Series
 
