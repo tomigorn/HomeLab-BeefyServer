@@ -152,7 +152,7 @@ than an instant hardlink. Configure the apps with these **container** paths:
 | SABnzbd | incomplete / complete | `/data/usenet/incomplete` / `/data/usenet/complete/movies` |
 | Radarr | root folder | `/data/media/movies` |
 | Radarr | **Use Hardlinks instead of Copy** | **on** (§13.6) |
-| Radarr | Recycle Bin | `/data/.recyclebin`, 7-day cleanup |
+| Radarr | Recycle Bin | `/data/.recyclebin`, own cleanup ([Recycle bin](#recycle-bin)) |
 | Radarr | qBittorrent client | host `gluetun`, port `8080` |
 | Radarr | SABnzbd client | host `gluetun`, port `8081` |
 | Sonarr | the same, with category `sonarr` / `tv`, root `/data/media/tv` | see [Series (Sonarr)](#series-sonarr) |
@@ -264,7 +264,7 @@ Spec `docs/superpowers/specs/2026-11-15-storage-retention-design.md` (owner 2026
 |---|---|
 | day 0–30 | SSD |
 | day 30 | HDD (every title, kept-forever ones too; done by the mover as today) |
-| day 90 | temporary titles: media files deleted after 7 days of "Leaving soon" (title unmonitored + tagged `retention-deleted` first, then files only). "Deleted" = Radarr/Sonarr's recycle bin `/data/.recyclebin` for 7 days, so the space comes back only after its cleanup |
+| day 90 | temporary titles: media files deleted after 7 days of "Leaving soon" (title unmonitored + tagged `retention-deleted` first, then files only). "Deleted" = the recycle bin `/data/.recyclebin` for 7 days from the move ([Recycle bin](#recycle-bin)), so the space comes back only after its cleanup |
 | HDD > 85 % | temporary titles past day 30 with bytes on the HDD (tier hdd/split, only those bytes counted) leave earlier, oldest import first, until 80 %; our deletions of the last 7 days (still in the recycle bin) count as free; at most 5 such deletions a night, none while the HDD did not drop after the previous night's |
 | watching | resets the clock (no cap): a title played again leaves 3 months after that play; a reset ends "Leaving soon" and the 7 days start over when it is due again. Extra guard at delete time: nothing in someone's Continue Watching or Next Up or played in the last 14 days is deleted. Missing play data never makes a title look older: Jellyfin unreadable or knowing < 90 % of the files = no deletion that night |
 | postponed | in a household collection (Seerr **Collections**): at most 30 days, then deleted anyway (spec) |
@@ -299,6 +299,21 @@ Switch deletion on (owner only):
 The delete run (`retention-delete.timer` 04:31, `--apply`) deletes only when: switched on, 04:00–04:40, clock NTP-synced, no data problem, the media lock `/run/lock/beefy-media.lock` free within 4 min, and per title: temporary, its date reached, 14 days of grace after switch-on, 7 uninterrupted days of "Leaving soon" counted from switch-on at the earliest, no queue item, no import in the last 6 h, the fetched title's TMDB/TVDB id matching. At most 20 attempts a night (5 for the space rule); the first error stops the run, so does 04:40 (checked before every title, also after the lock wait). Each title: unmonitor + tag, then delete the files.
 
 Off again: `RETENTION_DELETE=0` (commit), `sudo systemctl disable --now retention-delete.timer`, `sudo systemctl start retention.service` (clears the switch-on state: switching on later again starts a fresh 14-day grace and leaving-soon week; set `RETENTION_ENABLED_ON` to that new day).
+
+### Recycle bin
+
+Every deleted library file (retention, Delete a title, upgrades, language and quality block) sits in `/srv/video/.recyclebin` (`/data/.recyclebin`) for **7 days from the move into the bin**, then it is gone (2026-11-21).
+
+| | |
+|---|---|
+| Why own | Radarr/Sonarr's cleanup compares each file's date (mtime). They touch the file after the move, but the files belong to SABnzbd (65106), Bazarr (65104) or buntu, so the touch is refused (`utimensat` with a time needs the owner) and swallowed (`RecycleBinProvider.cs` `SetLastWriteTime`; log `UnauthorizedAccessException … SetLastWriteTimeUtc`). Seen 2026-11-18: a file dated 11-11 moved in on 11-17 was purged the next morning |
+| Rule | moved at = the later of the file's ctime (set by the rename into the bin, never set back) and its date; deleted once 7 days old. Empty folders go once a day old |
+| Where | `scripts/recycle-bin.py`, `systemd/recycle-bin.{service,timer}` 04:37, as buntu, writes only the bin. Radarr/Sonarr `RecycleBinCleanupDays` = 0 (backup `backups/pre-recycle-bin-2026-11-21/`, not in git) |
+| Guards | the bin must be a real folder named `.recyclebin` on a mounted pool, clock NTP-synced; else nothing is deleted (exit 1). An undeletable file is logged, the rest goes on |
+| Check | `scripts/recycle-bin.py --dry-run` (every file with its delete date), `journalctl -u recycle-bin`, `md.recycle-bin` |
+| Install | `sudo install -m 0644 systemd/recycle-bin.service systemd/recycle-bin.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now recycle-bin.timer` |
+| Undo | `sudo systemctl disable --now recycle-bin.timer`, then Radarr and Sonarr Settings → Media Management → Recycling Bin Cleanup 7 (counts the file date again) |
+| Tests | `python3 tests/test_recycle_bin.py` |
 
 ## Download → library pipeline
 
@@ -680,7 +695,7 @@ The records of a wiped title stay in `title-wipe.tsv`: the wipe runs as buntu an
 | Rename Movies | on (Recyclarr) | |
 | Propers and Repacks | Do not Prefer (Recyclarr) | the Repack/Proper custom formats score them instead |
 | Rescan Movie Folder after Refresh | **After Manual Refresh** | the scheduled refresh would `stat` cold files and wake the HDD (storage doc §13.6) |
-| Recycle Bin | `/data/.recyclebin`, 7 days | |
+| Recycle Bin | `/data/.recyclebin`, cleanup **0 (off)** | its cleanup counts the file date; ours counts 7 days from the move ([Recycle bin](#recycle-bin)) |
 | Metadata (Kodi/Emby NFO) | **all off** | Jellyfin fetches its own from TMDB; two writers = duplicate/conflicting artwork |
 | Connect | `Jellyfin` (Emby/Jellyfin) | see below |
 | Connect (Custom Script) | `Language policy`, `Wrong-film guard`, `Title wipe`, `Original audio`, `Download now: first download only`, `Seerr sync` | [Seerr availability](#seerr-availability-after-an-import), [Languages](#languages), [Wrong-film guard](#wrong-film-guard), [Delete a title](#delete-a-title), [Can wait](#can-wait-downloads-at-night) |
@@ -1610,7 +1625,7 @@ configured via the API the same way; what differs:
 | qBittorrent | category `sonarr` -> `/data/torrents/tv` |
 | Prowlarr | application `Sonarr` (`http://sonarr:8989`), fullSync, TV categories 5000-5090 |
 | Auth | `External` (Authentik forward auth on `sonarr.holy-grail.ch`, group `streaming-admins`) |
-| Media management | hardlinks, recycle bin `/data/.recyclebin` 7 d, extra files `srt,ass,ssa,sub,idx`, rescan after manual refresh, delete empty folders, no metadata writers |
+| Media management | hardlinks, recycle bin `/data/.recyclebin` cleanup off ([Recycle bin](#recycle-bin)), extra files `srt,ass,ssa,sub,idx`, rescan after manual refresh, delete empty folders, no metadata writers |
 | Connect | `Jellyfin` (Emby/Jellyfin), `/data/media/` -> `/media/`, on import/upgrade/rename/delete |
 | Bazarr | Sonarr `sonarr:8989`, SignalR feed (no webhook, same race as Radarr), profile **English + German** by default, `English + German + <Language>` via the `lang-xx` tag ([Languages](#languages)) |
 
