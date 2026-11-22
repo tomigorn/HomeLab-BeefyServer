@@ -1457,6 +1457,28 @@ class DownloadBlocked(Base):
         self.assertNotIn(TOKEN, out.getvalue())
 
 
+class ClientKind(unittest.TestCase):
+    """The one place that says what a Jellyfin client is: names as the apps and the server's device list show them (Jellyfin /Devices on beefy 2026-11-22, app sources)."""
+
+    def test_tv_apps(self):
+        for name in ("Moonfin for Android TV", "Moonfin for tvOS", "Moonfin for Tizen", "Jellyfin Android TV", "Swiftfin tvOS", "Jellyfin for Tizen", "Jellyfin for WebOS"):
+            self.assertEqual(app.client_kind(name), "tv", name)
+
+    def test_the_web_client_is_a_tv_only_on_a_tv_device_name(self):
+        for device in ("Samsung Smart TV", "LG Smart TV", "Xbox One", "Sony PS4"):
+            self.assertEqual(app.client_kind("Jellyfin Web", device), "tv", device)
+        for device in ("Chrome", "Chrome Android", "Safari iPhone", "", None):
+            self.assertIsNone(app.client_kind("Jellyfin Web", device), device)
+
+    def test_phone_apps(self):
+        for name in ("Moonfin for Android", "Moonfin for iOS", "Jellyfin Android", "Jellyfin iOS", "Swiftfin iOS", "Findroid"):
+            self.assertEqual(app.client_kind(name), "phone", name)
+
+    def test_everything_else_is_neither(self):
+        for name in ("Moonfin for Windows", "Seerr", "hss-popular", "Kodi", "", None):
+            self.assertIsNone(app.client_kind(name), name)
+
+
 class PhoneDownload(Base):
     """Original downloads (/Items/<id>/Download, rewritten by Traefik): a phone app on a 4K title gets the phone version (Movie-Downloads README "Phone versions")."""
     ITEM = "72a1b6d4112a1f5f68e7b23409a9069f"
@@ -1471,6 +1493,7 @@ class PhoneDownload(Base):
         self.core.cfg.phone_box = str(self.box)
         self.calls = []
         self.height = 2160
+        self.language = None
         self.sessions = [{"Id": "sess-phone", "DeviceId": self.DEVICE, "UserId": USERS[TOKEN]["Id"], "Client": "Moonfin for Android"}]
         uid = USERS[TOKEN]["Id"]
         self.devices = [{"Id": "tv", "AppName": "Moonfin for Android TV", "LastUserId": uid, "DateLastActivity": self.iso(-3600)},
@@ -1483,6 +1506,8 @@ class PhoneDownload(Base):
                 return self.sessions
             if method == "GET" and path.startswith("/Devices"):
                 return {"Items": [d for d in self.devices if d["LastUserId"] == urllib.parse.parse_qs(path.partition("?")[2]).get("userId", [None])[0]]}
+            if method == "GET" and path.startswith("/DisplayPreferences"):
+                return {"CustomPrefs": {"language": self.language}} if self.language else {}
             if method == "GET" and path.startswith("/Users"):
                 return [{"Id": "admin-id", "Policy": {"IsAdministrator": True}}]
             if method == "GET" and path.startswith("/Items?"):
@@ -1515,12 +1540,120 @@ class PhoneDownload(Base):
         self.assertEqual(self.hit(headers=ua)[0], 503)
 
     def test_a_named_non_phone_client_gets_the_original(self):
-        auth = {"Authorization": 'MediaBrowser Client="Moonfin for Android TV", Device="TV", DeviceId="tv", Version="1"'}
+        auth = {"Authorization": 'MediaBrowser Client="Jellyfin Web", Device="Chrome", DeviceId="web", Version="1"'}
         self.assertEqual(self.hit(headers=auth), (302, {"location": self.bypass()}))
 
     def test_a_named_phone_client_is_a_phone(self):
         auth = {"X-Emby-Authorization": 'MediaBrowser Client="Moonfin for Android", Device="Pixel", DeviceId="x", Version="1"'}
         self.assertEqual(self.hit(headers=auth)[0], 503)
+
+    # --- TV clients: Original download refused with a pop-up (Jellyfin README "TV downloads off") ---
+    TV_DEVICE = "tv-device-0001"
+
+    def tv_auth(self, client, device="Sony BRAVIA", header="Authorization"):
+        return {header: f'MediaBrowser Client="{client}", Device="{device}", DeviceId="{self.TV_DEVICE}", Version="1"'}
+
+    def tv_session(self):
+        self.sessions = [{"Id": "sess-tv", "DeviceId": self.TV_DEVICE, "UserId": USERS[TOKEN]["Id"]}]
+
+    def test_tv_clients_named_in_the_header_are_refused_with_a_pop_up(self):
+        self.tv_session()
+        for client, device in (("Moonfin for Android TV", "Sony BRAVIA 4K GB ATV3"), ("Moonfin for tvOS", "Apple TV"), ("Moonfin for Tizen", "Samsung Smart TV"),
+                               ("Jellyfin Android TV", "KD-65XF9005"), ("Swiftfin tvOS", "AppleTV"), ("Jellyfin for Tizen", "Samsung Smart TV"), ("Jellyfin for WebOS", "LG Smart TV"),
+                               ("Jellyfin Web", "Xbox One"), ("Jellyfin Web", "Samsung Smart TV")):
+            self.core.notified.clear()
+            self.calls.clear()
+            code, body = self.hit(headers=self.tv_auth(client, device))
+            self.assertEqual(code, 503, client)
+            self.assertIn("TV", body["error"])
+            self.assertEqual(self.requests(), [], client)
+            [m] = self.messages()
+            self.assertEqual((m["Header"], m["Text"]), (app.TV_HEADER, app.TV_TEXT["en"]), client)
+
+    def test_the_tv_pop_up_goes_to_the_callers_session_on_the_header_device(self):
+        self.sessions = [{"Id": "sess-tv", "DeviceId": self.TV_DEVICE, "UserId": USERS[TOKEN]["Id"]},
+                         {"Id": "sess-other-user", "DeviceId": self.TV_DEVICE, "UserId": USERS["b" * 32]["Id"]},
+                         {"Id": "sess-phone", "DeviceId": self.DEVICE, "UserId": USERS[TOKEN]["Id"]}]
+        self.hit(headers=self.tv_auth("Moonfin for Android TV", header="X-Emby-Authorization"))
+        self.assertEqual([p for m, p, b in self.calls if m == "POST"], ["/Sessions/sess-tv/Message"])
+
+    def test_the_tv_refusal_covers_file_too_and_never_asks_for_a_phone_version(self):
+        self.tv_session()
+        code, _ = self.core.handle("GET", f"/Items/{self.ITEM}/File?ApiKey={TOKEN}", self.tv_auth("Swiftfin tvOS"), b"")
+        self.assertEqual(code, 503)
+        self.assertEqual(self.requests(), [])
+        self.assertFalse((self.box / "sent.jsonl").exists())
+
+    def test_the_tv_pop_up_is_german_for_a_german_display_language(self):
+        self.tv_session()
+        self.language = "de-DE"
+        self.hit(headers=self.tv_auth("Moonfin for Android TV"))
+        self.assertEqual(self.messages()[0]["Text"], app.TV_TEXT["de"])
+        self.assertNotEqual(app.TV_TEXT["de"], app.TV_TEXT["en"])
+
+    def test_the_tv_pop_up_is_english_when_the_language_is_unreadable(self):
+        self.tv_session()
+        for lang in (None, "fr-FR", "en-US"):
+            self.core.notified.clear()
+            self.calls.clear()
+            self.language = lang
+            self.hit(headers=self.tv_auth("Moonfin for Android TV"))
+            self.assertEqual(self.messages()[0]["Text"], app.TV_TEXT["en"], lang)
+
+    def test_one_tv_pop_up_per_device_within_two_minutes(self):
+        self.tv_session()
+        for _ in range(4):
+            self.assertEqual(self.hit(headers=self.tv_auth("Moonfin for Android TV"))[0], 503)
+        self.assertEqual(len(self.messages()), 1)
+        self.now = NOW + datetime.timedelta(seconds=121)
+        self.hit(headers=self.tv_auth("Moonfin for Android TV"))
+        self.assertEqual(len(self.messages()), 2)
+
+    def test_a_tv_without_a_live_session_is_refused_without_a_pop_up(self):
+        self.sessions = []
+        self.assertEqual(self.hit(headers=self.tv_auth("Moonfin for Android TV"))[0], 503)
+        self.assertEqual(self.messages(), [])
+
+    def test_a_tv_with_a_bad_token_is_refused_without_a_pop_up(self):
+        self.tv_session()
+        self.assertEqual(self.hit(token="z" * 32, headers=self.tv_auth("Moonfin for Android TV"))[0], 503)
+        self.assertEqual(self.messages(), [])
+
+    def test_an_unnamed_downloader_on_a_tv_is_refused_by_the_latest_device(self):
+        # Moonfin's downloader sends no Client name: the user's latest active device decides, as for phones
+        uid = USERS[TOKEN]["Id"]
+        self.devices = [{"Id": self.TV_DEVICE, "AppName": "Moonfin for Android TV", "Name": "Sony BRAVIA", "LastUserId": uid, "DateLastActivity": self.iso(-20)},
+                        {"Id": self.DEVICE, "AppName": "Moonfin for Android", "LastUserId": uid, "DateLastActivity": self.iso(-600)}]
+        self.tv_session()
+        self.assertEqual(self.hit()[0], 503)
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.messages()[0]["Text"], app.TV_TEXT["en"])
+        self.assertEqual([p for m, p, b in self.calls if m == "POST"], ["/Sessions/sess-tv/Message"])
+
+    def test_an_unnamed_downloader_whose_latest_device_is_a_web_tv_is_refused(self):
+        uid = USERS[TOKEN]["Id"]
+        self.devices = [{"Id": self.TV_DEVICE, "AppName": "Jellyfin Web", "Name": "Samsung Smart TV", "LastUserId": uid, "DateLastActivity": self.iso(-20)}]
+        self.tv_session()
+        self.assertEqual(self.hit()[0], 503)
+
+    def test_an_old_tv_session_does_not_block_a_phone_download(self):
+        uid = USERS[TOKEN]["Id"]
+        self.devices[0].update({"AppName": "Moonfin for Android TV", "DateLastActivity": self.iso(-3600)})
+        self.assertEqual(self.hit()[0], 503)
+        self.assertEqual(len(self.requests()), 1)
+
+    def test_a_phone_used_after_the_tv_still_gets_the_phone_version(self):
+        self.devices[0].update({"AppName": "Moonfin for Android TV", "DateLastActivity": self.iso(-120)})
+        self.assertEqual(self.hit()[0], 503)
+        self.assertEqual(self.requests(), [{"item": self.ITEM, "user": USERS[TOKEN]["Id"], "device": self.DEVICE}])
+        self.assertIn("phone version", self.messages()[0]["Text"])
+
+    def test_a_streaming_request_is_not_touched(self):
+        self.assertEqual(self.core.handle("GET", f"/Videos/{self.ITEM}/stream?Static=true&ApiKey={TOKEN}", self.tv_auth("Moonfin for Android TV"), b"")[0], 404)
+
+    def test_an_unnamed_download_with_no_tv_device_is_unchanged(self):
+        self.assertEqual(self.hit()[0], 503)
+
 
     def bypass(self, item=ITEM, token=TOKEN):
         return f"/Items/{item}/Download?ApiKey={token}&hssPhone=1"
@@ -1579,7 +1712,7 @@ class PhoneDownload(Base):
         self.assertEqual(self.requests(), [])
 
     def test_not_a_phone_app_downloads_the_original(self):
-        self.devices[0]["DateLastActivity"] = self.iso(-5)
+        self.devices[0].update({"AppName": "Moonfin for Windows", "DateLastActivity": self.iso(-5)})
         self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
         self.assertEqual(self.requests(), [])
 

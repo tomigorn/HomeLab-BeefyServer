@@ -51,8 +51,22 @@ AUDIT_KEEP = 3
 KEEP_DAYS = 30
 # Phone versions (Movie-Downloads README "Phone versions"): only these apps get the smaller second version on an Original download
 PHONE_CLIENTS = {"Moonfin for Android", "Moonfin for iOS", "Jellyfin Android", "Jellyfin iOS", "Swiftfin iOS", "Findroid"}
+# TV apps (Jellyfin README "TV downloads off"): names as /Devices lists them (2026-11-22) and as the app sources set them (Jellyfin for WebOS)
+TV_CLIENTS = {"Moonfin for Android TV", "Moonfin for tvOS", "Moonfin for Tizen", "Jellyfin Android TV", "Swiftfin tvOS", "Jellyfin for Tizen", "Jellyfin for WebOS"}
+# the web client on a TV names itself "Jellyfin Web" and puts the TV in the device name (jellyfin-web appHost deviceName)
+WEB_CLIENT = "Jellyfin Web"
+TV_WEB_DEVICES = {"Samsung Smart TV", "LG Smart TV", "Xbox One", "Sony PS4"}
 ITEM_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 CLIENT_RE = re.compile(r'Client="([^"]*)"')
+DEVICE_NAME_RE = re.compile(r'\bDevice="([^"]*)"')
+DEVICE_ID_HEADER_RE = re.compile(r'\bDeviceId="([^"]*)"')
+
+
+def client_kind(app_name, device_name=None):
+    """"tv", "phone" or None for a Jellyfin client: the one place that classifies clients for downloads."""
+    if app_name in TV_CLIENTS or (app_name == WEB_CLIENT and device_name in TV_WEB_DEVICES):
+        return "tv"
+    return "phone" if app_name in PHONE_CLIENTS else None
 PHONE_ACTIVE = datetime.timedelta(minutes=15)
 
 
@@ -81,6 +95,9 @@ RESET_CAP = 500
 DOWNLOAD_HEADER = "\U0001f4f1 Download"
 DOWNLOAD_TEXT = "Converted downloads are switched off. Please choose 'Original'. A smaller phone version will come automatically later."
 DOWNLOAD_TIMEOUT_MS = 15000
+TV_HEADER = "\U0001f4fa Download"
+TV_TEXT = {"en": "Downloads are not available on TV. Please download on your phone or computer.",
+           "de": "Downloads sind auf dem Fernseher nicht m\u00f6glich. Bitte lade auf dem Handy oder Computer herunter."}
 DOWNLOAD_NOTICE_EVERY = datetime.timedelta(minutes=2)
 DOWNLOAD_NOTICE_CAP = 256
 DEVICE_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
@@ -742,6 +759,8 @@ class Core:
         and any error, gets the original: 302 back to Jellyfin with hssPhone=1, which Traefik passes straight through."""
         if not ITEM_ID_RE.match(item):
             return 404, {"error": "not found"}
+        auth = headers.get("x-emby-authorization") or headers.get("authorization") or ""
+        named, device_name = CLIENT_RE.search(auth), DEVICE_NAME_RE.search(auth)
         pairs = [(k, v) for k, v in urllib.parse.parse_qsl(query, keep_blank_values=True, max_num_fields=64) if k.lower() != "hssphone"]
 
         def to(target):
@@ -750,10 +769,16 @@ class Core:
             return 302, {"location": f"/Items/{target}/{endpoint}?" + urllib.parse.urlencode(kept + [("hssPhone", "1")])}
         q = {k.lower(): v for k, v in pairs}
         token = q.get("apikey") or q.get("api_key") or self.token(headers) or ""
+        if named and client_kind(named.group(1), device_name.group(1) if device_name else None) == "tv":
+            return self.tv_refused(token, (DEVICE_ID_HEADER_RE.search(auth) or [None, ""])[1])
         if not self.cfg.phone_box or not self.jellyfin_admin or not TOKEN_RE.match(token):
             return to(item)
         try:
             user = self.jellyfin(token)
+            if not named:
+                tv = self.recent_device(user)
+                if tv and client_kind(tv.get("AppName"), tv.get("Name")) == "tv" and tv.get("Id"):
+                    return self.tv_refused(token, tv["Id"])
             session = self.phone_session(user, headers)
             if not session:
                 return to(item)
@@ -778,24 +803,43 @@ class Core:
             print(f"phone download: {type(e).__name__}, original sent", flush=True)
             return to(item)
 
+    def tv_refused(self, token, device):
+        """A TV client asked for an Original download: refused, one pop-up in its own session. 503, not 403: Moonfin falls back to the plain stream (the file itself) on a 4xx and stops on a 5xx."""
+        if self.jellyfin_admin and DEVICE_ID_RE.match(device) and TOKEN_RE.match(token) and self.mark_notice("tv:" + device):
+            self.spawn(lambda: self.send_notice(device, token, lambda user: (TV_HEADER, TV_TEXT[self.language(user)])))
+        print("tv download: refused", flush=True)
+        return 503, {"error": "downloads are not available on TV"}
+
+    def language(self, user):
+        """"de" when the user's Jellyfin display language is German, else "en"."""
+        try:
+            prefs = self.jellyfin_admin("GET", f"/DisplayPreferences/usersettings?userId={urllib.parse.quote(str(user.get('Id') or ''), safe='')}&client=emby") or {}
+            return "de" if str((prefs.get("CustomPrefs") or {}).get("language") or "").lower().startswith("de") else "en"
+        except Exception:  # noqa: BLE001
+            return "en"
+
+    def recent_device(self, user):
+        """The user's most recently active Jellyfin device within PHONE_ACTIVE, else None."""
+        uid = urllib.parse.quote(str(user.get("Id") or ""), safe="")
+        devices = (self.jellyfin_admin("GET", f"/Devices?userId={uid}") or {}).get("Items") or []
+        now = self.clock()
+        recent = [(t, d) for d in devices if d.get("LastUserId") == user.get("Id") for t in [jf_time(d.get("DateLastActivity"))] if t and now - t <= PHONE_ACTIVE]
+        return max(recent, key=lambda x: x[0])[1] if recent else None
+
     def phone_session(self, user, headers):
         """{"DeviceId", "Id" (its live session or None)} when this download comes from a phone app, else None.
         Phone apps keep no Jellyfin session while idle (Moonfin for Android, 2026-11-20), so the user's devices decide: the most recently active one
         within PHONE_ACTIVE (the app asks for the item's details right before it downloads) must be a phone app."""
         # the request's own client name decides when it sends one (Moonfin's downloader sends none and a browser-like User-Agent, so that is no signal)
         named = CLIENT_RE.search(headers.get("x-emby-authorization") or headers.get("authorization") or "")
-        if named and named.group(1) not in PHONE_CLIENTS:
+        if named and client_kind(named.group(1)) != "phone":
             print("phone download: original (client is no phone app)", flush=True)
             return None
-        uid = urllib.parse.quote(str(user.get("Id") or ""), safe="")
-        devices = (self.jellyfin_admin("GET", f"/Devices?userId={uid}") or {}).get("Items") or []
-        now = self.clock()
-        recent = [(t, d) for d in devices if d.get("LastUserId") == user.get("Id") for t in [jf_time(d.get("DateLastActivity"))] if t and now - t <= PHONE_ACTIVE]
-        if not recent:
+        device = self.recent_device(user)
+        if not device:
             print("phone download: original (no device active lately)", flush=True)
             return None
-        _, device = max(recent, key=lambda x: x[0])
-        if device.get("AppName") not in PHONE_CLIENTS or not device.get("Id"):
+        if client_kind(device.get("AppName")) != "phone" or not device.get("Id"):
             print(f"phone download: original (latest device is {str(device.get('AppName'))[:40]})", flush=True)
             return None
         sessions = self.jellyfin_admin("GET", "/Sessions?deviceId=" + urllib.parse.quote(str(device["Id"]), safe="")) or []
@@ -861,6 +905,10 @@ class Core:
             return True
 
     def notify_device(self, device, token):
+        self.send_notice(device, token, lambda user: (DOWNLOAD_HEADER, DOWNLOAD_TEXT))
+
+    def send_notice(self, device, token, texts):
+        """A pop-up (header, text from texts(user)) in the token user's own session on that device."""
         try:
             user = self.jellyfin(token)
             if (user.get("Policy") or {}).get("IsDisabled"):
@@ -868,7 +916,7 @@ class Core:
             sessions = self.jellyfin_admin("GET", "/Sessions?deviceId=" + urllib.parse.quote(device, safe="")) or []
             for s in sessions:
                 if s.get("DeviceId") == device and s.get("UserId") == user.get("Id") and s.get("Id"):
-                    self.jellyfin_admin("POST", f"/Sessions/{urllib.parse.quote(str(s['Id']), safe='')}/Message", {"Header": DOWNLOAD_HEADER, "Text": DOWNLOAD_TEXT, "TimeoutMs": DOWNLOAD_TIMEOUT_MS})
+                    self.jellyfin_admin("POST", f"/Sessions/{urllib.parse.quote(str(s['Id']), safe='')}/Message", dict(zip(("Header", "Text"), texts(user)), TimeoutMs=DOWNLOAD_TIMEOUT_MS))
                     print("download notice sent", flush=True)
                     return
             print("download notice: no session", flush=True)

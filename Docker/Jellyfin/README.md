@@ -877,6 +877,19 @@ Original downloads from a phone app of a 4K film or episode get a smaller second
 | Tested | Moonfin for Android (owner phone 2026-11-20 08:32): Original download of Money Heist S02E01 got the phone version (2.1 GiB instead of 5.8), log `phone download: phone version sent`. Still to test: a 4K title without a phone version (409 + pop-ups without a live session), iPhone and the official apps |
 | Tests | `cd popular && python3 -m unittest test_app.PhoneDownload`; check `jf.popular-phone-download` |
 
+## TV downloads off (2026-11-22)
+A TV client's Original download is refused with a short pop-up; streaming (static stream, HLS) is untouched. Same route as "Phone versions": nothing changed on fastpi.
+
+| What | Where |
+|---|---|
+| Route | the existing `jellyfin-phone-download` router sends `/Items/<id>/Download` and `/File` to `jellyfin-popular`, so TV requests already arrive there |
+| Classification | `popular/app.py` `client_kind(app, device)` → `tv` / `phone` / none: one place for every client decision. TV: `TV_CLIENTS` (Moonfin for Android TV / tvOS / Tizen, Jellyfin Android TV, Swiftfin tvOS, Jellyfin for Tizen / WebOS, names from `/Devices` 2026-11-22 and the app sources) and the web client (`Jellyfin Web`) with a TV device name (`TV_WEB_DEVICES`: Samsung Smart TV, LG Smart TV, Xbox One, Sony PS4). A browser in TV layout on a PC is a plain `Jellyfin Web`: not detectable |
+| Decision | a `Client="…"` in the auth header decides; a downloader without one (Moonfin) is judged by the user's latest active device within 15 min, as for phones. A phone used after the TV wins |
+| Answer | 503, never 4xx: Moonfin falls back to the plain stream (the file) on a 4xx and stops on a 5xx. Phone and desktop downloads are unchanged |
+| Pop-up | "📺 Download" in the caller's own session on that device (token checked, one per device per 2 min), text by the Jellyfin display language (`DisplayPreferences` `language`: German = DE, else EN): EN "Downloads are not available on TV. Please download on your phone or computer." / DE "Downloads sind auf dem Fernseher nicht möglich. Bitte lade auf dem Handy oder Computer herunter." A TV without a live session gets the refusal only |
+| Logs | `sudo docker logs jellyfin-popular \| grep "tv download"` → `refused`; `download notice` as for the other pop-ups |
+| Tests | `cd popular && python3 -m unittest test_app.ClientKind test_app.PhoneDownload`; check `jf.popular-tv-download` |
+
 ## Phone lists (2026-11-20)
 Two private rows on top of the home in the Moonfin phone and tablet apps.
 
