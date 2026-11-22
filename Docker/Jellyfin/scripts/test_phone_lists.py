@@ -383,5 +383,12 @@ class RunTest(unittest.TestCase):
         self.assertEqual(self.jf.sets, {})
 
 
+class HintTest(unittest.TestCase):
+    def test_the_hint_says_to_pick_a_smaller_quality(self):
+        # owner 2026-11-22: Original = the full file, any smaller quality = the phone version
+        self.assertIn("smaller quality", pl.HINT)
+        self.assertNotIn("Original:", pl.HINT)
+
+
 if __name__ == "__main__":
     unittest.main()

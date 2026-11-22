@@ -1479,8 +1479,8 @@ class ClientKind(unittest.TestCase):
             self.assertIsNone(app.client_kind(name), name)
 
 
-class PhoneDownload(Base):
-    """Original downloads (/Items/<id>/Download, rewritten by Traefik): a phone app on a 4K title gets the phone version (Movie-Downloads README "Phone versions")."""
+class PhoneBase(Base):
+    """Fakes shared by Original and converted downloads: a 4K episode, its phone version, the user's devices and sessions."""
     ITEM = "72a1b6d4112a1f5f68e7b23409a9069f"
     PHONE = "0123456789abcdef0123456789abcdef"
     DEVICE = "a4859e97-7caf-4d39-a378-60798b8c22a8"
@@ -1499,6 +1499,9 @@ class PhoneDownload(Base):
         self.devices = [{"Id": "tv", "AppName": "Moonfin for Android TV", "LastUserId": uid, "DateLastActivity": self.iso(-3600)},
                         {"Id": self.DEVICE, "AppName": "Moonfin for Android", "LastUserId": uid, "DateLastActivity": self.iso(-40, digits=7)},
                         {"Id": "web", "AppName": "Jellyfin Web", "LastUserId": USERS["b" * 32]["Id"], "DateLastActivity": self.iso(-1)}]
+        # the server copy has German at index 1, the phone version at index 3 (Godzilla Minus One, 2026-11-22)
+        self.sources = [{"Id": self.ITEM, "MediaStreams": [{"Type": "Video", "Index": 0}, {"Type": "Audio", "Index": 1, "Language": "deu"}, {"Type": "Audio", "Index": 2, "Language": "jpn"}]},
+                        {"Id": self.PHONE, "MediaStreams": [{"Type": "Video", "Index": 0}, {"Type": "Audio", "Index": 1, "Language": "jpn"}, {"Type": "Audio", "Index": 3, "Language": "deu"}]}]
 
         def admin(method, path, body=None):
             self.calls.append((method, path, body))
@@ -1511,7 +1514,8 @@ class PhoneDownload(Base):
             if method == "GET" and path.startswith("/Users"):
                 return [{"Id": "admin-id", "Policy": {"IsAdministrator": True}}]
             if method == "GET" and path.startswith("/Items?"):
-                return {"Items": [{"Id": self.ITEM, "Type": "Episode", "MediaStreams": [{"Type": "Video", "Height": self.height, "Width": 3840 if self.height > 1080 else 1920}]}]}
+                return {"Items": [{"Id": self.ITEM, "Type": "Episode", "MediaStreams": [{"Type": "Video", "Height": self.height, "Width": 3840 if self.height > 1080 else 1920}],
+                                   "MediaSources": self.sources}]}
             return None
 
         self.core.jellyfin_admin = admin
@@ -1524,30 +1528,15 @@ class PhoneDownload(Base):
     def state(self, **item):
         (self.box / "state.json").write_text(json.dumps({"items": {self.ITEM: item}}))
 
-    def hit(self, token=TOKEN, ip=IP, item=ITEM, extra="", headers=None):
-        q = f"ApiKey={token}{extra}" if token else extra.lstrip("&")
-        h = dict({"X-Real-Ip": ip} if ip else {}, **(headers or {}))
-        return self.core.handle("GET", f"/Items/{item}/Download?{q}", h, b"")
+    def bypass(self, item=ITEM, token=TOKEN):
+        return f"/Items/{item}/Download?ApiKey={token}&hssPhone=1"
 
-    def test_a_browser_used_last_gets_the_original(self):
-        uid = USERS[TOKEN]["Id"]
-        self.devices.append({"Id": "chrome", "AppName": "Jellyfin Web", "LastUserId": uid, "DateLastActivity": self.iso(-2)})
-        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
-        self.assertEqual(self.requests(), [])
+    def messages(self):
+        return [b for m, p, b in self.calls if m == "POST" and p.endswith("/Message")]
 
-    def test_the_phone_downloader_user_agent_does_not_matter(self):
-        ua = {"User-Agent": "Mozilla/5.0 (Linux; Android 14; 2312DRA50G Build/UKQ1) AppleWebKit/537.36"}
-        self.assertEqual(self.hit(headers=ua)[0], 503)
+    def requests(self):
+        return [json.loads(f.read_text()) for f in sorted((self.box / "requests").glob("*.json"))]
 
-    def test_a_named_non_phone_client_gets_the_original(self):
-        auth = {"Authorization": 'MediaBrowser Client="Jellyfin Web", Device="Chrome", DeviceId="web", Version="1"'}
-        self.assertEqual(self.hit(headers=auth), (302, {"location": self.bypass()}))
-
-    def test_a_named_phone_client_is_a_phone(self):
-        auth = {"X-Emby-Authorization": 'MediaBrowser Client="Moonfin for Android", Device="Pixel", DeviceId="x", Version="1"'}
-        self.assertEqual(self.hit(headers=auth)[0], 503)
-
-    # --- TV clients: Original download refused with a pop-up (Jellyfin README "TV downloads off") ---
     TV_DEVICE = "tv-device-0001"
 
     def tv_auth(self, client, device="Sony BRAVIA", header="Authorization"):
@@ -1556,6 +1545,44 @@ class PhoneDownload(Base):
     def tv_session(self):
         self.sessions = [{"Id": "sess-tv", "DeviceId": self.TV_DEVICE, "UserId": USERS[TOKEN]["Id"]}]
 
+
+class PhoneDownload(PhoneBase):
+    """Original downloads (/Items/<id>/Download and /File, path unchanged by Traefik): the full original file for every client; only a TV is refused (owner 2026-11-22).
+    Smaller qualities get the phone version: ConvertedDownload."""
+
+    def hit(self, token=TOKEN, ip=PhoneBase.IP, item=PhoneBase.ITEM, extra="", headers=None):
+        q = f"ApiKey={token}{extra}" if token else extra.lstrip("&")
+        h = dict({"X-Real-Ip": ip} if ip else {}, **(headers or {}))
+        return self.core.handle("GET", f"/Items/{item}/Download?{q}", h, b"")
+
+    def test_a_phone_gets_the_original_even_when_a_phone_version_is_ready(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
+        self.assertFalse((self.box / "sent.jsonl").exists())
+        self.assertEqual(self.messages(), [])
+
+    def test_a_phone_original_download_of_a_4k_title_asks_for_nothing(self):
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.messages(), [])
+
+    def test_a_phone_original_download_while_preparing_still_gets_the_original(self):
+        self.state(state="downloading", percent=42)
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
+        self.assertEqual(self.messages(), [])
+
+    def test_a_named_phone_client_gets_the_original(self):
+        auth = {"X-Emby-Authorization": 'MediaBrowser Client="Moonfin for Android", Device="Pixel", DeviceId="x", Version="1"'}
+        self.assertEqual(self.hit(headers=auth), (302, {"location": self.bypass()}))
+
+    def test_a_browser_or_desktop_gets_the_original(self):
+        uid = USERS[TOKEN]["Id"]
+        self.devices.append({"Id": "chrome", "AppName": "Jellyfin Web", "LastUserId": uid, "DateLastActivity": self.iso(-2)})
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
+        auth = {"Authorization": 'MediaBrowser Client="Jellyfin Media Player", Device="PC", DeviceId="pc", Version="1"'}
+        self.assertEqual(self.hit(headers=auth), (302, {"location": self.bypass()}))
+
+    # --- TV clients: Original download refused with a pop-up (Jellyfin README "TV downloads off") ---
     def test_tv_clients_named_in_the_header_are_refused_with_a_pop_up(self):
         self.tv_session()
         for client, device in (("Moonfin for Android TV", "Sony BRAVIA 4K GB ATV3"), ("Moonfin for tvOS", "Apple TV"), ("Moonfin for Tizen", "Samsung Smart TV"),
@@ -1637,137 +1664,35 @@ class PhoneDownload(Base):
         self.assertEqual(self.hit()[0], 503)
 
     def test_an_old_tv_session_does_not_block_a_phone_download(self):
-        uid = USERS[TOKEN]["Id"]
         self.devices[0].update({"AppName": "Moonfin for Android TV", "DateLastActivity": self.iso(-3600)})
-        self.assertEqual(self.hit()[0], 503)
-        self.assertEqual(len(self.requests()), 1)
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
 
-    def test_a_phone_used_after_the_tv_still_gets_the_phone_version(self):
+    def test_a_phone_used_after_the_tv_gets_the_original(self):
         self.devices[0].update({"AppName": "Moonfin for Android TV", "DateLastActivity": self.iso(-120)})
-        self.assertEqual(self.hit()[0], 503)
-        self.assertEqual(self.requests(), [{"item": self.ITEM, "user": USERS[TOKEN]["Id"], "device": self.DEVICE}])
-        self.assertIn("phone version", self.messages()[0]["Text"])
+        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
 
     def test_a_streaming_request_is_not_touched(self):
         self.assertEqual(self.core.handle("GET", f"/Videos/{self.ITEM}/stream?Static=true&ApiKey={TOKEN}", self.tv_auth("Moonfin for Android TV"), b"")[0], 404)
 
-    def test_an_unnamed_download_with_no_tv_device_is_unchanged(self):
-        self.assertEqual(self.hit()[0], 503)
-
-
-    def bypass(self, item=ITEM, token=TOKEN):
-        return f"/Items/{item}/Download?ApiKey={token}&hssPhone=1"
-
-    def messages(self):
-        return [b for m, p, b in self.calls if m == "POST" and p.endswith("/Message")]
-
-    def requests(self):
-        return [json.loads(f.read_text()) for f in sorted((self.box / "requests").glob("*.json"))]
-
-    def test_ready_phone_version_is_sent_instead(self):
-        self.state(state="ready", phoneItem=self.PHONE)
-        self.assertEqual(self.hit(), (302, {"location": self.bypass(self.PHONE)}))
-
-    def test_a_sent_phone_version_is_recorded_per_user_and_device(self):
-        self.state(state="ready", phoneItem=self.PHONE)
-        self.hit()
-        [rec] = [json.loads(l) for l in (self.box / "sent.jsonl").read_text().splitlines()]
-        self.assertEqual(rec, {"at": self.now.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "user": USERS[TOKEN]["Id"], "device": self.DEVICE,
-                               "item": self.ITEM, "phoneItem": self.PHONE})
-
-    def test_an_unwritable_record_still_sends_the_phone_version(self):
-        self.state(state="ready", phoneItem=self.PHONE)
-        (self.box / "sent.jsonl").mkdir()
-        self.assertEqual(self.hit(), (302, {"location": self.bypass(self.PHONE)}))
-
-    def test_first_download_starts_the_phone_version_with_a_pop_up(self):
-        code, body = self.hit()
-        self.assertEqual(code, 503)
-        self.assertEqual(self.requests(), [{"item": self.ITEM, "user": USERS[TOKEN]["Id"], "device": self.DEVICE}])
-        [m] = self.messages()
-        self.assertIn("being prepared", m["Text"])
-
-    def test_a_second_tap_while_preparing_shows_progress_without_a_new_request(self):
-        self.state(state="downloading", percent=42)
-        code, _ = self.hit()
-        self.assertEqual(code, 503)
-        self.assertEqual(self.requests(), [])
-        self.assertIn("42", self.messages()[0]["Text"])
-
-    def test_a_tap_while_converting_shows_the_conversion(self):
-        for st, pct, want in (("converting", 37, "37 % converted"), ("queued", 0, "conversion starts soon")):
-            self.state(state=st, percent=pct)
-            self.assertEqual(self.hit()[0], 503, st)
-            self.assertIn(want, self.messages()[-1]["Text"])
-        self.assertEqual(self.requests(), [])
-
-    def test_nothing_smaller_or_not_needed_downloads_the_original(self):
-        for st in ("nothing", "not-needed"):
-            self.state(state=st)
-            self.assertEqual(self.hit(), (302, {"location": self.bypass()}), st)
-
-    def test_not_4k_downloads_the_original(self):
-        self.height = 1080
-        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
-        self.assertEqual(self.requests(), [])
-
-    def test_not_a_phone_app_downloads_the_original(self):
-        self.devices[0].update({"AppName": "Moonfin for Windows", "DateLastActivity": self.iso(-5)})
-        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
-        self.assertEqual(self.requests(), [])
-
-    def test_no_device_active_lately_downloads_the_original(self):
-        self.devices[1]["DateLastActivity"] = self.iso(-3600)
-        self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
-
-    def test_phone_without_a_live_session_still_starts_the_phone_version(self):
-        self.sessions = []
-        self.assertEqual(self.hit()[0], 503)
-        self.assertEqual(self.requests(), [{"item": self.ITEM, "user": USERS[TOKEN]["Id"], "device": self.DEVICE}])
-        self.assertEqual(self.messages(), [])
-
+    # --- plumbing ---
     def test_bad_or_missing_token_goes_to_jellyfin_which_refuses_it(self):
         self.assertEqual(self.hit(token="z" * 32)[1], {"location": self.bypass(token="z" * 32)})
         self.assertEqual(self.hit(token=None), (302, {"location": f"/Items/{self.ITEM}/Download?hssPhone=1"}))
 
     def test_other_query_parameters_are_kept(self):
-        self.state(state="nothing")
         self.assertEqual(self.hit(extra="&mediaSourceId=x")[1], {"location": f"/Items/{self.ITEM}/Download?ApiKey={TOKEN}&mediaSourceId=x&hssPhone=1"})
 
     def test_bad_item_id_is_refused(self):
         self.assertEqual(self.hit(item="../x")[0], 404)
 
-    def test_the_file_endpoint_moonfin_falls_back_to_is_handled_too(self):
+    def test_the_file_endpoint_keeps_the_endpoint(self):
         self.state(state="ready", phoneItem=self.PHONE)
         got = self.core.handle("GET", f"/Items/{self.ITEM}/File?MediaSourceId={self.ITEM}&ApiKey={TOKEN}", {}, b"")
-        self.assertEqual(got, (302, {"location": f"/Items/{self.PHONE}/File?MediaSourceId={self.PHONE}&ApiKey={TOKEN}&hssPhone=1"}))
-
-    def test_file_endpoint_while_preparing_is_refused_too(self):
-        self.state(state="downloading", percent=10)
-        self.assertEqual(self.core.handle("GET", f"/Items/{self.ITEM}/File?ApiKey={TOKEN}", {}, b"")[0], 503)
-
-    def test_file_endpoint_bypass_keeps_the_endpoint(self):
-        self.state(state="nothing")
-        self.assertEqual(self.core.handle("GET", f"/Items/{self.ITEM}/File?ApiKey={TOKEN}", {}, b"")[1], {"location": f"/Items/{self.ITEM}/File?ApiKey={TOKEN}&hssPhone=1"})
-
-    def test_media_source_id_follows_the_phone_version_on_download_too(self):
-        self.state(state="ready", phoneItem=self.PHONE)
-        got = self.hit(extra=f"&MediaSourceId={self.ITEM}")
-        self.assertEqual(got, (302, {"location": f"/Items/{self.PHONE}/Download?ApiKey={TOKEN}&MediaSourceId={self.PHONE}&hssPhone=1"}))
-
-    def test_being_prepared_is_a_503_so_moonfin_stops_without_falling_back_to_the_4k_file(self):
-        code, body = self.hit()
-        self.assertEqual((code, body["error"]), (503, "phone version being prepared"))
+        self.assertEqual(got, (302, {"location": f"/Items/{self.ITEM}/File?MediaSourceId={self.ITEM}&ApiKey={TOKEN}&hssPhone=1"}))
 
     def test_emby_prefix_and_any_case(self):
-        self.state(state="ready", phoneItem=self.PHONE)
         got = self.core.handle("GET", f"/emby/items/{self.ITEM}/download?ApiKey={TOKEN}", {"X-Real-Ip": self.IP}, b"")
-        self.assertEqual(got, (302, {"location": self.bypass(self.PHONE)}))
-
-    def test_one_request_file_per_item_while_waiting(self):
-        self.hit()
-        self.hit()
-        self.assertEqual(len(self.requests()), 1)
+        self.assertEqual(got, (302, {"location": self.bypass()}))
 
     def test_jellyfin_down_downloads_the_original(self):
         def down(method, path, body=None):
@@ -1776,7 +1701,6 @@ class PhoneDownload(Base):
         self.assertEqual(self.hit(), (302, {"location": self.bypass()}))
 
     def test_redirect_is_sent_as_a_location_header(self):
-        self.state(state="ready", phoneItem=self.PHONE)
         app.Handler.core = self.core
         h = app.Handler.__new__(app.Handler)
         sent = {}
@@ -1786,7 +1710,203 @@ class PhoneDownload(Base):
         h.send_header = lambda k, v: sent.setdefault(k, v)
         h.end_headers = lambda: None
         h._go("GET")
-        self.assertEqual((sent["code"], sent["Location"]), (302, self.bypass(self.PHONE)))
+        self.assertEqual((sent["code"], sent["Location"]), (302, self.bypass()))
+
+
+class ConvertedDownload(PhoneBase):
+    """Smaller-quality downloads: Moonfin's High/Medium/Low/Mobile is GET /Videos/<id>/stream?Static=false&videoCodec=hevc&videoBitRate=…&maxWidth=…&container=mp4&…
+    (Moonfin-Core download_service.dart _buildDownloadUrl, Traefik access log 2026-11-20); fastpi's router jellyfin-converted-download-block rewrites it to
+    /hss-popular/converted/<id>, query unchanged. A phone gets the 1080p phone version, remuxed by Jellyfin to the MP4 the app expects (owner 2026-11-22)."""
+    PLAY = "84f05907-8109-4bb2-95ab-73e3cc3045e3"
+
+    def moonfin(self, token=TOKEN, audio="1", extra=""):
+        a = f"&AudioStreamIndex={audio}" if audio is not None else ""
+        return (f"MediaSourceId={self.ITEM}&ApiKey={token}&Static=false&videoCodec=hevc&audioCodec=aac&videoBitRate=4000000&audioBitRate=192000&maxWidth=1920"
+                f"&container=mp4&audioChannels=2{a}&PlaySessionId={self.PLAY}&DeviceId={self.DEVICE}{extra}")
+
+    def hit(self, query=None, item=PhoneBase.ITEM, headers=None):
+        return self.core.handle("GET", f"/hss-popular/converted/{item}?{self.moonfin() if query is None else query}", dict(headers or {}), b"")
+
+    def remux(self, target, audio="3", token=TOKEN):
+        a = f"&AudioStreamIndex={audio}" if audio is not None else ""
+        return (f"/Videos/{target}/stream?MediaSourceId={target}&ApiKey={token}&audioCodec=aac&audioBitRate=192000&container=mp4&audioChannels=2"
+                f"&PlaySessionId={self.PLAY}&DeviceId={self.DEVICE}&Static=false&videoCodec=hevc%2Ch264{a}&hssPhone=1")
+
+    # --- phone, phone version ready ---
+    def test_a_ready_phone_version_is_sent_as_an_mp4_remux_without_the_quality_limits(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        self.assertEqual(self.hit(), (302, {"location": self.remux(self.PHONE)}))
+
+    def test_every_smaller_quality_gets_the_same_phone_version(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        for rate, width in (("4000000", "1920"), ("2000000", "1280"), ("1000000", "854"), ("500000", "640")):
+            q = self.moonfin().replace("videoBitRate=4000000", f"videoBitRate={rate}").replace("maxWidth=1920", f"maxWidth={width}")
+            self.assertEqual(self.hit(q), (302, {"location": self.remux(self.PHONE)}), rate)
+
+    def test_the_audio_language_follows_to_the_phone_version(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        self.assertEqual(self.hit(self.moonfin(audio="2")), (302, {"location": self.remux(self.PHONE, audio="1")}))
+
+    def test_an_audio_language_the_phone_version_lacks_is_left_to_jellyfin(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        self.sources[0]["MediaStreams"].append({"Type": "Audio", "Index": 5, "Language": "eng"})
+        self.assertEqual(self.hit(self.moonfin(audio="5")), (302, {"location": self.remux(self.PHONE, audio=None)}))
+        self.assertEqual(self.hit(self.moonfin(audio=None)), (302, {"location": self.remux(self.PHONE, audio=None)}))
+
+    def test_unreadable_audio_streams_leave_the_audio_to_jellyfin(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        self.sources = []
+        self.assertEqual(self.hit(), (302, {"location": self.remux(self.PHONE, audio=None)}))
+
+    def test_a_sent_phone_version_is_recorded_per_user_and_device(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        self.hit()
+        [rec] = [json.loads(l) for l in (self.box / "sent.jsonl").read_text().splitlines()]
+        self.assertEqual(rec, {"at": self.now.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "user": USERS[TOKEN]["Id"], "device": self.DEVICE,
+                               "item": self.ITEM, "phoneItem": self.PHONE})
+
+    def test_the_phone_downloader_user_agent_does_not_matter(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        ua = {"User-Agent": "Mozilla/5.0 (compatible; Moonfin/2.9.0)"}
+        self.assertEqual(self.hit(headers=ua)[1], {"location": self.remux(self.PHONE)})
+
+    def test_any_case_of_the_query_keys(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        q = f"api_key={TOKEN}&static=false&VIDEOBITRATE=1000000&MaxWidth=854&audiocodec=aac&deviceid={self.DEVICE}"
+        self.assertEqual(self.hit(q), (302, {"location": f"/Videos/{self.PHONE}/stream?MediaSourceId={self.PHONE}&api_key={TOKEN}&audiocodec=aac&deviceid={self.DEVICE}"
+                                                         "&container=mp4&Static=false&videoCodec=hevc%2Ch264&hssPhone=1"}))
+
+    # --- phone, no phone version yet ---
+    def test_first_smaller_download_starts_the_phone_version_with_a_pop_up(self):
+        code, body = self.hit()
+        self.assertEqual((code, body["error"]), (503, "phone version being prepared"))
+        self.assertEqual(self.requests(), [{"item": self.ITEM, "user": USERS[TOKEN]["Id"], "device": self.DEVICE}])
+        [m] = self.messages()
+        self.assertEqual((m["Header"], m["Text"]), (app.PHONE_HEADER, app.PHONE_TEXT_NEW))
+
+    def test_one_request_file_per_item_while_waiting(self):
+        self.hit()
+        self.hit()
+        self.assertEqual(len(self.requests()), 1)
+        self.assertEqual(len(self.messages()), 1)
+
+    def test_a_tap_while_preparing_shows_progress_once_per_device_within_two_minutes(self):
+        self.state(state="downloading", percent=42)
+        for _ in range(4):
+            self.assertEqual(self.hit()[0], 503)
+        self.assertEqual(self.requests(), [])
+        [m] = self.messages()
+        self.assertIn("42 % downloaded", m["Text"])
+        self.now = NOW + datetime.timedelta(seconds=121)
+        self.hit()
+        self.assertEqual(len(self.messages()), 2)
+
+    def test_a_tap_while_converting_shows_the_conversion(self):
+        for st, pct, want in (("converting", 37, "37 % converted"), ("queued", 0, "conversion starts soon")):
+            self.core.notified.clear()
+            self.state(state=st, percent=pct)
+            self.assertEqual(self.hit()[0], 503, st)
+            self.assertIn(want, self.messages()[-1]["Text"])
+        self.assertEqual(self.requests(), [])
+
+    def test_phone_without_a_live_session_still_starts_the_phone_version(self):
+        self.sessions = []
+        self.assertEqual(self.hit()[0], 503)
+        self.assertEqual(len(self.requests()), 1)
+        self.assertEqual(self.messages(), [])
+
+    def test_the_pop_ups_say_to_pick_a_smaller_quality_again(self):
+        for text in (app.PHONE_TEXT_NEW, app.PHONE_TEXT_WAIT):
+            self.assertIn("smaller quality", text)
+            self.assertNotIn("Original", text)
+
+    # --- phone, no separate phone version: the title's own picture ---
+    def test_not_4k_gets_its_own_file_remuxed_with_its_own_audio_index(self):
+        self.height = 1080
+        self.assertEqual(self.hit(), (302, {"location": self.remux(self.ITEM, audio="1")}))
+        self.assertEqual(self.requests(), [])
+        self.assertEqual(self.messages(), [])
+
+    def test_nothing_smaller_not_needed_or_failed_gets_its_own_file(self):
+        for st in ("nothing", "not-needed", "failed"):
+            self.state(state=st)
+            self.assertEqual(self.hit(), (302, {"location": self.remux(self.ITEM, audio="1")}), st)
+        self.assertEqual(self.requests(), [])
+
+    def test_jellyfin_errors_after_the_phone_check_get_its_own_file(self):
+        def flaky(method, path, body=None):
+            if path.startswith("/Items?"):
+                raise OSError("down")
+            return admin(method, path, body)
+        admin = self.core.jellyfin_admin
+        self.core.jellyfin_admin = flaky
+        self.assertEqual(self.hit(), (302, {"location": self.remux(self.ITEM, audio="1")}))
+
+    def test_phone_versions_off_gets_its_own_file(self):
+        self.core.cfg.phone_box = None
+        self.assertEqual(self.hit(), (302, {"location": self.remux(self.ITEM, audio="1")}))
+
+    # --- TV: refused as an Original download is ---
+    def test_a_tv_is_refused_with_the_tv_pop_up(self):
+        self.tv_session()
+        code, body = self.hit(headers=self.tv_auth("Moonfin for Android TV"))
+        self.assertEqual(code, 503)
+        self.assertIn("TV", body["error"])
+        self.assertEqual(self.messages()[0]["Text"], app.TV_TEXT["en"])
+        self.assertEqual(self.requests(), [])
+
+    def test_an_unnamed_downloader_on_a_tv_is_refused_by_the_latest_device(self):
+        uid = USERS[TOKEN]["Id"]
+        self.devices = [{"Id": self.TV_DEVICE, "AppName": "Moonfin for Android TV", "Name": "Sony BRAVIA", "LastUserId": uid, "DateLastActivity": self.iso(-20)}]
+        self.tv_session()
+        self.assertEqual(self.hit()[0], 503)
+        self.assertEqual(self.messages()[0]["Text"], app.TV_TEXT["en"])
+
+    # --- everything else (desktop, browser): unchanged, refused with the "choose Original" pop-up ---
+    def test_a_desktop_app_is_refused_as_before(self):
+        self.devices[1]["AppName"] = "Moonfin for Windows"
+        code, body = self.hit()
+        self.assertEqual(code, 403)
+        self.assertIn("Original", body["error"])
+        [m] = self.messages()
+        self.assertEqual((m["Header"], m["Text"]), (app.DOWNLOAD_HEADER, app.DOWNLOAD_TEXT))
+        self.assertEqual(self.requests(), [])
+
+    def test_a_named_non_phone_client_is_refused_as_before(self):
+        auth = {"Authorization": 'MediaBrowser Client="Jellyfin Web", Device="Chrome", DeviceId="web", Version="1"'}
+        self.assertEqual(self.hit(headers=auth)[0], 403)
+
+    def test_no_device_active_lately_is_refused_as_before(self):
+        self.devices[1]["DateLastActivity"] = self.iso(-3600)
+        self.assertEqual(self.hit()[0], 403)
+
+    def test_bad_token_or_bad_item_is_refused_without_a_pop_up(self):
+        for token in ("z" * 32, "c" * 32):
+            self.assertEqual(self.hit(self.moonfin(token=token))[0], 403, token)
+        self.assertEqual(self.hit(item="not-an-item-id")[0], 403)
+        self.assertEqual(self.hit(item="../../x")[0], 404)
+        self.assertEqual(self.messages(), [])
+        self.assertEqual(self.requests(), [])
+
+    def test_jellyfin_down_is_refused(self):
+        def down(method, path, body=None):
+            raise OSError("down")
+        self.core.jellyfin_admin = down
+        self.assertEqual(self.hit()[0], 403)
+
+    def test_the_old_blocked_path_is_unchanged(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        self.assertEqual(self.core.handle("GET", f"/hss-popular/download-blocked?{self.moonfin()}", {}, b"")[0], 403)
+
+    def test_query_is_not_logged(self):
+        h = app.Handler.__new__(app.Handler)
+        path = f"/hss-popular/converted/{self.ITEM}?{self.moonfin()}"
+        h.command, h.path, h.requestline = "GET", path, f"GET {path} HTTP/1.1"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            h.log_request(302)
+        self.assertIn("/hss-popular/converted/", out.getvalue())
+        self.assertNotIn(TOKEN, out.getvalue())
 
 
 WSECRET = "w" * 40

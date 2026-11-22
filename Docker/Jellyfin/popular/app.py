@@ -49,7 +49,7 @@ STATE_FRESH = datetime.timedelta(minutes=10)
 AUDIT_MAX_BYTES = 1 << 20
 AUDIT_KEEP = 3
 KEEP_DAYS = 30
-# Phone versions (Movie-Downloads README "Phone versions"): only these apps get the smaller second version on an Original download
+# Phone versions (Movie-Downloads README "Phone versions"): only these apps get the smaller second version on a smaller-quality download
 PHONE_CLIENTS = {"Moonfin for Android", "Moonfin for iOS", "Jellyfin Android", "Jellyfin iOS", "Swiftfin iOS", "Findroid"}
 # TV apps (Jellyfin README "TV downloads off"): names as /Devices lists them (2026-11-22) and as the app sources set them (Jellyfin for WebOS)
 TV_CLIENTS = {"Moonfin for Android TV", "Moonfin for tvOS", "Moonfin for Tizen", "Jellyfin Android TV", "Swiftfin tvOS", "Jellyfin for Tizen", "Jellyfin for WebOS"}
@@ -83,8 +83,14 @@ ITEM_DOWNLOAD_RE = re.compile(r"(?i)^(?:/emby|/mediabrowser)?/items/([^/]+)/(dow
 PHONE_REQUEST_EVERY = 300
 PHONE_PREPARING = {"downloading", "checking", "placing", "searching", "queued", "converting"}
 PHONE_HEADER = "\U0001f4f1 Phone version"
-PHONE_TEXT_NEW = "A smaller phone version is being prepared, usually 5 to 30 minutes. You get a \u2705 message when it is ready; then tap Download again."
-PHONE_TEXT_WAIT = "The phone version is being prepared ({what}). You get a \u2705 message when it is ready; then tap Download again."
+PHONE_TEXT_NEW = "A smaller phone version is being prepared, usually 5 to 30 minutes. You get a \u2705 message when it is ready; then tap Download again and pick a smaller quality."
+PHONE_TEXT_WAIT = "The phone version is being prepared ({what}). You get a \u2705 message when it is ready; then tap Download again and pick a smaller quality."
+# fastpi's jellyfin-converted-download-block rewrites /Videos/<id>/stream?Static=false (Moonfin's smaller qualities) to this path, query unchanged
+CONVERTED_RE = re.compile(r"^/hss-popular/converted/([^/]+)$")
+# the client's own audio choice and session stay; its video limits (videoBitRate, maxWidth, ...) go, so Jellyfin copies the picture into the MP4 Moonfin expects
+REMUX_KEEP = ("apikey", "api_key", "audiocodec", "audiobitrate", "audiochannels", "container", "playsessionid", "deviceid")
+REMUX_DEFAULTS = (("container", "mp4"), ("audioCodec", "aac"))
+REMUX_VIDEO_CODECS = "hevc,h264"
 FLUSH_EVERY = datetime.timedelta(minutes=1)
 AUTH_TTL = datetime.timedelta(seconds=30)
 UPSTREAM_TIMEOUT = 8
@@ -693,6 +699,9 @@ class Core:
         m = ITEM_DOWNLOAD_RE.match(path)
         if m and method == "GET":
             return self.phone_download(m.group(1).lower(), headers, query, "File" if m.group(2).lower() == "file" else "Download")
+        m = CONVERTED_RE.match(path)
+        if m:
+            return self.converted_download(m.group(1).lower(), headers, query)
         if path == "/hss-popular/download-blocked":
             return self.download_blocked(query)
         return 404, {"error": "not found"}
@@ -753,55 +762,105 @@ class Core:
         return 403, {"error": "Converted downloads are switched off, choose Original"}
 
     def phone_download(self, item, headers, query, endpoint="Download"):
-        """Traefik sends Original downloads (/Items/<id>/Download, path unchanged) here. A phone app (PHONE_CLIENTS, the session of the token's user at the request's IP) on a 4K title gets the
-        phone version (302 to its own item) when it is ready; else the request is queued for Movie-Downloads' phone-fetch.py, the phone gets a pop-up and 503
-        (Moonfin falls back to /File and the static stream on any 4xx, but stops after 3 retries on a 5xx: Moonfin-Core download_service.dart _shouldRetryWithFallback). Everything else,
-        and any error, gets the original: 302 back to Jellyfin with hssPhone=1, which Traefik passes straight through."""
+        """Traefik sends Original downloads (/Items/<id>/Download and /File, path unchanged) here: a TV client is refused (tv_refused), everything else gets the original file,
+        a 302 back to Jellyfin with hssPhone=1, which Traefik passes straight through; so does any error. Smaller qualities get the phone version: converted_download."""
         if not ITEM_ID_RE.match(item):
             return 404, {"error": "not found"}
         auth = headers.get("x-emby-authorization") or headers.get("authorization") or ""
         named, device_name = CLIENT_RE.search(auth), DEVICE_NAME_RE.search(auth)
         pairs = [(k, v) for k, v in urllib.parse.parse_qsl(query, keep_blank_values=True, max_num_fields=64) if k.lower() != "hssphone"]
-
-        def to(target):
-            # a MediaSourceId names the version: it follows the target
-            kept = [(k, target if k.lower() == "mediasourceid" and v.lower() == item else v) for k, v in pairs]
-            return 302, {"location": f"/Items/{target}/{endpoint}?" + urllib.parse.urlencode(kept + [("hssPhone", "1")])}
+        original = 302, {"location": f"/Items/{item}/{endpoint}?" + urllib.parse.urlencode(pairs + [("hssPhone", "1")])}
         q = {k.lower(): v for k, v in pairs}
         token = q.get("apikey") or q.get("api_key") or self.token(headers) or ""
         if named and client_kind(named.group(1), device_name.group(1) if device_name else None) == "tv":
             return self.tv_refused(token, (DEVICE_ID_HEADER_RE.search(auth) or [None, ""])[1])
-        if not self.cfg.phone_box or not self.jellyfin_admin or not TOKEN_RE.match(token):
-            return to(item)
+        if named or not self.jellyfin_admin or not TOKEN_RE.match(token):
+            return original
+        try:
+            tv = self.recent_device(self.jellyfin(token))
+            if tv and client_kind(tv.get("AppName"), tv.get("Name")) == "tv" and tv.get("Id"):
+                return self.tv_refused(token, tv["Id"])
+        except Exception as e:  # noqa: BLE001
+            print(f"original download: {type(e).__name__}, original sent", flush=True)
+        return original
+
+    def converted_download(self, item, headers, query):
+        """Moonfin's smaller-quality downloads (High/Medium/Low/Mobile: /Videos/<id>/stream?Static=false, rewritten by fastpi's jellyfin-converted-download-block, query unchanged).
+        Owner 2026-11-22: every smaller quality on a phone app gets the same 1080p phone version. Ready: 302 to Jellyfin's MP4 remux of it (video copied, the client's audio choice);
+        being prepared or new: pop-up and 503 (Traefik makes it 403; Moonfin never falls back on a converted download); a title that is not 4K or has no smaller version: its own
+        file remuxed the same way. A TV is refused as on an Original download; every other client keeps the old refusal ("choose Original")."""
+        pairs = [(k, v) for k, v in urllib.parse.parse_qsl(query, keep_blank_values=True, max_num_fields=64) if k.lower() != "hssphone"]
+        q = {k.lower(): v for k, v in pairs}
+        token = q.get("apikey") or q.get("api_key") or self.token(headers) or ""
+        auth = headers.get("x-emby-authorization") or headers.get("authorization") or ""
+        named, device_name = CLIENT_RE.search(auth), DEVICE_NAME_RE.search(auth)
+        if named and client_kind(named.group(1), device_name.group(1) if device_name else None) == "tv":
+            return self.tv_refused(token, (DEVICE_ID_HEADER_RE.search(auth) or [None, ""])[1])
+        if not ITEM_ID_RE.match(item) or not self.jellyfin_admin or not TOKEN_RE.match(token):
+            return self.download_blocked(query)
         try:
             user = self.jellyfin(token)
+            if (user.get("Policy") or {}).get("IsDisabled"):
+                return self.download_blocked(query)
             if not named:
                 tv = self.recent_device(user)
                 if tv and client_kind(tv.get("AppName"), tv.get("Name")) == "tv" and tv.get("Id"):
                     return self.tv_refused(token, tv["Id"])
             session = self.phone_session(user, headers)
-            if not session:
-                return to(item)
+        except Exception as e:  # noqa: BLE001
+            print(f"converted download: {type(e).__name__}, refused", flush=True)
+            return self.download_blocked(query)
+        if not session:
+            return self.download_blocked(query)
+        try:
+            if not self.cfg.phone_box:
+                return self.remux(item, item, pairs)
             st = self.phone_state(item)
             if st.get("state") == "ready" and st.get("phoneItem") and ITEM_ID_RE.match(str(st["phoneItem"])):
-                print("phone download: phone version sent", flush=True)
+                print("converted download: phone version sent", flush=True)
                 self.record_sent(item, st["phoneItem"], user, session)
-                return to(st["phoneItem"])
+                return self.remux(item, str(st["phoneItem"]), pairs)
             if st.get("state") in PHONE_PREPARING:
                 what = {"downloading": f"{st.get('percent') or 0} % downloaded", "converting": f"{st.get('percent') or 0} % converted", "queued": "conversion starts soon",
                         "checking": "virus and quality check", "searching": "searching"}.get(st.get("state"), "almost done")
-                self.phone_message(session, PHONE_TEXT_WAIT.format(what=what))
+                if self.mark_notice("phone:" + str(session.get("DeviceId"))):
+                    self.phone_message(session, PHONE_TEXT_WAIT.format(what=what))
                 return 503, {"error": "phone version being prepared"}
             if st.get("state") or not self.is_4k(item):
-                return to(item)
+                return self.remux(item, item, pairs)
             if self.ask_phone(item, user, session):
                 self.phone_message(session, PHONE_TEXT_NEW)
             return 503, {"error": "phone version being prepared"}
-        except Unauthorized:
-            return to(item)
         except Exception as e:  # noqa: BLE001
-            print(f"phone download: {type(e).__name__}, original sent", flush=True)
-            return to(item)
+            print(f"converted download: {type(e).__name__}, own file sent", flush=True)
+            return self.remux(item, item, pairs)
+
+    def remux(self, item, target, pairs):
+        """302 to Jellyfin's progressive MP4 of target without the client's video limits: Jellyfin copies an HEVC or H.264 picture (tested 2026-11-22: "-codec:v:0 copy", ~100x speed)."""
+        kept = [(k, v) for k, v in pairs if k.lower() in REMUX_KEEP]
+        have = {k.lower() for k, _ in kept}
+        q = {k.lower(): v for k, v in pairs}
+        audio = self.audio_index(item, target, q.get("audiostreamindex"))
+        out = ([("MediaSourceId", target)] + kept + [(k, v) for k, v in REMUX_DEFAULTS if k.lower() not in have]
+               + [("Static", "false"), ("videoCodec", REMUX_VIDEO_CODECS)] + ([("AudioStreamIndex", str(audio))] if audio is not None else []) + [("hssPhone", "1")])
+        return 302, {"location": f"/Videos/{target}/stream?" + urllib.parse.urlencode(out)}
+
+    def audio_index(self, item, target, index):
+        """The client's audio stream index on target: the same index on the item itself, else the first track of the same language on the phone version, else None (Jellyfin's default)."""
+        if not re.fullmatch(r"[0-9]{1,3}", str(index or "")):
+            return None
+        if target == item:
+            return int(index)
+        try:
+            if not self.admin_id:
+                self.admin_id = next(u["Id"] for u in self.jellyfin_admin("GET", "/Users") or [] if (u.get("Policy") or {}).get("IsAdministrator"))
+            found = ((self.jellyfin_admin("GET", f"/Items?ids={item}&userId={self.admin_id}&Fields=MediaSources") or {}).get("Items") or [{}])[0]
+            audio = {str(s.get("Id") or "").replace("-", "").lower(): [m for m in s.get("MediaStreams") or [] if m.get("Type") == "Audio"] for s in found.get("MediaSources") or []}
+            lang = next((m.get("Language") for m in audio.get(item, []) if m.get("Index") == int(index)), None)
+            return next((m["Index"] for m in audio.get(target, []) if lang and m.get("Language") == lang and isinstance(m.get("Index"), int)), None)
+        except Exception as e:  # noqa: BLE001
+            print(f"converted download: audio streams unreadable ({type(e).__name__})", flush=True)
+            return None
 
     def tv_refused(self, token, device):
         """A TV client asked for an Original download: refused, one pop-up in its own session. 503, not 403: Moonfin falls back to the plain stream (the file itself) on a 4xx and stops on a 5xx."""
