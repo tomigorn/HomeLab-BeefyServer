@@ -515,6 +515,40 @@ def bazarr_client(base, key):
     return call
 
 
+def watched_client(base, key, library, ttl=60, clock=time.time):
+    """user -> 'radarr:<id>' / 'sonarr:<id>' refs of the library titles the user played, newest first, or None when Jellyfin does not know the user or cannot answer (the sort stays hidden).
+    Asks Jellyfin's popular backend on the internal network (GET /watched?user=, shared secret): it holds the Jellyfin key, this container never does."""
+    cache, lock = {}, threading.Lock()
+
+    def ask(user):
+        try:
+            got = _open(urllib.request.Request(f"{base}/watched?user={urllib.parse.quote(user, safe='')}", headers={"X-Watched-Secret": key, "Accept": "application/json"}), 5)
+        except ApiError:
+            return None
+        if not isinstance(got, dict) or not isinstance(got.get("movie"), list) or not isinstance(got.get("tv"), list):
+            return None
+        refs = []
+        for app, field, ids in (("radarr", "tmdbId", got["movie"]), ("sonarr", "tvdbId", got["tv"])):
+            by = {t.get(field): t["id"] for t in library(app) if isinstance(t, dict) and t.get(field)}
+            refs += [f"{app}:{by[i]}" for i in ids if i in by]
+        return refs
+
+    def call(user):
+        now = clock()
+        with lock:
+            hit = cache.get(user)
+        if hit and now - hit[0] < ttl:
+            return hit[1]
+        refs = ask(user)
+        if refs is not None:
+            with lock:
+                for k in [k for k, (at, _) in cache.items() if now - at >= ttl]:
+                    del cache[k]
+                cache[user] = (now, refs)
+        return refs
+    return call
+
+
 def file_checker(path):
     """Antivirus' download quality check (hook/quality_check.py, mounted read-only) for the problem report site; None when not mounted."""
     if not path or not pathlib.Path(path).is_file():
@@ -611,6 +645,9 @@ def main():
         threading.Thread(target=collections_page.loop, args=(sys.modules[__name__], Handler.deps), daemon=True).start()
     if os.environ.get("RP_PORT") and Handler.deps.report_secret and Handler.deps.manual_file:
         import report
+        wkey = read_secret(os.environ["DN_WATCHED_SECRET_FILE"]) if os.environ.get("DN_WATCHED_SECRET_FILE") else None
+        if os.environ.get("DN_WATCHED") and wkey:
+            Handler.deps.watched = watched_client(os.environ["DN_WATCHED"], wkey, lambda app: report.library(Handler.deps, app))
         report.serve(sys.modules[__name__], Handler.deps, int(os.environ["RP_PORT"]))
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("DN_PORT", "8090"))), Handler)
     print(f"download-now listening on {srv.server_address[1]}", flush=True)

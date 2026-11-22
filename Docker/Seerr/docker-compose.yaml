@@ -140,6 +140,9 @@ services:
       - RP_SECRET_FILE=/run/secrets/report/secret
       - RP_QUALITY_CHECK=/opt/quality/quality_check.py
       - RP_DRY_RUN=${REPORT_DRY_RUN:-0}
+      # "Recently watched" sort: Jellyfin's popular backend (holds the Jellyfin key) answers GET /watched?user= on the internal jellyfin network; no Jellyfin key here
+      - DN_WATCHED=http://jellyfin-popular:8100
+      - DN_WATCHED_SECRET_FILE=/run/secrets/report/watched
     volumes:
       - ./download-now:/app:ro
       - ./secrets/download-now:/run/secrets/download-now:ro
@@ -174,6 +177,9 @@ services:
       movie-downloads:
         # pinned: qBittorrent lets this address in without a password (WebUI AuthSubnetWhitelist)
         ipv4_address: 172.28.10.205
+        # default route stays here (jellyfin below only reaches jellyfin-popular:8100)
+        gw_priority: 10
+      jellyfin: {}
     healthcheck:
       test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8090/_download-now/health"]
       interval: 60s

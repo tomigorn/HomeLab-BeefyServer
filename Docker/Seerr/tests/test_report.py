@@ -601,6 +601,51 @@ class ManualPage(unittest.TestCase):
         self.assertEqual(state, "importing")
         self.assertEqual([f["path"] for f in sent[0]["files"]], ["/data/torrents/pack/S01E08.mkv"])
 
+class WatchedClient(unittest.TestCase):
+    LIB = {"radarr": [{"id": 14, "tmdbId": 603}, {"id": 12, "tmdbId": 11}, {"id": 7, "tmdbId": 99}], "sonarr": [{"id": 5, "tvdbId": 81189}, {"id": 6}]}
+
+    def setUp(self):
+        self.calls, self.now, self.answer = [], [1000.0], {"movie": [603, 5, 11], "tv": [81189, 4]}
+        self.real = dn._open
+        dn._open = self.fake
+        self.client = dn.watched_client("http://popular:8100", "k3y", lambda app: self.LIB[app], clock=lambda: self.now[0])
+
+    def tearDown(self):
+        dn._open = self.real
+
+    def fake(self, req, timeout=15):
+        self.calls.append((req.full_url, req.get_header("X-watched-secret"), timeout))
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+    def test_refs_newest_first_only_titles_in_the_library(self):
+        self.assertEqual(self.client("jane"), ["radarr:14", "radarr:12", "sonarr:5"])
+        self.assertEqual(self.calls[0][:2], ("http://popular:8100/watched?user=jane", "k3y"))
+
+    def test_user_name_is_quoted(self):
+        self.client("a b&c")
+        self.assertEqual(self.calls[0][0], "http://popular:8100/watched?user=a%20b%26c")
+
+    def test_answer_cached_one_minute_per_user(self):
+        self.client("jane")
+        self.client("jane")
+        self.now[0] += 61
+        self.client("jane")
+        self.client("bob")
+        self.assertEqual(len(self.calls), 3)
+
+    def test_unknown_user_or_error_is_none_and_not_kept(self):
+        self.answer = dn.ApiError("/watched: 404")
+        self.assertIsNone(self.client("jane"))
+        self.answer = {"movie": [603], "tv": []}
+        self.assertEqual(self.client("jane"), ["radarr:14"])
+
+    def test_malformed_answer_is_none(self):
+        for bad in (None, [], {"movie": "x"}, {"tv": [1]}):
+            self.answer = bad
+            self.assertIsNone(self.client("jane"), bad)
+
 
 if __name__ == "__main__":
     unittest.main()
