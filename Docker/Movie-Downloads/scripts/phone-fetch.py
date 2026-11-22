@@ -66,7 +66,7 @@ TEXT_OR_IMAGE_SUBS = {"subrip", "ass", "ssa", "hdmv_pgs_subtitle", "dvd_subtitle
 COLOUR = re.compile(r"^[a-z0-9-]{1,20}$")
 JOB_KEY = re.compile(r"^(radarr|sonarr)-[0-9]+$")
 READY_HEADER = "✅ Phone version ready"
-READY_TEXT = "{title}: the phone version is ready. Tap Download again (Original)."
+READY_TEXT = "{title}: the phone version is ready. Tap Download again and pick a smaller quality."
 
 
 class Refused(Exception):

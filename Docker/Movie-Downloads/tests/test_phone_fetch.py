@@ -674,5 +674,12 @@ class Forget(unittest.TestCase):
         self.assertIn("forget --item", self.run_main("--help")[1])
 
 
+class Texts(unittest.TestCase):
+    def test_the_ready_message_says_to_pick_a_smaller_quality(self):
+        # owner 2026-11-22: Original = the full file, any smaller quality = the phone version
+        self.assertIn("smaller quality", pf.READY_TEXT)
+        self.assertNotIn("(Original)", pf.READY_TEXT)
+
+
 if __name__ == "__main__":
     unittest.main()
