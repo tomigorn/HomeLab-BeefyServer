@@ -19,6 +19,8 @@ LOCAL = time.localtime
 DAILY = 2
 NOTE_MAX = 300
 SEARCH_MAX = 20
+BROWSE_PAGE = 50
+BROWSE_SORTS = ("az", "year", "added")
 LIB_TTL = 600
 QUEUE_TTL = 15
 RELEASE_TIMEOUT = 300  # an interactive search of every indexer (FlareSolverr ones included) can take minutes
@@ -127,6 +129,42 @@ def search(deps, term):
             hits.append(((not exact, not start, manual.norm(t.get("title"))), brief(app, t)))
     hits.sort(key=lambda x: x[0])
     return [b for _, b in hits[:SEARCH_MAX]]
+
+
+def browse(deps, user, kind, sort, page):
+    """One page of the library (films or series with a file) for the browse list: the same titles as the search."""
+    if kind not in ("movie", "tv") or not page.isdigit() or not 1 <= int(page) <= 10 ** 6:
+        raise Refused(400, "bad request")
+    app = "radarr" if kind == "movie" else "sonarr"
+    seen = deps.watched(user) if callable(getattr(deps, "watched", None)) else None
+    sorts = list(BROWSE_SORTS) + (["watched"] if seen is not None else [])
+    if sort not in sorts:
+        raise Refused(400, "bad request")
+    items = library(deps, app)
+    key = lambda t: manual.norm(t.get("title"))
+    if sort == "az":
+        items = sorted(items, key=key)
+    elif sort == "year":
+        items = sorted(items, key=key)
+        items.sort(key=lambda t: t.get("year") or 0, reverse=True)
+    elif sort == "added":
+        items = sorted(items, key=key)
+        items.sort(key=lambda t: str(t.get("added") or ""), reverse=True)
+    else:
+        by = {f"{app}:{t['id']}": t for t in items}
+        items = [by[r] for r in seen if r in by]
+    total, n = len(items), int(page)
+    lo = (n - 1) * BROWSE_PAGE
+    return {"items": [brief(app, t) for t in items[lo:lo + BROWSE_PAGE]], "total": total, "page": n, "pages": max(1, -(-total // BROWSE_PAGE)), "sorts": sorts}
+
+
+def poster(deps, ref):
+    """The small cover of a library title from its Radarr/Sonarr (MediaCover), for the browse list."""
+    app, t = title_of(deps, ref)
+    try:
+        return deps.arr_image(app, f"/MediaCover/{int(t['id'])}/poster-250.jpg")
+    except Exception:
+        raise Refused(404, "not found") from None
 
 
 def title_of(deps, ref):
@@ -574,6 +612,8 @@ def handle(dn, method, path, headers, body, deps):
         if method == "GET" and url.path in STATIC:
             return static(url.path)
         q = urllib.parse.parse_qs(url.query)
+        if method == "GET" and url.path == "/api/poster":
+            return 200, "image/jpeg", poster(deps, (q.get("ref") or [""])[0])
         out = route(dn, deps, user, admin, method, url.path, q, headers, body)
         return 200, "application/json", json.dumps(out).encode()
     except Refused as e:
@@ -603,6 +643,8 @@ def route(dn, deps, user, admin, method, path, q, headers, body):
         return {"user": user, "admin": admin, "left": None if admin else max(0, DAILY - used_today(deps, user)), "daily": DAILY}
     if path == "/api/search":
         return {"results": search(deps, (q.get("q") or [""])[0])}
+    if path == "/api/browse":
+        return browse(deps, user, (q.get("kind") or [""])[0], (q.get("sort") or ["az"])[0], (q.get("page") or ["1"])[0])
     if path == "/api/episodes":
         return {"seasons": seasons(deps, (q.get("ref") or [""])[0])}
     if path == "/api/resolve":
@@ -634,7 +676,7 @@ def serve(dn, deps, port):
             status, ctype, data = handle(dn, method, self.path, dict(self.headers.items()), body, deps)
             self.send_response(status)
             self.send_header("Content-Type", ctype)
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", "private, max-age=86400" if status == 200 and ctype.startswith("image/") else "no-store")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)

@@ -75,6 +75,8 @@ class Deps:
     report_dry_run: bool = False
     bazarr: object = None
     file_check: object = None
+    arr_image: object = None
+    watched: object = None
 
 
 def redact(text):
@@ -460,6 +462,23 @@ def arr_client(bases, keys):
     return make
 
 
+def arr_image_client(bases, keys, limit=2_000_000):
+    """(app, path under the arr's root, e.g. /MediaCover/12/poster-250.jpg) -> the image bytes."""
+    def call(app, path):
+        req = urllib.request.Request(f"{bases[app]}{path}", headers={"X-Api-Key": keys[app]})
+        try:
+            with OPENER.open(req, timeout=15) as r:
+                data = r.read(limit + 1)
+        except urllib.error.HTTPError as e:
+            raise ApiError(f"{path}: {e.code}") from None
+        except (urllib.error.URLError, http.client.HTTPException, TimeoutError, OSError) as e:
+            raise ApiError(f"{path}: {redact(e)}") from None
+        if not data or len(data) > limit:
+            raise ApiError(f"{path}: not an image")
+        return data
+    return call
+
+
 LEGACY = {"/torrents/start": "/torrents/resume"}
 
 
@@ -518,11 +537,15 @@ def secret(name):
     return pathlib.Path(os.environ.get("DN_SECRETS", "/run/secrets/download-now"), name).read_text().strip()
 
 
+def arr_bases(env):
+    return {"radarr": env.get("DN_RADARR", "http://radarr:7878"), "sonarr": env.get("DN_SONARR", "http://sonarr:8989")}
+
+
 def deps_from_env(env):
     return Deps(
         seerr=seerr_client(env.get("DN_SEERR", "http://seerr:5055")),
-        arr=arr_client({"radarr": env.get("DN_RADARR", "http://radarr:7878"), "sonarr": env.get("DN_SONARR", "http://sonarr:8989")},
-                       {"radarr": secret("radarr.apikey"), "sonarr": secret("sonarr.apikey")}),
+        arr=arr_client(arr_bases(env), {"radarr": secret("radarr.apikey"), "sonarr": secret("sonarr.apikey")}),
+        arr_image=arr_image_client(arr_bases(env), {"radarr": secret("radarr.apikey"), "sonarr": secret("sonarr.apikey")}),
         qbit=qbit_client(env.get("DN_QBIT", "http://gluetun:8080") + "/api/v2"),
         sab=sab_client(env.get("DN_SAB", "http://gluetun:8081"), secret("sabnzbd.apikey")),
         origins={o.strip() for o in env.get("DN_ORIGINS", "https://requests.holy-grail.ch").split(",") if o.strip()},

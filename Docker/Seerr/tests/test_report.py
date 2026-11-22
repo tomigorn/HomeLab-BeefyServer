@@ -79,6 +79,11 @@ class World:
         self.queue = {"radarr": [], "sonarr": []}
         self.bazarr_calls = []
         self.checked = []
+        self.images, self.cover = [], {"/MediaCover/12/poster-250.jpg": b"\xff\xd8jpeg"}
+        self.watched_by = None
+
+    def watched(self, user):
+        return self.watched_by(user) if self.watched_by else None
 
     def arr(self, app):
         def call(path, method="GET", body=None, timeout=None):
@@ -120,9 +125,15 @@ class World:
         self.checked.append(path)
         return {"verdict": "broken", "reasons": ["timestamp jump 280.9 s -> 118.0 s"], "notes": [], "duration": 3000.0}
 
+    def arr_image(self, app, path):
+        self.images.append((app, path))
+        if path not in self.cover:
+            raise dn.ApiError(f"{app} {path}: 404")
+        return self.cover[path]
+
     def deps(self):
         return dn.Deps(seerr=None, arr=self.arr, qbit=None, sab=None, origins={"https://requests.example.com"}, manual_file=str(self.store),
-                       report_secret=SECRET, report_origin=ORIGIN, bazarr=self.bazarr, file_check=self.file_check)
+                       report_secret=SECRET, report_origin=ORIGIN, bazarr=self.bazarr, file_check=self.file_check, arr_image=self.arr_image, watched=self.watched)
 
     def records(self):
         return json.loads(self.store.read_text())["problems"] if self.store.exists() else {}
@@ -210,6 +221,80 @@ class Library(unittest.TestCase):
         self.assertEqual((out["ref"], out["episodeId"]), ("sonarr:5", 502))
         self.assertEqual(call(self.w, "GET", "/api/resolve?type=tv&tmdb=4040")[1]["episodeId"], None)
         self.assertEqual(call(self.w, "GET", "/api/resolve?type=movie&tmdb=1")[0], 404)
+
+
+class Browse(unittest.TestCase):
+    def setUp(self):
+        reset()
+        self.w = World()
+        self.w.movies += [{"id": 15, "title": "Zebra Days", "year": 2020, "hasFile": True, "added": "2026-11-10T10:00:00Z", "tags": []},
+                          {"id": 16, "title": "ant farm", "year": 1999, "hasFile": True, "added": "2026-01-02T10:00:00Z", "tags": []}]
+        self.w.movies[0]["added"] = "2026-06-01T10:00:00Z"
+        self.w.movies[2]["added"] = "2026-03-01T10:00:00Z"
+        self.w.series += [{"id": 6, "title": "Alpha Show", "year": 2010, "tags": [], "added": "2026-11-20T10:00:00Z", "statistics": {"episodeFileCount": 1}},
+                          {"id": 7, "title": "Empty Show", "year": 2015, "tags": [], "statistics": {"episodeFileCount": 0}}]
+        self.w.series[0]["added"] = "2026-02-01T10:00:00Z"
+
+    def get(self, kind, sort="az", page=1, headers=None):
+        return call(self.w, "GET", f"/api/browse?kind={kind}&sort={sort}&page={page}", headers)
+
+    def refs(self, kind, sort="az", page=1):
+        return [i["ref"] for i in self.get(kind, sort, page)[1]["items"]]
+
+    def test_films_and_series_apart_with_files_only(self):
+        self.assertEqual(self.refs("movie"), ["radarr:16", "radarr:14", "radarr:12", "radarr:15"])
+        self.assertEqual(self.refs("tv"), ["sonarr:6", "sonarr:5"])
+
+    def test_row_has_title_year_and_poster_only(self):
+        self.assertEqual(self.get("tv")[1]["items"][1], {"ref": "sonarr:5", "kind": "tv", "title": "Company Retreat", "year": 2026})
+
+    def test_sorts(self):
+        self.assertEqual(self.refs("movie", "year"), ["radarr:15", "radarr:12", "radarr:16", "radarr:14"])
+        self.assertEqual(self.refs("movie", "added"), ["radarr:15", "radarr:12", "radarr:14", "radarr:16"])
+        self.assertEqual(self.refs("tv", "added"), ["sonarr:6", "sonarr:5"])
+
+    def test_pages(self):
+        report.BROWSE_PAGE = 3
+        try:
+            one, two = self.get("movie", page=1)[1], self.get("movie", page=2)[1]
+        finally:
+            report.BROWSE_PAGE = 50
+        self.assertEqual((one["total"], one["pages"], one["page"], len(one["items"]), len(two["items"])), (4, 2, 1, 3, 1))
+        self.assertEqual(self.get("movie", page=9)[1]["items"], [])
+
+    def test_bad_parameters(self):
+        for q in ("kind=book&sort=az", "kind=movie&sort=nope", "kind=movie&sort=az&page=0", "kind=movie&sort=az&page=x", "kind=movie&sort=watched"):
+            self.assertEqual(call(self.w, "GET", "/api/browse?" + q)[0], 400, q)
+
+    def test_needs_the_login(self):
+        self.assertEqual(self.get("movie", headers=hdr(secret="wrong"))[0], 403)
+        self.assertEqual(self.get("movie", headers=hdr(groups="cloud-users"))[0], 403)
+
+    def test_watched_sort_hidden_without_a_jellyfin_match(self):
+        self.assertEqual(self.get("movie")[1]["sorts"], ["az", "year", "added"])
+        self.w.watched_by = lambda user: None
+        self.assertEqual(self.get("movie")[1]["sorts"], ["az", "year", "added"])
+        self.assertEqual(self.get("movie", "watched")[0], 400)
+
+    def test_watched_sort_most_recent_first_for_the_signed_in_user(self):
+        seen = []
+        self.w.watched_by = lambda user: (seen.append(user), ["radarr:14", "sonarr:5", "radarr:12", "radarr:99"])[1]
+        out = self.get("movie", "watched")[1]
+        self.assertEqual(out["sorts"], ["az", "year", "added", "watched"])
+        self.assertEqual([i["ref"] for i in out["items"]], ["radarr:14", "radarr:12"])
+        self.assertEqual([i["ref"] for i in self.get("tv", "watched")[1]["items"]], ["sonarr:5"])
+        self.assertEqual(set(seen), {"jane"})
+
+    def test_poster_proxied_from_the_arr_and_cacheable(self):
+        status, ctype, data = report.handle(dn, "GET", "/api/poster?ref=radarr:12", hdr(), b"", self.w.deps())
+        self.assertEqual((status, ctype, data), (200, "image/jpeg", b"\xff\xd8jpeg"))
+        self.assertEqual(self.w.images, [("radarr", "/MediaCover/12/poster-250.jpg")])
+
+    def test_poster_missing_or_unknown(self):
+        self.assertEqual(call(self.w, "GET", "/api/poster?ref=radarr:15")[0], 404)
+        self.assertEqual(call(self.w, "GET", "/api/poster?ref=radarr:13")[0], 400)
+        self.assertEqual(call(self.w, "GET", "/api/poster?ref=../x")[0], 400)
+        self.assertEqual(call(self.w, "GET", "/api/poster?ref=radarr:12", hdr(secret="wrong"))[0], 403)
 
 
 class Limits(unittest.TestCase):

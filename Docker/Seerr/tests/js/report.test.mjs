@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
-const { pickLang, statusInfo, linkQuery, itemLabel, TEXT, REASONS } = createRequire(import.meta.url)("../../download-now/report-www/report.js");
+const { pickLang, statusInfo, linkQuery, itemLabel, browseQuery, rowLabel, TEXT, REASONS } = createRequire(import.meta.url)("../../download-now/report-www/report.js");
 
 test("language from the browser, German or English", () => {
   assert.equal(pickLang(["de-CH", "en"]), "de");
@@ -37,4 +37,16 @@ test("Jellyfin link query: only known numeric fields", () => {
 test("item label with episode", () => {
   assert.equal(itemLabel(TEXT.en, { title: "Company Retreat", year: 2026, season: 1, episode: 8, episodeTitle: "Eight" }), "Company Retreat (2026) · S01E08 Eight");
   assert.equal(itemLabel(TEXT.en, { title: "Some Film", year: 2004 }), "Some Film (2004)");
+});
+
+test("browse list: query, row text, every sort and label in both languages", () => {
+  assert.equal(browseQuery("movie", "az", 1), "kind=movie&sort=az&page=1");
+  assert.equal(browseQuery("tv", "watched", 3), "kind=tv&sort=watched&page=3");
+  assert.equal(rowLabel({ title: "Some Film", year: 2004 }), "Some Film (2004)");
+  assert.equal(rowLabel({ title: "Old" }), "Old");
+  for (const l of ["en", "de"]) {
+    for (const k of ["browse", "films", "series", "more", "noPoster"]) assert.ok(TEXT[l][k], `${l} ${k}`);
+    for (const k of ["az", "year", "added", "watched"]) assert.ok(TEXT[l].sorts[k], `${l} sort ${k}`);
+  }
+  assert.deepEqual(Object.keys(TEXT.de).sort(), Object.keys(TEXT.en).sort());
 });

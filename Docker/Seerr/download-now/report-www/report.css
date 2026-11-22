@@ -34,3 +34,13 @@ label.reason input { margin-top: 4px; width: 18px; height: 18px; flex: none; }
 .item { padding: 10px 0; border-bottom: 1px solid var(--line); }
 .item:last-child { border-bottom: 0; }
 .break { overflow-wrap: anywhere; }
+.tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.tab { flex: 1; background: transparent; color: var(--text); border: 1px solid var(--line); font-weight: 400; }
+.tab[aria-selected=true] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+ul.browse { list-style: none; margin: 10px 0 0; padding: 0; }
+ul.browse li { border-bottom: 1px solid var(--line); }
+ul.browse li:last-child { border-bottom: 0; }
+button.brow { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; background: transparent; color: var(--text); font-weight: 400; padding: 6px 4px; border-radius: 8px; min-height: 72px; }
+.cover { flex: none; width: 40px; height: 60px; object-fit: cover; border-radius: 4px; background: var(--line); font-size: 0; }
+.btext { display: flex; flex-direction: column; min-width: 0; }
+.btitle { font-weight: 600; }

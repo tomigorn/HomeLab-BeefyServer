@@ -21,6 +21,8 @@
         "language-ok": "Language check passed — an admin will look at it", subtitles: "Subtitles are searched again", review: "An admin will look at it",
         failed: "Replacement failed — the old file stays, an admin will look at it", closed: "Handled by an admin", "dry-run": "Test mode: nothing changed"
       },
+      browse: "Or pick from the library", films: "Films", series: "Series", sort: "Sort by", more: "Show more", noPoster: "No cover", loading: "Loading…",
+      sorts: { az: "A–Z", year: "Release year", added: "Recently added", watched: "Recently watched by you" },
       mine: "Your reports", all: "All reports", none: "No reports yet.", back: "← New report", reportedBy: "by",
       errors: { limit: "You have used your 2 reports for today.", "already reported": "This was already reported — see its status below.", "bad request": "Please check your choice.",
         forbidden: "Not signed in or no access.", origin: "Please reload the page.", "not in the library": "This title is not in the library.", generic: "Something went wrong. Try again later." },
@@ -44,6 +46,8 @@
         "language-ok": "Sprachprüfung bestanden — ein Admin schaut es an", subtitles: "Untertitel werden neu gesucht", review: "Ein Admin schaut es an",
         failed: "Ersetzen fehlgeschlagen — die alte Datei bleibt, ein Admin schaut es an", closed: "Von einem Admin erledigt", "dry-run": "Testmodus: nichts geändert"
       },
+      browse: "Oder aus der Bibliothek wählen", films: "Filme", series: "Serien", sort: "Sortieren nach", more: "Mehr anzeigen", noPoster: "Kein Cover", loading: "Lädt…",
+      sorts: { az: "A–Z", year: "Erscheinungsjahr", added: "Zuletzt hinzugefügt", watched: "Zuletzt von dir geschaut" },
       mine: "Deine Meldungen", all: "Alle Meldungen", none: "Noch keine Meldungen.", back: "← Neue Meldung", reportedBy: "von",
       errors: { limit: "Du hast deine 2 Meldungen für heute gebraucht.", "already reported": "Das wurde schon gemeldet — Status siehe unten.", "bad request": "Bitte prüfe deine Auswahl.",
         forbidden: "Nicht angemeldet oder kein Zugriff.", origin: "Bitte lade die Seite neu.", "not in the library": "Dieser Titel ist nicht in der Bibliothek.", generic: "Etwas ging schief. Später nochmals versuchen." },
@@ -89,8 +93,12 @@
     return s;
   }
 
+  function browseQuery(kind, sort, page) { return "kind=" + kind + "&sort=" + sort + "&page=" + page; }
+
+  function rowLabel(r) { return String(r.title || "") + (r.year ? " (" + r.year + ")" : ""); }
+
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = { pickLang: pickLang, statusInfo: statusInfo, linkQuery: linkQuery, itemLabel: itemLabel, TEXT: TEXT, REASONS: REASONS };
+    module.exports = { pickLang: pickLang, statusInfo: statusInfo, linkQuery: linkQuery, itemLabel: itemLabel, browseQuery: browseQuery, rowLabel: rowLabel, TEXT: TEXT, REASONS: REASONS };
     return;
   }
 
@@ -99,7 +107,7 @@
   document.documentElement.lang = lang;
   document.title = t.title;
   var app = document.getElementById("app");
-  var state = { me: null, item: null, seasons: null, reason: null, poll: null };
+  var state = { me: null, item: null, seasons: null, reason: null, poll: null, browse: { kind: "movie", sort: "az", items: [], page: 0, pages: 0, sorts: ["az", "year", "added"], busy: false, loaded: false } };
 
   function el(tag, attrs, kids) {
     var e = document.createElement(tag);
@@ -135,6 +143,7 @@
     if (m) return renderStatus(m[1]);
     app.appendChild(header());
     app.appendChild(findCard());
+    if (!state.item) app.appendChild(browseCard());
     if (state.item && state.item.kind === "tv") app.appendChild(episodeCard());
     if (state.item && (state.item.kind === "movie" || state.item.episodeId)) app.appendChild(reasonCard());
     app.appendChild(listCard());
@@ -168,6 +177,49 @@
     c.appendChild(list);
     setTimeout(function () { input.focus(); }, 0);
     return c;
+  }
+
+  function browseCard() {
+    var b = state.browse;
+    var c = el("section", { class: "card", "data-browse": true }, [el("h2", { text: t.browse })]);
+    var tabs = el("div", { class: "tabs", role: "tablist" });
+    [["movie", t.films], ["tv", t.series]].forEach(function (k) {
+      tabs.appendChild(el("button", { type: "button", role: "tab", class: "tab", "data-kind": k[0], "aria-selected": b.kind === k[0] ? "true" : "false", text: k[1], on: { click: function () {
+        if (b.kind === k[0]) return;
+        b.kind = k[0]; b.items = []; b.page = 0; b.pages = 0; b.loaded = false; render();
+      } } }));
+    });
+    c.appendChild(tabs);
+    var sel = el("select", { "aria-label": t.sort, "data-sort": true, on: { change: function () { b.sort = sel.value; b.items = []; b.page = 0; b.pages = 0; b.loaded = false; render(); } } });
+    b.sorts.forEach(function (s) { sel.appendChild(el("option", { value: s, selected: s === b.sort, text: t.sorts[s] })); });
+    c.appendChild(sel);
+    var list = el("ul", { class: "browse" });
+    b.items.forEach(function (r) {
+      var img = el("img", { class: "cover", src: "/api/poster?ref=" + encodeURIComponent(r.ref), alt: "", loading: "lazy", decoding: "async", width: "40", height: "60" });
+      img.addEventListener("error", function () { img.removeAttribute("src"); img.classList.add("none"); img.setAttribute("alt", t.noPoster); });
+      list.appendChild(el("li", {}, [el("button", { type: "button", class: "brow", "aria-label": rowLabel(r), on: { click: function () { choose(r, null); } } },
+        [img, el("span", { class: "btext" }, [el("span", { class: "btitle break", text: r.title }), el("span", { class: "muted", text: r.year ? String(r.year) : "" })])])]));
+    });
+    c.appendChild(list);
+    var msg = el("p", { class: "muted", "data-browse-msg": true, text: b.busy ? t.loading : !b.loaded ? "" : b.items.length ? "" : t.noHits });
+    c.appendChild(msg);
+    if (b.loaded && b.page < b.pages) c.appendChild(el("div", { class: "row" }, [el("button", { type: "button", class: "plain", "data-more": true, text: t.more, on: { click: function () { loadBrowse(); } } })]));
+    if (!b.loaded && !b.busy) loadBrowse();
+    return c;
+  }
+
+  function loadBrowse() {
+    var b = state.browse;
+    if (b.busy) return;
+    var kind = b.kind, sort = b.sort;
+    b.busy = true;
+    api("/api/browse?" + browseQuery(kind, sort, b.page + 1)).then(function (j) {
+      b.busy = false;
+      if (b.kind !== kind || b.sort !== sort) return;
+      b.items = b.items.concat(j.items); b.page = j.page; b.pages = j.pages; b.sorts = j.sorts; b.loaded = true;
+      if (b.sorts.indexOf(b.sort) < 0) { b.sort = "az"; b.items = []; b.page = 0; b.loaded = false; }
+      if (!state.item && !/^#r=/.test(location.hash)) render();
+    }).catch(function () { b.busy = false; b.loaded = true; if (!state.item) render(); });
   }
 
   function choose(r, episodeId) {
