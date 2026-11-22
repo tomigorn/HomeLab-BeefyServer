@@ -634,6 +634,14 @@ class Delete(unittest.TestCase):
                 self.assertTrue((pool / f).exists(), f)
             self.assertTrue(any("phone version" in l and "recycle bin" in l for l in self.logs))
 
+    def test_an_own_upscale_goes_to_the_recycle_bin_with_the_title(self):
+        with tempfile.TemporaryDirectory() as d:
+            pool = self.library_pool(d)
+            (pool / "media/movies/New Film (2025)/New Film (2025) - 2160p upscale.mkv").write_bytes(b"4k")
+            self.run_it(pool=pool)
+            self.assertFalse((pool / "media/movies/New Film (2025)/New Film (2025) - 2160p upscale.mkv").exists())
+            self.assertTrue((pool / ".recyclebin/New Film (2025)/New Film (2025) - 2160p upscale.mkv").exists())
+
     def test_a_phone_version_on_another_disk_is_copied_then_removed_like_the_arrs_do(self):
         # the pool answers EXDEV for a rename off the HDD branch (the bin lives on the SSDs)
         with tempfile.TemporaryDirectory() as d:

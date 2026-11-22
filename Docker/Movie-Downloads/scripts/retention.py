@@ -50,7 +50,8 @@ GONE_CAP = 500
 JF_LISTS = {"leaving": ("user-retention-leaving", "Leaving soon", "temporary titles that leave within 7 days"),
             "gone": ("user-retention-gone", "Left the server", "files deleted by the storage cleanup; request again to download")}
 SEASON = re.compile(r"/Season (\d+)/")
-PHONE = re.compile(r" - Phone \d+p\.[^./]+$")
+# own versions: phone versions and the 2160p upscale (README "Own conversions")
+PHONE = re.compile(r" - (Phone \d+p|2160p upscale)\.[^./]+$")
 POOL = "/srv/video"
 BIN = ".recyclebin"
 
