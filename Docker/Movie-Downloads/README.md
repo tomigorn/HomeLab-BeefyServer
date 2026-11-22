@@ -308,7 +308,7 @@ Every deleted library file (retention, Delete a title, upgrades, language and qu
 |---|---|
 | Why own | Radarr/Sonarr's cleanup compares each file's date (mtime). They touch the file after the move, but the files belong to SABnzbd (65106), Bazarr (65104) or buntu, so the touch is refused (`utimensat` with a time needs the owner) and swallowed (`RecycleBinProvider.cs` `SetLastWriteTime`; log `UnauthorizedAccessException … SetLastWriteTimeUtc`). Seen 2026-11-18: a file dated 11-11 moved in on 11-17 was purged the next morning |
 | Rule | moved at = the later of the file's ctime (set by the rename into the bin, never set back) and its date; deleted once 7 days old. Empty folders go once a day old |
-| Where | `scripts/recycle-bin.py`, `systemd/recycle-bin.{service,timer}` 04:37, as buntu, writes only the bin. Radarr/Sonarr `RecycleBinCleanupDays` = 0 (backup `backups/pre-recycle-bin-2026-11-21/`, not in git) |
+| Where | `scripts/recycle-bin.py`, `systemd/recycle-bin.{service,timer}` 04:37, as buntu, writes only the bin; the maintenance window waits for `recycle-bin.service` (`UNITS` in `Server/9-Night-Schedule/beefy-maintenance-window`). Radarr/Sonarr `RecycleBinCleanupDays` = 0 (backup `backups/pre-recycle-bin-2026-11-21/`, not in git) |
 | Guards | the bin must be a real folder named `.recyclebin` on a mounted pool, clock NTP-synced; else nothing is deleted (exit 1). An undeletable file is logged, the rest goes on |
 | Check | `scripts/recycle-bin.py --dry-run` (every file with its delete date), `journalctl -u recycle-bin`, `md.recycle-bin` |
 | Install | `sudo install -m 0644 systemd/recycle-bin.service systemd/recycle-bin.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now recycle-bin.timer` |
