@@ -1,0 +1,13 @@
+[Unit]
+Description=Own conversions: probe new imports, queue MPEG-2, VC-1, XviD/DivX, WMV and interlaced files for a 2160p upscale (README Own conversions)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+RequiresMountsFor=/srv/video
+After=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+# root for docker only; ffprobe runs as Jellyfin's uid without network or capabilities, the library read-only
+Type=oneshot
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/upscale.py detect
+StateDirectory=upscale
+PrivateTmp=true

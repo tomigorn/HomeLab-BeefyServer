@@ -1,0 +1,19 @@
+[Unit]
+Description=Own conversions: 2160p upscale of the queued titles, one at a time, night only (README Own conversions)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+RequiresMountsFor=/srv/video
+After=docker.service
+
+[Service]
+# root for docker only; the conversion runs as Jellyfin's uid without network or capabilities, the library read-only
+Type=oneshot
+# Hold beefy awake only when nobody holds it, release only what this run took (same pattern as phone-convert and subtitle-translate).
+ExecStartPre=/bin/sh -c 'rm -f /run/upscale-keep-awake; [ -e /run/beefy-keep-awake ] || { /usr/local/sbin/beefy-keep-awake on && touch /run/upscale-keep-awake; }'
+ExecStartPre=-/usr/bin/docker rm -f upscale-convert
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/upscale.py run
+ExecStopPost=-/usr/bin/docker rm -f upscale-convert
+ExecStopPost=/bin/sh -c '[ -e /run/upscale-keep-awake ] && /usr/local/sbin/beefy-keep-awake off; rm -f /run/upscale-keep-awake'
+StateDirectory=upscale
+TimeoutStartSec=8h
+UMask=0002
+PrivateTmp=true

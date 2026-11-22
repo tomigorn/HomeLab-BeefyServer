@@ -1290,6 +1290,42 @@ scripts/phone-version.py --episode <sonarr episode id>
 - Tests: `python3 tests/test_phone_version.py`.
 - Library 2026-11-16 (`--library`): 1082 files, 2 would be blocked (only Arabic / only Russian audio where Radarr says English: *Palestine 36*, *Navalny*; left alone, only new imports act), 15 unknown (no or untagged audio in the arr's media info).
 
+#### Own conversions
+
+Owner 2026-11-19 / 2026-11-22: a download phones and TVs cannot play directly gets its own compatible version next to it. An exception to "no own conversion", only for these formats. Both proven settings live here.
+
+| Setting | 2160p upscale (`scripts/upscale.py`) | Phone version (`scripts/phone-fetch.py convert`) |
+|---|---|---|
+| For | MPEG-2, VC-1, XviD/DivX (`mpeg4`, `msmpeg4v1-3`), WMV (`wmv1-3`), any interlaced video (`field_order` tt/bb/tb/bt) | a 4K title asked for in a smaller quality, no fitting release ("Phone versions") |
+| Proven on | The Ring Thing (DVD, 2026-11-19, owner picked "C · EWA Lanczos Sharp" of 5 test clips) | owner 2026-11-20 15:00 and 2026-11-21 |
+| Scale | `hwupload,libplacebo=w=3840:h=2160:upscaler=ewa_lanczossharp:format=yuv420p,hwdownload,format=yuv420p,setsar=1` (Vulkan, `-init_hw_device vulkan`); other shapes keep their display aspect inside 3840×2160 (4:3 → 2880×2160) | `scale_vaapi=w=1920:h=-2:format=p010` (10-bit) |
+| Video | `libx264 -preset medium -profile:v high -level 5.1 -pix_fmt yuv420p -crf 16`; `setfield=prog` marks the frames progressive (else Jellyfin calls the upscale interlaced) | Quick Sync `hevc_qsv -low_power 1 -preset slow -b:v 5M -maxrate 7500k -bufsize 15M`, HDR10 kept, Dolby Vision dropped (profile 5: not converted) |
+| Audio | every track copied, plus AAC stereo 192 kbit/s of the original-language track (`… (Original)`, else the default one) as the only default track | lossy tracks (EAC3/AC3/AAC) copied; a language without one gets its best track as EAC3 5.1 640 kbit/s |
+| Subtitles | copied, bitmap ones too (never burnt in); Bazarr's text subtitles of the original are copied onto the version's name on every run, Bazarr asked for missing ones after placing | copied, fonts too |
+| Name | `<folder> - 2160p upscale.mkv` (episodes `<name up to SxxEyy> - 2160p upscale.mkv`) next to the original | `<folder> - Phone 1080p.mkv` on the HDD branch |
+| Cost | ≈ 4.4 MB disk space per second of film (The Ring Thing: 20.1 GB for 77 min), ≈ 3 × the film's length on beefy (3 h 50 min) | — |
+
+| Part | What |
+|---|---|
+| Detect | `systemd/upscale-detect.path` watches the import logs `/srv/appdata/{radarr,sonarr}/quality-block.imports` (written by `scripts/original-audio-hook.sh`) → `upscale-detect.service` (root for docker) → `upscale.py detect`: each new import probed with the Jellyfin image's ffprobe (codec, field order; Jellyfin's uid, no network, library read-only). A file that already has its version is registered as done |
+| Queue | `/var/lib/upscale/state.json` (`titles`: state `queued`, `converting`, `done`, `failed`, `gone`, reason, note; `pending` = waiting titles) |
+| Night run | `systemd/upscale.timer` 22:10 (`Server/9-Night-Schedule.md`) → `upscale.service` (root for docker; holds beefy awake only when nobody holds it, releases only its own marker): oldest first, one at a time, only when it starts 22:00-06:00 and ends before 06:00 (3 × length), skipped (stays queued) when the file's disk would cross its floor (SSD 80 %, HDD 90 %, with the estimated size). Throw-away container `upscale-convert` of the Jellyfin image (Jellyfin's uid, `/dev/dri`, no network, no capabilities, the title folder read-only), work file in `<branch>/upscale-work/` on the original's disk |
+| Check | one 2160p H.264 video, every audio track + AAC, duration within 1 %; else `failed`, the work file removed, nothing in the library |
+| Place | under the media lock, renamed into the title folder on the same disk, owner like the original, 0664; Jellyfin told (`/Library/Media/Updated`); lists it as version "2160p upscale" (sorted first: higher resolution) |
+| Retention | the version belongs to its title: `retention.py` moves it to the recycle bin with the title's files, like a phone version |
+
+```bash
+scripts/upscale.py status                         # every title, state, note; waiting count
+sudo scripts/upscale.py add "<library file>"      # queue one by hand (or register its existing version); a failed one again
+sudo systemctl start upscale.service              # run now (converts only 22:00-06:00)
+journalctl -u upscale-detect -n 5; journalctl -u upscale -n 20
+sudo install -m 0644 systemd/upscale-detect.{path,service} systemd/upscale.{service,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now upscale-detect.path upscale.timer
+```
+
+- Tests: `python3 tests/test_upscale.py` (detection matrix, command, sizes, night, disk floor, the run against fakes). Real runner test by day on a scratch folder: `sudo env UP_POOL=<scratch under /srv/video> UP_STATE=<scratch>/state.json UP_NOW=2026-11-22T22:10:00 scripts/upscale.py add|run` (30 s MPEG-2 clip of Nosferatu: 72 s, 2026-11-22).
+- Wake: beefy is woken at 22:05 only for night downloads (fastpi `Beefy-Waker` reads `pending` of `night-downloads.json`); a queued upscale waits for a night beefy is awake at 22:10.
+- The Ring Thing: made by hand 2026-11-19 (same video settings, no AAC stereo track, file flagged interlaced), registered as done 2026-11-22.
+
 ### Swiss German
 
 `audio-swiss-german` = Swiss German audio is mandatory and outranks quality: a Swiss German DVD is taken over a High German 4K; no Swiss German release = nothing is grabbed.

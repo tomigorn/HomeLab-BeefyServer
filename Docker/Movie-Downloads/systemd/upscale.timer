@@ -1,0 +1,10 @@
+[Unit]
+Description=Own conversions: the night run 22:10 (only while beefy is awake; Server/9-Night-Schedule.md)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Timer]
+OnCalendar=*-*-* 22:10:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target
