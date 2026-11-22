@@ -2492,6 +2492,26 @@ class QualityBlock(unittest.TestCase):
         self.assertEqual(sorted(d["id"] for d in self.done()), sorted(d["id"] for d in first))
         self.assertEqual(len(first), 2)
 
+    def playback(self, *entries):
+        (self.scouts / "playback-check.json").write_text(json.dumps({"entries": list(entries), "downloads": [], "queue": [], "seenHits": {}, "checked": {}}))
+
+    def test_playback_check_note_is_a_quality_note_that_says_the_file_is_fine(self):
+        self.playback(self.entry(verdict="note", reasons=[], notes=["file OK, probably the client"], blocked=False, searched=False, file="kept", downloadId=None, source="playback",
+                                 note="3 starts within 3 min, each stopped within 60 s (Living Room TV)"))
+        [d] = self.done()
+        self.assertEqual((d["type"], d["resolved"]["how"], d["details"]["reason"], d["details"]["problems"], d["details"]["note"]),
+                         ("quality-note", "playback-note", "playback-ok", ["file OK, probably the client"], "3 starts within 3 min, each stopped within 60 s (Living Room TV)"))
+
+    def test_playback_check_block_is_an_auto_block_record(self):
+        self.playback(self.entry(source="playback", downloadId="DL9"))
+        [d] = self.done()
+        self.assertEqual((d["type"], d["resolved"]["how"], d["details"]["reason"]), ("auto-block", "auto-block", "broken-file"))
+
+    def test_playback_check_and_quality_block_entries_are_both_shown(self):
+        self.entries(self.entry())
+        self.playback(self.entry(verdict="note", reasons=[], notes=["file OK, probably the client"], blocked=False, file="kept", source="playback", fileName="other.mkv"))
+        self.assertEqual(sorted(d["type"] for d in self.done()), ["auto-block", "quality-note"])
+
     def test_no_file_or_broken_file_shows_nothing(self):
         self.assertEqual(self.done(), [])
         (self.scouts / "quality-block.json").write_text("{broken")

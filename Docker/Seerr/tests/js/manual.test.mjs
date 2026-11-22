@@ -142,6 +142,22 @@ test("done tab: a quality note blocks nothing and says so; German", async () => 
   assert.match(de.$("[data-problem] [data-auto-block]").textContent, /Gefunden: duration 90 min, expected 120 min/);
 });
 
+test("done tab: a playback check note says the file is fine; German", async () => {
+  const d = problem({ type: "quality-note", key: "movie/4242", title: "Some Film", year: 2020, requesters: [], resolved: { at: "2026-11-20T02:00:00Z", how: "playback-note" },
+    details: { reason: "playback-ok", release: "", file: "kept", searched: false, problems: ["file OK, probably the client"], fileName: "Some Film.mkv", note: "3 starts within 3 min, each stopped within 60 s (Living Room TV)" } });
+  const en = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [d], admin: false } } });
+  en.$('[data-tab="done"]').click();
+  await settle();
+  assert.match(en.$("[data-problem]").textContent, /Playback kept failing, the file check found nothing wrong — probably the client/);
+  assert.match(en.$("[data-problem] [data-auto-block]").textContent, /Found: file OK, probably the client · 3 starts within 3 min/);
+  assert.match(en.$("[data-problem] [data-resolved]").textContent, /Checked after playback trouble/);
+  const de = await page({ "/_download-now/manual/problems": { status: 200, body: { open: [], done: [d], admin: false } } }, undefined, PAGE.replace(">Series<", ">Serien<"));
+  de.$('[data-tab="done"]').click();
+  await settle();
+  assert.match(de.$("[data-problem]").textContent, /Die Wiedergabe brach immer wieder ab, die Dateiprüfung fand nichts — wahrscheinlich liegt es am Gerät/);
+  assert.match(de.$("[data-problem] [data-resolved]").textContent, /Nach Wiedergabeproblemen geprüft/);
+});
+
 test("done tab: a broken file the quality check could not block shows why", async () => {
   const d = problem({ type: "quality-note", key: "movie/4242", requesters: [], resolved: { at: "2026-11-20T02:00:00Z", how: "quality-note" },
     details: { reason: "broken-kept", release: "", file: "kept", searched: false, problems: ["no audio stream"], fileName: "x.mkv", note: "imported by hand (no download id): not blocked" } });

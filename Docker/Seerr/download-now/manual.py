@@ -972,25 +972,29 @@ def auto_blocks(deps, records, now):
 
 
 def quality_blocks(deps, records, now):
-    """Movie-Downloads' quality-block.py: a blocked broken download is an auto-block record; a note, or a broken file it could not block, a quality-note record (Done tab only)."""
-    for e in scout_files(deps)["quality-block.json"].get("entries") or []:
+    """Movie-Downloads' quality-block.py and playback-check.py: a blocked broken file is an auto-block record; a note, or a broken file they could not block, a quality-note record (Done tab only). A playback-check note is the healthy file after playback trouble (how: playback-note)."""
+    files = scout_files(deps)
+    for e in (files["quality-block.json"].get("entries") or []) + (files["playback-check.json"].get("entries") or []):
         if not isinstance(e, dict) or e.get("verdict") not in ("broken", "note") or now - (epoch(e.get("at")) or 0) > KEEP_DAYS * DAY:
             continue
         name = str(e.get("fileName") or "")[:200]
         key = e["key"] if isinstance(e.get("key"), str) else f"file/{name}"
         blocked = e.get("verdict") == "broken" and e.get("blocked") is True
+        playback = e.get("source") == "playback"
         kind = "auto-block" if blocked else "quality-note"
-        ident = f"quality|{e.get('app')}|{e.get('downloadId')}" if blocked else f"quality-note|{e.get('app')}|{e.get('checkedAt')}|{name}"
+        ident = f"quality|{e.get('app')}|{e.get('downloadId')}" if blocked else f"{'playback' if playback else 'quality'}-note|{e.get('app')}|{e.get('checkedAt')}|{name}"
         pid = pid_of(kind, key, ident)
-        details = {"reason": "broken-file" if blocked else "broken-kept" if e.get("verdict") == "broken" else "quality-note", "release": str(e.get("release") or "")[:200],
+        reason = "broken-file" if blocked else "broken-kept" if e.get("verdict") == "broken" else "playback-ok" if playback else "quality-note"
+        details = {"reason": reason, "release": str(e.get("release") or "")[:200],
                    "file": e.get("file"), "searched": bool(e.get("searched")), "problems": clean_lines((e.get("reasons") or []) + (e.get("notes") or [])), "fileName": name}
         if not blocked:
             details["note"] = str(e.get("note") or "")[:300]
+        how = "playback-note" if playback and not blocked and e.get("verdict") == "note" else kind
         r = records.get(pid)
         if r is None:
             records[pid] = {"id": pid, "type": kind, "key": key, "ident": ident, "title": e.get("title") or name, "year": e.get("year"), "requesters": [],
-                            "details": details, "firstSeen": e.get("at"), "lastSeen": e.get("at"), "resolved": {"at": e.get("at"), "how": kind},
-                            "actions": [{"at": e.get("at"), "user": None, "userId": None, "action": kind, "result": e.get("file")}]}
+                            "details": details, "firstSeen": e.get("at"), "lastSeen": e.get("at"), "resolved": {"at": e.get("at"), "how": how},
+                            "actions": [{"at": e.get("at"), "user": None, "userId": None, "action": how, "result": e.get("file")}]}
         else:
             r["details"] = details
 
@@ -1675,7 +1679,7 @@ def scout_files(deps):
     """Movie-Downloads' state (read-only mount): the NFO scout's releases, the description scout's entries and the language and quality blocks' logs, re-read when they change."""
     d = getattr(deps, "scout_dir", None)
     out = {}
-    for name in ("nfo-scout.json", "description-scout.json", "language-block.json", "quality-block.json", "library-check.json"):
+    for name in ("nfo-scout.json", "description-scout.json", "language-block.json", "quality-block.json", "playback-check.json", "library-check.json"):
         path = os.path.join(d, name) if d else None
         try:
             st = os.stat(path) if path else None

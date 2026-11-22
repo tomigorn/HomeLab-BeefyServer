@@ -107,6 +107,7 @@
         "broken-file": "Blocked automatically: the file is broken — searching again.",
         "broken-kept": "The file is broken, but it was not blocked — please check it.",
         "quality-note": "Note from the quality check on download — nothing was blocked.",
+        "playback-ok": "Playback kept failing, the file check found nothing wrong — probably the client. Nothing was blocked.",
         mismatch: "The Seerr request points to another title in Sonarr/Radarr, so downloads land there and not under the requested title.",
         duplicate: "The same release was imported into more than one title, so the same files are in the library several times.",
         unknown: "Sonarr/Radarr stopped this download for a reason this page doesn't know yet:"
@@ -193,7 +194,7 @@
       rejectingLine: function (rel, u, keep) { return "🚫 " + rel + " blocked by " + (u || "someone") + ", searching for another release — " + (keep ? "the current file stays until a replacement arrives" : "the current file was deleted"); },
       replacedBy: function (u) { return "Release replaced (picked by " + (u || "someone") + ")"; }, replacedAfterBlock: function (u) { return "Another release replaced the blocked one (blocked by " + (u || "someone") + ")"; },
       replaceFailed: "Replacement failed — the current file stays",
-      autoBlocked: "Blocked automatically, searching again", originalIs: "original language ", qualityNoted: "Checked on download", problemsFound: "Found", reportBy: "Reported by", dismiss: "Mark as handled",
+      autoBlocked: "Blocked automatically, searching again", originalIs: "original language ", qualityNoted: "Checked on download", playbackNoted: "Checked after playback trouble", problemsFound: "Found", reportBy: "Reported by", dismiss: "Mark as handled",
       reportReasons: { start: "Doesn't start / stops", video: "Video glitches", audio: "Audio glitches", quality: "Bad video quality", sound: "No sound / wrong audio track", language: "Wrong language", subtitles: "Subtitles", wrong: "Wrong title / episode", other: "Other" },
       autoFile: { removed: "the file was removed", "previous restored": "the previous file is back", kept: "the file stays until a better one arrives",
         "never imported": "it never reached the library", "not found": "Radarr/Sonarr did not know the download", "log only": "test mode: nothing was done" },
@@ -239,6 +240,7 @@
         "broken-file": "Automatisch gesperrt: die Datei ist defekt — wird neu gesucht.",
         "broken-kept": "Die Datei ist defekt, wurde aber nicht gesperrt — bitte prüfen.",
         "quality-note": "Hinweis der Qualitätsprüfung beim Download — nichts gesperrt.",
+        "playback-ok": "Die Wiedergabe brach immer wieder ab, die Dateiprüfung fand nichts — wahrscheinlich liegt es am Gerät. Nichts gesperrt.",
         mismatch: "Die Seerr-Anfrage zeigt auf einen anderen Titel in Sonarr/Radarr, darum landen Downloads dort und nicht beim angefragten Titel.",
         duplicate: "Dasselbe Release wurde in mehr als einen Titel importiert, darum liegen dieselben Dateien mehrfach in der Bibliothek.",
         unknown: "Sonarr/Radarr hat diesen Download aus einem Grund angehalten, den diese Seite noch nicht kennt:"
@@ -328,7 +330,7 @@
       autoBlocked: "Automatisch gesperrt, wird neu gesucht", originalIs: "Originalsprache ",
       autoFile: { removed: "die Datei wurde entfernt", "previous restored": "die vorherige Datei ist wieder da", kept: "die Datei bleibt, bis eine bessere da ist",
         "never imported": "sie kam nie in die Bibliothek", "not found": "Radarr/Sonarr kannten den Download nicht", "log only": "Testmodus: nichts unternommen" },
-      qualityNoted: "Beim Download geprüft", problemsFound: "Gefunden", reportBy: "Gemeldet von", dismiss: "Als erledigt markieren",
+      qualityNoted: "Beim Download geprüft", playbackNoted: "Nach Wiedergabeproblemen geprüft", problemsFound: "Gefunden", reportBy: "Gemeldet von", dismiss: "Als erledigt markieren",
       reportReasons: { start: "Startet nicht / bricht ab", video: "Bildfehler", audio: "Tonfehler", quality: "Schlechte Bildqualität", sound: "Kein Ton / falsche Tonspur", language: "Falsche Sprache", subtitles: "Untertitel", wrong: "Falscher Titel / falsche Folge", other: "Anderes" },
       fileCount: function (n) { return n + (n === 1 ? " Datei" : " Dateien"); },
       library: "Bibliothek prüfen", libEmpty: "Keine defekten Dateien gefunden bisher.",
@@ -621,7 +623,7 @@
     if ((x.problems || []).length) parts.push(t.problemsFound + ": " + x.problems.map(String).join("; "));
     if ((x.audio || []).length) parts.push(t.audio + ": " + x.audio.map(String).join(", "));
     if (x.original) parts.push(t.originalIs + String(x.original));
-    if (t.autoFile[x.file] && !((x.reason === "quality-note" || x.reason === "broken-kept") && x.file === "kept")) parts.push(t.autoFile[x.file]);
+    if (t.autoFile[x.file] && !((x.reason === "quality-note" || x.reason === "playback-ok" || x.reason === "broken-kept") && x.file === "kept")) parts.push(t.autoFile[x.file]);
     if (x.note) parts.push(String(x.note));
     return parts.join(" · ");
   }
@@ -692,7 +694,7 @@
       var res = p.resolved || {};
       var by = (p.actions || []).filter(function (a) { return a.action === res.how; }).pop() || {};
       var pick = (p.actions || []).filter(function (a) { return a.action === "replace" || a.action === "reject"; }).pop() || {};
-      var how = res.how === "auto-block" ? t.autoBlocked : res.how === "quality-note" ? t.qualityNoted : res.how === "gone" || res.how === "imported" || res.how === "found" ? t[res.how] : res.how === "delete" ? t.removedBy(by.user ? String(by.user) : null)
+      var how = res.how === "auto-block" ? t.autoBlocked : res.how === "quality-note" ? t.qualityNoted : res.how === "playback-note" ? t.playbackNoted : res.how === "gone" || res.how === "imported" || res.how === "found" ? t[res.how] : res.how === "delete" ? t.removedBy(by.user ? String(by.user) : null)
         : res.how === "override" ? t.overriddenBy(by.user ? String(by.user) : null) : res.how === "block" ? t.blockedBy(by.user ? String(by.user) : null)
         : res.how === "replaced" ? (pick.action === "reject" ? t.replacedAfterBlock : t.replacedBy)(pick.user ? String(pick.user) : null) : res.how === "replace-failed" ? t.replaceFailed
         : t.fixedBy(by.user ? String(by.user) : null, t.actions[res.how] || String(res.how));
