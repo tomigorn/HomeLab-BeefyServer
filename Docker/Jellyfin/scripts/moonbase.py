@@ -19,6 +19,9 @@ from trending_model import COMING, HOME, LIBRARIES  # noqa: E402
 _spec = importlib.util.spec_from_file_location("phone_lists", HERE / "phone-lists.py")
 phone_lists = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(phone_lists)
+_spec = importlib.util.spec_from_file_location("region_rows", HERE / "region-rows.py")
+region_rows = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(region_rows)
 
 PLUGIN_ID = "8c5d0e914f2a4b6d9e3f1a7c8d9e0f2b"
 SERVER_URL = "https://jellyfin.holy-grail.ch"
@@ -84,14 +87,15 @@ def collection(item, order=0):
 
 
 def sections(sets):
-    """The web home order; collections missing or empty for a non-admin user left out, the service and genre lists not on home."""
-    full = {item["Name"]: item for item in sets if item["Count"] > 0}
+    """The web home order; collections missing or empty for a non-admin user left out, the service and genre lists not on home; the region rows (region-rows.py) after Hidden Gems in their order."""
+    full = {item["Name"]: item for item in sets if item["Count"] > 0 and not item.get("Region")}
+    regions = sorted((i for i in sets if i.get("Region") and i["Count"] > 0), key=lambda i: region_rows.rank(i["Region"], i["Count"]))
 
     def coll(*names):
         return [collection(full[n]) for n in names if n in full]
 
     out = [builtin("resume"), builtin("nextup"), *coll(COMING[1]), builtin("favoritemovies"), builtin("favoriteseries"), builtin("latestmedia"),
-           *coll(TOP_SHOWS), builtin("studios"), builtin("rewatch"), *coll(TOP_MOVIES), builtin("sinceyouwatched1"), *coll(GEMS), builtin("genres"), *coll(*END_ROWS)]
+           *coll(TOP_SHOWS), builtin("studios"), builtin("rewatch"), *coll(TOP_MOVIES), builtin("sinceyouwatched1"), *coll(GEMS), *(collection(i) for i in regions), builtin("genres"), *coll(*END_ROWS)]
     for order, section in enumerate(out):
         section["order"] = order
     return out
@@ -194,11 +198,17 @@ def save_state(state):
 
 
 def lists():
-    """The home-row collections by name, counted as a non-admin user sees them (without a user a BoxSet counts 0)."""
+    """The home-row collections by name and the region rows (Region: their key), counted as a non-admin user sees them (without a user a BoxSet counts 0)."""
     user = next(u["Id"] for u in api("GET", "/Users") if not u["Policy"]["IsAdministrator"])
-    items = api("GET", "/Items?Recursive=true&IncludeItemTypes=BoxSet&SortBy=SortName&CollapseBoxSetItems=false&EnableImages=false")["Items"]
-    return [{"Id": i["Id"], "Name": i["Name"], "Count": api("GET", f"/Items?userId={user}&ParentId={i['Id']}&Limit=0&EnableImages=false")["TotalRecordCount"]}
-            for i in items if i["Name"] in ROW_SETS]
+    items = api("GET", "/Items?Recursive=true&IncludeItemTypes=BoxSet&SortBy=SortName&CollapseBoxSetItems=false&Fields=Tags&EnableImages=false")["Items"]
+    out = []
+    for i in items:
+        region = next((t[len(region_rows.TAG) + 1:] for t in i.get("Tags") or [] if t.startswith(region_rows.TAG + "-")), None)
+        if i["Name"] not in ROW_SETS and region is None:
+            continue
+        out.append({"Id": i["Id"], "Name": i["Name"], "Count": api("GET", f"/Items?userId={user}&ParentId={i['Id']}&Limit=0&EnableImages=false")["TotalRecordCount"],
+                    **({"Region": region} if region else {})})
+    return out
 
 
 def injector_config():

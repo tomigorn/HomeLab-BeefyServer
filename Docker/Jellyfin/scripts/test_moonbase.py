@@ -58,6 +58,13 @@ class SectionsTest(unittest.TestCase):
         top = [s for s in mb.sections(LISTS) if s.get("pluginAdditionalData") == "hp"][0]
         self.assertEqual((top["kind"], top["pluginSource"], top["pluginSection"], top["serverId"], top["type"]), ("pluginDynamic", "collections", "collection", "https://jellyfin.holy-grail.ch", "none"))
 
+    def test_region_rows_after_hidden_gems_owner_rows_first_then_the_biggest(self):
+        regions = [{"Id": "r1", "Name": "Anime", "Count": 8, "Region": "anime"}, {"Id": "r2", "Name": "Nordic Films & Series", "Count": 5, "Region": "nordic"},
+                   {"Id": "r3", "Name": "Japanese Films & Series", "Count": 6, "Region": "japanese"}, {"Id": "r4", "Name": "Korean Films & K-Dramas", "Count": 0, "Region": "korean"}]
+        names = rows(mb.sections(LISTS + regions))
+        at = names.index("Hidden Gems")
+        self.assertEqual(names[at + 1:at + 5], ["Nordic Films & Series", "Anime", "Japanese Films & Series", "genres"])
+
     def test_orders_are_consecutive(self):
         self.assertEqual([s["order"] for s in mb.sections(LISTS)], list(range(len(mb.sections(LISTS)))))
 

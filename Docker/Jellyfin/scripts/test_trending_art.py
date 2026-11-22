@@ -100,6 +100,13 @@ class Art(unittest.TestCase):
         im = Image.open(io.BytesIO(ta.collection_poster("user-pat", "Pat produced · by jane", None, [])))
         self.assertEqual(im.size, (600, 900))
 
+    def test_region_rows_have_their_own_colour_and_a_globe_mark(self):
+        others = {ta.palette(k) for k in ("home-movies", "coming", "gems", "user-pat", "service-8-movie", "genre-drama-movie", "other")}
+        self.assertNotIn(ta.palette("region-nordic"), others)
+        self.assertEqual(ta.palette("region-nordic"), ta.palette("region-anime"))
+        self.assertEqual(ta.mark("region-nordic", None, 132).size, (132, 132))
+        self.assertEqual(load(ta.collection_poster("region-nordic", "Nordic Films & Series", None, [img()])).size, (600, 900))
+
     def test_collection_poster_fans_the_member_posters(self):
         im = load(ta.collection_poster("coming", "Coming soon", None, [img((250, 250, 250))]))
         self.assertGreater(min(mean(im, (270, 720, 330, 780))), 200)
