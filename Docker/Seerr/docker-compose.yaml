@@ -101,7 +101,7 @@ services:
 # /_download-now/ here; every call is checked against Seerr (admin / manage-requests, or the caller's own request).
 # Holds the Radarr/Sonarr/SABnzbd keys (secrets/download-now, scripts/download-now-setup.sh); qBittorrent
 # lets 172.28.10.205 in without a password. Publishes nothing. Also the Manual interaction backend
-# (README "Manual interaction"): reads request-state.json, keeps its problem list in the state volume. And the Collections backend (README "Collections") and the storage retention backend (README "Storage retention").
+# (README "Manual interaction"): reads request-state.json, keeps its problem list in the state volume. And the Collections backend (README "Collections"), the storage retention backend (README "Storage retention") and the Delete early backend (README "Delete early").
 # And the problem report site report.holy-grail.ch (README "Problem reports", report.py) on REPORT_PORT: published for fastpi's Traefik only (DOCKER-USER), which
 # adds Authentik's user headers and the shared secret in secrets/report; reports live in manual.json, the old file's check reads the library read-only.
   download-now:
@@ -135,6 +135,9 @@ services:
       - DN_SCOUT_REQUESTS=/run/scout-requests
       - DN_COLLECTIONS=/collections/lists.json
       - DN_RETENTION_KEEP=/retention/keep.json
+      # Delete early (README "Delete early"): job files for Movie-Downloads' delete-early runner; its state comes with /run/scouts
+      - DN_DELETE_JOBS=/delete-early
+      - DN_DELETE_STATE=/run/scouts/delete-early.json
       - RP_PORT=8091
       - RP_ORIGIN=https://report.holy-grail.ch
       - RP_SECRET_FILE=/run/secrets/report/secret
@@ -165,6 +168,8 @@ services:
       - /srv/appdata/seerr-collections:/collections
       # Storage retention (README "Storage retention"): the "Keep forever" choices, read by Movie-Downloads retention.py as buntu (65127:buntu 2750, keep.json 0640); retention.json comes with /run/indexer-bar
       - /srv/appdata/seerr-retention:/retention
+      # Delete early (README "Delete early"): delete / answer / restore jobs, carried out by Movie-Downloads scripts/delete-early.py as buntu (65127:buntu 2770); no key that deletes lives here
+      - /srv/appdata/seerr-delete-early:/delete-early
       # Problem reports (README "Problem reports"): Traefik's shared secret (scripts/report-setup.sh), the download quality check of ../Antivirus, and the library
       # read-only through the idle-I/O pool, only for that check of a reported file (ffprobe demux, nice 19)
       - ./secrets/report:/run/secrets/report:ro

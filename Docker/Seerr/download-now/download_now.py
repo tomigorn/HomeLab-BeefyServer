@@ -77,6 +77,8 @@ class Deps:
     file_check: object = None
     arr_image: object = None
     watched: object = None
+    delete_jobs: object = None
+    delete_state: object = None
 
 
 def redact(text):
@@ -374,6 +376,9 @@ def handle(method, path, headers, body, deps):
     if url.path.startswith("/_download-now/retention/"):
         import retention_api
         return retention_api.handle(sys.modules[__name__], method, path, headers, body, deps)
+    if url.path.startswith("/_download-now/delete-early/"):
+        import delete_early
+        return delete_early.handle(sys.modules[__name__], method, path, headers, body, deps)
     if url.path.startswith("/_download-now/manual/"):
         import manual
         return manual.handle(sys.modules[__name__], method, path, headers, body, deps)
@@ -595,6 +600,8 @@ def deps_from_env(env):
         night_downloads=env.get("DN_NIGHT_DOWNLOADS") or (str(pathlib.Path(env["DN_SCOUT_DIR"], "night-downloads.json")) if env.get("DN_SCOUT_DIR") else None),
         retention_file=env.get("DN_RETENTION") or (str(pathlib.Path(env["DN_REQUEST_STATE"]).with_name("retention.json")) if env.get("DN_REQUEST_STATE") else None),
         retention_keep=env.get("DN_RETENTION_KEEP") or None,
+        delete_jobs=env.get("DN_DELETE_JOBS") or None,
+        delete_state=env.get("DN_DELETE_STATE") or None,
         report_secret=read_secret(env["RP_SECRET_FILE"]) if env.get("RP_SECRET_FILE") else None,
         report_origin=env.get("RP_ORIGIN") or None,
         report_dry_run=env.get("RP_DRY_RUN") == "1",

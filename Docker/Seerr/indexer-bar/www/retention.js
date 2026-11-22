@@ -309,6 +309,185 @@
     if (anchor.nextElementSibling !== row) anchor.after(row);
   }
 
+  // ---- Delete early (README "Delete early"): a fact row on the title page, state and actions from /_download-now/delete-early/ ----
+  var DAPI = "/_download-now/delete-early/";
+  var DTEXT = {
+    en: {
+      fact: "Delete early", start: "🗑 Delete early", whole: "Whole series", season: "Season {n}", film: "this film", series: "the whole series", seasonOf: "season {n}",
+      ask: "Delete {what} now?", askNote: "The files stay 7 days in the recycle bin and can be restored; the title stays requestable. {left} of {max} deletions left this week.",
+      askKeep: "If it is marked ♾️ Keep forever or someone else is watching it, they are asked first.",
+      confirm: "🗑 Delete", cancel: "Cancel", busy: "…", queued: "⏳ Working on it…",
+      wants: "{who} wants to delete {what}: {reason}. Answer until {d}.", reason: { keep: "it is marked ♾️ Keep forever", watching: "you have started watching it" },
+      approve: "✅ Approve", deny: "✖ Deny", waiting: "⏳ Waiting for {names} to OK it until {d}.",
+      bin: "🗑 In the recycle bin until {d} (deleted by {who}{scope}).", restore: "↩ Restore", restored: "↩ Restored{scope}.",
+      denied: "✖ Not deleted{scope}: {names} said no.", expired: "✖ Not deleted{scope}: no answer within 7 days.", refusedRow: "✖ Not deleted{scope}: {why}.",
+      scope: ", season {n}",
+      errors: { quota: "at most 10 deletions a week", already: "already being deleted", protected: "this title is protected", library: "not on the server", group: "only requesters may delete", forbidden: "not allowed", closed: "already decided", season: "unknown season", failed: "something went wrong", "not in the bin": "no longer in the recycle bin" }
+    },
+    de: {
+      fact: "Früher löschen", start: "🗑 Früher löschen", whole: "Ganze Serie", season: "Staffel {n}", film: "diesen Film", series: "die ganze Serie", seasonOf: "Staffel {n}",
+      ask: "{What} jetzt löschen?", askNote: "Die Dateien bleiben 7 Tage im Papierkorb und lassen sich wiederherstellen; der Titel bleibt anfragbar. Noch {left} von {max} Löschungen diese Woche.",
+      askKeep: "Ist er als ♾️ Für immer behalten markiert oder schaut ihn jemand anderes, wird zuerst gefragt.",
+      confirm: "🗑 Löschen", cancel: "Abbrechen", busy: "…", queued: "⏳ Wird erledigt…",
+      wants: "{who} möchte {what} löschen: {reason}. Antwort bis {d}.", reason: { keep: "als ♾️ Für immer behalten markiert", watching: "du hast angefangen, es zu schauen" },
+      approve: "✅ Zustimmen", deny: "✖ Ablehnen", waiting: "⏳ Wartet bis {d} auf das OK von {names}.",
+      bin: "🗑 Im Papierkorb bis {d} (gelöscht von {who}{scope}).", restore: "↩ Wiederherstellen", restored: "↩ Wiederhergestellt{scope}.",
+      denied: "✖ Nicht gelöscht{scope}: {names} hat abgelehnt.", expired: "✖ Nicht gelöscht{scope}: keine Antwort innert 7 Tagen.", refusedRow: "✖ Nicht gelöscht{scope}: {why}.",
+      scope: ", Staffel {n}",
+      errors: { quota: "höchstens 10 Löschungen pro Woche", already: "wird schon gelöscht", protected: "dieser Titel ist geschützt", library: "nicht auf dem Server", group: "nur Anfragende dürfen löschen", forbidden: "nicht erlaubt", closed: "schon entschieden", season: "unbekannte Staffel", failed: "etwas ist schiefgegangen", "not in the bin": "nicht mehr im Papierkorb" }
+    }
+  };
+  var del = { titles: {}, loading: {}, confirm: null, scope: {}, error: {}, timer: null };
+
+  function dRequest(method, url, body) {
+    return new Promise(function (resolve, reject) {
+      var x = new XMLHttpRequest();
+      x.__hgSkip = true;
+      x.open(method, url);
+      x.withCredentials = true;
+      if (body !== undefined) x.setRequestHeader("Content-Type", "application/json");
+      x.onload = function () {
+        var data = null;
+        try { data = JSON.parse(x.responseText); } catch (e) { data = null; }
+        if (x.status >= 200 && x.status < 300) resolve(data || {}); else reject((data && data.error) || "failed");
+      };
+      x.onerror = function () { reject("failed"); };
+      x.send(body === undefined ? undefined : JSON.stringify(body));
+    });
+  }
+
+  function dState(key, force) {
+    var c = del.titles[key];
+    var busy = c && c.st && ((c.st.queued || []).length || (c.st.items || []).some(function (i) { return i.state === "approved"; }));
+    var ttl = busy ? 3000 : 30000;
+    if (!force && c && Date.now() - c.at < ttl) return;
+    if (del.loading[key]) return;
+    var kt = key.split("/");
+    del.loading[key] = true;
+    dRequest("GET", DAPI + "state?type=" + kt[0] + "&tmdb=" + kt[1]).then(function (st) { del.titles[key] = { at: Date.now(), st: st }; }, function () { del.titles[key] = { at: Date.now(), st: null }; })
+      .then(function () { del.loading[key] = false; run(); if (busy || (del.titles[key].st && (del.titles[key].st.queued || []).length)) schedule(); });
+  }
+
+  function schedule() {
+    if (del.timer || typeof setTimeout === "undefined") return;
+    del.timer = setTimeout(function () { del.timer = null; run(); }, 3000);
+  }
+
+  function dAct(key, op, body) {
+    del.error[key] = null;
+    dRequest("POST", DAPI + op, body).then(function () { del.confirm = null; }, function (err) { del.confirm = null; del.error[key] = String(err || "failed"); })
+      .then(function () { var row = document.querySelector("[data-hg-delete-fact]"); if (row) row.parentNode.removeChild(row); dState(key, true); run(); });
+  }
+
+  function what(t, kind, season) {
+    if (kind === "movie") return t.film;
+    return season === null || season === undefined ? t.series : fill(t.seasonOf, { n: season });
+  }
+
+  function dButton(doc, attr, text, fn) {
+    var b = el(doc, "button", { type: "button", "class": "hg-keep-toggle" }, text);
+    b.setAttribute(attr, "");
+    b.addEventListener("click", function (e) { e.preventDefault(); fn(b); });
+    return b;
+  }
+
+  function itemLine(doc, key, kind, it, l) {
+    var t = DTEXT[l], line = el(doc, "div", { "class": "hg-delete-line" });
+    var scope = it.season === null || it.season === undefined ? "" : fill(t.scope, { n: it.season });
+    var open = (it.asks || []).filter(function (a) { return a.answer === null; });
+    var names = (open.length ? open : it.asks || []).reduce(function (a, x) { return a.concat(x.names || []); }, []).join(", ");
+    if (it.state === "pending" && it.approver) {
+      var reason = (open[0] || {}).reason;
+      line.appendChild(el(doc, "span", {}, fill(t.wants, { who: it.byName || "", what: what(t, kind, it.season), reason: t.reason[reason] || "", d: day((it.expires || "").slice(0, 10), l) })));
+      line.appendChild(dButton(doc, "data-hg-delete-approve", t.approve, function (b) { b.disabled = true; dAct(key, "answer", { id: it.id, approve: true }); }));
+      line.appendChild(dButton(doc, "data-hg-delete-deny", t.deny, function (b) { b.disabled = true; dAct(key, "answer", { id: it.id, approve: false }); }));
+    } else if (it.state === "pending") {
+      line.appendChild(el(doc, "span", {}, fill(t.waiting, { names: names, d: day((it.expires || "").slice(0, 10), l) })));
+    } else if (it.state === "approved") {
+      line.appendChild(el(doc, "span", {}, t.queued));
+    } else if (it.state === "deleted") {
+      line.appendChild(el(doc, "span", {}, fill(t.bin, { d: day((it.binUntil || "").slice(0, 10), l), who: it.byName || "", scope: scope })));
+      if (it.canRestore) line.appendChild(dButton(doc, "data-hg-delete-restore", t.restore, function (b) { b.disabled = true; dAct(key, "restore", { id: it.id }); }));
+    } else if (it.state === "restored") {
+      line.appendChild(el(doc, "span", {}, fill(t.restored, { scope: scope })));
+    } else if (it.mine && it.state === "denied") {
+      line.appendChild(el(doc, "span", {}, fill(t.denied, { scope: scope, names: names })));
+    } else if (it.mine && it.state === "expired") {
+      line.appendChild(el(doc, "span", {}, fill(t.expired, { scope: scope })));
+    } else if (it.mine && (it.state === "refused" || it.state === "failed")) {
+      line.appendChild(el(doc, "span", {}, fill(t.refusedRow, { scope: scope, why: t.errors[it.why] || t.errors.failed })));
+    } else {
+      return null;
+    }
+    return line;
+  }
+
+  function deleteFact(doc) {
+    var m = TITLE_PAGE.exec(window.location.pathname), panel = m && doc.querySelector(".media-facts");
+    var row = doc.querySelector("[data-hg-delete-fact]");
+    if (!m) { if (row) row.parentNode.removeChild(row); return; }
+    var key = m[1] + "/" + m[2], kind = m[1];
+    dState(key);
+    var c = del.titles[key], st = c && c.st;
+    var anchor = panel && (panel.querySelector(":scope > [data-hg-keep-fact]") || factAnchor(panel));
+    var l = lang(doc), t = DTEXT[l];
+    var lines = [];
+    var items = st ? (st.items || []) : [];
+    // only the newest closed item per season: an older restore or refusal is not repeated once the title moved on
+    items = items.filter(function (it, i) {
+      if (it.state === "pending" || it.state === "approved" || it.state === "deleted") return true;
+      return !items.some(function (o, j) { return j !== i && o.season === it.season && String(o.at || "") > String(it.at || ""); });
+    });
+    items.forEach(function (it) { var x = itemLine(doc, key, kind, it, l); if (x) lines.push(x); });
+    var active = st && ((st.queued || []).length || (st.items || []).some(function (it) { return it.state === "pending" || it.state === "approved" || it.state === "deleted"; }));
+    var wholeBusy = st && (st.items || []).some(function (it) { return (it.state === "pending" || it.state === "approved" || it.state === "deleted") && (it.season === null || it.season === undefined); });
+    var canStart = st && st.allowed && !wholeBusy && !(kind === "movie" && active);
+    if (!panel || !anchor || !st || (!canStart && !lines.length && !(st.queued || []).length)) { if (row) row.parentNode.removeChild(row); return; }
+    var sig = JSON.stringify([key, l, st, del.confirm === key, del.error[key] || null, del.scope[key] || ""]);
+    if (row && row.getAttribute("data-hg-delete-fact") !== sig) { row.parentNode.removeChild(row); row = null; }
+    if (!row) {
+      row = el(doc, "div", { "class": "media-fact", "data-hg-delete-fact": sig });
+      row.appendChild(el(doc, "span", {}, t.fact));
+      var value = el(doc, "div", { "class": "media-fact-value hg-delete-value" });
+      lines.forEach(function (x) { value.appendChild(x); });
+      if ((st.queued || []).length) value.appendChild(el(doc, "div", { "class": "hg-delete-line" }, t.queued));
+      if (del.error[key]) value.appendChild(el(doc, "div", { "class": "hg-delete-line hg-delete-error" }, "✖ " + (t.errors[del.error[key]] || t.errors.failed)));
+      if (canStart && del.confirm === key) {
+        var sv = del.scope[key] || "", season = sv === "" ? null : Number(sv);
+        var box = el(doc, "div", { "class": "hg-delete-confirm", role: "alertdialog" });
+        var w = what(t, kind, season);
+        box.appendChild(el(doc, "strong", {}, fill(t.ask, { what: w, What: w.charAt(0).toUpperCase() + w.slice(1) })));
+        var q = st.quota || {};
+        box.appendChild(el(doc, "div", { "class": "hg-delete-note" }, fill(t.askNote, { left: Math.max(0, (q.max || 10) - (q.used || 0)), max: q.max || 10 })));
+        box.appendChild(el(doc, "div", { "class": "hg-delete-note" }, t.askKeep));
+        var bar = el(doc, "div", { "class": "hg-delete-buttons" });
+        bar.appendChild(dButton(doc, "data-hg-delete-confirm", t.confirm, function (b) { b.disabled = true; b.textContent = t.busy; dAct(key, "delete", { type: kind, tmdbId: Number(m[2]), season: season }); }));
+        bar.appendChild(dButton(doc, "data-hg-delete-cancel", t.cancel, function () { del.confirm = null; run(); }));
+        box.appendChild(bar);
+        value.appendChild(box);
+      } else if (canStart) {
+        var start = el(doc, "div", { "class": "hg-delete-line" });
+        if (kind === "tv" && (st.seasons || []).length) {
+          var sel = el(doc, "select", { "class": "hg-delete-scope", "data-hg-delete-scope": "", "aria-label": t.fact });
+          sel.appendChild(el(doc, "option", { value: "" }, t.whole));
+          st.seasons.forEach(function (n) { sel.appendChild(el(doc, "option", { value: String(n) }, fill(t.season, { n: n }))); });
+          sel.value = del.scope[key] || "";
+          start.appendChild(sel);
+        }
+        start.appendChild(dButton(doc, "data-hg-delete-start", t.start, function () {
+          var s = row.querySelector("select[data-hg-delete-scope]");
+          del.scope[key] = s ? s.value : "";
+          del.confirm = key;
+          del.error[key] = null;
+          run();
+        }));
+        value.appendChild(start);
+      }
+      row.appendChild(value);
+    }
+    if (anchor.nextElementSibling !== row) anchor.after(row);
+  }
+
   // ---- request rows and cards ----
   function cardFields(doc) {
     var out = [], names = doc.querySelectorAll(".card-field-name");
@@ -426,19 +605,24 @@
       ".hg-keep-note,.hg-keep-counts{color:#9ca3af;font-size:.875rem;margin:.25rem 0 .75rem}.hg-keep-items{list-style:none;margin:0 0 .75rem;padding:0}" +
       ".hg-keep-items li{display:flex;flex-wrap:wrap;gap:.25rem .75rem;align-items:baseline;padding:.375rem 0;border-top:1px solid #374151;font-size:.875rem;min-width:0}" +
       ".hg-keep-items a{color:#e5e7eb;text-decoration:none;font-weight:600;overflow-wrap:anywhere}.hg-keep-items a:hover{text-decoration:underline}" +
+      "[data-hg-delete-fact]>span:first-child{white-space:nowrap;flex-shrink:0}.hg-delete-value{display:flex;flex-direction:column;align-items:flex-end;gap:.375rem;min-width:0;text-align:right}" +
+      ".hg-delete-line{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:.375rem;font-size:.875rem}.hg-delete-error{color:#fca5a5}" +
+      ".hg-delete-scope{background:#374151;color:#e5e7eb;border:1px solid #6b7280;border-radius:.375rem;font-size:.75rem;line-height:1.25rem;padding:0 1.75rem 0 .5rem}" +
+      ".hg-delete-confirm{display:flex;flex-direction:column;gap:.375rem;padding:.6rem .75rem;border:1px solid rgba(248,113,113,.6);border-radius:.375rem;background:rgba(127,29,29,.35);text-align:left;max-width:28rem}" +
+      ".hg-delete-note{color:#d1d5db;font-size:.8rem}.hg-delete-buttons{display:flex;gap:.5rem;justify-content:flex-end}" +
       ".hg-keep-date{min-width:6.5rem;color:#d1d5db}.hg-keep-soon-row .hg-keep-date{color:#fdba74;font-weight:600}.hg-keep-meta{color:#9ca3af;font-size:.8rem}";
     (doc.head || doc.documentElement).appendChild(s);
   }
 
   function run() {
     if (typeof document === "undefined") return;
-    try { style(document); attachDialogs(document); titleFact(document); cards(document); adminList(document); } catch (e) { /* never break Seerr */ }
+    try { style(document); attachDialogs(document); titleFact(document); deleteFact(document); cards(document); adminList(document); } catch (e) { /* never break Seerr */ }
   }
 
   function ours(node) {
     if (node.nodeType !== 1) return true;
     if (node.id === BOX) return true;
-    var attrs = ["data-hg-keep-fact", "data-hg-keep-card", "data-hg-keep-list", "data-hg-keep-pill"];
+    var attrs = ["data-hg-keep-fact", "data-hg-keep-card", "data-hg-keep-list", "data-hg-keep-pill", "data-hg-delete-fact"];
     for (var i = 0; i < attrs.length; i++) if (node.hasAttribute(attrs[i])) return true;
     return false;
   }

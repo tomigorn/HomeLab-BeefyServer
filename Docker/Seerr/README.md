@@ -720,6 +720,34 @@ Modern titles leave the server 3 months after the download or the last play (wat
 | Log | `sudo docker logs seerr-download-now \| grep retention` (one line per choice: user id, title, keep / temporary) |
 | Tests | `python3 tests/test_retention_api.py`, `python3 tests/test_retention_rules.py`; JS `retention.test.mjs`; browser `tests/test_retention_layout.py` (1280 / 390 px, command in its docstring) |
 
+## Delete early
+
+A requester deletes a film, a whole series or one season before the 3-month [Storage retention](#storage-retention) ends (owner 2026-11-22). The files go to the 7-day recycle bin and can be restored; the title stays in Seerr (status *unknown*: a film shows **Request** at once, a series' seasons after the nightly availability sync).
+
+| Where | What |
+|---|---|
+| Title page | fact row **Delete early** (DE **Früher löschen**) after **On the server**: button **🗑 Delete early**, series with a choice *Whole series* / *Season n*; a confirm box (7 days in the bin, deletions left this week) before anything is sent |
+| Asked person | box *"Jane wants to delete this film: it is marked ♾️ Keep forever. Answer until …"* with **✅ Approve** / **✖ Deny**; the deleter sees *Waiting for … to OK it until …* |
+| In the bin | *🗑 In the recycle bin until … (deleted by …)* with **↩ Restore** for the deleter, a requester of the title or ADMIN / MANAGE_REQUESTS |
+
+| Rule | What |
+|---|---|
+| Who | a Seerr session with a request right (or ADMIN) **and** the forward-auth header `X-authentik-groups` naming `streaming-requesters` (fastpi Traefik, Authentik app `requests`, set on every request); no header = refused for everyone, also the admin key |
+| Never | the test film Nosferatu (TMDB 653), a `keep-test` title, a title without files |
+| Needs an OK | **♾️ Keep forever** and the deleter did not request it → a requester (none: the owner); someone else **mid-watch** (played in the last 30 days, not finished) → that viewer (no Seerr account: the owner). Each asked person: Telegram where known, Jellyfin pop-up on their live sessions, the box above. No answer in 7 days = not deleted |
+| Limit | 10 deletions per user in 7 days (pending ones count, denied ones not), checked here and by the runner |
+| Notice | the requester is told when someone else deleted their title: who, the bin date and the title page link (Restore) |
+| Same title twice | refused while it is queued, waiting for an OK or in the bin (a whole series also blocks its seasons) |
+
+| Part | What |
+|---|---|
+| Backend | `download-now/delete_early.py`, `/_download-now/delete-early/`: GET `state?type=&tmdb=`, POST `delete` `{type, tmdbId, season}`, `answer` `{id, approve}`, `restore` `{id}` (Origin + JSON, body ≤ 1 KiB, every 3 s, 30 per hour); session gate in nginx like the rest. Holds no key that deletes: writes job files only |
+| Jobs | `/srv/appdata/seerr-delete-early/*.req` (65127:buntu 2770, rw mount `/delete-early`), carried out by Movie-Downloads `scripts/delete-early.py` (`../Movie-Downloads/README.md` "Delete early") |
+| State | the runner's `~/.local/state/movie-downloads/delete-early.json`, read through `/run/scouts` |
+| Audit | `~/.local/state/movie-downloads/delete-early-audit.jsonl` (requested, pending, approved, denied, expired, refused, deleted, failed, restored; Seerr user id and Holy Grail account); `sudo docker logs seerr-download-now \| grep delete-early` |
+| Script | `indexer-bar/www/retention.js` (EN/DE, every text as `textContent`) |
+| Tests | `python3 tests/test_delete_early_api.py`; JS `delete-early.test.mjs`; runner `python3 ../Movie-Downloads/tests/test_delete_early.py` |
+
 ## Delete a title
 
 Title page → **Manage** (admin):
@@ -731,6 +759,7 @@ Title page → **Manage** (admin):
 
 - A later request after Clear Data starts completely fresh (new search, new download).
 - The library file sits 7 days in the recycle bin.
+- Requesters delete without Clear Data: [Delete early](#delete-early) (title stays, Restore within 7 days).
 - How it works (`clear-data-wipe.sh` timer): `../Movie-Downloads/README.md` "Delete a title".
 
 ## Tracker (Floppy) webhook
