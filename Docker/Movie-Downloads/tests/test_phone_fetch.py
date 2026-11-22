@@ -601,5 +601,78 @@ class Store(unittest.TestCase):
             self.assertEqual(pf.load_state(pathlib.Path(t, "s.json"))["requests"], {"k": {"state": "ready"}})
 
 
+class Forget(unittest.TestCase):
+    def setUp(self):
+        self.t = tempfile.TemporaryDirectory()
+        self.addCleanup(self.t.cleanup)
+        d = pathlib.Path(self.t.name)
+        self.state, self.lock, self.box = d / "s.json", str(d / "lock"), d / "box"
+        self.box.mkdir()
+        pf.save_state(self.state, {"requests": {
+            "radarr-1": {"title": "Film One", "state": "failed", "jfItem": "item-aaa"},
+            "radarr-2": {"title": "Film Two", "state": "ready", "jfItem": "item-bbb", "phoneItem": "item-ccc"},
+            "radarr-3": {"title": "Film Three", "state": "nothing", "jfItem": "item-ddd"}}})
+        self.old = (pf.STATE, pf.LOCK, pf.BOX)
+        pf.STATE, pf.LOCK, pf.BOX = self.state, self.lock, str(self.box)
+        self.addCleanup(lambda: (setattr(pf, "STATE", self.old[0]), setattr(pf, "LOCK", self.old[1]), setattr(pf, "BOX", self.old[2])))
+
+    def keys(self):
+        return sorted(pf.load_state(self.state)["requests"])
+
+    def run_main(self, *argv):
+        import contextlib
+        import io
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = pf.main(list(argv))
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_forget_removes_only_that_entry_in_any_state(self):
+        for item, gone in (("item-aaa", "radarr-1"), ("item-bbb", "radarr-2"), ("item-ddd", "radarr-3")):
+            before = self.keys()
+            rc, out, _ = self.run_main("forget", "--item", item)
+            self.assertEqual(rc, 0)
+            self.assertEqual(self.keys(), [k for k in before if k != gone])
+            self.assertIn("next:", out)
+        self.assertEqual(self.keys(), [])
+
+    def test_unknown_id_is_an_error_with_a_hint_and_changes_nothing(self):
+        before = self.state.read_text()
+        rc, _, err = self.run_main("forget", "--item", "nope-123")
+        self.assertEqual(rc, 1)
+        self.assertIn("nope-123", err)
+        self.assertIn("next: scripts/phone-fetch.py status", err)
+        self.assertEqual(self.state.read_text(), before)
+
+    def test_a_later_request_starts_afresh(self):
+        pf.forget_locked(self.state, "item-aaa", lock=self.lock)
+        self.assertNotIn("radarr-1", pf.load_state(self.state)["requests"])
+
+    def test_the_export_for_the_phone_lists_drops_it(self):
+        rc, _, _ = self.run_main("forget", "--item", "item-bbb")
+        self.assertEqual(rc, 0)
+        items = json.loads((self.box / "state.json").read_text())["items"]
+        self.assertEqual(sorted(items), ["item-aaa", "item-ddd"])
+
+    def test_no_temp_file_is_left_behind(self):
+        self.run_main("forget", "--item", "item-aaa")
+        self.assertEqual(sorted(p.name for p in pathlib.Path(self.t.name).iterdir() if p.name.endswith(".tmp")), [])
+
+    def test_a_held_lock_ends_in_a_clear_error(self):
+        import fcntl
+        with open(self.lock, "a") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            with self.assertRaises(TimeoutError):
+                pf.forget_locked(self.state, "item-aaa", lock=self.lock, wait=0)
+        self.assertEqual(len(self.keys()), 3)
+
+    def test_wrong_arguments_give_usage(self):
+        self.assertEqual(self.run_main("forget")[0], 2)
+        self.assertEqual(self.run_main("forget", "--movie", "1")[0], 2)
+
+    def test_help_names_forget(self):
+        self.assertIn("forget --item", self.run_main("--help")[1])
+
+
 if __name__ == "__main__":
     unittest.main()

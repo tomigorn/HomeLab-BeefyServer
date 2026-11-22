@@ -1257,6 +1257,7 @@ Owner 2026-11-19 (fastpi `reports/specs/2026-11-19-phone-versions-design.md`): a
 ```bash
 scripts/phone-fetch.py status                       # every request and its state
 scripts/phone-fetch.py request --episode 130        # by hand (one release search, then a download)
+scripts/phone-fetch.py forget --item <jellyfin id>  # drop the title's record (any state) from the list; a placed "- Phone 1080p" file stays, a later request searches afresh
 journalctl -u phone-fetch -n 20
 sudo install -m 0644 systemd/phone-fetch.{service,path,timer} systemd/phone-convert.{service,path} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now phone-fetch.path phone-fetch.timer phone-convert.path
 sudo install -d -o buntu -g media -m 2775 /srv/dlpool/usenet/complete/phone/convert

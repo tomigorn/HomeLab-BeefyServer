@@ -8,7 +8,10 @@ Requests come from Jellyfin's popular service as JSON files in <box>/requests (o
 Usage: scripts/phone-fetch.py request --movie <radarr id> | --episode <sonarr episode id> | --item <jellyfin item id>
        scripts/phone-fetch.py run      (systemd/phone-fetch.path and .timer)
        scripts/phone-fetch.py convert  (systemd/phone-convert.path, root)
-       scripts/phone-fetch.py status   | -h"""
+       scripts/phone-fetch.py status
+       scripts/phone-fetch.py forget --item <jellyfin item id>   (drops the title's record; a placed "- Phone" file stays; a later request searches afresh)
+       scripts/phone-fetch.py -h"""
+import fcntl
 import importlib.util
 import json
 import os
@@ -30,6 +33,7 @@ _spec.loader.exec_module(pv)
 lb = pv.lb
 
 STATE = pathlib.Path(os.environ.get("PF_STATE", lb.STATE_DIR / "phone-fetch.json"))
+LOCK = os.environ.get("PF_LOCK", "/run/lock/beefy-media.lock")
 BOX = os.environ.get("PF_BOX", "/srv/appdata/phone-versions")
 DL_HOST = os.environ.get("PF_DL_HOST", "/srv/dlpool")
 HDD = os.environ.get("PF_HDD", "/srv/.disks/hdd-cold")
@@ -89,6 +93,33 @@ def load_state(path):
 
 def save_state(path, state):
     lb.save_state(path, state)
+
+
+def forget(state, item):
+    """Drop the record of one Jellyfin item; returns the removed record or None. Files stay untouched."""
+    for key, r in list(state["requests"].items()):
+        if str(r.get("jfItem")) == str(item):
+            return state["requests"].pop(key)
+    return None
+
+
+def forget_locked(path, item, lock=None, wait=120):
+    """forget under the media lock (the one `run` holds), state re-read inside it; returns (record or None, state)."""
+    with open(lock or LOCK, "a") as fh:
+        end = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= end:
+                    raise TimeoutError("a run holds the media lock")
+                time.sleep(1)
+        state = load_state(path)
+        r = forget(state, item)
+        if r:
+            save_state(path, state)
+        return r, state
 
 
 def resolve(deps, target):
@@ -704,6 +735,24 @@ def main(argv):
         print(__doc__)
         return 0 if argv else 2
     cmd = argv[0]
+    if cmd == "forget":
+        if len(argv) != 3 or argv[1] != "--item":
+            print("usage: scripts/phone-fetch.py forget --item <jellyfin item id>", file=sys.stderr)
+            return 2
+        try:
+            r, state = forget_locked(STATE, argv[2])
+        except (OSError, ValueError) as e:
+            print(f"phone-fetch: forget failed: {e}", file=sys.stderr)
+            print("next: scripts/phone-fetch.py forget --item " + argv[2] + "   (try again in a minute)", file=sys.stderr)
+            return 1
+        if not r:
+            print(f"phone-fetch: no phone-fetch record for item {argv[2]}", file=sys.stderr)
+            print("next: scripts/phone-fetch.py status   (lists the requests), then forget --item <jellyfin item id>", file=sys.stderr)
+            return 1
+        export(Deps(None, None, None, box=BOX), state)
+        print(f"{r.get('title')}: record forgotten (was {r.get('state')}); a placed \"- Phone\" file stays")
+        print(f"next: scripts/phone-fetch.py request --item {argv[2]}   (searches afresh), scripts/phone-fetch.py status")
+        return 0
     try:
         state = load_state(STATE)
     except (OSError, ValueError) as e:
@@ -732,7 +781,7 @@ def main(argv):
         print(f"{r['title']}: {r['state']} · option {r.get('option')} · {r.get('release') or r.get('note')}")
         print("next: journalctl -u phone-fetch -f   (progress), scripts/phone-fetch.py status")
     else:
-        print("usage: scripts/phone-fetch.py request --movie <id> | --episode <id> | --item <jellyfin id> | run | convert | status | -h", file=sys.stderr)
+        print("usage: scripts/phone-fetch.py request --movie <id> | --episode <id> | --item <jellyfin id> | run | convert | status | forget --item <jellyfin id> | -h", file=sys.stderr)
         return 2
     save_state(STATE, state)
     return 0
