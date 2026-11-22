@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Phone lists: two private home rows per user in the phone and tablet apps (Moonfin "mobile" profile), on top of the home (spec fastpi reports/specs/2026-11-19-phone-versions-design.md "Phone lists").
+"""Phone lists: two private home rows per user in the Moonfin phone, tablet and desktop apps ("mobile" and "desktop" profiles), on top of the home (spec fastpi reports/specs/2026-11-19-phone-versions-design.md "Phone lists").
 "📱 Your phone version requests": the titles this user asked a phone version of (Movie-Downloads scripts/phone-fetch.py, <box>/state.json): being prepared (an entry set with a ⏳ band poster), ready (the title itself), nothing smaller found (entry set, 2 days); a ready title leaves once this user downloaded it or 14 days after it got ready. 2+ episodes of one series are one card in both rows: the season when all are from one season, else the series.
 "📲 On your phone": what the download hook sent to this user's phone in the last 14 days (<box>/sent.jsonl, popular/app.py).
 Each row is a BoxSet tagged hss-phone + hss-phone-u-<userId>, made under a per-user name and then renamed (Jellyfin derives a set's id from its "<name> [boxset]" folder, so the shown name alone gave two users one set), kept once made (Moonfin hides an empty collection row); every other user's policy blocks that owner tag (like media-bar.py), entry sets too.
-Moonfin phones and tablets read the "mobile" profile; its own homeSections replace the global ones, so the rows go there only (TV, web and desktop never get them).
+Moonfin phones and tablets read the "mobile" profile, Windows, macOS and Linux "desktop" (owner 2026-11-22: every client that can download); a profile's own homeSections replace the global ones, so the rows go there only (TV and the web client never get them).
 Runs after each phone-fetch export (systemd path unit) and hourly (expiry); unchanged inputs skip the run for up to SKIP_MINUTES.
 Idempotent. Usage: phone-lists.py [--dry-run | --check]  (--check exits 1 when a set, a block or a home row differs)"""
 import base64
@@ -26,6 +26,7 @@ STATE = pathlib.Path.home() / ".local" / "state" / "jellyfin-phone-lists.json"
 # Shared with moonbase.py and media-bar.py: all three write Moonfin user settings and user policies.
 LOCK = pathlib.Path.home() / ".local" / "state" / "jellyfin-moonbase.lock"
 SKIP_MINUTES = 50
+PROFILES = ("mobile", "desktop")
 
 SERVER_URL = "https://jellyfin.holy-grail.ch"
 TAG = "hss-phone"
@@ -415,18 +416,20 @@ def run(argv, api=jf_api, raw=jf_raw, box=BOX, state_path=STATE, now=None, log=p
         settings = sync.user_settings(uid)
         if not settings:
             continue
-        mobile = settings.get("mobile") if isinstance(settings.get("mobile"), dict) else {}
-        have = mobile.get("homeSections")
         wanted = rows.get(uid, [])
-        if have is None and not wanted:
-            continue
-        base = have if have is not None else (settings.get("global") or {}).get("homeSections") or []
-        new = home_rows(base, wanted)
-        if new != have:
-            sync.problems.append(f"user {uid}: home rows")
-            if write:
-                api("POST", f"/Moonfin/Settings/{uid}", {"settings": {"syncEnabled": settings.get("syncEnabled", True), "mobile": {"homeSections": new}},
-                                                          "clientId": "hss-phone-lists", "mergeMode": "merge"})
+        change = {}
+        for name in PROFILES:
+            profile = settings.get(name) if isinstance(settings.get(name), dict) else {}
+            have = profile.get("homeSections")
+            if have is None and not wanted:
+                continue
+            base = have if have is not None else (settings.get("global") or {}).get("homeSections") or []
+            new = home_rows(base, wanted)
+            if new != have:
+                sync.problems.append(f"user {uid}: {name} home rows")
+                change[name] = {"homeSections": new}
+        if change and write:
+            api("POST", f"/Moonfin/Settings/{uid}", {"settings": {"syncEnabled": settings.get("syncEnabled", True), **change}, "clientId": "hss-phone-lists", "mergeMode": "merge"})
     if check:
         log(f"ok {len(plans)} users" if not sync.problems else "drift: " + "; ".join(sync.problems))
         return 1 if sync.problems else 0

@@ -1,5 +1,5 @@
 [Unit]
-Description=Phone lists: the per-user home rows "Your phone version requests" and "On your phone" in the Moonfin phone and tablet apps
+Description=Phone lists: the per-user home rows "Your phone version requests" and "On your phone" in the Moonfin phone, tablet and desktop apps
 
 [Service]
 Type=oneshot

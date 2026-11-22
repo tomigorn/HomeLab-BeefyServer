@@ -313,6 +313,28 @@ class RunTest(unittest.TestCase):
         self.assertEqual(self.jf.users["u1"]["BlockedTags"], ["kids"])
         self.assertFalse(any(self.jf.visible("u2", s) for s in self.jf.sets))
 
+    def test_rows_also_on_the_desktop_home(self):
+        # owner 2026-11-22: every client that can download; Moonfin uses "desktop" on Windows, macOS and Linux (plugin_sync_service.dart _profileName)
+        self.jf.moonfin["u1"]["desktop"] = {"homeSections": [section("resume", 0), section("latestmedia", 1)]}
+        self.jf.moonfin["u2"]["global"] = {"homeSections": [section("nextup", 0)]}
+        self.inputs({"c": req("ready", {"u1": ts(minutes=5)}), "a": req("ready", {"u2": ts(minutes=5)})}, [sent("u1", "b", hours=2)])
+        self.assertEqual(self.run_lists(), 0)
+        [ready], [shelf] = (self.jf.by_kind("u1", k) for k in ("ready", "sent"))
+        desktop = self.jf.moonfin["u1"]["desktop"]["homeSections"]
+        self.assertEqual([s.get("pluginAdditionalData") or s["type"] for s in desktop], [ready["Id"], shelf["Id"], "resume", "latestmedia"])
+        self.assertEqual([s["order"] for s in desktop], [0, 1, 2, 3])
+        [ready2] = self.jf.by_kind("u2", "ready")
+        self.assertEqual([s.get("pluginAdditionalData") or s["type"] for s in self.jf.moonfin["u2"]["desktop"]["homeSections"]], [ready2["Id"], "nextup"])
+        self.assertEqual(len(self.jf.moonfin["u1"]["tv"]["homeSections"]), 1)
+        self.jf.writes.clear()
+        self.state.unlink()
+        self.assertEqual(self.run_lists("--check"), 0)
+
+    def test_a_user_without_rows_gets_no_desktop_profile(self):
+        self.inputs({"c": req("ready", {"u1": ts(minutes=5)})})
+        self.run_lists()
+        self.assertNotIn("desktop", self.jf.moonfin["u2"])
+
     def test_second_run_changes_nothing_and_check_is_clean(self):
         self.inputs({"a": req("downloading", {"u1": ts(hours=1)}, percent=40)})
         self.run_lists()
