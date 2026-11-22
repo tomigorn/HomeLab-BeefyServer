@@ -33,6 +33,7 @@ fastpi pulls from beefy at 04:02-04:20 (never wakes it: `fetch_nowake`).
 |---|---|
 | 22:05 | fastpi `beefy-night-downloads-wake` wakes beefy only when paused downloads wait (`HomeLab-FastPi` `Docker/Beefy-Waker`); beefy awake anyway: `night-downloads.timer` 22:05 |
 | 22:05 | Jellyfin Intro Skipper analysis (only when beefy is awake; new episodes only) |
+| 22:10 | own conversions: `upscale.timer` (only when beefy is awake; 2160p upscale of queued MPEG-2/VC-1/XviD/WMV/interlaced titles, one at a time, none that would end after 06:00; holds beefy awake while it runs; `Docker/Movie-Downloads/README.md` "Own conversions") |
 | 22:20 | Jellyfin popular lists (only when beefy is awake; Netflix publishes on Tuesday evening) |
 | boot, every 2 min | `night-downloads.timer`: low tariff (22:00-06:00, all Sunday): one night download per client at a time, FIFO; after 06:00 (not Sunday) pauses night items still downloading unless ETA < 15 min, they resume the next night |
 
@@ -59,6 +60,6 @@ Details: `Docker/Movie-Downloads/README.md` "Can wait: downloads at night".
 | `snap.firmware-updater.firmware-notifier.timer` (user, masked) | desktop notifier |
 | `pro config set apt_news=false` | ads in `apt upgrade` |
 
-Kept on purpose: the live pollers (`request-tags`, `night-downloads`, `clear-data-wipe`, `indexer-usage`, `hdd-spinstate`, `queue-watchdog`, `sysstat-collect`, `jellyfin-user-defaults`, `request-state` 15 s, `media-metrics` 5 min (library sizes hourly, from the Radarr/Sonarr DB), `retention` 30 min, `floppy-abs-push` 15 min, `smart-exporter` 30 min, never spins up a parked HDD) run only while beefy is awake and never wake it. `snapd.snap-repair` (snapd default 05/11/17/23 h, only while awake) is left as shipped. Radarr/Sonarr internal tasks and Bazarr's scheduler have fixed intervals and stay.
+Kept on purpose: the live pollers (`upscale-detect.path` on new imports, `request-tags`, `night-downloads`, `clear-data-wipe`, `indexer-usage`, `hdd-spinstate`, `queue-watchdog`, `sysstat-collect`, `jellyfin-user-defaults`, `request-state` 15 s, `media-metrics` 5 min (library sizes hourly, from the Radarr/Sonarr DB), `retention` 30 min, `floppy-abs-push` 15 min, `smart-exporter` 30 min, never spins up a parked HDD) run only while beefy is awake and never wake it. `snapd.snap-repair` (snapd default 05/11/17/23 h, only while awake) is left as shipped. Radarr/Sonarr internal tasks and Bazarr's scheduler have fixed intervals and stay.
 
 Floppy snapshots its SQLite itself at 04:20 inside the container (no systemd timer).
