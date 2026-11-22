@@ -1656,5 +1656,121 @@ class PhoneDownload(Base):
         self.assertEqual((sent["code"], sent["Location"]), (302, self.bypass(self.PHONE)))
 
 
+WSECRET = "w" * 40
+PLAYED = [
+    {"Id": "m1", "Type": "Movie", "ProviderIds": {"Tmdb": "603"}},
+    {"Id": "e1", "Type": "Episode", "SeriesId": "aaaa0000000000000000000000000001", "ProviderIds": {"Tvdb": "9999"}},
+    {"Id": "m2", "Type": "Movie", "ProviderIds": {"Imdb": "tt1"}},
+    {"Id": "e2", "Type": "Episode", "SeriesId": "bbbb0000000000000000000000000002"},
+    {"Id": "e3", "Type": "Episode", "SeriesId": "aaaa0000000000000000000000000001"},
+    {"Id": "m3", "Type": "Movie", "ProviderIds": {"Tmdb": "11"}},
+    {"Id": "m4", "Type": "Movie", "ProviderIds": {"Tmdb": "603"}},
+]
+JF_SERIES = {"aaaa0000000000000000000000000001": {"Id": "aaaa0000000000000000000000000001", "ProviderIds": {"Tvdb": "81189"}},
+          "bbbb0000000000000000000000000002": {"Id": "bbbb0000000000000000000000000002", "ProviderIds": {"Tmdb": "5"}}}
+
+
+class Watched(Base):
+    def setUp(self):
+        super().setUp()
+        self.calls = []
+        self.jf_users = [{"Id": "40e05f0a-9e96-4fd9-b225-eb1379dfcfa4", "Name": "Jane"}, {"Id": "11111111-2222-3333-4444-555555555555", "Name": "guest"},
+                         {"Id": "22222222-2222-3333-4444-555555555555", "Name": "GUEST"}]
+        self.core.cfg.watched_secret = WSECRET
+        self.core.jellyfin_admin = self.admin
+
+    def admin(self, method, path, body=None):
+        self.calls.append((method, path))
+        url = urllib.parse.urlsplit(path)
+        q = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+        if url.path == "/Users":
+            return self.jf_users
+        if url.path == "/Items" and "ids" in q:
+            return {"Items": [JF_SERIES[i] for i in q["ids"].split(",") if i in JF_SERIES]}
+        if url.path == "/Items":
+            return {"Items": PLAYED}
+        raise AssertionError(path)
+
+    def get(self, user="jane", secret=WSECRET, query=None):
+        h = {"X-Watched-Secret": secret} if secret is not None else {}
+        return self.core.watched(h, query if query is not None else "user=" + urllib.parse.quote(user))
+
+    def test_most_recent_first_unique_ids_by_kind(self):
+        code, data = self.get()
+        self.assertEqual(code, 200)
+        self.assertEqual(data, {"movie": [603, 11], "tv": [81189]})
+
+    def test_asks_jellyfin_for_the_users_played_items_newest_first(self):
+        self.get()
+        items = [p for (_, p) in self.calls if p.startswith("/Items?") and "ids=" not in p][0]
+        for part in ("userId=40e05f0a9e964fd9b225eb1379dfcfa4", "Filters=IsPlayed", "SortBy=DatePlayed", "SortOrder=Descending", "IncludeItemTypes=Movie%2CEpisode", "Fields=ProviderIds"):
+            self.assertIn(part, items)
+
+    def test_user_matched_by_name_case_insensitive(self):
+        self.assertEqual(self.get("JANE")[0], 200)
+
+    def test_unknown_or_ambiguous_user_is_404_and_asks_nothing_more(self):
+        self.assertEqual(self.get("nobody")[0], 404)
+        self.assertEqual(self.get("guest")[0], 404)
+        self.assertEqual([p for (_, p) in self.calls if p.startswith("/Items")], [])
+
+    def test_bad_secret_or_none_is_403_and_never_reaches_jellyfin(self):
+        for s in ("x" * 40, "", None):
+            self.assertEqual(self.get(secret=s)[0], 403)
+        self.core.cfg.watched_secret = None
+        self.assertEqual(self.get()[0], 403)
+        self.assertEqual(self.calls, [])
+
+    def test_bad_user_parameter(self):
+        for q in ("", "user=", "user=" + "a" * 65, "other=1"):
+            self.assertEqual(self.get(query=q)[0], 400, q)
+
+    def test_jellyfin_down_is_502(self):
+        def down(method, path, body=None):
+            raise OSError("down")
+        self.core.jellyfin_admin = down
+        self.assertEqual(self.get()[0], 502)
+
+    def test_without_the_jellyfin_key_is_503(self):
+        self.core.jellyfin_admin = None
+        self.assertEqual(self.get()[0], 503)
+
+    def test_routing_only_on_the_internal_handler(self):
+        self.assertEqual(self.core.handle("GET", "/hss-popular/watched?user=jane", {"x-watched-secret": WSECRET}, b"")[0], 404)
+
+
+class WatchedServer(unittest.TestCase):
+    def setUp(self):
+        self.seen = []
+        app.WatchedHandler.core = type("C", (), {"watched": lambda s, h, q: self.seen.append((h.get("X-Watched-Secret"), q)) or (200, {"movie": [], "tv": []})})()
+        self.srv = app.make_watched_server(("127.0.0.1", 0))
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+        self.port = self.srv.server_address[1]
+
+    def tearDown(self):
+        self.srv.shutdown()
+        self.srv.server_close()
+
+    def send(self, raw):
+        with socket.create_connection(("127.0.0.1", self.port), timeout=3) as s:
+            s.sendall(raw)
+            out = b""
+            while chunk := s.recv(4096):
+                out += chunk
+            return out.decode(errors="replace")
+
+    def test_get_watched_only_and_the_user_is_never_logged(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            ok = self.send(b"GET /watched?user=jane HTTP/1.0\r\nX-Watched-Secret: s3\r\n\r\n")
+            post = self.send(b"POST /watched?user=jane HTTP/1.0\r\nContent-Length: 0\r\n\r\n")
+            other = self.send(b"GET /hss-popular/state HTTP/1.0\r\n\r\n")
+        self.assertIn(" 200 ", ok.split("\r\n")[0])
+        self.assertIn(" 405 ", post.split("\r\n")[0])
+        self.assertIn(" 404 ", other.split("\r\n")[0])
+        self.assertEqual(self.seen, [("s3", "user=jane")])
+        self.assertNotIn("jane", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

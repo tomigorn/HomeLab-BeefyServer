@@ -39,6 +39,9 @@ AUTH_RE = re.compile(r'Token="([^"]*)"')
 ALLOWED_KEYS = {"id", "mode", "check"}
 MAX_BODY = 2048
 MAX_HOOK_BODY = 1 << 20
+WATCHED_NAME_MAX = 64
+WATCHED_SCAN = 1000
+WATCHED_MAX = 200
 TICKS = 10_000_000
 TRACK_FOR = datetime.timedelta(minutes=10)
 HOOK_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -94,7 +97,7 @@ class Unauthorized(Exception):
 class Config:
     def __init__(self, allow_file, audit_file, request_state, origins, limit=10, days=7, daily_max=30, rate_per_min=10, list_max_age_days=9, tz="Europe/Zurich", state_db=None, audit_max_bytes=AUDIT_MAX_BYTES,
                  details_files=None, details_per_min=60, index_file=None, hook_secret=None, signal_file=None, dry_flag=None, export_file=None, identity_file=None,
-                 phone_box=None):
+                 phone_box=None, watched_secret=None):
         self.allow_file, self.audit_file, self.request_state = pathlib.Path(allow_file), pathlib.Path(audit_file), pathlib.Path(request_state)
         self.details_files = [pathlib.Path(f) for f in details_files] if details_files else [self.allow_file.with_name("details.json"), self.allow_file.with_name("coming.json")]
         self.details_per_min = details_per_min
@@ -108,6 +111,7 @@ class Config:
         self.export_file = pathlib.Path(export_file) if export_file else None
         self.identity_file = pathlib.Path(identity_file) if identity_file else None
         self.phone_box = phone_box or None
+        self.watched_secret = watched_secret or None
 
 
 def seerr_status(kind, season, media):
@@ -675,6 +679,53 @@ class Core:
         if path == "/hss-popular/download-blocked":
             return self.download_blocked(query)
         return 404, {"error": "not found"}
+
+    def watched(self, headers, query):
+        """Internal (WatchedHandler, 8100): the Jellyfin items a user played, newest first, as {"movie": [TMDB ids], "tv": [TVDB ids]} for the report site's "recently watched" sort (Seerr README "Problem reports").
+        The user is the Jellyfin user whose name equals ?user= (case-insensitive, exactly one); only the shared secret in X-Watched-Secret lets a caller ask."""
+        h = {str(k).lower(): v for k, v in headers.items()}
+        want, got = self.cfg.watched_secret, h.get("x-watched-secret")
+        if not want or not isinstance(got, str) or not secrets.compare_digest(got.encode(), want.encode()):
+            return 403, {"error": "forbidden"}
+        names = urllib.parse.parse_qs(query or "", max_num_fields=8).get("user") or []
+        name = names[0].strip() if names else ""
+        if not name or len(name) > WATCHED_NAME_MAX:
+            return 400, {"error": "bad request"}
+        if not self.jellyfin_admin:
+            return 503, {"error": "unavailable"}
+        try:
+            hits = [u for u in self.jellyfin_admin("GET", "/Users") or [] if isinstance(u, dict) and str(u.get("Name") or "").casefold() == name.casefold()]
+            uid = str(hits[0].get("Id") or "").replace("-", "").lower() if len(hits) == 1 else None
+            if not uid or not ITEM_ID_RE.match(uid):
+                return 404, {"error": "no such user"}
+            played = (self.jellyfin_admin("GET", f"/Items?userId={uid}&Recursive=true&Filters=IsPlayed&IncludeItemTypes=Movie%2CEpisode&SortBy=DatePlayed&SortOrder=Descending"
+                                                 f"&Fields=ProviderIds&EnableTotalRecordCount=false&Limit={WATCHED_SCAN}") or {}).get("Items") or []
+            movies, series = [], []
+            for it in played:
+                if not isinstance(it, dict):
+                    continue
+                if it.get("Type") == "Movie":
+                    self.add_id(movies, (it.get("ProviderIds") or {}).get("Tmdb"))
+                elif it.get("Type") == "Episode":
+                    sid = self.hook_id(it.get("SeriesId"))
+                    if sid and sid not in series:
+                        series.append(sid)
+            tv = []
+            for i in range(0, len(series), 50):
+                chunk = series[i:i + 50]
+                got = {self.hook_id(x.get("Id")): x for x in (self.jellyfin_admin("GET", f"/Items?userId={uid}&ids={','.join(chunk)}&Fields=ProviderIds") or {}).get("Items") or [] if isinstance(x, dict)}
+                for sid in chunk:
+                    self.add_id(tv, ((got.get(sid) or {}).get("ProviderIds") or {}).get("Tvdb"))
+        except Exception as e:  # noqa: BLE001
+            print(f"watched failed {type(e).__name__}", flush=True)
+            return 502, {"error": "upstream"}
+        return 200, {"movie": movies[:WATCHED_MAX], "tv": tv[:WATCHED_MAX]}
+
+    @staticmethod
+    def add_id(out, value):
+        v = str(value or "")
+        if re.fullmatch(r"[1-9][0-9]{0,9}", v) and int(v) not in out:
+            out.append(int(v))
 
     def download_blocked(self, query):
         """Traefik sends Moonfin's converted downloads here: always 403; the caller's own session on that DeviceId gets one fixed pop-up per DOWNLOAD_NOTICE_EVERY."""
@@ -1286,7 +1337,7 @@ def make_core():
                  limit=int(env.get("POP_LIMIT", "10")), days=int(env.get("POP_DAYS", "7")), daily_max=int(env.get("POP_DAILY_MAX", "30")), tz=env.get("TZ") or "Europe/Zurich",
                  hook_secret=secret_file(env.get("POP_HOOK_SECRET_FILE", "/run/secrets/popular/hook.secret")), signal_file=env.get("POP_SIGNAL", "/signal/requested"),
                  export_file=env.get("POP_EXPORT_FILE") or None, identity_file=env.get("POP_IDENTITY_FILE", "/data/identity.json"),
-                 phone_box=env.get("POP_PHONE_BOX") or None)
+                 phone_box=env.get("POP_PHONE_BOX") or None, watched_secret=secret_file(env.get("POP_WATCHED_SECRET_FILE", "/run/secrets/popular/watched.secret")))
     return Core(cfg, seerr, jellyfin, jellyfin_admin=jellyfin_admin if jf_key else None)
 
 
@@ -1399,6 +1450,41 @@ class HookHandler(Handler):
         print("hook", flush=True)
 
 
+class WatchedHandler(Handler):
+    """GET /watched?user=<name> only, internal network. The user name is never logged."""
+    server_version = "hss-popular-watched"
+
+    def _go(self, method):
+        if method != "GET":
+            self.send_error(405)
+            return
+        path, _, query = self.path.partition("?")
+        if path != "/watched":
+            self.send_error(404)
+            return
+        try:
+            code, data = self.core.watched(self.headers, query)
+        except Exception as e:  # noqa: BLE001
+            print(f"watched error {type(e).__name__}", flush=True)
+            code, data = 500, {"error": "internal"}
+        raw = json.dumps(data).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def log_request(self, code="-", size="-"):
+        print(f"watched {getattr(code, 'value', code)}", flush=True)
+
+    def log_error(self, fmt, *args):
+        print("watched error", flush=True)
+
+    def log_message(self, fmt, *args):
+        print("watched", flush=True)
+
+
 class Server(http.server.HTTPServer):
     """A fixed pool of workers (pids_limit 64) and a bounded queue: connections beyond it are closed at once instead of starting threads."""
     request_queue_size = 64
@@ -1436,6 +1522,10 @@ def make_hook_server(addr=("0.0.0.0", 8098), workers=4, backlog=8):
     return Server(addr, HookHandler, workers, backlog)
 
 
+def make_watched_server(addr=("0.0.0.0", 8100), workers=4, backlog=8):
+    return Server(addr, WatchedHandler, workers, backlog)
+
+
 def start_facade(core):
     try:
         sys.modules.setdefault("app", sys.modules[__name__])
@@ -1463,6 +1553,9 @@ def main():
     Handler.core = HookHandler.core = make_core()
     threading.Thread(target=refresh_origins_forever, args=(Handler.core,), daemon=True).start()
     threading.Thread(target=make_hook_server(("0.0.0.0", int(os.environ.get("POP_HOOK_PORT", "8098")))).serve_forever, daemon=True).start()
+    if Handler.core.cfg.watched_secret:
+        WatchedHandler.core = Handler.core
+        threading.Thread(target=make_watched_server(("0.0.0.0", int(os.environ.get("POP_WATCHED_PORT", "8100")))).serve_forever, daemon=True).start()
     start_facade(Handler.core)
     make_server().serve_forever()
 

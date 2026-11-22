@@ -74,6 +74,7 @@ services:
 # the published port only answers fastpi (DOCKER-USER guard). TV requests: the
 # Webhooks plugin posts playback events to jellyfin-popular:8098/hook/<secret>,
 # on the jellyfin network only (not published). Seerr facade for Moonfin: 8099, jellyfin network only.
+# Watch history for the Seerr report site: 8100 (GET /watched?user=, shared secret), jellyfin network only, asked by seerr-download-now.
   popular:
     image: python:3.15.2-alpine3.24
     container_name: jellyfin-popular
@@ -98,6 +99,7 @@ services:
       - POP_SIGNAL=/signal/requested
       - POP_FACADE_PORT=8099
       - POP_FACADE_SECRET_FILE=/run/secrets/popular/facade.secret
+      - POP_WATCHED_SECRET_FILE=/run/secrets/popular/watched.secret
       - POP_EXPORT_FILE=/export/origins.json
       - POP_PHONE_BOX=/phone   # phone versions: state.json read, requests/ written (Movie-Downloads README "Phone versions")
     volumes:
