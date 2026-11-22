@@ -56,6 +56,12 @@ TV_CLIENTS = {"Moonfin for Android TV", "Moonfin for tvOS", "Moonfin for Tizen",
 # the web client on a TV names itself "Jellyfin Web" and puts the TV in the device name (jellyfin-web appHost deviceName)
 WEB_CLIENT = "Jellyfin Web"
 TV_WEB_DEVICES = {"Samsung Smart TV", "LG Smart TV", "Xbox One", "Sony PS4"}
+# Desktop apps (Jellyfin README "Desktop downloads"): Moonfin-Core injection.dart _clientName, Jellyfin Media Player 1.x / Jellyfin Desktop 2.x nativeshell.js appName
+DESKTOP_CLIENTS = {"Moonfin for Windows", "Moonfin for macOS", "Moonfin for Linux", "Jellyfin Media Player", "Jellyfin Desktop"}
+# jellyfin-web apphost.js BrowserName on a computer; a phone or tablet browser adds " iPhone" / " iPad" / " Android"
+DESKTOP_WEB_DEVICES = {"Chrome", "Edge Chromium", "Edge", "Firefox", "Opera", "Safari", "Web Browser"}
+# clients whose smaller-quality download gets the phone version
+DOWNLOAD_KINDS = ("phone", "desktop")
 ITEM_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 CLIENT_RE = re.compile(r'Client="([^"]*)"')
 DEVICE_NAME_RE = re.compile(r'\bDevice="([^"]*)"')
@@ -63,11 +69,47 @@ DEVICE_ID_HEADER_RE = re.compile(r'\bDeviceId="([^"]*)"')
 
 
 def client_kind(app_name, device_name=None):
-    """"tv", "phone" or None for a Jellyfin client: the one place that classifies clients for downloads."""
+    """"tv", "phone", "desktop" or None for a Jellyfin client: the one place that classifies clients for downloads."""
     if app_name in TV_CLIENTS or (app_name == WEB_CLIENT and device_name in TV_WEB_DEVICES):
         return "tv"
-    return "phone" if app_name in PHONE_CLIENTS else None
+    if app_name in PHONE_CLIENTS:
+        return "phone"
+    if app_name in DESKTOP_CLIENTS or (app_name == WEB_CLIENT and device_name in DESKTOP_WEB_DEVICES):
+        return "desktop"
+    return None
+
+
+def header_client(auth):
+    """(client, device name, device id) from a MediaBrowser auth header; jellyfin-apiclient URL-encodes the client and device names, Jellyfin decodes them."""
+    def get(rx):
+        m = rx.search(auth or "")
+        return m.group(1) if m else None
+    client, device = get(CLIENT_RE), get(DEVICE_NAME_RE)
+    return (urllib.parse.unquote(client) if client is not None else None, urllib.parse.unquote(device) if device is not None else None, get(DEVICE_ID_HEADER_RE))
 PHONE_ACTIVE = datetime.timedelta(minutes=15)
+CHOICE_MAX = 50
+CHOICE_PER_MIN = 30
+
+
+def preparing_text(st):
+    """What a phone version being prepared is doing, for the pop-ups and the desktop choice."""
+    return {"downloading": f"{st.get('percent') or 0} % downloaded", "converting": f"{st.get('percent') or 0} % converted", "queued": "conversion starts soon",
+            "checking": "virus and quality check", "searching": "searching"}.get(st.get("state"), "almost done")
+
+
+def video_label(streams):
+    """"4K HDR", "1080p", ... from a media source's first video stream."""
+    v = next((m for m in streams or [] if isinstance(m, dict) and m.get("Type") == "Video"), None)
+    if not v:
+        return ""
+    w, h = v.get("Width") or 0, v.get("Height") or 0
+    res = "4K" if w >= 3200 or h >= 2000 else "1080p" if w >= 1800 or h >= 1000 else "720p" if w >= 1200 or h >= 700 else "SD"
+    return res + (" HDR" if v.get("VideoRange") == "HDR" else "")
+
+
+def is_4k_streams(streams):
+    # 4K scope films are 3840 x 1600 or less: the width decides
+    return any((m.get("Width") or 0) >= 3200 or (m.get("Height") or 0) >= 2000 for m in streams or [] if isinstance(m, dict) and m.get("Type") == "Video")
 
 
 def jf_time(value):
@@ -696,6 +738,8 @@ class Core:
             return self.request(headers, body)
         if path == "/hss-popular/tv-code" and method == "POST":
             return self.tv_code(headers, body)
+        if path == "/hss-popular/download-choice" and method == "POST":
+            return self.download_choice(headers, body)
         m = ITEM_DOWNLOAD_RE.match(path)
         if m and method == "GET":
             return self.phone_download(m.group(1).lower(), headers, query, "File" if m.group(2).lower() == "file" else "Download")
@@ -821,8 +865,7 @@ class Core:
                 self.record_sent(item, st["phoneItem"], user, session)
                 return self.remux(item, str(st["phoneItem"]), pairs)
             if st.get("state") in PHONE_PREPARING:
-                what = {"downloading": f"{st.get('percent') or 0} % downloaded", "converting": f"{st.get('percent') or 0} % converted", "queued": "conversion starts soon",
-                        "checking": "virus and quality check", "searching": "searching"}.get(st.get("state"), "almost done")
+                what = preparing_text(st)
                 if self.mark_notice("phone:" + str(session.get("DeviceId"))):
                     self.phone_message(session, PHONE_TEXT_WAIT.format(what=what))
                 return 503, {"error": "phone version being prepared"}
@@ -862,6 +905,90 @@ class Core:
             print(f"converted download: audio streams unreadable ({type(e).__name__})", flush=True)
             return None
 
+    def download_choice(self, headers, body):
+        """Desktop web client and Jellyfin Media Player (Jellyfin README "Desktop downloads"): {"items": [ids]} -> {"choice": false} or the full file and phone version
+        of each title the caller can see; {"items", "pick": "phone"} -> the file to download per title (ready phone version, else its own file when it can have none),
+        phone versions being prepared, and the ones ordered now (same request file as a phone). Only a desktop client (client_kind) gets a choice."""
+        if (headers.get("origin") or "") not in self.cfg.origins:
+            self.reject("bad origin")
+            return 403, {"error": "origin"}
+        if (headers.get("content-type") or "").split(";")[0].strip().lower() != "application/json":
+            self.reject("not JSON")
+            return 415, {"error": "JSON only"}
+        if len(body) > MAX_BODY:
+            self.reject("too large")
+            return 413, {"error": "too large"}
+        try:
+            user = self.user(headers)
+        except Unauthorized:
+            self.reject("unauthenticated")
+            return 401, {"error": "sign in to Jellyfin"}
+        if user["disabled"]:
+            return 403, {"error": "account disabled"}
+        if not self.rate_ok(user["id"], "choice", CHOICE_PER_MIN):
+            return 429, {"error": "slow down"}
+        try:
+            req = json.loads(body)
+        except ValueError:
+            return 400, {"error": "bad JSON"}
+        items = req.get("items") if isinstance(req, dict) else None
+        if (not isinstance(req, dict) or set(req) - {"items", "pick"} or req.get("pick", "phone") != "phone" or not isinstance(items, list) or not 0 < len(items) <= CHOICE_MAX
+                or not all(isinstance(i, str) and ITEM_ID_RE.match(i) for i in items)):
+            return 400, {"error": "only {items: [ids], pick: phone}"}
+        client, device_name, device_id = header_client(headers.get("x-emby-authorization") or headers.get("authorization") or "")
+        if client_kind(client, device_name) != "desktop":
+            return 200, {"choice": False}
+        ids = list(dict.fromkeys(items))
+        try:
+            found = (self.jellyfin_admin("GET", f"/Items?ids={','.join(ids)}&userId={user['id']}&Fields=MediaSources%2CMediaStreams") or {}).get("Items") or []
+        except Exception as e:  # noqa: BLE001
+            print(f"download choice: {type(e).__name__}", flush=True)
+            return 502, {"error": "upstream"}
+        offers = {}
+        for it in found:
+            iid = str((it or {}).get("Id") or "").replace("-", "").lower()
+            if iid in ids and it.get("Type") in ("Movie", "Episode"):
+                offers[iid] = self.offer(iid, it)
+        if "pick" not in req:
+            if not any(o["phone"] for o in offers.values()):
+                return 200, {"choice": False}
+            return 200, {"choice": True, "items": {i: {k: v for k, v in o.items() if k != "phoneItem"} for i, o in offers.items()}}
+        session = {"DeviceId": device_id if device_id and DEVICE_ID_RE.match(device_id) else None}
+        out = {"downloads": [], "preparing": [], "ordered": []}
+        for iid in ids:
+            o = offers.get(iid)
+            phone = (o or {}).get("phone") or {}
+            if not o:
+                continue
+            if phone.get("state") == "ready":
+                out["downloads"].append({"item": iid, "file": o["phoneItem"]})
+                self.record_sent(iid, o["phoneItem"], {"Id": user["id"]}, session)
+            elif phone.get("state") == "preparing":
+                out["preparing"].append({"item": iid, "what": phone["what"]})
+            elif phone.get("state") == "order":
+                self.ask_phone(iid, {"Id": user["id"]}, session)
+                out["ordered"].append(iid)
+            else:
+                out["downloads"].append({"item": iid, "file": iid})
+        print(f"download choice: phone version {len(out['downloads'])} files, {len(out['preparing'])} preparing, {len(out['ordered'])} ordered", flush=True)
+        return 200, out
+
+    def offer(self, iid, item):
+        """{"name", "full", "phone" (None when this title can have no phone version), "phoneItem"} for one title."""
+        sources = {str(s.get("Id") or "").replace("-", "").lower(): s for s in item.get("MediaSources") or [] if isinstance(s, dict)}
+        own = sources.get(iid) or {}
+        st = self.phone_state(iid)
+        phone, phone_item = None, None
+        if st.get("state") == "ready":
+            phone_item = str(st.get("phoneItem") or "")
+            src = sources.get(phone_item) if ITEM_ID_RE.match(phone_item) else None
+            phone = {"state": "ready", "size": src.get("Size"), "label": video_label(src.get("MediaStreams"))} if src else None
+        elif st.get("state") in PHONE_PREPARING:
+            phone = {"state": "preparing", "what": preparing_text(st)}
+        elif not st.get("state") and is_4k_streams(item.get("MediaStreams")):
+            phone = {"state": "order"}
+        return {"name": item.get("Name") or "", "full": {"size": own.get("Size"), "label": video_label(own.get("MediaStreams") or item.get("MediaStreams"))}, "phone": phone, "phoneItem": phone_item}
+
     def tv_refused(self, token, device):
         """A TV client asked for an Original download: refused, one pop-up in its own session. 503, not 403: Moonfin falls back to the plain stream (the file itself) on a 4xx and stops on a 5xx."""
         if self.jellyfin_admin and DEVICE_ID_RE.match(device) and TOKEN_RE.match(token) and self.mark_notice("tv:" + device):
@@ -886,19 +1013,19 @@ class Core:
         return max(recent, key=lambda x: x[0])[1] if recent else None
 
     def phone_session(self, user, headers):
-        """{"DeviceId", "Id" (its live session or None)} when this download comes from a phone app, else None.
+        """{"DeviceId", "Id" (its live session or None)} when this download comes from a phone or desktop app (DOWNLOAD_KINDS), else None.
         Phone apps keep no Jellyfin session while idle (Moonfin for Android, 2026-11-20), so the user's devices decide: the most recently active one
-        within PHONE_ACTIVE (the app asks for the item's details right before it downloads) must be a phone app."""
+        within PHONE_ACTIVE (the app asks for the item's details right before it downloads) must be a phone or desktop app."""
         # the request's own client name decides when it sends one (Moonfin's downloader sends none and a browser-like User-Agent, so that is no signal)
-        named = CLIENT_RE.search(headers.get("x-emby-authorization") or headers.get("authorization") or "")
-        if named and client_kind(named.group(1)) != "phone":
-            print("phone download: original (client is no phone app)", flush=True)
+        named, device_name, _ = header_client(headers.get("x-emby-authorization") or headers.get("authorization") or "")
+        if named is not None and client_kind(named, device_name) not in DOWNLOAD_KINDS:
+            print("phone download: original (client is no phone or desktop app)", flush=True)
             return None
         device = self.recent_device(user)
         if not device:
             print("phone download: original (no device active lately)", flush=True)
             return None
-        if client_kind(device.get("AppName")) != "phone" or not device.get("Id"):
+        if client_kind(device.get("AppName"), device.get("Name")) not in DOWNLOAD_KINDS or not device.get("Id"):
             print(f"phone download: original (latest device is {str(device.get('AppName'))[:40]})", flush=True)
             return None
         sessions = self.jellyfin_admin("GET", "/Sessions?deviceId=" + urllib.parse.quote(str(device["Id"]), safe="")) or []
@@ -918,10 +1045,7 @@ class Core:
             self.admin_id = next(u["Id"] for u in self.jellyfin_admin("GET", "/Users") or [] if (u.get("Policy") or {}).get("IsAdministrator"))
         got = self.jellyfin_admin("GET", f"/Items?ids={item}&userId={self.admin_id}&Fields=MediaStreams") or {}
         found = (got.get("Items") or [{}])[0]
-        if found.get("Type") not in ("Movie", "Episode"):
-            return False
-        # 4K scope films are 3840 x 1600 or less: the width decides
-        return any((m.get("Width") or 0) >= 3200 or (m.get("Height") or 0) >= 2000 for m in found.get("MediaStreams") or [] if m.get("Type") == "Video")
+        return found.get("Type") in ("Movie", "Episode") and is_4k_streams(found.get("MediaStreams"))
 
     def ask_phone(self, item, user, session):
         now = self.clock()

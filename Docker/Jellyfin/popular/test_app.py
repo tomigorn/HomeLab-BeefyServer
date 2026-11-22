@@ -1467,16 +1467,27 @@ class ClientKind(unittest.TestCase):
     def test_the_web_client_is_a_tv_only_on_a_tv_device_name(self):
         for device in ("Samsung Smart TV", "LG Smart TV", "Xbox One", "Sony PS4"):
             self.assertEqual(app.client_kind("Jellyfin Web", device), "tv", device)
-        for device in ("Chrome", "Chrome Android", "Safari iPhone", "", None):
+        for device in ("Chrome Android", "Safari iPhone", "Firefox iPad", "Jane's iPhone", "", None):
             self.assertIsNone(app.client_kind("Jellyfin Web", device), device)
 
     def test_phone_apps(self):
         for name in ("Moonfin for Android", "Moonfin for iOS", "Jellyfin Android", "Jellyfin iOS", "Swiftfin iOS", "Findroid"):
             self.assertEqual(app.client_kind(name), "phone", name)
 
+    def test_desktop_apps(self):
+        # Moonfin-Core injection.dart _clientName; Jellyfin Media Player 1.x / Jellyfin Desktop 2.x nativeshell.js appName
+        for name in ("Moonfin for Windows", "Moonfin for macOS", "Moonfin for Linux", "Jellyfin Media Player", "Jellyfin Desktop"):
+            self.assertEqual(app.client_kind(name, "SurfaceLap6A Windows 11 Pro"), "desktop", name)
+
+    def test_the_web_client_is_a_desktop_on_a_desktop_browser_name(self):
+        # jellyfin-web apphost.js BrowserName, without the " iPad" / " iPhone" / " Android" suffix of mobile browsers
+        for device in ("Chrome", "Edge Chromium", "Edge", "Firefox", "Opera", "Safari", "Web Browser"):
+            self.assertEqual(app.client_kind("Jellyfin Web", device), "desktop", device)
+
     def test_everything_else_is_neither(self):
-        for name in ("Moonfin for Windows", "Seerr", "hss-popular", "Kodi", "", None):
+        for name in ("Moonfin for Web", "Seerr", "hss-popular", "Kodi", "", None):
             self.assertIsNone(app.client_kind(name), name)
+        self.assertIsNone(app.client_kind("Seerr", "Chrome"))
 
 
 class PhoneBase(Base):
@@ -1862,9 +1873,27 @@ class ConvertedDownload(PhoneBase):
         self.assertEqual(self.hit()[0], 503)
         self.assertEqual(self.messages()[0]["Text"], app.TV_TEXT["en"])
 
-    # --- everything else (desktop, browser): unchanged, refused with the "choose Original" pop-up ---
-    def test_a_desktop_app_is_refused_as_before(self):
+    # --- Moonfin desktop: the same mapping as a phone (owner 2026-11-22) ---
+    def test_moonfin_desktop_gets_the_ready_phone_version(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        for name in ("Moonfin for Windows", "Moonfin for macOS", "Moonfin for Linux"):
+            self.devices[1].update(AppName=name, Name="SurfaceLap6A Windows 11 Pro")
+            self.assertEqual(self.hit(), (302, {"location": self.remux(self.PHONE)}), name)
+
+    def test_moonfin_desktop_starts_a_missing_phone_version_with_a_pop_up(self):
         self.devices[1]["AppName"] = "Moonfin for Windows"
+        self.assertEqual(self.hit()[0], 503)
+        self.assertEqual(self.requests(), [{"item": self.ITEM, "user": USERS[TOKEN]["Id"], "device": self.DEVICE}])
+        self.assertEqual([m["Text"] for m in self.messages()], [app.PHONE_TEXT_NEW])
+
+    def test_moonfin_desktop_on_a_title_that_is_not_4k_gets_its_own_file(self):
+        self.devices[1]["AppName"] = "Moonfin for Linux"
+        self.height = 1080
+        self.assertEqual(self.hit(), (302, {"location": self.remux(self.ITEM, audio="1")}))
+
+    # --- everything else: unchanged, refused with the "choose Original" pop-up ---
+    def test_an_unknown_app_is_refused_as_before(self):
+        self.devices[1]["AppName"] = "Moonfin for Web"
         code, body = self.hit()
         self.assertEqual(code, 403)
         self.assertIn("Original", body["error"])
@@ -1872,9 +1901,10 @@ class ConvertedDownload(PhoneBase):
         self.assertEqual((m["Header"], m["Text"]), (app.DOWNLOAD_HEADER, app.DOWNLOAD_TEXT))
         self.assertEqual(self.requests(), [])
 
-    def test_a_named_non_phone_client_is_refused_as_before(self):
-        auth = {"Authorization": 'MediaBrowser Client="Jellyfin Web", Device="Chrome", DeviceId="web", Version="1"'}
-        self.assertEqual(self.hit(headers=auth)[0], 403)
+    def test_a_named_client_that_is_neither_phone_nor_desktop_is_refused_as_before(self):
+        for client, device in (("Kodi", "PC"), ("Jellyfin Web", "Chrome Android")):
+            auth = {"Authorization": f'MediaBrowser Client="{client}", Device="{device}", DeviceId="web", Version="1"'}
+            self.assertEqual(self.hit(headers=auth)[0], 403, client)
 
     def test_no_device_active_lately_is_refused_as_before(self):
         self.devices[1]["DateLastActivity"] = self.iso(-3600)
@@ -1907,6 +1937,172 @@ class ConvertedDownload(PhoneBase):
             h.log_request(302)
         self.assertIn("/hss-popular/converted/", out.getvalue())
         self.assertNotIn(TOKEN, out.getvalue())
+
+
+class DownloadChoice(PhoneBase):
+    """Desktop web client and Jellyfin Media Player (owner 2026-11-22): their Download has no quality choice, so the injector entry "Download choice" asks
+    POST /hss-popular/download-choice {"items": [...]} first and shows full file / phone version; picking the phone version posts {"items", "pick": "phone"}."""
+    MOVIE = "6368815bff4f9df65ec668a9c397cc6e"
+    SMALL = "1111111111111111111111111111111a"
+    WEB = 'MediaBrowser Client="Jellyfin Web", Device="Chrome", DeviceId="web-device-0001", Version="12.4.0", Token="' + TOKEN + '"'
+
+    def setUp(self):
+        super().setUp()
+        self.items = {
+            self.ITEM: {"Id": self.ITEM, "Name": "Money Heist S02E01", "Type": "Episode", "MediaStreams": [{"Type": "Video", "Width": 3840, "Height": 2160, "VideoRange": "HDR"}],
+                        "MediaSources": [{"Id": self.ITEM, "Size": 29363263741, "MediaStreams": [{"Type": "Video", "Width": 3840, "Height": 1608, "VideoRange": "HDR"}]},
+                                         {"Id": self.PHONE, "Size": 4384001056, "MediaStreams": [{"Type": "Video", "Width": 1920, "Height": 1080, "VideoRange": "HDR"}]}]},
+            self.SMALL: {"Id": self.SMALL, "Name": "Nosferatu", "Type": "Movie", "MediaStreams": [{"Type": "Video", "Width": 1920, "Height": 1080, "VideoRange": "SDR"}],
+                         "MediaSources": [{"Id": self.SMALL, "Size": 2100000000, "MediaStreams": [{"Type": "Video", "Width": 1920, "Height": 1080, "VideoRange": "SDR"}]}]},
+            self.MOVIE: {"Id": self.MOVIE, "Name": "Godzilla Minus One", "Type": "Movie", "MediaStreams": [{"Type": "Video", "Width": 3840, "Height": 1608}],
+                         "MediaSources": [{"Id": self.MOVIE, "Size": 30000000000, "MediaStreams": [{"Type": "Video", "Width": 3840, "Height": 1608}]}]},
+        }
+        self.states = {}
+        old = self.core.jellyfin_admin
+
+        def admin(method, path, body=None):
+            if method == "GET" and path.startswith("/Items?"):
+                self.calls.append((method, path, body))
+                q = urllib.parse.parse_qs(path.partition("?")[2])
+                return {"Items": [self.items[i] for i in q["ids"][0].split(",") if i in self.items]}
+            return old(method, path, body)
+
+        self.core.jellyfin_admin = admin
+
+    def state(self, item=PhoneBase.ITEM, **st):
+        self.states[item] = st
+        (self.box / "state.json").write_text(json.dumps({"items": self.states}))
+
+    def post(self, body, auth=None, origin=ORIGIN, ctype="application/json", token_header=False):
+        h = {"Content-Type": ctype, "Authorization": self.WEB if auth is None else auth}
+        if origin:
+            h["Origin"] = origin
+        if token_header:
+            h = {"Content-Type": ctype, "Origin": origin, "X-Emby-Token": TOKEN}
+        return self.core.handle("POST", "/hss-popular/download-choice", h, body if isinstance(body, bytes) else json.dumps(body).encode())
+
+    def client(self, name, device):
+        return f'MediaBrowser Client="{name}", Device="{device}", DeviceId="pc-0001", Version="1", Token="{TOKEN}"'
+
+    # --- the offer ---
+    def test_a_ready_phone_version_is_offered_with_sizes_and_labels(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        code, body = self.post({"items": [self.ITEM]})
+        self.assertEqual(code, 200)
+        self.assertEqual(body, {"choice": True, "items": {self.ITEM: {"name": "Money Heist S02E01", "full": {"size": 29363263741, "label": "4K HDR"},
+                                                                      "phone": {"state": "ready", "size": 4384001056, "label": "1080p HDR"}}}})
+
+    def test_a_4k_title_without_a_phone_version_offers_one_on_request(self):
+        code, body = self.post({"items": [self.MOVIE]})
+        self.assertEqual(body["items"][self.MOVIE]["phone"], {"state": "order"})
+        self.assertEqual(body["items"][self.MOVIE]["full"], {"size": 30000000000, "label": "4K"})
+        self.assertEqual(self.requests(), [], "an offer orders nothing")
+
+    def test_a_phone_version_being_prepared_shows_its_progress(self):
+        self.state(state="downloading", percent=42)
+        self.assertEqual(self.post({"items": [self.ITEM]})[1]["items"][self.ITEM]["phone"], {"state": "preparing", "what": "42 % downloaded"})
+
+    def test_no_choice_when_no_title_can_have_a_phone_version(self):
+        self.assertEqual(self.post({"items": [self.SMALL]}), (200, {"choice": False}))
+        for st in ("nothing", "failed", "not-needed"):
+            self.state(item=self.MOVIE, state=st)
+            self.assertEqual(self.post({"items": [self.MOVIE]}), (200, {"choice": False}), st)
+
+    def test_a_ready_state_whose_version_is_gone_offers_none(self):
+        self.state(state="ready", phoneItem="ffffffffffffffffffffffffffffffff")
+        self.assertEqual(self.post({"items": [self.ITEM]}), (200, {"choice": False}))
+
+    def test_a_batch_offers_each_title(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        code, body = self.post({"items": [self.ITEM, self.SMALL, self.MOVIE]})
+        self.assertEqual(code, 200)
+        self.assertEqual([body["items"][i]["phone"] for i in (self.ITEM, self.SMALL, self.MOVIE)],
+                         [{"state": "ready", "size": 4384001056, "label": "1080p HDR"}, None, {"state": "order"}])
+
+    def test_items_are_read_as_the_caller_so_only_their_titles_count(self):
+        self.post({"items": [self.ITEM]})
+        [path] = [p for m, p, b in self.calls if p.startswith("/Items?")]
+        self.assertIn("userId=" + USERS[TOKEN]["Id"].replace("-", ""), path)
+        self.assertEqual(self.post({"items": ["22222222222222222222222222222222"]}), (200, {"choice": False}))
+
+    def test_the_web_clients_encoded_header_is_read(self):
+        # jellyfin-web's API client URL-encodes the client and device names (seen live 2026-11-22: Client="Jellyfin%20Web")
+        self.state(state="ready", phoneItem=self.PHONE)
+        self.assertTrue(self.post({"items": [self.ITEM]}, auth=self.client("Jellyfin%20Web", "Edge%20Chromium"))[1]["choice"])
+        self.assertEqual(self.post({"items": [self.ITEM]}, auth=self.client("Jellyfin%20Web", "Chrome%20Android")), (200, {"choice": False}))
+
+    def test_only_desktop_clients_get_a_choice(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        for name, device in (("Jellyfin Web", "Firefox"), ("Jellyfin Web", "Edge%20Chromium"), ("Jellyfin Media Player", "PC"), ("Jellyfin Desktop", "PC"), ("Moonfin for Windows", "PC")):
+            self.assertTrue(self.post({"items": [self.ITEM]}, auth=self.client(name, device))[1]["choice"], name + device)
+        for name, device in (("Jellyfin Web", "Chrome Android"), ("Jellyfin Web", "Safari iPhone"), ("Jellyfin Web", "Samsung Smart TV"), ("Moonfin for Android", "Pixel"), ("Kodi", "PC")):
+            self.assertEqual(self.post({"items": [self.ITEM]}, auth=self.client(name, device)), (200, {"choice": False}), name + device)
+        self.assertEqual(self.post({"items": [self.ITEM]}, token_header=True), (200, {"choice": False}), "no client name")
+
+    # --- picking the phone version ---
+    def test_picking_a_ready_phone_version_returns_its_file_and_records_it(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        code, body = self.post({"items": [self.ITEM], "pick": "phone"})
+        self.assertEqual((code, body), (200, {"downloads": [{"item": self.ITEM, "file": self.PHONE}], "preparing": [], "ordered": []}))
+        [rec] = [json.loads(l) for l in (self.box / "sent.jsonl").read_text().splitlines()]
+        self.assertEqual((rec["user"], rec["device"], rec["item"], rec["phoneItem"]), (USERS[TOKEN]["Id"].replace("-", ""), "web-device-0001", self.ITEM, self.PHONE))
+        self.assertEqual(self.messages(), [])
+
+    def test_picking_a_missing_phone_version_orders_it_like_a_phone_does(self):
+        code, body = self.post({"items": [self.MOVIE], "pick": "phone"})
+        self.assertEqual((code, body), (200, {"downloads": [], "preparing": [], "ordered": [self.MOVIE]}))
+        self.assertEqual(self.requests(), [{"item": self.MOVIE, "user": USERS[TOKEN]["Id"].replace("-", ""), "device": "web-device-0001"}])
+        self.post({"items": [self.MOVIE], "pick": "phone"})
+        self.assertEqual(len(self.requests()), 1, "one request per item per 5 min")
+        self.assertFalse((self.box / "sent.jsonl").exists())
+
+    def test_picking_a_phone_version_being_prepared_orders_nothing(self):
+        self.state(state="converting", percent=37)
+        self.assertEqual(self.post({"items": [self.ITEM], "pick": "phone"})[1], {"downloads": [], "preparing": [{"item": self.ITEM, "what": "37 % converted"}], "ordered": []})
+        self.assertEqual(self.requests(), [])
+
+    def test_a_batch_pick_gets_each_title_its_best_file(self):
+        self.state(state="ready", phoneItem=self.PHONE)
+        body = self.post({"items": [self.ITEM, self.SMALL, self.MOVIE], "pick": "phone"})[1]
+        self.assertEqual(body, {"downloads": [{"item": self.ITEM, "file": self.PHONE}, {"item": self.SMALL, "file": self.SMALL}], "preparing": [], "ordered": [self.MOVIE]})
+
+    def test_a_pick_from_a_non_desktop_client_does_nothing(self):
+        self.assertEqual(self.post({"items": [self.MOVIE], "pick": "phone"}, auth=self.client("Jellyfin Web", "Samsung Smart TV")), (200, {"choice": False}))
+        self.assertEqual(self.requests(), [])
+
+    def test_a_bad_device_id_still_orders_without_one(self):
+        auth = self.WEB.replace('DeviceId="web-device-0001"', 'DeviceId="bad id/../"')
+        self.post({"items": [self.MOVIE], "pick": "phone"}, auth=auth)
+        self.assertEqual(self.requests()[0]["device"], None)
+
+    # --- refusals ---
+    def test_refusals(self):
+        self.assertEqual(self.post({"items": [self.ITEM]}, auth='MediaBrowser Client="Jellyfin Web", Device="Chrome"')[0], 401)
+        self.assertEqual(self.post({"items": [self.ITEM]}, auth=self.WEB.replace(TOKEN, "c" * 32))[0], 403)
+        self.assertEqual(self.post({"items": [self.ITEM]}, origin="https://evil.example.com")[0], 403)
+        self.assertEqual(self.post({"items": [self.ITEM]}, origin=None)[0], 403)
+        self.assertEqual(self.post({"items": [self.ITEM]}, ctype="text/plain")[0], 415)
+        self.assertEqual(self.post(b"x" * 4097)[0], 413)
+        for bad in ({"items": []}, {"items": self.ITEM}, {"items": ["../x"]}, {"items": [self.ITEM] * 51}, {"items": [self.ITEM], "pick": "full"},
+                    {"items": [self.ITEM], "x": 1}, [self.ITEM], {"items": [1]}):
+            self.assertEqual(self.post(bad)[0], 400, bad)
+        self.assertEqual(self.post(b"{bad")[0], 400)
+        self.assertEqual(self.core.handle("GET", "/hss-popular/download-choice", {"Authorization": self.WEB}, b"")[0], 404)
+        self.assertEqual(self.requests(), [])
+
+    def test_fifty_items_fit_in_one_call(self):
+        ids = ["%032x" % n for n in range(50)]
+        self.assertEqual(self.post({"items": ids, "pick": "phone"})[0], 200)
+
+    def test_rate_limited_per_user(self):
+        codes = [self.post({"items": [self.SMALL]})[0] for _ in range(app.CHOICE_PER_MIN + 1)]
+        self.assertEqual((codes[0], codes[-1]), (200, 429))
+
+    def test_jellyfin_down_is_an_error_the_page_answers_with_the_full_file(self):
+        def down(method, path, body=None):
+            raise OSError("down")
+        self.core.jellyfin_admin = down
+        self.assertEqual(self.post({"items": [self.ITEM]})[0], 502)
 
 
 WSECRET = "w" * 40
