@@ -1,0 +1,10 @@
+[Unit]
+Description=Delete early: expire unanswered requests after 7 days and retry approved deletes, every 30 min while beefy is awake
+
+[Timer]
+OnBootSec=6min
+OnUnitActiveSec=30min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

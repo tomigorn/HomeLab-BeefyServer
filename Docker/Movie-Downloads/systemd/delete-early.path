@@ -1,0 +1,10 @@
+[Unit]
+Description=Seerr queued a Delete early job (delete, answer or restore)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Path]
+PathExistsGlob=/srv/appdata/seerr-delete-early/*.req
+Unit=delete-early.service
+
+[Install]
+WantedBy=multi-user.target

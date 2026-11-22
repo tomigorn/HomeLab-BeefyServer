@@ -4,7 +4,7 @@
 U=${1:-$(cd "$(dirname "$0")/.." && pwd)/systemd}
 PASS=0; FAIL=0
 NEED="NoNewPrivileges=true PrivateTmp=true ProtectSystem=strict ProtectHome=read-only PrivateDevices=yes ProtectKernelTunables=yes ProtectKernelModules=yes ProtectKernelLogs=yes ProtectControlGroups=yes ProtectClock=yes ProtectHostname=yes ProtectProc=invisible ProcSubset=pid RestrictNamespaces=yes RestrictRealtime=yes RestrictSUIDSGID=yes LockPersonality=yes MemoryDenyWriteExecute=yes CapabilityBoundingSet= SystemCallArchitectures=native SystemCallFilter=@system-service"
-for u in clear-data-wipe clear-data-wipe-added seerr-sync request-state night-downloads media-metrics retention retention-delete; do
+for u in clear-data-wipe clear-data-wipe-added seerr-sync request-state night-downloads media-metrics retention retention-delete delete-early; do
   missing=""
   for l in $NEED; do grep -qxF "$l" "$U/$u.service" 2>/dev/null || missing+=" $l"; done
   grep -qx 'ReadWritePaths=/home/buntu/.local/state/movie-downloads.*' "$U/$u.service" 2>/dev/null || missing+=" ReadWritePaths(state dir)"

@@ -315,6 +315,26 @@ Every deleted library file (retention, Delete a title, upgrades, language and qu
 | Undo | `sudo systemctl disable --now recycle-bin.timer`, then Radarr and Sonarr Settings → Media Management → Recycling Bin Cleanup 7 (counts the file date again) |
 | Tests | `python3 tests/test_recycle_bin.py` |
 
+### Delete early
+
+Seerr's **Delete early** button (`../Seerr/README.md` "Delete early", owner 2026-11-22) queues a job; `scripts/delete-early.py` (as buntu) carries it out.
+
+| Job | What the runner does |
+|---|---|
+| delete | refused: test film / `keep-test`, no files, 11th delete of the user in 7 days. Asks first: Keep forever (job flag or `retention.json` + keep store) and the deleter is no requester → a requester, none → the owner (Seerr user 1); someone else mid-watch (Jellyfin: a film with a resume point on any version, a series or season with an episode played in the last 30 days and not every episode played) → that viewer (Jellyfin user → Seerr user by Seerr's Jellyfin link or the identity map's subject; none → the owner). Else, under the media lock: the same steps as retention (unmonitor + tag `retention-deleted`, files through Radarr/Sonarr into the [Recycle bin](#recycle-bin), phone versions moved the same way, `retention-gone.json` = *Left the server* list), side files (`<video>.de.srt`) recorded and moved with it; a season: only its files, season and its episodes unmonitored, no tag. A whole title's Seerr status goes to *unknown* (`POST /media/<id>/unknown`): a film shows **Request** at once, a series' seasons after the nightly availability sync; the Seerr row and its requests stay (no [Clear Data](#delete-a-title)) |
+| answer | only an asked person counts; one no = denied, all yes = deleted; 7 days without an answer = expired (not deleted) |
+| restore | the deleter, a requester or a manager, while in the bin: each file moved back to its old path (the newest copy in the bin, never over an existing file), monitored again, tag removed, `RescanMovie` / `RescanSeries`, Jellyfin told (`/Library/Media/Updated`), Seerr status *available*, off the *Left the server* list |
+
+| Part | What |
+|---|---|
+| Units | `systemd/delete-early.path` (a job file appears), `delete-early.timer` (every 30 min while awake: expiry, approved deletes the media lock held back), `delete-early.service` (writes the state dir, the job folder, `/run/lock`, `/srv/video/media`, `/srv/video/.recyclebin`) |
+| Notices | Jellyfin pop-up on the person's live sessions (Jellyfin display language EN/DE); Telegram (EN) for the owner through `_global/secrets/oob-alert.env`, others only when listed in `secrets/delete-early-telegram.json` (`{"<Seerr user id>": "<chat id>"}`, gitignored; nobody today) |
+| State | `~/.local/state/movie-downloads/delete-early.json`, audit `delete-early-audit.jsonl` (one JSON line per event) |
+| Check | `scripts/delete-early.py --list`, `journalctl -u delete-early`, `md.delete-early` |
+| Install | `sudo install -d -o 65127 -g buntu -m 2770 /srv/appdata/seerr-delete-early`, `sudo install -m 0644 systemd/delete-early.service systemd/delete-early.path systemd/delete-early.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now delete-early.path delete-early.timer` |
+| Off | `sudo systemctl disable --now delete-early.path delete-early.timer` (jobs then wait; the Seerr button still queues them) |
+| Tests | `python3 tests/test_delete_early.py` |
+
 ## Download → library pipeline
 
 What happens after Radarr grabs a release, end to end. Everything below is set

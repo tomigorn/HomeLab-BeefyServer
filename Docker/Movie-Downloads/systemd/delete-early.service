@@ -1,0 +1,36 @@
+[Unit]
+Description=Delete early: carry out Seerr's queued delete / answer / restore jobs (recycle bin, approvals, notices; media lock held)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/delete-early.py
+# a restore copies files back off the bin (SSD) when the pool refuses the rename
+TimeoutStartSec=2400
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/buntu/.local/state/movie-downloads /srv/appdata/seerr-delete-early /run/lock /srv/video/media /srv/video/.recyclebin
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
