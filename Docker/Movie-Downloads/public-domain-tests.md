@@ -32,7 +32,7 @@ For end-to-end tests of the download pipeline (request → download → import �
 | Title | TMDB | Last test | Notes |
 |---|---|---|---|
 | Nosferatu (1922) | 653 | 2026-11-12 | **permanent, never delete**; usenet, German 1080p Blu-ray |
-| Battleship Potemkin (1925) | 643 | 2026-11-21 | usenet, no 4K exists. 2026-11-21 problem report test (Seerr README "Problem reports"): Radarr 224, imported `…1080p.BluRay.x264-CINEFILE`; "video glitches" report blocked it and grabbed a dead Spanish XviD torrent (led to the resolution-first order) and then the same encode as a 1-seed torrent (led to skipping the same release under another spelling); both removed by hand, the CINEFILE file stays. **Deleted 2026-11-22** (Clear Data) |
+| Battleship Potemkin (1925) | 643 | 2026-11-21 | usenet, no 4K exists. 2026-11-21 problem report test (Seerr README "Problem reports"): Radarr 224, imported `…1080p.BluRay.x264-CINEFILE`; "video glitches" report blocked it and grabbed a dead Spanish XviD torrent (led to the resolution-first order) and then the same encode as a 1-seed torrent (led to skipping the same release under another spelling); both removed by hand, the CINEFILE file stays. **Deleted 2026-11-22** (Clear Data). 2026-11-22 Delete early test (canary, Seerr README "Delete early"): requested again (Radarr 226, same CINEFILE release), deleted early, restored, deleted again; **in the recycle bin until 2026-11-29**, then purged by `recycle-bin.timer`. Left behind on purpose: Radarr 226 unmonitored + tag `retention-deleted`, the canary's Seerr request (status unknown = requestable), the *Left the server* entry |
 | The Cabinet of Dr. Caligari (1920) | 234 | 2026-11-22 | usenet, German DL 2160p. 2026-11-22 problem report test through report.holy-grail.ch (canary): Radarr 225, imported `…2160p.UHD.BluRay.H265-GAZPROM`; "video glitches" report blocked it, grabbed `…2160p.UHD.BluRay.x265-SURCODE` (usenet), moved out of the night category, imported over GAZPROM at 00:39 (forced: "not a Custom Format upgrade"). **Deleted 2026-11-22** (Clear Data) |
 
 ### Series
@@ -47,4 +47,5 @@ For end-to-end tests of the download pipeline (request → download → import �
 | Date | Removed |
 |---|---|
 | 2026-11-09 | Nosferatu, Battleship Potemkin, The Cabinet of Dr. Caligari (Clear Data), The Vampires (Sonarr, with files). Nosferatu was needed by `jf.continue-remove-api`: every Jellyfin auto-update then rolled back; requested again 2026-11-12 and made permanent |
+| 2026-11-22 | Battleship Potemkin again (Radarr 226) by Delete early: files in the recycle bin until 2026-11-29; the Radarr entry (unmonitored) and the Seerr request stay as the placeholder |
 | 2026-11-22 | Battleship Potemkin (Radarr 224) and The Cabinet of Dr. Caligari (Radarr 225), report-site tests of 2026-11-21/22 (Seerr Clear Data → `clear-data-wipe.sh`: Radarr with files, Jellyfin items; re-created Seerr rows removed). Nosferatu untouched. The open Caligari report on the Manual page was marked handled |
