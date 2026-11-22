@@ -1212,6 +1212,31 @@ sudo scripts/library-check.py run --limit 2   # by hand: two files, then stop
 
 - Tests: `python3 tests/test_library_check.py` (fakes); real samples from ffmpeg's test pattern in the Jellyfin image (good, segments out of order, no audio, truncated tail): `sudo LC_REAL=1 python3 tests/test_library_check.py Real`.
 
+#### Playback check
+
+Owner 2026-11-18 (fastpi `reports/specs/2026-11-18-media-quality-check-design.md`, part 3): a safety net from playback. Nobody has to report a file that will not play.
+
+| Part | What |
+|---|---|
+| Detector | Jellyfin's activity log (`/System/ActivityLog/Entries`, `VideoPlayback` / `VideoPlaybackStopped`): the same item started 3 times or more within 15 min, each stopped within 60 s; any client (Moonfin on the TV included), any user. A start is paired with the next stop of the same item, user and client; a start without a stop does not count. One burst = one hit. Measured on the real log 2026-10-14..11-21: 6 hits, 5 of them 2026-10-19..11-17 (1 real, the VisionQuest E08 file, 4 healthy) |
+| Check | the file check only (`Antivirus/hook/quality_check.py`, same as "Library check": ffprobe as Jellyfin's uid in the throw-away container `playback-check`, `nice 19`, idle I/O). A file the library check already verified (same size and mtime) is not read again; the same unchanged file is not checked twice within 24 h |
+| Healthy | never replaced. A Manual page note (Done tab, type Quality note): "file OK, probably the client", with the number of starts and the clients |
+| Broken | timestamp jump back > 1 s, no video, no audio: the quality block's path (`quality-block.py` `imported()`): file removed or the previous one put back from the recycle bin, release blocklisted once, searched again. Held under the shared media lock; busy for 5 min = acts on the next run without reading the file again. The test film, hand imports and files without an import record are never blocked: they stay and show on the Manual page ("please check it") |
+| Runs | `systemd/playback-check.timer`: 5 min after boot, then every 5 min while beefy is awake (no `Persistent`, never wakes beefy); `playback-check.service` (root for docker only, `nice 19`, idle I/O). One request to Jellyfin per run, at the container's bridge IP (never localhost: the idle watcher would count it, like `playback-watch`); the disks are touched only on a hit (the file the household just played). Nothing runs 03:50-04:50 |
+| First run | looks back 40 min only: no history is checked on install. `replay` shows what the detector finds in the old log |
+| Log | `~/.local/state/movie-downloads/playback-check.json` (`entries` shown on the Manual page, `queue`, `seenHits`, `checked`); entries 180 days |
+| Modes | `PC_ACTION=log` in the unit (`Environment=`): decides and records, changes nothing |
+
+```bash
+sudo install -m 0644 systemd/playback-check.service systemd/playback-check.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now playback-check.timer
+scripts/playback-check.py replay --since all  # read only: the hits in the whole activity log, nothing checked
+scripts/playback-check.py status              # last run, queue, last entries
+journalctl -u playback-check -n 50            # hits, checks, blocks
+sudo systemctl disable --now playback-check.timer   # off
+```
+
+- Tests: `python3 tests/test_playback_check.py` (detector, pairing, the whole run against fakes: healthy, broken, upgrade put-back, lock busy, night window).
+
 #### Phone versions
 
 Owner 2026-11-19 (fastpi `reports/specs/2026-11-19-phone-versions-design.md`): a phone download of a 4K title gets a smaller second download, kept on the HDD as a second Jellyfin version of the same item. Owner 2026-11-20/21: when no release fits or 3 fitting ones failed, beefy converts the server copy itself (fallback only).

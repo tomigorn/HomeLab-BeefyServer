@@ -1,0 +1,10 @@
+[Unit]
+Description=Playback safety net every 5 minutes while beefy is awake (one small Jellyfin request; the file check runs only on a hit)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

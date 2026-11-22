@@ -1,0 +1,22 @@
+[Unit]
+Description=Playback safety net: a title started and stopped three times within 15 minutes gets the file check, broken files are blocked, healthy ones noted (README Playback check)
+Documentation=file:///home/buntu/Projects/Docker/Movie-Downloads/README.md
+RequiresMountsFor=/srv/video /srv/dlpool
+After=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+# root for docker only (ffprobe runs as Jellyfin's uid in a throw-away container, no network, library read-only); writes its state, the shared media lock and, for a put-back of the previous file, the library and the recycle bin
+Type=oneshot
+ExecStartPre=-/usr/bin/docker rm -f playback-check
+ExecStart=/home/buntu/Projects/Docker/Movie-Downloads/scripts/playback-check.py run
+ExecStopPost=-/usr/bin/docker rm -f playback-check
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=3h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/buntu/.local/state/movie-downloads /run/lock /srv/video/media /srv/video/.recyclebin
+UMask=0022
