@@ -2,7 +2,7 @@
 """Phone lists: two private home rows per user in the phone and tablet apps (Moonfin "mobile" profile), on top of the home (spec fastpi reports/specs/2026-11-19-phone-versions-design.md "Phone lists").
 "📱 Your phone version requests": the titles this user asked a phone version of (Movie-Downloads scripts/phone-fetch.py, <box>/state.json): being prepared (an entry set with a ⏳ band poster), ready (the title itself), nothing smaller found (entry set, 2 days); a ready title leaves once this user downloaded it or 14 days after it got ready. 2+ episodes of one series are one card in both rows: the season when all are from one season, else the series.
 "📲 On your phone": what the download hook sent to this user's phone in the last 14 days (<box>/sent.jsonl, popular/app.py).
-Each row is a BoxSet tagged hss-phone + hss-phone-u-<userId>, kept once made (Moonfin hides an empty collection row); every other user's policy blocks that owner tag (like media-bar.py), entry sets too.
+Each row is a BoxSet tagged hss-phone + hss-phone-u-<userId>, made under a per-user name and then renamed (Jellyfin derives a set's id from its "<name> [boxset]" folder, so the shown name alone gave two users one set), kept once made (Moonfin hides an empty collection row); every other user's policy blocks that owner tag (like media-bar.py), entry sets too.
 Moonfin phones and tablets read the "mobile" profile; its own homeSections replace the global ones, so the rows go there only (TV, web and desktop never get them).
 Runs after each phone-fetch export (systemd path unit) and hourly (expiry); unchanged inputs skip the run for up to SKIP_MINUTES.
 Idempotent. Usage: phone-lists.py [--dry-run | --check]  (--check exits 1 when a set, a block or a home row differs)"""
@@ -269,8 +269,10 @@ class Sync:
     def existing(self):
         """{(owner, kind, item or None): set id}; duplicates and sets without an owner or kind are returned to delete."""
         sets, extra = {}, []
+        self.owned = set()
         for box in self.api("GET", f"/Items?Recursive=true&IncludeItemTypes=BoxSet&Tags={TAG}&Fields=Tags&EnableImages=false&EnableUserData=false")["Items"]:
             tags = box.get("Tags") or []
+            self.owned.add(box["Id"])
             key = (owner_of(tags), tagged(tags, KIND), tagged(tags, ITEM) if tagged(tags, KIND) == "entry" else None)
             if None in key[:2] or key in sets:
                 extra.append(box["Id"])
@@ -285,13 +287,17 @@ class Sync:
         got = self.api("GET", f"/Items?ids={','.join(ids)}&userId={uid}&EnableImages=false&EnableUserData=false")["Items"]
         return {i["Id"]: i for i in got}
 
-    def ensure(self, sid, name, tags, overview, members, ordered, uid):
-        """Create (sid None) or update one set; returns its id (None in a dry run that would create it)."""
+    def ensure(self, sid, name, folder, tags, overview, members, ordered, uid):
+        """Create (sid None) under the unique folder name, or update one set; returns its id (None in a dry run that would create it)."""
         if sid is None:
             self.problems.append(f"set {name}: missing")
             if not self.write:
                 return None
-            sid = self.api("POST", f"/Collections?name={urllib.parse.quote(name)}&ids={','.join(members)}&isLocked=true")["Id"]
+            sid = self.api("POST", f"/Collections?name={urllib.parse.quote(folder)}&ids={','.join(members)}&isLocked=true")["Id"]
+            if sid in self.owned:
+                self.log(f"set {name}: Jellyfin returned {sid}, already another phone set, not taken over; next: phone-lists.py --check")
+                return None
+            self.owned.add(sid)
         item = self.api("GET", f"/Items/{sid}?userId={uid}")
         want = {"Name": name, "Tags": sorted(tags), "ForcedSortName": f"00 {name}", "LockData": True, "DisplayOrder": "Default", "Overview": overview}
         have = {**{k: item.get(k) for k in want}, "Tags": sorted(item.get("Tags") or [])}
@@ -378,7 +384,7 @@ def run(argv, api=jf_api, raw=jf_raw, box=BOX, state_path=STATE, now=None, log=p
             key = (uid, "entry", e["item"])
             text = band_text(e)
             tags = [TAG, OWNER + uid, KIND + "entry", ITEM + e["item"]]
-            sid = sync.ensure(sets.get(key), e["title"] or e["item"], tags, f"{text}. {HINT}", [e["item"]], steps, uid)
+            sid = sync.ensure(sets.get(key), e["title"] or e["item"], f"{TAG} {uid} entry {e['item']}", tags, f"{text}. {HINT}", [e["item"]], steps, uid)
             if sid is None:
                 continue
             keep.add(sid)
@@ -395,7 +401,7 @@ def run(argv, api=jf_api, raw=jf_raw, box=BOX, state_path=STATE, now=None, log=p
             if key not in sets and not ids:
                 continue
             name = NAMES[kind][lang]
-            sid = sync.ensure(sets.get(key), name, [TAG, OWNER + uid, KIND + kind], "", ids, steps, uid)
+            sid = sync.ensure(sets.get(key), name, f"{TAG} {uid} {kind}", [TAG, OWNER + uid, KIND + kind], "", ids, steps, uid)
             if sid is not None:
                 keep.add(sid)
                 wanted.append((sid, name))

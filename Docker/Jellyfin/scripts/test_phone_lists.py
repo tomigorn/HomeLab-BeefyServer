@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 import importlib.util
 import json
 import pathlib
@@ -187,7 +188,12 @@ class FakeJellyfin:
                         "u2": {"syncEnabled": True, "mobile": {"homeSections": [section("resume", 0)]}}}
         self.prefs = {"u1": {"CustomPrefs": {"language": "de"}}}
         self.writes = []
-        self.n = 0
+
+    def add_set(self, name, tags, members=()):
+        path = f"/config/data/collections/{name} [boxset]"
+        sid = "set-" + hashlib.md5(path.encode()).hexdigest()[:8]
+        self.sets.setdefault(sid, {"Id": sid, "Name": name, "Path": path, "Tags": list(tags), "Members": list(members), "Type": "BoxSet"})
+        return sid
 
     def visible(self, uid, sid):
         return not set(self.sets[sid]["Tags"]) & set(self.users[uid]["BlockedTags"])
@@ -219,9 +225,10 @@ class FakeJellyfin:
                 raise urllib.error.HTTPError(path, 404, "nf", None, None)
             return json.loads(json.dumps(self.moonfin[uid]))
         if p == "/Collections" and method == "POST":
-            self.n += 1
-            sid = f"set{self.n}"
-            self.sets[sid] = {"Id": sid, "Name": q["name"], "Tags": [], "Members": [i for i in q.get("ids", "").split(",") if i], "Type": "BoxSet"}
+            # like Jellyfin: the folder is "<name> [boxset]" and the id comes from that path, so the same name gives the same set
+            sid = self.add_set(q["name"], [])
+            m = self.sets[sid]["Members"]
+            m += [i for i in q.get("ids", "").split(",") if i and i not in m]
             return {"Id": sid}
         if p.startswith("/Collections/"):
             sid, ids = p.split("/")[2], q["ids"].split(",")
@@ -236,7 +243,7 @@ class FakeJellyfin:
             return None
         if p.startswith("/Items/") and method == "POST":
             sid = p.split("/")[2]
-            self.sets[sid].update({k: v for k, v in body.items() if k != "Members"})
+            self.sets[sid].update({k: v for k, v in body.items() if k not in ("Members", "Path")})
             return None
         if p.startswith("/Items/"):
             return {k: v for k, v in self.sets[p.split("/")[2]].items() if k != "Members"}
@@ -376,6 +383,50 @@ class RunTest(unittest.TestCase):
         self.inputs({"c": req("ready", {"u1": ts(hours=1)})})
         self.assertEqual(self.run_lists("--check"), 1)
         self.assertEqual(self.jf.writes, [])
+
+    def test_two_users_get_their_own_sets_at_the_same_time(self):
+        # 2026-11-22: same row name = same Jellyfin folder = same id; the canary's set took over the owner's
+        self.jf.prefs = {}
+        self.inputs({"a": req("downloading", {"u1": ts(hours=1), "u2": ts(hours=1)}, percent=40, title="Film A"), "c": req("ready", {"u1": ts(minutes=5), "u2": ts(minutes=5)})},
+                    [sent("u1", "b", hours=2), sent("u2", "b", hours=2)])
+        self.assertEqual(self.run_lists(), 0, self.logs[-1])
+        for kind in ("ready", "sent", "entry"):
+            [mine], [theirs] = self.jf.by_kind("u1", kind), self.jf.by_kind("u2", kind)
+            self.assertNotEqual(mine["Id"], theirs["Id"], kind)
+            self.assertEqual(mine["Name"], theirs["Name"], kind)
+            self.assertEqual(len([t for t in mine["Tags"] + theirs["Tags"] if t.startswith(pl.OWNER)]), 2, kind)
+        self.assertEqual(self.jf.by_kind("u1", "sent")[0]["Name"], "📲 On your phone")
+        self.assertEqual([self.jf.by_kind(u, "sent")[0]["Members"] for u in ("u1", "u2")], [["b"], ["b"]])
+        self.assertFalse(any(self.jf.visible("u2", s["Id"]) for s in self.jf.sets.values() if pl.OWNER + "u1" in s["Tags"]))
+        self.assertFalse(any(self.jf.visible("u1", s["Id"]) for s in self.jf.sets.values() if pl.OWNER + "u2" in s["Tags"]))
+        self.assertEqual(self.run_lists("--check"), 0, self.logs[-1])
+
+    def test_a_set_made_under_its_shown_name_stays_its_owners(self):
+        # sets made before 2026-11-22 live in the folder of their shown name; a second user's new set must not land there
+        self.jf.prefs = {}
+        sid = self.jf.add_set("📲 On your phone", [pl.TAG, pl.OWNER + "u1", pl.KIND + "sent"], ["b"])
+        self.inputs({}, [sent("u1", "b", hours=2), sent("u2", "c", hours=1)])
+        self.assertEqual(self.run_lists(), 0, self.logs[-1])
+        self.assertEqual((self.jf.by_kind("u1", "sent"), len(self.jf.by_kind("u2", "sent"))), ([self.jf.sets[sid]], 1))
+        self.assertEqual(self.jf.sets[sid]["Members"], ["b"])
+        self.assertEqual(self.jf.by_kind("u2", "sent")[0]["Members"], ["c"])
+
+    def test_a_new_set_that_comes_back_as_someone_elses_is_not_taken_over(self):
+        self.jf.prefs = {}
+        self.inputs({}, [sent("u1", "b", hours=2), sent("u2", "c", hours=1)])
+        real = self.jf.__call__
+        self.jf.add_set("x", [pl.TAG, pl.OWNER + "u1", pl.KIND + "sent"], ["b"])
+        def collide(method, path, body=None):
+            if method == "POST" and path.startswith("/Collections?"):
+                return {"Id": self.jf.by_kind("u1", "sent")[0]["Id"]}
+            return real(method, path, body)
+        self.run_lists_with(collide)
+        self.assertEqual(self.jf.by_kind("u1", "sent")[0]["Members"], ["b"])
+        self.assertEqual(self.jf.by_kind("u2", "sent"), [])
+        self.assertTrue(any("not taken over" in line for line in self.logs), self.logs)
+
+    def run_lists_with(self, api):
+        return pl.run([], api=api, raw=self.jf.raw, box=self.box, state_path=self.state, now=NOW, log=self.logs.append, art=FakeArt())
 
     def test_gone_title_is_left_out(self):
         self.inputs({"zzz": req("ready", {"u1": ts(hours=1)})})
