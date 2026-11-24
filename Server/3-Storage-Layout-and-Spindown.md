@@ -47,7 +47,7 @@ of the time.
 | Alerts (fastpi) | SSD ≥ 80 %, HDD ≥ 80 % warn / ≥ 90 % critical, mover failed/not run, overflow, verify failures | HomeLab-FastPi `Docker/grafana/README.md` |
 | Seerr bar | SSD green < 70, yellow 70-80, red ≥ 80; HDD 80/90 | `Docker/Seerr/README.md` "Indexer bar" |
 | hd-idle | HDD parks after 5 min (300 s, since 2026-11-18; 20 min 2026-10-28 to 11-18) | `/etc/default/hd-idle` |
-| Retention (observe mode) | SSD 30 days → HDD → temporary titles' files deleted at day 90 (HDD > 85 %: earlier, down to 80 %); computed only, the mover does the moves, nothing deleted | `Docker/Movie-Downloads/README.md` "Storage retention" |
+| Retention (deletion on since 2026-11-16) | SSD 30 days → HDD → temporary titles' files deleted at day 90 (HDD > 85 %: earlier, down to 80 %); the mover does the moves, `retention-delete` (04:31) deletes | `Docker/Movie-Downloads/README.md` "Storage retention" |
 
 ### The mover (§5, built 2026-10-28)
 

@@ -701,7 +701,7 @@ Terms combine (all must fit), at most 6, query ≤ 300 characters. A name that f
 
 ## Storage retention
 
-Modern titles leave the server 3 months after the download or the last play (watching resets the clock), old, niche and top-rated ones stay; rules, stages and the switch: `../Movie-Downloads/README.md` "Storage retention". **Observe mode: the dates are shown, nothing is deleted.**
+Modern titles leave the server 3 months after the download or the last play (watching resets the clock), old, niche and top-rated ones stay; rules, stages and the switch: `../Movie-Downloads/README.md` "Storage retention". **Deletion is on since 2026-11-16**: due titles leave after their 7 days of Leaving soon.
 
 | Where | What |
 |---|---|

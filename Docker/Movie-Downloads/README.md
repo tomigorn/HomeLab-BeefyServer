@@ -258,7 +258,7 @@ Re-measured on the real views 2026-11-17 (same test, 3 rounds; stream read throu
 
 ### Storage retention
 
-Spec `docs/superpowers/specs/2026-11-15-storage-retention-design.md` (owner 2026-11-15). **Observe mode since 2026-11-16: nothing is deleted.** Moves SSD → HDD stay with the existing mover ([The mergerfs catch](#the-mergerfs-catch-and-why-it-matters-here)).
+Spec `docs/superpowers/specs/2026-11-15-storage-retention-design.md` (owner 2026-11-15). **Deletion on since 2026-11-16** (`retention.conf`; switch on and off below). Moves SSD → HDD stay with the existing mover ([The mergerfs catch](#the-mergerfs-catch-and-why-it-matters-here)).
 
 | Stage, from the clock: the later of the import (series: its latest import) and the last play by anyone (series: any episode; Jellyfin `LastPlayedDate`, owner 2026-11-16: watching resets it) | What |
 |---|---|
