@@ -147,6 +147,16 @@ def check_drift(containers: list[dict], declared: dict[str, str], local_ids: dic
     return images, drift
 
 
+def drop_namespace_providers(row: dict, config: dict) -> dict:
+    """The row without services that others join via network_mode: service:<name> (gluetun), and without their data paths: recreating them strips the dependents' network."""
+    svcs = (config.get("services") or {}).values()
+    providers = {s["network_mode"][8:] for s in svcs if str(s.get("network_mode", "")).startswith("service:")}
+    if not providers & set(row["services"]):
+        return row
+    return dict(row, services=[x for x in row["services"] if x not in providers],
+                backups=[b for b in row["backups"] if b.rstrip("/").rsplit("/", 1)[-1] not in providers])
+
+
 def drift_command(row: dict, services: list[str]) -> str:
     tail = "".join(f" {b}" for b in row["backups"])
     return f"SERVICES='{' '.join(sorted(services))}' {SCRIPTS}/update-project.sh {DOCKER / row['project']} recreate{tail}"
@@ -614,6 +624,7 @@ def main(argv: list[str]) -> int:
             continue
         try:
             config = compose_config(row)
+            row = drop_namespace_providers(row, config)
             images, drift = project_images(row, config)
             if drift:
                 applied, fixed = handle_drift(row, drift, state, results, applied, dry)

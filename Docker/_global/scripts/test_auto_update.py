@@ -14,6 +14,7 @@ from auto_update import (  # noqa: E402
     crosses_major,
     drift_command,
     decide,
+    drop_namespace_providers,
     failure_reason,
     find_stale,
     parse_container_lines,
@@ -110,6 +111,25 @@ def test_update_command_names_services_and_backups():
     row = {"project": "Home-Assistant", "services": ["homeassistant"], "backups": ["./config"]}
     assert update_command(row) == f"SERVICES='homeassistant' {SCRIPTS}/update-project.sh {DOCKER}/Home-Assistant pull ./config"
     assert update_command({"project": "DDNS", "services": [], "backups": []}) == f"{SCRIPTS}/update-project.sh {DOCKER}/DDNS pull"
+
+
+def test_namespace_provider_is_never_suggested_or_backed_up():
+    row = {"project": "Movie-Downloads", "tier": "notify", "check": "",
+           "services": ["gluetun", "qbittorrent", "radarr"],
+           "backups": ["/srv/appdata/gluetun", "/srv/appdata/qbittorrent", "/srv/appdata/radarr"]}
+    config = {"services": {"gluetun": {}, "qbittorrent": {"network_mode": "service:gluetun"},
+                           "flaresolverr": {"network_mode": "service:gluetun"}, "radarr": {"network_mode": "bridge"}}}
+    out = drop_namespace_providers(row, config)
+    assert out["services"] == ["qbittorrent", "radarr"]
+    assert out["backups"] == ["/srv/appdata/qbittorrent", "/srv/appdata/radarr"]
+    assert "gluetun" not in update_command(out)
+    assert row["services"][0] == "gluetun"
+
+
+def test_namespace_providers_leave_rows_without_providers_alone():
+    row = {"project": "DDNS", "services": [], "backups": []}
+    assert drop_namespace_providers(row, {"services": {"a": {}}}) == row
+    assert drop_namespace_providers(row, {}) == row
 
 
 def test_repo_is_found_from_the_script_location():
