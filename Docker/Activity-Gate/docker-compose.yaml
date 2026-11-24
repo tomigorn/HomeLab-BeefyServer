@@ -34,8 +34,10 @@ services:
       - "${GATE_PORT}:8080"
     # Upstreams by container name, never via 192.168.1.102: a flow to a published port would count as use in the idle watcher.
     networks:
-      - jellyfin
-      - movie-downloads
+      jellyfin:
+        ipv4_address: 172.28.11.2
+      movie-downloads:
+        ipv4_address: 172.28.10.6
     healthcheck:
       test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8080/health"]
       interval: 30s
