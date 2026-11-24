@@ -85,8 +85,10 @@ services:
       floppy-redis:
         condition: service_healthy
     networks:
-      - floppy
-      - floppy-redis
+      floppy:
+        ipv4_address: 172.28.16.2
+      floppy-redis:
+        ipv4_address: 172.28.17.3
     logging:
       driver: "json-file"
       options:
@@ -130,7 +132,8 @@ services:
       retries: 3
       timeout: 5s
     networks:
-      - floppy-redis
+      floppy-redis:
+        ipv4_address: 172.28.17.2
     logging:
       driver: "json-file"
       options:
