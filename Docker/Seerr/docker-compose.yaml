@@ -37,9 +37,12 @@ services:
       - ${APPDATA_ROOT}/seerr:/app/config
     # No published port: seerr-proxy below owns SEERR_PORT and reaches Seerr as seerr:5055 on seerr-front.
     networks:
-      seerr-front: {}
-      movie-downloads: {}
+      seerr-front:
+        ipv4_address: 172.20.0.3
+      movie-downloads:
+        ipv4_address: 172.28.10.3
       jellyfin:
+        ipv4_address: 172.28.11.6
         # default route stays on jellyfin: DOCKER-USER lets only that subnet reach sso on fastpi :443
         gw_priority: 10
     healthcheck:
@@ -77,7 +80,8 @@ services:
     ports:
       - "${SEERR_PORT}:8080"
     networks:
-      - seerr-front
+      seerr-front:
+        ipv4_address: 172.20.0.2
     depends_on:
       seerr:
         condition: service_healthy
@@ -178,13 +182,15 @@ services:
     ports:
       - "${REPORT_PORT}:8091"
     networks:
-      seerr-front: {}
+      seerr-front:
+        ipv4_address: 172.20.0.4
       movie-downloads:
         # pinned: qBittorrent lets this address in without a password (WebUI AuthSubnetWhitelist)
         ipv4_address: 172.28.10.205
         # default route stays here (jellyfin below only reaches jellyfin-popular:8100)
         gw_priority: 10
-      jellyfin: {}
+      jellyfin:
+        ipv4_address: 172.28.11.3
     healthcheck:
       test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8090/_download-now/health"]
       interval: 60s
@@ -206,6 +212,9 @@ services:
 # seerr-front: only seerr-proxy, seerr and download-now. Outbound into the LAN is dropped by DOCKER-USER.
 networks:
   seerr-front:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
     name: seerr-front
   movie-downloads:
     external: true
