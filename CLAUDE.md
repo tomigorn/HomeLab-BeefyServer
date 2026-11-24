@@ -18,6 +18,7 @@ Everything that runs on beefy: Docker stacks under `Docker/`, server docs under 
   - `.env.example`: identical to `.env` except secret values are blank. Same variables, order and comments. Starts with `COMPOSE_PROJECT_NAME=`.
   - `.env`: the real values, gitignored.
   - `.gitignore`: ignores `.env` and every sensitive file or folder, per the sample.
+- Every container gets a fixed IP (`ipv4_address`) on every network it joins, never a dynamic one: on fastpi a dynamic app took Traefik's pinned IP at boot (outage 2026-11-24).
 - Media containers share one `/srv/video` → `/data` mount so Radarr can hardlink; see `Docker/Movie-Downloads/README.md`.
 - `Docker/MEDIA-STACK-TODO.md` is the open-items list for the media stack.
 
