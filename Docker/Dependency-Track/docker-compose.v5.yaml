@@ -36,7 +36,8 @@ services:
     volumes:
       - ${APPDATA_ROOT}/dt5-db:/var/lib/postgresql
     networks:
-      - dependency-track
+      dependency-track:
+        ipv4_address: 172.28.14.4
 
 # #########################################################
 # APISERVER ###############################################
@@ -88,7 +89,8 @@ services:
       dt5-db:
         condition: service_healthy
     networks:
-      - dependency-track
+      dependency-track:
+        ipv4_address: 172.28.14.2
 
 # #########################################################
 # FRONTEND ################################################
@@ -126,7 +128,8 @@ services:
     depends_on:
       - dt5-apiserver
     networks:
-      - dependency-track
+      dependency-track:
+        ipv4_address: 172.28.14.3
 
 # =========================================================
 # Networks ================================================
