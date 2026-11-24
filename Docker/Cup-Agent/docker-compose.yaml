@@ -33,7 +33,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
-      - cup_socket
+      cup_socket:
+        ipv4_address: 172.19.0.3
     # /var/run must stay writable (the proxy writes its generated haproxy config
     # there) and tmpfs-ing it would MASK the template shipped in the image.
     # Non-root; the docker group (973) opens the socket. The image entrypoint renders
@@ -68,7 +69,8 @@ services:
     volumes:
       - cup_socket_bridge:/sock
     networks:
-      - cup_socket
+      cup_socket:
+        ipv4_address: 172.19.0.2
     depends_on:
       - socket-proxy-ro
     cap_drop:
@@ -103,8 +105,10 @@ services:
       # this port leaks an inventory of everything running on beefy.
       - "${AGENT_PORT:-8000}:8000"
     networks:
-      - cup_socket      # to reach the bridged socket
-      - default         # and the internet, to query registries
+      cup_socket:      # to reach the bridged socket
+        ipv4_address: 172.19.0.4
+      default:         # and the internet, to query registries
+        ipv4_address: 172.28.12.2
     mem_limit: 128m
     # No healthcheck: this image is distroless — no shell, no wget — so any CMD
     # probe can only ever report unhealthy. Same reasoning as fastpi's Cup.
@@ -118,6 +122,9 @@ services:
 # =========================================================
 networks:
   cup_socket:
+    ipam:
+      config:
+        - subnet: 172.19.0.0/16
     name: cup_socket
     driver: bridge
     # Internal: nothing on this network has any reason to reach the internet.
