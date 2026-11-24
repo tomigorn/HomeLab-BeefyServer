@@ -18,8 +18,8 @@ st = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(st)
 
 CONTAINER = "subtitle-libretranslate"
-LOCAL_IMAGE = "libretranslate-local:v1.9.6"
-VERSION = "1.9.6"
+LOCAL_IMAGE = "libretranslate-local:v1.10.0"
+VERSION = "1.10.0"
 MODELS = "/srv/appdata/libretranslate"
 DE = "Ich habe heute keine Zeit, weil ich arbeiten muss."
 EN = "I don’t have time today because I have to work."

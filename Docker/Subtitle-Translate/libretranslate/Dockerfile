@@ -1,11 +1,11 @@
 # LibreTranslate on a current Debian/Python base (README "Local image"): upstream's own final stage (python:3.11-slim-bookworm + user + /app), with /app and its venv taken unchanged from the official release image, so code, Python packages and behaviour stay those of the release.
 # Pins (A-30): the weekly rebuild (_global/rebuild-local.conf) moves both digests to their tag's current one; a new LibreTranslate release = change both tags here by hand (README "Update").
-FROM libretranslate/libretranslate:v1.9.6@sha256:1de2d7056bb8ad607a412f4563d9abe324ff632b43b5be9428bcc8e213aebb32 AS upstream
+FROM libretranslate/libretranslate:v1.10.0@sha256:6cf78d417741c979a12ba4f9731284b1e66066dc090c8c810174a442e0926ba2 AS upstream
 
-FROM python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39
+FROM python:3.11-slim-bookworm@sha256:ef56ae98435cc40d8a27020b0b32a9941515acd5840f0fba34858bb34dd362d1
 
 # The two bases this image was built from, for the post-update check (st.lt-base-current); the weekly rebuild moves these digests together with the FROM lines.
-RUN printf '%s\n' libretranslate/libretranslate:v1.9.6@sha256:1de2d7056bb8ad607a412f4563d9abe324ff632b43b5be9428bcc8e213aebb32 python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39 > /etc/base-images
+RUN printf '%s\n' libretranslate/libretranslate:v1.10.0@sha256:6cf78d417741c979a12ba4f9731284b1e66066dc090c8c810174a442e0926ba2 python:3.11-slim-bookworm@sha256:ef56ae98435cc40d8a27020b0b32a9941515acd5840f0fba34858bb34dd362d1 > /etc/base-images
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get -y upgrade \
