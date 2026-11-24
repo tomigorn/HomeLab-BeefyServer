@@ -76,8 +76,10 @@ services:
       - ./secrets/wireguard_private_key:/run/secrets/wireguard_private_key:ro
     networks:
       movie-downloads:
+        ipv4_address: 172.28.10.2
         priority: 100   # eth0, the default route; clamd is internal (no gateway)
-      clamd: {}   # completion hook -> clamav:3310 (S-8); directly attached, so gluetun allows it without FIREWALL_OUTBOUND_SUBNETS
+      clamd:   # completion hook -> clamav:3310 (S-8); directly attached, so gluetun allows it without FIREWALL_OUTBOUND_SUBNETS
+        ipv4_address: 172.28.18.3
 
 # #########################################################
 # QBITTORRENT #############################################
@@ -331,7 +333,8 @@ services:
     ports:
       - "${BAZARR_PORT}:6767"
     networks:
-      - movie-downloads
+      movie-downloads:
+        ipv4_address: 172.28.10.4
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:6767/api/system/ping"]
       interval: 60s
@@ -419,7 +422,8 @@ services:
       # API keys for !secret in recyclarr.yml
       - ./secrets/recyclarr.yml:/config/secrets.yml:ro
     networks:
-      - movie-downloads
+      movie-downloads:
+        ipv4_address: 172.28.10.5
 
 # #########################################################
 # VPN STATUS ##############################################
@@ -495,7 +499,8 @@ services:
       - DOCKER_SOCK=tcp://movie-socket-proxy-heal:2375
       - TZ=${TZ}
     networks:
-      - movie-heal
+      movie-heal:
+        ipv4_address: 172.28.13.2
     mem_limit: 64m
 
 # Default-deny Docker API for autoheal: socket-proxy/autoheal-haproxy.cfg (fastpi pattern): only the
@@ -523,7 +528,8 @@ services:
     cap_drop:
       - ALL
     networks:
-      - movie-heal
+      movie-heal:
+        ipv4_address: 172.28.13.3
     mem_limit: 64m
 
 # =========================================================
