@@ -5,7 +5,7 @@ OWASP Dependency-Track 5.x: one CVE dashboard over the SBOMs of every running im
 | | |
 |---|---|
 | Compose | `docker-compose.v5.yaml` (project `dependency-track-v5`), the default via `.env` `COMPOSE_FILE` + `COMPOSE_PROFILES=app`; `docker-compose.yaml` = v4 4.14.6, down, kept for the rollback until 2026-11-11 (`docker-compose.v5.yaml` header) |
-| Images | `ghcr.io/dependencytrack/apiserver:5.2.1`, `ghcr.io/dependencytrack/frontend:5.2.1` (pinned by digest), `postgres:18.6-alpine` |
+| Images | `ghcr.io/dependencytrack/apiserver:5.2.1`, `ghcr.io/dependencytrack/frontend:5.2.1` (pinned by digest), `postgres:18.7-alpine` |
 | Containers | `dt5-frontend` (host port `8090` → 8080, nginx: UI + `/api` proxied to the apiserver), `dt5-apiserver` (no port, mem 3 GB), `dt5-db` (no port, mem 4 GB), bridge `dependency-track-v5` |
 | Port | `8090`, reachable from fastpi only (DOCKER-USER rule) |
 | Data | `/srv/appdata/dt5` (KEK keyset `.dependency-track/keys/secret-management-kek.json`, copy in `~/backups/dt5-kek.json`), `/srv/appdata/dt5-db` (Postgres); v4: `/srv/appdata/dependency-track(-db)`, kept until 2026-11-11 |
