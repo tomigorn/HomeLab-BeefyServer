@@ -57,7 +57,8 @@ services:
     ports:
       - "${JELLYFIN_PORT}:8096"
     networks:
-      - jellyfin
+      jellyfin:
+        ipv4_address: 172.28.11.4
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8096/health"]
       interval: 60s
@@ -120,7 +121,8 @@ services:
     ports:
       - "${POPULAR_PORT}:8097"
     networks:
-      - jellyfin
+      jellyfin:
+        ipv4_address: 172.28.11.5
     healthcheck:
       test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:8097/hss-popular/health"]
       interval: 60s
