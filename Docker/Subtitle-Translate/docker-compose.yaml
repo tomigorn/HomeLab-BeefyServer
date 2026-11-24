@@ -44,7 +44,8 @@ services:
       retries: 3
       start_period: 180s
     networks:
-      - translate-internal
+      translate-internal:
+        ipv4_address: 172.22.0.2
 
 # #########################################################
 # LINGARR #################################################
@@ -85,8 +86,10 @@ services:
     depends_on:
       - libretranslate
     networks:
-      - translate-internal
-      - translate-edge
+      translate-internal:
+        ipv4_address: 172.22.0.3
+      translate-edge:
+        ipv4_address: 172.21.0.2
 
 # =========================================================
 # Networks ================================================
@@ -94,10 +97,16 @@ services:
 networks:
   # No egress: LibreTranslate and Lingarr talk only to each other.
   translate-internal:
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16
     name: subtitle-translate-internal
     internal: true
   # Only for the loopback port of Lingarr.
   translate-edge:
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
     name: subtitle-translate-edge
 
 # =========================================================
