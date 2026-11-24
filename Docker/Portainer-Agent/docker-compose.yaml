@@ -27,11 +27,19 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    networks:
+      default:
+        ipv4_address: 172.18.0.2
 
 # =========================================================
 # Networks ================================================
 # =========================================================
-# (none — the agent uses the default bridge network)
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+# The agent's own default network, fixed subnet.
 
 # =========================================================
 # Volumes =================================================
