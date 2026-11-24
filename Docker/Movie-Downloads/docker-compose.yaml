@@ -136,7 +136,7 @@ services:
 # #########################################################
 # Indexer manager. Inside the tunnel because it talks to trackers directly.
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:2.7.0
+    image: lscr.io/linuxserver/prowlarr:3.1.0
     container_name: movie-prowlarr
     restart: unless-stopped
     mem_limit: 1g
