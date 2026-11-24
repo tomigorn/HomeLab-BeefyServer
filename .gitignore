@@ -65,3 +65,6 @@ Thumbs.db
 **/.claude/settings.local.json
 CLAUDE.local.md
 AGENTS.md
+
+# Data a failed update-project.sh run leaves next to its source (may hold keys)
+*.failed-update-*
