@@ -65,8 +65,10 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - egress   # freshclam
-      - clamd
+      egress:   # freshclam
+        ipv4_address: 172.28.19.2
+      clamd:
+        ipv4_address: 172.28.18.4
 
 # #########################################################
 # CLAMAV-QUEUE ############################################
@@ -129,7 +131,8 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      clamd: {}
+      clamd:
+        ipv4_address: 172.28.18.2
       movie-downloads:
         # pinned: qBittorrent lets this address in without a password (WebUI AuthSubnetWhitelist), to stop and tag an infected torrent
         ipv4_address: 172.28.10.204
