@@ -68,7 +68,7 @@ v5 came from the v4 database (`v4-migrator`, [docs/v5-cutover.md](docs/v5-cutove
 
 ```bash
 sudo docker compose ps                                                    # 3 healthy
-curl -s http://127.0.0.1:8090/api/version                # 5.2.1
+curl -s http://127.0.0.1:8090/api/version                # 5.2.2
 sudo docker logs dt5-apiserver 2>&1 | grep -E ' ERROR ' | tail
 ~/Projects/Docker/_global/scripts/post-update-check.sh Dependency-Track
 ```
