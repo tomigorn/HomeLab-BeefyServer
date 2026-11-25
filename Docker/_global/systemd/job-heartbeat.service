@@ -1,0 +1,9 @@
+[Unit]
+Description=Per-timer heartbeat (last success, failed units), pulled by fastpi
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I %h/Projects/Docker/_global/scripts/job_heartbeat.py --host beefy --no-meta --out %h/.local/state/job-heartbeat/job_heartbeat.prom --state %h/.local/state/job-heartbeat/state.json
+TimeoutStartSec=90
+Nice=10
+NoNewPrivileges=true

@@ -5,6 +5,26 @@ This git folder is located in ~/Projects
 
 Nightly 04:26 to fastpi's append-only restic server (beefy cannot delete snapshots), monthly restore test on fastpi: `Server/10-Backup.md`.
 
+## Job heartbeat
+
+Every enabled timer of beefy (system and `buntu` user scope) gets a last-success metric, so a job that stops or fails silently pages. beefy has no node-exporter (it sleeps, nothing scrapes it): `buntu`'s user timer `job-heartbeat.timer` (every 5 min, while up) runs `Docker/_global/scripts/job_heartbeat.py` (verbatim copy of fastpi's, single source: HomeLab-FastPi `Docker/grafana/job-heartbeat/`, with its test; change it there, then copy) and writes `~/.local/state/job-heartbeat/job_heartbeat.prom`. fastpi's `beefy-idle-pull` copies it every 5 min while beefy is up (removed while it sleeps). The last success is kept in `~/.local/state/job-heartbeat/state.json` (systemd forgets it at poweroff).
+
+| Metric (`host="beefy"`, `scope`, `unit`) | Meaning |
+|---|---|
+| `systemd_job_last_success_timestamp_seconds`, `systemd_job_last_result` | last successful finish of the timer's service, 1 if the last run failed |
+| `systemd_job_max_age_seconds` | allowed age from the timer's schedule (longest gap + grace) |
+| `systemd_unit_failed` | one series per failed unit |
+
+| Alert (fastpi, Telegram, muted 22:00-07:00) | Fires when |
+|---|---|
+| `SystemdUnitFailed` | a unit is failed for 5 min |
+| `JobHeartbeatStale` | last success older than its allowed age for 10 min, only once beefy has been up longer than that age (night jobs: judged in the 03:58-04:45 window and at 22:05) |
+
+```bash
+systemctl --user list-timers   # install: copy Docker/_global/systemd/job-heartbeat.* to ~/.config/systemd/user, daemon-reload, enable --now job-heartbeat.timer
+python3 Docker/_global/scripts/test_job_heartbeat.py
+```
+
 ## Image auto-update
 
 Nightly, by tier, with a functional check and automatic rollback. `Docker/_global/scripts/{auto_update.py,test_auto_update.py,update-project.sh,test_update_project.sh}` are verbatim copies of fastpi's (single source: HomeLab-FastPi `Docker/_global/scripts/`, doc `Server/4-Security-Monitoring/auto-updates.md` "beefy"): change them there, then copy.
