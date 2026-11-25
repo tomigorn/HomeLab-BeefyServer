@@ -96,10 +96,15 @@ Each is small and independent; a probe answers exactly "is *this* signal busy?"
    (`/proc/diskstats` delta) > `DISK_BUSY_KBPS`. Catches an in-progress download
    writing to disk. Aligns with HDD spindown: a parked disk does no I/O = idle.
 
-**Manual inhibit:** if `INHIBIT_FILE` (default `/run/beefy-keep-awake`) exists,
-the watcher treats beefy as busy unconditionally. `touch` it to pin beefy awake
-for maintenance without holding an SSH session; delete it (or reboot — it's on
-tmpfs) to release.
+**Keep-awake holds** (since v1.11.0): beefy counts as busy while `INHIBIT_FILE` (default `/run/beefy-keep-awake`) or any file in `/run/beefy-keep-awake.d/` exists (an unreadable dir counts as held). tmpfs: a reboot clears all.
+
+| Who | Hold | Release |
+|---|---|---|
+| A job or unit | `beefy-keep-awake on <holder>` → `/run/beefy-keep-awake.d/<holder>` | `beefy-keep-awake off <holder>` (only its own) |
+| Sessions, batches (shared file) | `beefy-keep-awake on` → `/run/beefy-keep-awake` | `beefy-keep-awake off` |
+| mover / ssd-rebalance / apt | own file `mover`, `ssd-rebalance`, `apt` in the dir | at the end |
+
+Helper: `Server/8-Idle-Watcher/beefy-keep-awake` → `/usr/local/sbin/` (install.sh, sudoers rule for buntu); `beefy-keep-awake status` lists the holds. Test: `bash Server/8-Idle-Watcher/test_beefy_keep_awake.sh`.
 
 ## Config (`/etc/beefy-idle.conf`)
 
@@ -137,7 +142,7 @@ busy: disk=5300kbps                                            -> reset (downloa
 WOULD power off (idle 15m, dry-run)                            -> stay up
 ```
 
-Since v1.4.0 each cycle also writes `/run/beefy-idle.prom` (atomic, `METRICS_FILE`): `beefy_idle_busy{reason=conns|ssh|vscode|cpu|net|disk|inhibit|probe_error}` 0/1, `beefy_idle_info{detail}` (reason words and the peer ip only since v1.6.0: "conn from 192.168.1.50", "keep-awake file", "cpu, disk"; bounded label), `beefy_idle_cpu_percent` / `beefy_idle_net_kbytes_per_second` / `beefy_idle_disk_kbytes_per_second` (the measured values), `beefy_idle_cpu_temp_celsius` (coretemp Package id 0) / `beefy_idle_pch_temp_celsius` (pch_cometlake) read from `/sys/class/hwmon` (fastpi dashboard panel Temperatures; gone while beefy sleeps), `beefy_idle_updated_timestamp_seconds` and (since v1.5.0) `beefy_boot_time_seconds` (`btime` from `/proc/stat`). fastpi pulls it every 5 min (`beefy-idle-pull.timer`) for the `BeefyAwakeLong` alert (beefy up 6 h); `inhibit` = the `/run/beefy-keep-awake` file.
+Since v1.4.0 each cycle also writes `/run/beefy-idle.prom` (atomic, `METRICS_FILE`): `beefy_idle_busy{reason=conns|ssh|vscode|cpu|net|disk|inhibit|probe_error}` 0/1, `beefy_idle_info{detail}` (reason words and the peer ip only since v1.6.0: "conn from 192.168.1.50", "keep-awake file", "cpu, disk"; bounded label), `beefy_idle_cpu_percent` / `beefy_idle_net_kbytes_per_second` / `beefy_idle_disk_kbytes_per_second` (the measured values), `beefy_idle_cpu_temp_celsius` (coretemp Package id 0) / `beefy_idle_pch_temp_celsius` (pch_cometlake) read from `/sys/class/hwmon` (fastpi dashboard panel Temperatures; gone while beefy sleeps), `beefy_idle_updated_timestamp_seconds` and (since v1.5.0) `beefy_boot_time_seconds` (`btime` from `/proc/stat`). fastpi pulls it every 5 min (`beefy-idle-pull.timer`) for the `BeefyAwakeLong` alert (beefy up 6 h); `inhibit` = the `/run/beefy-keep-awake` file or a holder file in `/run/beefy-keep-awake.d/`.
 
 Since v1.8.0 each cycle also writes `/run/beefy-activity/resources.json` (`RESOURCES_FILE`, empty = off) for fastpi's activity page, served by the activity gate (`Docker/Activity-Gate`). Numbers only, averaged over the cycle; a figure that cannot be read is left out:
 
@@ -210,7 +215,7 @@ never clobbers tuned values), then `systemctl daemon-reload && enable --now`.
 
 **Controls**
 - **Logs:** `journalctl -u beefy-idle-watcher -f` (live) or `-b | grep start:` (version banners).
-- **Keep awake** (unattended job): `sudo touch /run/beefy-keep-awake`; release: `sudo rm` it (clears on reboot).
+- **Keep awake** (unattended job): `sudo beefy-keep-awake on <holder>`; release: `sudo beefy-keep-awake off <holder>` (clears on reboot).
 - **Disarm:** `DRY_RUN=1` in `/etc/beefy-idle.conf` + `sudo systemctl restart beefy-idle-watcher`.
 - **Tune:** change `IDLE_MINUTES` / thresholds in the same file + restart.
 - **SSH in (auto-wake):** `ssh beefy` (scp/rsync/git too) auto-wakes the box if it's asleep — see the client `~/.ssh/config` block in the Beefy-Waker README (`HomeLab-FastPi` -> `Docker/Beefy-Waker/README.md`, section "SSH wake").
@@ -219,7 +224,7 @@ never clobbers tuned values), then `systemctl daemon-reload && enable --now`.
 `HomeLab-FastPi` -> `Docker/Beefy-Waker/docs/2026-06-26-power-management-review.md`)
 - **Sleeps mid-job** if a detached job is below all thresholds (CPU<15% / net<200kB/s /
   disk<2000kB/s) with no SSH and no inbound conn — including a paused `apt`/`dpkg` (can corrupt
-  the package DB). Mitigation: `touch /run/beefy-keep-awake`; **installed** via an apt `DPkg::Pre-Invoke`/`Post-Invoke` hook
+  the package DB). Mitigation: holder file `/run/beefy-keep-awake.d/apt`; **installed** via an apt `DPkg::Pre-Invoke`/`Post-Invoke` hook
   (`/etc/apt/apt.conf.d/99-beefy-keep-awake`; copy in `8-Idle-Watcher/apt-99-beefy-keep-awake.conf`).
 - **Never sleeps** if a persistent connection to a service port lingers (keepalive monitor,
   left-open browser tab, idle WebSocket).

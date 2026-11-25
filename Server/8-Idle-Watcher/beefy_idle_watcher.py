@@ -853,6 +853,18 @@ def _run(cmd):
         return None
 
 
+def inhibited(path):
+    """The shared keep-awake file, or any holder's file in <path>.d/ (beefy-keep-awake on <holder>). An unreadable dir counts as held."""
+    if os.path.exists(path):
+        return True
+    try:
+        return bool(os.listdir(path + ".d"))
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+
 def _ct_est_timeout():
     try:
         return int(_read("/proc/sys/net/netfilter/nf_conntrack_tcp_timeout_established"))
@@ -872,7 +884,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.10.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.11.0"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -1108,7 +1120,7 @@ def main():
             ps = _run(["ps", "-eo", "args"])
             ssh = count_interactive_ssh(ps)
             vscode = vscode_remote_active(ps)
-            inhibit = os.path.exists(cfg["INHIBIT_FILE"])
+            inhibit = inhibited(cfg["INHIBIT_FILE"])
             probes = {
                 "conns": conns + ct > 0,
                 "ssh": ssh > 0,

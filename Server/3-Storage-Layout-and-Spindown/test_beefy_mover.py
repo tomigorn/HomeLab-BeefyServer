@@ -444,6 +444,14 @@ class KeepAwake(unittest.TestCase):
                 pass
             self.assertTrue(f.exists())
 
+    def test_default_is_its_own_holder_file_and_the_dir_is_made(self):
+        self.assertEqual(bm.Conf.from_env({}).keep_awake, pathlib.Path("/run/beefy-keep-awake.d/mover"))
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "beefy-keep-awake.d" / "mover"
+            with bm.keep_awake(f):
+                self.assertTrue(f.exists())
+            self.assertFalse(f.exists())
+
 
 class EndToEnd(Tree):
     """Real tier-move against scratch branches: a move keeps owner, mode, times and content; a hardlinked copy is never moved."""

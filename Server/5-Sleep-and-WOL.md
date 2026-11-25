@@ -296,7 +296,7 @@ attached to a router (no beefy service routed yet); attach `beefy-wake` as servi
 ### Sleep — beefy, BUILT (dry-run, pending arming)
 **NOT Traefik-driven.** beefy self-monitors via the **`beefy-idle-watcher`** systemd service — see
 **[`8-Idle-Watcher.md`](8-Idle-Watcher.md)** and `Server/8-Idle-Watcher/`. Four probes (inbound
-service conns, interactive SSH **and VS Code Remote**, CPU/net, disk I/O) + a `/run/beefy-keep-awake`
+service conns, interactive SSH **and VS Code Remote**, CPU/net, disk I/O) + the `/run/beefy-keep-awake` (and `.d/<holder>`)
 inhibit; when all idle 15 min → `systemctl poweroff` (WOL stays armed → fastpi's Beefy-Waker wakes
 it). Ships **dry-run** (logs `WOULD power off`); arm by setting `DRY_RUN=0` in `/etc/beefy-idle.conf`
 after observing the journal.

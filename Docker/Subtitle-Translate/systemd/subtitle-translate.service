@@ -10,10 +10,10 @@ User=buntu
 UMask=0002
 Environment=ST_STOP_AT=05:50
 Environment=ST_WAIT_HOURS=48
-# Hold beefy awake only when nobody holds it, release only what this run took (same pattern as the maintenance window).
-ExecStartPre=+/bin/sh -c 'rm -f /run/subtitle-translate-keep-awake; [ -e /run/beefy-keep-awake ] || { /usr/local/sbin/beefy-keep-awake on && touch /run/subtitle-translate-keep-awake; }'
+# Own keep-awake hold while running; other holds stay.
+ExecStartPre=+/usr/local/sbin/beefy-keep-awake on subtitle-translate
 ExecStart=/home/buntu/Projects/Docker/Subtitle-Translate/scripts/subtitle-translate.py
-ExecStopPost=+/bin/sh -c '[ -e /run/subtitle-translate-keep-awake ] && /usr/local/sbin/beefy-keep-awake off; rm -f /run/subtitle-translate-keep-awake'
+ExecStopPost=+/usr/local/sbin/beefy-keep-awake off subtitle-translate
 TimeoutStartSec=90min
 Nice=19
 IOSchedulingClass=idle

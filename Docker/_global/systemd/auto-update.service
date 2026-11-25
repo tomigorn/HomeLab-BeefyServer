@@ -19,10 +19,10 @@ Environment=AUTO_UPDATE_HOST=beefy
 Environment=AUTO_UPDATE_APPLY_BY=04:16
 Environment=AUTO_UPDATE_MAX_APPLY=2
 Environment=AUTO_UPDATE_TEXTFILE=/var/lib/auto-update/textfile
-# Hold the idle watcher off only while running, and release only what this run took (an owner's hold stays).
-ExecStartPre=+/bin/sh -c 'rm -f /run/auto-update-keep-awake; [ -e /run/beefy-keep-awake ] || { /usr/local/sbin/beefy-keep-awake on && touch /run/auto-update-keep-awake; }'
+# Own keep-awake hold while running; other holds stay.
+ExecStartPre=+/usr/local/sbin/beefy-keep-awake on auto-update
 ExecStart=/usr/bin/python3 /home/buntu/Projects/Docker/_global/scripts/auto_update.py
-ExecStopPost=+/bin/sh -c '[ -e /run/auto-update-keep-awake ] && /usr/local/sbin/beefy-keep-awake off; rm -f /run/auto-update-keep-awake'
+ExecStopPost=+/usr/local/sbin/beefy-keep-awake off auto-update
 # Hard stop above MAX_APPLY failed updates with rollback (~22 min each, test_auto_update.py); APPLY_BY stops new work at 04:16.
 TimeoutStartSec=50min
 Nice=10

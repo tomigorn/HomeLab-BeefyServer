@@ -1,5 +1,5 @@
 #!/bin/sh
-# Body of beefy-maintenance-window.service: stays up for the hold time (the unit holds /run/beefy-keep-awake meanwhile), then waits until none of the window jobs runs any more, at most the drain cap. Always exits 0: the unit releases the hold either way.
+# Body of beefy-maintenance-window.service: stays up for the hold time (the unit holds beefy-keep-awake on maintenance-window meanwhile), then waits until none of the window jobs runs any more, at most the drain cap. Always exits 0: the unit releases the hold either way.
 set -u
 HOLD=${BMW_HOLD_SECS:-2820}
 DRAIN_MAX=${BMW_DRAIN_MAX_SECS:-2700}

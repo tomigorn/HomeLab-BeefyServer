@@ -186,5 +186,18 @@ class Branches(unittest.TestCase):
         self.assertFalse(self.journal.exists())
 
 
+class KeepAwake(unittest.TestCase):
+    def test_own_holder_file_with_the_dir_made(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "beefy-keep-awake.d" / "ssd-rebalance"
+            with rb.keep_awake(f):
+                self.assertTrue(f.exists())
+            self.assertFalse(f.exists())
+
+    def test_default_is_its_own_holder_file(self):
+        src = (HERE / "ssd_rebalance.py").read_text()
+        self.assertIn('"--keep-awake", default="/run/beefy-keep-awake.d/ssd-rebalance"', src)
+
+
 if __name__ == "__main__":
     unittest.main()

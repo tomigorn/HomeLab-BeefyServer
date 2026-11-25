@@ -3,6 +3,11 @@
 set -euo pipefail
 D=$(cd "$(dirname "$0")" && pwd)
 install -m 0755 "$D/beefy_idle_watcher.py"      /usr/local/sbin/beefy_idle_watcher.py
+install -m 0755 "$D/beefy-keep-awake"           /usr/local/sbin/beefy-keep-awake
+install -m 0644 "$D/apt-99-beefy-keep-awake.conf" /etc/apt/apt.conf.d/99-beefy-keep-awake
+echo 'buntu ALL=(root) NOPASSWD: /usr/local/sbin/beefy-keep-awake' > /etc/sudoers.d/beefy-keep-awake.new
+chmod 440 /etc/sudoers.d/beefy-keep-awake.new
+visudo -cqf /etc/sudoers.d/beefy-keep-awake.new && mv /etc/sudoers.d/beefy-keep-awake.new /etc/sudoers.d/beefy-keep-awake
 install -m 0644 "$D/beefy-idle-watcher.service" /etc/systemd/system/beefy-idle-watcher.service
 [ -f /etc/beefy-idle.conf ] || install -m 0644 "$D/beefy-idle.conf" /etc/beefy-idle.conf
 install -m 0644 "$D/beefy-shutdown-notify.service" /etc/systemd/system/beefy-shutdown-notify.service

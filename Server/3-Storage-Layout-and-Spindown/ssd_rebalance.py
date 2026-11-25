@@ -327,6 +327,7 @@ def keep_awake(path):
     mine = False
     with contextlib.suppress(OSError):
         if not path.exists():
+            path.parent.mkdir(exist_ok=True)
             path.touch()
             mine = True
     try:
@@ -361,7 +362,7 @@ def main(argv=None):
     ap.add_argument("--rate-mb-s", type=float, default=100, help="assumed copy rate, for the night-window start check")
     ap.add_argument("--log", default="/var/log/ssd-rebalance.log")
     ap.add_argument("--journal", default="/var/lib/ssd-rebalance/journal.json")
-    ap.add_argument("--keep-awake", default="/run/beefy-keep-awake")
+    ap.add_argument("--keep-awake", default="/run/beefy-keep-awake.d/ssd-rebalance")
     ap.add_argument("--jf-url", default="http://127.0.0.1:8096")
     ap.add_argument("--jf-key", default="/home/buntu/Projects/Docker/Jellyfin/secrets/api-key")
     a = ap.parse_args(argv)

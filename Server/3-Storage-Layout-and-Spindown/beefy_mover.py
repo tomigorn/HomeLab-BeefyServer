@@ -74,7 +74,7 @@ class Conf:
                           "ssd2": g("SMART_SSD2", "/dev/disk/by-id/ata-Samsung_SSD_870_QVO_8TB_S5SSNF0W909892P")}, deadline=g("DEADLINE", "04:40"), rate=float(g("RATE_MIB_S", "200")) * MIB,
                    hdd_reserve=float(g("HDD_RESERVE_PCT", "10")) / 100, dry_run=g("DRY_RUN", "0") == "1",
                    pins=pathlib.Path(g("PINS", "/etc/beefy-mover-pins")), tier_move=g("TIER_MOVE", "/usr/local/sbin/tier-move"),
-                   keep_awake=pathlib.Path(g("KEEP_AWAKE_FILE", "/run/beefy-keep-awake")),
+                   keep_awake=pathlib.Path(g("KEEP_AWAKE_FILE", "/run/beefy-keep-awake.d/mover")),
                    prom=pathlib.Path(g("PROM", "/var/lib/beefy-mover/mover.prom")), jf_url=g("JF_URL", "http://127.0.0.1:8096"),
                    jf_key_file=g("JF_KEY_FILE", "/home/buntu/Projects/Docker/Jellyfin/secrets/api-key"), jf_prefix=g("JF_PREFIX", "/media/"),
                    lock_wait=int(g("TIER_LOCK_WAIT", "60")))
@@ -341,6 +341,7 @@ def keep_awake(path):
     mine = False
     try:
         if not path.exists():
+            path.parent.mkdir(exist_ok=True)
             path.touch()
             mine = True
     except OSError:

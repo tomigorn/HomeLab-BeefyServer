@@ -7,7 +7,7 @@ When a film or episode has a human subtitle in some language but none in German 
 | `subtitle-libretranslate` | LibreTranslate v1.10.0 as local image `libretranslate-local:v1.10.0` (see "Local image"), offline Argos models; internal network only (no egress, no port) |
 | `subtitle-lingarr` | Lingarr 1.4.1, translation queue in front of LibreTranslate (`/api/translate/content`); port `127.0.0.1:9876` only, login + API key on, no Traefik route, no library mount |
 | `scripts/subtitle-translate.py` | picks the titles and the source, extracts embedded tracks, calls Lingarr, writes the file, removes replaced ones, refreshes the Jellyfin item |
-| `systemd/subtitle-translate.{service,timer}` | daily 04:46 (after the maintenance window), no new title after 05:50, one title at a time, holds `beefy-keep-awake` while running |
+| `systemd/subtitle-translate.{service,timer}` | daily 04:46 (after the maintenance window), no new title after 05:50, one title at a time, holds `beefy-keep-awake on subtitle-translate` while running |
 
 ## Rule (owner, 2026-10-31)
 

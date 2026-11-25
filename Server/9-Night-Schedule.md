@@ -5,7 +5,7 @@ beefy sleeps (S5) and its timers cannot wake it. Everything recurring runs in on
 | Part | What |
 |---|---|
 | Wake | fastpi `beefy-maintenance-wake` 03:55 (`Docker/Beefy-Waker`) |
-| Hold | `beefy-maintenance-window.timer` 03:58 → `.service` takes `/run/beefy-keep-awake` (only when nobody holds it, releases only its own), sleeps 47 min (to 04:45), then waits until none of the window jobs runs (cap 45 min) and releases. Cost about 0.50 CHF/year |
+| Hold | `beefy-maintenance-window.timer` 03:58 → `.service` holds `beefy-keep-awake on maintenance-window` (its own file, other holds stay), sleeps 47 min (to 04:45), then waits until none of the window jobs runs (cap 45 min) and releases. Cost about 0.50 CHF/year |
 | Install | `Server/9-Night-Schedule/install.sh` (idempotent; drop-ins `dropins/<unit>.d/night-window.conf`, user ones in `user-dropins/`). A timer restart may run its job once at install time |
 | Test | `Server/9-Night-Schedule/test-beefy-maintenance-window` |
 | Rule for new timers | fixed `OnCalendar=… Europe/Zurich` in the window, `Persistent=false`, no `OnBootSec` (a daytime boot must not run it) |

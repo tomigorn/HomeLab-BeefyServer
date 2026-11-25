@@ -1,0 +1,47 @@
+#!/bin/sh
+# Hold beefy awake against the idle watcher. Installed as /usr/local/sbin/beefy-keep-awake (install.sh), granted to buntu by one sudoers rule.
+#   beefy-keep-awake on <holder>    # own hold: /run/beefy-keep-awake.d/<holder>
+#   beefy-keep-awake off <holder>   # releases only that hold
+#   beefy-keep-awake on | off       # the shared file /run/beefy-keep-awake (sessions, batches)
+#   beefy-keep-awake status
+set -eu
+
+RUN=/run
+[ "$(id -u)" -ne 0 ] && [ -n "${BEEFY_KEEP_AWAKE_RUN:-}" ] && RUN=$BEEFY_KEEP_AWAKE_RUN
+FILE=$RUN/beefy-keep-awake
+DIR=$RUN/beefy-keep-awake.d
+
+target() {
+    [ $# -eq 0 ] && { echo "$FILE"; return; }
+    case "$1" in
+        ''|.*|*[!a-z0-9._-]*) echo "bad holder name: '$1' (a-z 0-9 . _ -)" >&2; exit 2 ;;
+    esac
+    mkdir -p "$DIR"
+    echo "$DIR/$1"
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+[ $# -le 1 ] || { echo "usage: $(basename "$0") on|off [holder] | status" >&2; exit 2; }
+case "$cmd" in
+    on)
+        f=$(target "$@")
+        : > "$f"
+        chmod 644 "$f"
+        echo "held: $f"
+        ;;
+    off)
+        f=$(target "$@")
+        rm -f "$f"
+        echo "released: $f"
+        ;;
+    status)
+        holders=$(ls -A "$DIR" 2>/dev/null | tr '\n' ' ')
+        [ -e "$FILE" ] && holders="${holders}(shared file)"
+        if [ -n "$holders" ]; then echo "held by: $holders"; else echo "released"; fi
+        ;;
+    *)
+        echo "usage: $(basename "$0") on|off [holder] | status" >&2
+        exit 2
+        ;;
+esac

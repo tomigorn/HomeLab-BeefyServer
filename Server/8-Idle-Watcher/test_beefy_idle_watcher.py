@@ -791,5 +791,34 @@ class TestResources(unittest.TestCase):
         self.assertIsNone(biw.cgroup_dir("12:cpu:/x\n"))
 
 
+class TestInhibit(unittest.TestCase):
+    def test_legacy_file_holds(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            f = os.path.join(t, "beefy-keep-awake")
+            self.assertFalse(biw.inhibited(f))
+            open(f, "w").close()
+            self.assertTrue(biw.inhibited(f))
+
+    def test_any_holder_file_in_the_d_dir_holds(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as t:
+            f = os.path.join(t, "beefy-keep-awake")
+            os.mkdir(f + ".d")
+            self.assertFalse(biw.inhibited(f))
+            open(os.path.join(f + ".d", "upscale"), "w").close()
+            self.assertTrue(biw.inhibited(f))
+
+    def test_unreadable_holder_dir_counts_as_held(self):
+        orig = biw.os.listdir
+        try:
+            def boom(p):
+                raise PermissionError(p)
+            biw.os.listdir = boom
+            self.assertTrue(biw.inhibited("/nonexistent/beefy-keep-awake"))
+        finally:
+            biw.os.listdir = orig
+
+
 if __name__ == "__main__":
     unittest.main()

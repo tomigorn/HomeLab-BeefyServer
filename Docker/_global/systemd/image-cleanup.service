@@ -14,11 +14,11 @@ Environment=HOME=/home/buntu
 Environment=IMAGE_CLEANUP_STATE=/var/lib/image-cleanup
 Environment="IMAGE_CLEANUP_KEEP=aquasec/trivy ghcr.io/gitleaks/gitleaks"
 Environment=IMAGE_CLEANUP_TEXTFILE=/var/lib/auto-update/textfile
-# Hold the idle watcher off only while running, and release only what this run took (as auto-update.service).
-ExecStartPre=+/bin/sh -c 'rm -f /run/image-cleanup-keep-awake; [ -e /run/beefy-keep-awake ] || { /usr/local/sbin/beefy-keep-awake on && touch /run/image-cleanup-keep-awake; }'
+# Own keep-awake hold while running; other holds stay.
+ExecStartPre=+/usr/local/sbin/beefy-keep-awake on image-cleanup
 ExecStart=/home/buntu/Projects/Docker/_global/scripts/image-cleanup.sh
 TimeoutStartSec=300
-ExecStopPost=+/bin/sh -c '[ -e /run/image-cleanup-keep-awake ] && /usr/local/sbin/beefy-keep-awake off; rm -f /run/image-cleanup-keep-awake'
+ExecStopPost=+/usr/local/sbin/beefy-keep-awake off image-cleanup
 Nice=10
 IOSchedulingClass=idle
 NoNewPrivileges=true
