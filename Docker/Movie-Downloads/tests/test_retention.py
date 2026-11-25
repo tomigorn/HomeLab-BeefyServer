@@ -664,6 +664,19 @@ class Delete(unittest.TestCase):
             self.assertFalse(src.exists())
             self.assertEqual([f.name for f in dest.parent.iterdir()], [dest.name])
 
+    def test_a_failed_title_is_reported_as_failed_not_deleted(self):
+        n = night()
+        self.run_it(arr=Fake(fail=("PUT", "/movie/1")), n=n)
+        self.assertEqual(n.failed, ["movie/1001"])
+        rec = rt.night_record({"firstOn": "2026-12-01"}, NIGHT.date(), 10, 1, 0, n.failed)
+        self.assertEqual((rec["deleted"], rec["failed"], rec["firstOn"]), (0, ["movie/1001"], "2026-12-01"))
+
+    def test_a_clean_run_has_no_failures(self):
+        n = night()
+        self.run_it(n=n)
+        self.assertEqual(n.failed, [])
+        self.assertEqual(rt.night_record({}, NIGHT.date(), 10, 2, 1, [])["deleted"], 2)
+
     def test_phone_versions_stay_when_the_arr_delete_fails(self):
         with tempfile.TemporaryDirectory() as d:
             pool = self.library_pool(d)

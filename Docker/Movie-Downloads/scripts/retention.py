@@ -115,6 +115,7 @@ class Night:
     clock_ok: bool
     first_on: datetime.date | None
     watching: set = dataclasses.field(default_factory=set)
+    failed: list = dataclasses.field(default_factory=list)
 
 
 class NotMounted(Exception):
@@ -717,8 +718,14 @@ def delete_due(titles, entries, overrides, now, switch, arr, log, night, cap=DEL
             log(f"retention: {t.key} ({t.title}) files deleted to the 7-day recycle bin ({st['why']} {st['deleteOn']}); title kept")
         except Exception as ex:
             log(f"retention: {t.key} ({t.title}) failed at '{step}': {type(ex).__name__}: {ex} - run stopped")
+            night.failed.append(t.key)
             break
     return done, space
+
+
+def night_record(last, today, hdd_used, done, space, failed):
+    """retention-night.json after a delete run: done counts attempts (the cap), deleted only the titles that went through."""
+    return {**last, "date": today.isoformat(), "hddUsed": hdd_used, "deleted": done - len(failed), "spaceDeleted": space, "failed": list(failed)}
 
 
 def arr_key(config_xml):
@@ -878,6 +885,7 @@ def main(argv=None):
     if last != before:
         write_atomic(night_file, last)
     first_on = datetime.date.fromisoformat(last["firstOn"]) if last.get("firstOn") else None
+    night = None
     if a.apply:
         try:
             busy = queue_keys(apis, lib.titles)
@@ -894,9 +902,12 @@ def main(argv=None):
                 done, space = delete_due(lib.titles, entries, overrides, now, switch, lambda app: arr[app], say, night, gone_file=state / "retention-gone.json",
                                          clock=lambda: datetime.datetime.now(TZ), pool=env.get("RT_POOL", POOL))
         if done:
-            write_atomic(night_file, {**last, "date": now.date().isoformat(), "hddUsed": hdd[1], "deleted": done, "spaceDeleted": space})
+            write_atomic(night_file, night_record(last, now.date(), hdd[1], done, space, night.failed))
     if switch.on:
         write_atomic(state / "retention-lists.json", jellyfin_lists(entries, overrides, read_gone(state / "retention-gone.json"), now.date(), switch.since))
+    if night is not None and night.failed:
+        say(f"retention: FAILED {', '.join(night.failed)} - exit 1")
+        return 1
     return 0
 
 
