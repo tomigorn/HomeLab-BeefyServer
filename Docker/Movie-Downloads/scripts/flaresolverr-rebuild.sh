@@ -33,8 +33,8 @@ apply() { (cd "$MD" && $DOCKER compose up -d --no-deps flaresolverr >/dev/null 2
 
 verify() {
   if [ -n "${FS_VERIFY:-}" ]; then eval "$FS_VERIFY"; return; fi
-  local i s k port proxy id
-  for i in $(seq 1 36); do
+  local s k port proxy id
+  for _ in $(seq 1 36); do
     s=$($DOCKER inspect -f '{{.State.Health.Status}}' movie-flaresolverr 2>/dev/null || true)
     [ "$s" = healthy ] && break
     sleep 5

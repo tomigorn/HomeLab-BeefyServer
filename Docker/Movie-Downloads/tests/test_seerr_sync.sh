@@ -122,7 +122,7 @@ el=$(( $(date -d "$(grep -m1 ' start: ' "$T/log" | cut -c1-19)" +%s) - start ))
 assert_eq "both imports, one Seerr scan" "SEERR-SCAN" "$(calls)"
 
 reset; echo '["/media/movies/A/A.mkv"]' > "$T/jf.json"; echo /data/media/movies/A/A.mkv > "$T/radarr/seerr-sync.queue"
-( for i in 1 2 3 4 5 6 7 8; do sleep 1; echo /data/media/movies/A/A.mkv >> "$T/radarr/seerr-sync.queue"; done ) & FEED=$!
+( for _ in 1 2 3 4 5 6 7 8; do sleep 1; echo /data/media/movies/A/A.mkv >> "$T/radarr/seerr-sync.queue"; done ) & FEED=$!
 start=$(date +%s); run SS_QUIET=3 >/dev/null
 el=$(( $(date -d "$(grep -m1 ' start: ' "$T/log" | cut -c1-19)" +%s) - start ))
 [ "$el" -le 6 ] && ok "a steady stream still runs at the cap (${el}s)" || bad "cap" "${el}s"

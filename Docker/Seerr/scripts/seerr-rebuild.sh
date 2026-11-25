@@ -151,8 +151,8 @@ fi
 
 verify() {
   if [ -n "${SR_VERIFY:-}" ]; then eval "$SR_VERIFY"; return; fi
-  local i s v want=$1
-  for i in $(seq 1 60); do
+  local s v want=$1
+  for _ in $(seq 1 60); do
     s=$($DOCKER inspect -f '{{.State.Health.Status}}' seerr 2>/dev/null || true)
     [ "$s" = healthy ] && break
     sleep 5

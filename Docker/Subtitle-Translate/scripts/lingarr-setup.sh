@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 set -a; . ./.env; set +a
 L=http://127.0.0.1:$LINGARR_PORT
 umask 077; mkdir -p secrets
-for i in $(seq 60); do curl -sf -o /dev/null "$L/" && break; sleep 2; done
+for _ in $(seq 60); do curl -sf -o /dev/null "$L/" && break; sleep 2; done
 if [[ $(curl -s -o /dev/null -w '%{http_code}' -H "X-Api-Key: $(cat secrets/lingarr.apikey 2>/dev/null)" "$L/api/translate/languages") == 200 ]]; then
   echo "lingarr: already set up, API key works"; exit 0
 fi
@@ -25,7 +25,7 @@ curl -sf -b "$jar" -X POST "$L/api/auth/apikey/generate" | jq -er '.apiKey' > se
 mv secrets/lingarr.apikey.new secrets/lingarr.apikey
 # AUTH_ENABLED=true in compose turns the login back on at start.
 sudo docker compose restart lingarr >/dev/null
-for i in $(seq 60); do curl -sf -o /dev/null "$L/" && break; sleep 2; done
+for _ in $(seq 60); do curl -sf -o /dev/null "$L/" && break; sleep 2; done
 anon=$(curl -s -o /dev/null -w '%{http_code}' "$L/api/translate/languages")
 keyed=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Api-Key: $(cat secrets/lingarr.apikey)" "$L/api/translate/languages")
 echo "lingarr: anonymous $anon (want 401), API key $keyed (want 200)"
