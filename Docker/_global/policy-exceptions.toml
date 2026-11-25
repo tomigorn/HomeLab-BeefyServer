@@ -1,0 +1,91 @@
+# Exceptions to the container policy (scripts/policy_check.py), reviewed like code.
+# One [[exception]] per project/service/rule; reason is required. Remove the entry with the fix: a stale entry fails the check.
+# Rules: ipv4_address user user_unique cap_drop no_new_privileges healthcheck image_pinned env_secret
+
+# --- Root by design (docs/container-hardening.md, Root by design)
+[[exception]]
+project = "Jellyfin"
+service = "jellyfin"
+rule = "user"
+reason = "root by design: image has no non-root mode (s6 always switches user), app runs as 65108"
+
+[[exception]]
+project = "Jellyfin-Beta"
+service = "jellyfin-beta"
+rule = "user"
+reason = "root by design: same image as Jellyfin, no non-root mode"
+
+[[exception]]
+project = "Movie-Downloads"
+service = "gluetun"
+rule = "user"
+reason = "root by design: creates tun0 and iptables rules"
+
+[[exception]]
+project = "Floppy"
+service = "floppy"
+rule = "user"
+reason = "root by design: entrypoint runs usermod/chown, supervisord switches to abc (65125)"
+
+[[exception]]
+project = "Portainer-Agent"
+service = "agent"
+rule = "user"
+reason = "root by design: needs the full Docker API, the socket is root anyway"
+
+[[exception]]
+project = "Antivirus"
+service = "clamav-hostscan"
+rule = "user"
+reason = "root by design: weekly host scan needs DAC_READ_SEARCH; network none, read-only root fs"
+
+[[exception]]
+project = "Antivirus"
+service = "clamav-hostscan"
+rule = "healthcheck"
+reason = "one-shot weekly scan (network none), exits when done: a healthcheck does not apply"
+
+# --- No shell in the image: a healthcheck needs a probe binary
+[[exception]]
+project = "Cup-Agent"
+service = "cup-agent"
+rule = "healthcheck"
+reason = "image has no shell: needs a probe binary; backlog: Fix the bug-hunt findings"
+
+[[exception]]
+project = "Portainer-Agent"
+service = "agent"
+rule = "healthcheck"
+reason = "image has no shell: needs a probe binary; backlog: Fix the bug-hunt findings"
+
+# --- Secret only as env so far
+[[exception]]
+project = "Portainer-Agent"
+service = "agent"
+rule = "env_secret"
+reason = "AGENT_SECRET from the gitignored .env; file variant not yet checked or migrated, backlog: Fix the bug-hunt findings"
+
+[[exception]]
+project = "Dependency-Track:v5"
+service = "dt5-apiserver"
+rule = "env_secret"
+reason = "database credential: moving it to a file restarts the apiserver against dt5-db; not yet migrated, backlog: Fix the bug-hunt findings"
+
+# --- Stopped v4 rollback copy (docker-compose.yaml); v5 runs from docker-compose.v5.yaml
+[[exception]]
+project = "Dependency-Track"
+service = "dt-db"
+rule = "ipv4_address"
+reason = "stopped v4 rollback copy: goes with the file when the v5 rollback window ends"
+
+[[exception]]
+project = "Dependency-Track"
+service = "dt-apiserver"
+rule = "ipv4_address"
+reason = "stopped v4 rollback copy: goes with the file when the v5 rollback window ends"
+
+[[exception]]
+project = "Dependency-Track"
+service = "dt-frontend"
+rule = "ipv4_address"
+reason = "stopped v4 rollback copy: goes with the file when the v5 rollback window ends"

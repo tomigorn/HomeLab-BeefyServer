@@ -12,6 +12,8 @@ State 2026-10-23, verified from `/proc/<pid>/status` of every process. Same rule
 | `/srv/video` (mergerfs) | group `media` (1100) as the **primary** gid: FUSE ignores supplementary groups; `UMASK=002` for hardlinks |
 | `/srv/appdata/<app>` | owned by the app's uid, group `buntu` (setgid) so host scripts read the API keys, `o-rwx` |
 
+Check: `scripts/policy_check.py` (all rules as a check, exceptions in `policy-exceptions.toml`; `policy-check.md`).
+
 ## uid map
 | uid:gid | Container | Extra groups | Caps |
 |---|---|---|---|
