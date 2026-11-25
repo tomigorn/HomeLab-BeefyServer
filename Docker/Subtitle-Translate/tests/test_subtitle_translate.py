@@ -180,6 +180,22 @@ class Srt(unittest.TestCase):
                          [("00:00:01,230 --> 00:00:03,400", "Hello,\nworld"), ("00:01:00,000 --> 00:01:02,050", "Bye")])
 
 
+class Encoding(unittest.TestCase):
+    def test_neither_utf8_nor_cp1252_still_reads(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "x.srt"
+            f.write_bytes(b"1\r\n00:00:01,000 --> 00:00:02,000\r\nHall\x81o \x8dWelt\r\n\r\n")
+            cues = st.read_cues(str(f))
+            self.assertEqual(len(cues), 1)
+            self.assertIn("Hall", cues[0]["text"])
+
+    def test_cp1252_umlauts_still_decode_as_cp1252(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = pathlib.Path(d) / "x.srt"
+            f.write_bytes("1\n00:00:01,000 --> 00:00:02,000\nGr\u00fc\u00dfe \u201eja\u201c\n\n".encode("cp1252"))
+            self.assertEqual(st.read_cues(str(f))[0]["text"], "Gr\u00fc\u00dfe \u201eja\u201c")
+
+
 class Due(unittest.TestCase):
     def test_wait(self):
         now = dt.datetime(2026, 10, 31, 4, 46, tzinfo=dt.timezone.utc)

@@ -156,7 +156,7 @@ def parse_ass(text):
 
 def read_cues(path):
     raw = pathlib.Path(path).read_bytes()
-    for enc in ("utf-8-sig", "cp1252"):
+    for enc in ("utf-8-sig", "cp1252", "latin-1"):
         try:
             text = raw.decode(enc)
             break
