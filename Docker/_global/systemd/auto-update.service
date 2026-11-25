@@ -23,8 +23,8 @@ Environment=AUTO_UPDATE_TEXTFILE=/var/lib/auto-update/textfile
 ExecStartPre=+/bin/sh -c 'rm -f /run/auto-update-keep-awake; [ -e /run/beefy-keep-awake ] || { /usr/local/sbin/beefy-keep-awake on && touch /run/auto-update-keep-awake; }'
 ExecStart=/usr/bin/python3 /home/buntu/Projects/Docker/_global/scripts/auto_update.py
 ExecStopPost=+/bin/sh -c '[ -e /run/auto-update-keep-awake ] && /usr/local/sbin/beefy-keep-awake off; rm -f /run/auto-update-keep-awake'
-# Hard stop at about 04:22 (start 04:12); the soft limit above normally ends it by 04:19.
-TimeoutStartSec=600
+# Hard stop above MAX_APPLY failed updates with rollback (~22 min each, test_auto_update.py); APPLY_BY stops new work at 04:16.
+TimeoutStartSec=50min
 Nice=10
 IOSchedulingClass=idle
 # Writes backups under ~/backups and drives docker, which is root-equivalent anyway: no ProtectHome.

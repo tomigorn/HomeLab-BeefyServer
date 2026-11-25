@@ -687,6 +687,7 @@ def main(argv: list[str]) -> int:
                     r["command"] = update_command(row)
                     state[key]["bad"] = True
                 log(f"  {r['ref']}: {r['result']}")
+        save(state_path, state, results)
     try:
         applied = fix_stale(rows, state, results, applied, dry, drifted)
     except Exception as e:  # noqa: BLE001
@@ -694,16 +695,20 @@ def main(argv: list[str]) -> int:
     if dry:
         return 0
     write_stale_prom()
+    save(state_path, state, results)
+    return 2 if any(r["result"] == "rollback_failed" for r in results) else 0
+
+
+def save(state_path: Path, state: dict, results: list[dict]) -> None:
+    """state.json and auto_update.prom, after every apply too: a run stopped later still holds back the bad digest and reports it."""
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, indent=1, sort_keys=True))
     os.replace(tmp, state_path)
     TEXTFILE.mkdir(parents=True, exist_ok=True)
-    prom = TEXTFILE / "auto_update.prom"
     tmp = TEXTFILE / ".auto_update.prom.tmp"
     tmp.write_text(render_prom(results, time.time()))
     os.chmod(tmp, 0o644)
-    os.replace(tmp, prom)
-    return 2 if any(r["result"] == "rollback_failed" for r in results) else 0
+    os.replace(tmp, TEXTFILE / "auto_update.prom")
 
 
 if __name__ == "__main__":

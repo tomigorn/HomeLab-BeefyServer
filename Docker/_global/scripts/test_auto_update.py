@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import json  # noqa: E402
+import re  # noqa: E402
 import time  # noqa: E402
 
 from auto_update import (  # noqa: E402
@@ -489,6 +491,67 @@ def test_apply_pull_skips_locally_built_services():
         auto_update.sh = real
     pull = next(c for c in calls if c[:3] == ["docker", "compose", "pull"])
     assert "--ignore-buildable" in pull
+
+
+class _Killed(BaseException):
+    pass
+
+
+def test_state_and_prom_are_written_after_each_apply_not_only_at_the_end():
+    import tempfile
+    with tempfile.TemporaryDirectory() as t:
+        tmp = Path(t)
+        conf = tmp / "auto-update.conf"
+        conf.write_text("auto  A  -  -  true\nauto  B  -  -  true\n")
+
+        def compose_config(row):
+            if row["project"] == "B":
+                raise _Killed()
+            return {}
+
+        fakes = {
+            "CONF": conf, "STATE": tmp / "state", "TEXTFILE": tmp / "tf",
+            "compose_config": compose_config,
+            "drop_namespace_providers": lambda row, config: row,
+            "project_images": lambda row, config: ({"img:1": "sha-old"}, []),
+            "repo_digests": lambda img: ["img@sha256:old"],
+            "remote_digest": lambda ref, running: "sha256:new",
+            "decide": lambda *a: ("apply", {"digest": "sha256:new"}),
+            "resources_ok": lambda: "",
+            "apply": lambda row, refs, images: ({"img:1": "rolled_back"}, "check failed"),
+            "write_stale_prom": lambda: None,
+        }
+        saved = {k: getattr(auto_update, k) for k in fakes}
+        for k, v in fakes.items():
+            setattr(auto_update, k, v)
+        try:
+            auto_update.main([])
+        except _Killed:
+            pass
+        else:
+            raise AssertionError("the fake kill did not happen")
+        finally:
+            for k, v in saved.items():
+                setattr(auto_update, k, v)
+        state = json.loads((tmp / "state" / "state.json").read_text())
+        assert state["A|img:1"].get("bad") is True, state
+        assert 'result="rolled_back"' in (tmp / "tf" / "auto_update.prom").read_text()
+
+
+def _unit_seconds(value: str) -> int:
+    total = 0
+    for num, unit in re.findall(r"(\d+)\s*(min|s|h)?", value):
+        total += int(num) * {"h": 3600, "min": 60, "s": 1, "": 1}[unit]
+    return total
+
+
+def test_unit_hard_stop_outlasts_the_failed_updates_of_one_night():
+    unit = (SCRIPTS.parent / "systemd" / "auto-update.service").read_text()
+    timeout = _unit_seconds(re.search(r"^TimeoutStartSec=(.+)$", unit, re.M).group(1))
+    max_apply = int(re.search(r"^Environment=AUTO_UPDATE_MAX_APPLY=(\d+)$", unit, re.M).group(1))
+    # update-project.sh: WAIT 45 s, 6 checks (curl -m 60 + 10 s), 6 custom checks (10 s apart), the rollback repeats both after ROLLBACK_WAIT 20 s; plus pull and recreates.
+    failed_update = 45 + 6 * 70 + 6 * 10 + 20 + 6 * 70 + 6 * 10 + 300
+    assert timeout >= max_apply * failed_update, (timeout, max_apply * failed_update)
 
 
 if __name__ == "__main__":
