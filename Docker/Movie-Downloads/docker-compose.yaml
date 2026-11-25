@@ -424,6 +424,13 @@ services:
     networks:
       movie-downloads:
         ipv4_address: 172.28.10.5
+    # supercronic is the container's only job: unhealthy when the scheduler is gone (a sync itself is judged by its log).
+    healthcheck:
+      test: ["CMD", "pgrep", "supercronic"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 # #########################################################
 # VPN STATUS ##############################################
@@ -531,6 +538,13 @@ services:
       movie-heal:
         ipv4_address: 172.28.13.3
     mem_limit: 64m
+    # The one request the allow-list lets through: autoheal's own unhealthy list (200 = proxy and socket work, any other path is 403).
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:2375/containers/json?filters=%7B%22health%22%3A%5B%22unhealthy%22%5D%2C%22label%22%3A%5B%22autoheal-movie%3Dtrue%22%5D%7D"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 # =========================================================
 # Networks ================================================
