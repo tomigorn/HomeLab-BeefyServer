@@ -18,6 +18,8 @@ Add `ip_range` to the network's `ipam.config` entry. No pinned address changes.
 | `cup-agent` (Cup-Agent) | 172.28.12.0/24 | .2 | `172.28.12.128/25` |
 | `dependency-track-v5` (Dependency-Track) | 172.28.14.0/24 | .2–.4 | `172.28.14.128/25` |
 | `floppy` / `floppy-redis` (Floppy) | 172.28.16.0/24, 172.28.17.0/24 | .2–.3 | `.128/25` of each |
+| `cup_socket` (Cup-Agent) | 172.19.0.0/16 | .0.2–.0.4 | `172.19.128.0/17` |
+| `default` (Portainer-Agent, live `docker_default`) | 172.18.0.0/16 | .0.2 | `172.18.128.0/17` |
 | `egress` (Antivirus) | 172.28.19.0/24 | .2 | `172.28.19.128/25` |
 | `seerr-front` (Seerr) | 172.20.0.0/16 | .0.2–.0.4 | `172.20.128.0/17` |
 | `translate-edge` / `translate-internal` (Subtitle-Translate) | 172.21.0.0/16, 172.22.0.0/16 | .0.2–.0.3 | `172.21.128.0/17`, `172.22.128.0/17` |
