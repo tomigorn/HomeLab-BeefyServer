@@ -16,7 +16,7 @@ beefy sleeps (S5) and its timers cannot wake it. Everything recurring runs in on
 |---|---|
 | 03:58 | window opens |
 | 04:00 | beefy-mover (+≤5 min; only when the SSDs are ≥ 70 %, starts no title after 04:40), Seerr radarr-scan |
-| 04:01-04:06 | apt-daily, logrotate, dpkg-db-backup, Seerr download-sync-reset 04:03, fwupd-refresh 04:04, clamav-scan 04:05, Seerr sonarr-scan 04:05, Wed beefy-restore-test 04:02 (database restore test, `10-Backup.md`; the window waits for it), sysstat-rotate/summary |
+| 04:01-04:06 | apt-daily, logrotate, dpkg-db-backup, Seerr download-sync-reset 04:03, clamav-scan 04:05, Seerr sonarr-scan 04:05, Wed beefy-restore-test 04:02 (database restore test, `10-Backup.md`; the window waits for it), sysstat-rotate/summary |
 | 04:07-04:13 | clamav-hostscan 04:07 (resumable, scans until 04:40), Jellyfin IMDb 04:08, Jellyfin scan 04:10, auto-update 04:12, Jellyfin Intro Skipper analysis 04:13 |
 | 04:14-04:20 | description-scout 04:14, Recyclarr 04:15, nfo-scout 04:16, night-search 04:17 (new episodes/films + cutoff-unmet, Treasure Maps ≤ 200), language-missing 04:18, repo-drift 04:19 (repo vs live compare, seconds, `Docker/_global/install-repo-drift.sh`), original-audio sweep 04:20 (+ Sun image-cleanup) |
 | 04:21-04:29 | subtitle-check 04:21 (subtitles changed since the last run, SSD only; findings to the queue-watchdog digest), Seerr jellyfin-full-scan 04:22, Jellyfin trickplay 04:24, backup to fastpi 04:26 (`10-Backup.md`), Wed floppy-abs-key-rotate 04:27, Thu flaresolverr-rebuild 04:27, Tue seerr-rebuild 04:27, Mon Antivirus + Sat Jellyfin rebuild-local 04:27 (window waits for all three), Sun fstrim 04:26, Sun xfs/e2 scrub 04:28/04:29 |

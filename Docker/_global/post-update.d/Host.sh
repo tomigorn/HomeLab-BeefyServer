@@ -48,6 +48,8 @@ check host.os-updates '^installed false$' "$(cmp -s "$DIR/../../../Server/11-OS-
 check host.sysctl-hardening '^installed ok$' "$(f="$DIR/../../../Server/12-Host-Hardening/90-hardening.conf"; cmp -s "$f" /etc/sysctl.d/90-hardening.conf && printf 'installed ' || printf 'differs '; grep -E '^[a-z]' "$f" | while IFS=' =' read -r k v; do [ "$(sysctl -n "$k" 2>&1)" = "$v" ] || echo "$k"; done | xargs | sed 's/^$/ok/')"
 # apport resets fs.suid_dumpable to 2 at every start (2026-11-24 patch run); masked + enabled=0 keeps the hardening value
 check host.apport '^masked inactive enabled=0$' "$(systemctl is-enabled apport.service 2>&1) $(systemctl is-active apport.service 2>&1) $(grep -E "^enabled=" /etc/default/apport 2>&1)"
+# fwupd-refresh started fwupd + udisks2 at 04:04 every night and their disk probe spun up the parked HDD; firmware updates by hand
+check host.fwupd-refresh '^masked inactive$' "$(systemctl is-enabled fwupd-refresh.timer 2>&1) $(systemctl is-active fwupd-refresh.timer 2>&1)"
 check host.headless '^multi-user.target disabled disabled$' "$(systemctl get-default) $(systemctl is-enabled gdm.service 2>&1) $(test -e /etc/cloud/cloud-init.disabled && echo disabled || echo enabled)"
 # Streams before background I/O (Movie-Downloads README "Disk priority"): the idle class of the mover and the nightly scan only counts with an ioprio-aware scheduler on the data disks
 check host.io-sched '^ok$' "$(for d in /srv/.disks/*; do k=$(lsblk -no PKNAME "$(findmnt -no SOURCE "$d")" 2>/dev/null); grep -qE "\[(mq-deadline|bfq)\]" /sys/block/$k/queue/scheduler 2>/dev/null || echo "$d"; done | xargs | sed "s/^$/ok/")"
