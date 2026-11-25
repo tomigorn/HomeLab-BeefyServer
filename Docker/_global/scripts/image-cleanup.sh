@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Weekly Docker image cleanup. Removes images no container (running or stopped) uses once they have been unused for KEEP_DAYS,
-# plus build cache not used for KEEP_DAYS. Never touches volumes, networks or containers.
+# plus build cache not used for KEEP_DAYS, then the least recently used cache over BUILD_CACHE_MAX. Never touches volumes, networks or containers.
 # Rollback safety: update-project.sh rolls back by re-tagging the previous image ID, so a superseded image must stay until the update is long verified.
 # First run (no state yet): only images of repositories no container uses are dated by build/pull time; dangling images and older tags of a repository in use (the likely previous versions) start their window now.
 # A plain "image prune --filter until" dates by image build time, not by when it became unused, so this keeps its own first-seen-unused clock per image ID.
@@ -11,9 +11,10 @@
 # A repo:${VAR} line or a bare repo name (for :latest) only protects repositories no container uses; for a repository in use those name the tag in use, so its other tags are old tags and go.
 # IMAGE_CLEANUP_KEEP: space-separated repositories to always keep (images another host's scheduled job runs here).
 # Usage: image-cleanup.sh [--dry-run]
-# Env: KEEP_DAYS (14), ROLLBACK_KEEP (3), REPO_DIR (the repo root), IMAGE_CLEANUP_STATE (/var/lib/image-cleanup), IMAGE_CLEANUP_TEXTFILE (/var/lib/node-exporter/textfile), DOCKER (docker command)
+# Env: KEEP_DAYS (14), BUILD_CACHE_MAX (20GB, build cache disk space kept), ROLLBACK_KEEP (3), REPO_DIR (the repo root), IMAGE_CLEANUP_STATE (/var/lib/image-cleanup), IMAGE_CLEANUP_TEXTFILE (/var/lib/node-exporter/textfile), DOCKER (docker command)
 set -uo pipefail
 KEEP_DAYS=${KEEP_DAYS:-14}
+BUILD_CACHE_MAX=${BUILD_CACHE_MAX:-20GB}
 STATE=${IMAGE_CLEANUP_STATE:-/var/lib/image-cleanup}
 TEXTFILE=${IMAGE_CLEANUP_TEXTFILE:-/var/lib/node-exporter/textfile}
 usage() { echo "Usage: image-cleanup.sh [--dry-run]"; }
@@ -94,11 +95,15 @@ fi
 ((DRY)) || mv "$newseen" "$seen"; rm -f "$newseen" "$corpus"
 
 cache=0
+pruned() { bytes "$(awk '/^Total/{print $NF}' <<<"$1" | tail -1)"; }
 if ((DRY)); then log "dry run: build cache not pruned"; else
-  out=$($DOCKER builder prune -f --filter "until=$((KEEP_DAYS * 24))h" 2>&1)
-  cache=$(bytes "$(awk -F': ' '/Total/{print $2}' <<<"$out" | tail -1)")
-  log "build cache freed $cache bytes"
+  # a record stays while a newer child uses it, so the age prune alone lets the cache grow: the size cap drops the least recently used
+  out=$($DOCKER builder prune -f --filter "until=$((KEEP_DAYS * 24))h" 2>&1); aged=$(pruned "$out")
+  out=$($DOCKER builder prune -f --max-used-space "$BUILD_CACHE_MAX" 2>&1); capped=$(pruned "$out")
+  cache=$((aged + capped))
+  log "build cache freed $cache bytes (unused $KEEP_DAYS d: $aged, over $BUILD_CACHE_MAX: $capped)"
 fi
+cache_size=$(bytes "$($DOCKER system df --format '{{.Type}}|{{.Size}}' | awk -F'|' '$1=="Build Cache"{print $2}')")
 after=$(images_size); img=$((before - after)); ((img < 0)) && img=0; freed=$((img + cache))
 log "done: $removed images removed, $pending unused images still within $KEEP_DAYS d, $failed failed, $freed bytes freed (images $img, build cache $cache)"
 ((DRY)) && exit 0
@@ -107,6 +112,7 @@ log "done: $removed images removed, $pending unused images still within $KEEP_DA
   echo "# TYPE docker_image_cleanup_removed_images gauge"; echo "docker_image_cleanup_removed_images $removed"
   echo "# TYPE docker_image_cleanup_rollback_window_images gauge"; echo "docker_image_cleanup_rollback_window_images $pending"
   echo "# TYPE docker_image_cleanup_failed_images gauge"; echo "docker_image_cleanup_failed_images $failed"
+  echo "# TYPE docker_image_cleanup_build_cache_bytes gauge"; echo "docker_image_cleanup_build_cache_bytes $cache_size"
   echo "# TYPE docker_image_cleanup_last_run_timestamp_seconds gauge"; echo "docker_image_cleanup_last_run_timestamp_seconds $now"
 } > "$TEXTFILE/.image_cleanup.prom.tmp"
 chmod 644 "$TEXTFILE/.image_cleanup.prom.tmp"; mv "$TEXTFILE/.image_cleanup.prom.tmp" "$TEXTFILE/image_cleanup.prom"
