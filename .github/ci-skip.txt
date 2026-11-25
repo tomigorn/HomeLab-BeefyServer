@@ -1,0 +1,2 @@
+# Tests CI does not run (glob | reason). They stay local, run by hand or by their project's run.sh.
+Docker/Subtitle-Translate/tests/test_libretranslate.py | live test: needs the running LibreTranslate and Lingarr containers and their secrets

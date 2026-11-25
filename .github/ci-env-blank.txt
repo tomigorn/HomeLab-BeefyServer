@@ -1,0 +1,1 @@
+# Variables that stay blank in the CI dummy .env (project VARIABLE | reason): they are optional and blank on the live host too, a dummy value would trip the env_secret rule.

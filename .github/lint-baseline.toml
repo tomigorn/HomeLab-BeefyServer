@@ -1,0 +1,164 @@
+# Reviewed baseline of findings that are not fixed (counts per file and code; a new finding or a higher count fails CI, a gone one fails as stale). Keep the reason honest, remove the entry with the fix.
+
+[[shellcheck]]
+file = "Docker/Antivirus/clamav/scan.sh"
+code = "SC2046"
+count = 2
+reason = "command substitution is split into words on purpose"
+
+[[shellcheck]]
+file = "Docker/Antivirus/tests/test_scan.sh"
+code = "SC1007"
+count = 1
+reason = "empty variable for one command, intended"
+
+[[shellcheck]]
+file = "Docker/Antivirus/tests/test_scan.sh"
+code = "SC2100"
+count = 1
+reason = "false positive: a plain string assignment, no arithmetic"
+
+[[shellcheck]]
+file = "Docker/Jellyfin/scripts/backup-config.sh"
+code = "SC2024"
+count = 2
+reason = "redirect runs as the calling user, not sudo; reviewed, unchanged"
+
+[[shellcheck]]
+file = "Docker/Movie-Downloads/scripts/clamav-hooks.sh"
+code = "SC2034"
+count = 1
+reason = "set for the sourced qbit-api.sh"
+
+[[shellcheck]]
+file = "Docker/Movie-Downloads/scripts/grab-guard.sh"
+code = "SC2154"
+count = 4
+reason = "variable is set by Radarr/Sonarr in the hook environment"
+
+[[shellcheck]]
+file = "Docker/Movie-Downloads/scripts/language-policy-hook.sh"
+code = "SC1007"
+count = 1
+reason = "empty variable for one command, intended"
+
+[[shellcheck]]
+file = "Docker/Movie-Downloads/scripts/language-policy-hook.sh"
+code = "SC2100"
+count = 2
+reason = "false positive: a plain string assignment, no arithmetic"
+
+[[shellcheck]]
+file = "Docker/Movie-Downloads/scripts/seerr-sync.sh"
+code = "SC2155"
+count = 1
+reason = "export or declare with assignment, exit status not used"
+
+[[shellcheck]]
+file = "Docker/Movie-Downloads/scripts/title-wipe-hook.sh"
+code = "SC2034"
+count = 2
+reason = "set for the sourced qbit-api.sh"
+
+[[shellcheck]]
+file = "Docker/Movie-Downloads/tests/test_qbit_port.sh"
+code = "SC2034"
+count = 1
+reason = "unused variable in a test script, left as is"
+
+[[shellcheck]]
+file = "Docker/Movie-Downloads/tests/test_qbit_port.sh"
+code = "SC2155"
+count = 1
+reason = "export or declare with assignment, exit status not used"
+
+[[shellcheck]]
+file = "Docker/Movie-Downloads/tests/test_seerr_sync.sh"
+code = "SC2010"
+count = 3
+reason = "ls piped to grep over plain file names in a test"
+
+[[shellcheck]]
+file = "Docker/Seerr/scripts/download-now-setup.sh"
+code = "SC2034"
+count = 1
+reason = "set for the sourced qbit-api.sh"
+
+[[shellcheck]]
+file = "Docker/Seerr/tests/test_seerr_rebuild.sh"
+code = "SC1007"
+count = 1
+reason = "empty variable for one command, intended"
+
+[[shellcheck]]
+file = "Docker/_global/lsio-init/drop-users-group.sh"
+code = "SC1008"
+count = 1
+reason = "s6 init script, shebang is /usr/bin/with-contenv bash"
+
+[[shellcheck]]
+file = "Docker/_global/scripts/post-update-check.sh"
+code = "SC2033"
+count = 2
+reason = "docker() wrapper (sudo fallback) is exported for child bash scripts; xargs and timeout calls bypass it, which only matters where docker needs sudo"
+
+[[shellcheck]]
+file = "Docker/_global/scripts/update-project.sh"
+code = "SC2024"
+count = 1
+reason = "redirect runs as the calling user, not sudo; reviewed, unchanged"
+
+[[shellcheck]]
+file = "Docker/_global/scripts/update-project.sh"
+code = "SC2033"
+count = 3
+reason = "docker() wrapper (sudo fallback) is exported for child bash scripts; xargs and timeout calls bypass it, which only matters where docker needs sudo"
+
+[[shellcheck]]
+file = "Server/10-Backup/beefy-restore-test.sh"
+code = "SC2034"
+count = 1
+reason = "unused variable in a test script, left as is"
+
+[[shellcheck]]
+file = "Server/10-Backup/test_beefy_restore_test.sh"
+code = "SC2010"
+count = 1
+reason = "ls piped to grep over plain file names in a test"
+
+[[shellcheck]]
+file = "Server/3-Storage-Layout-and-Spindown/install-dlpool.sh"
+code = "SC1087"
+count = 1
+reason = "regex bracket after a variable in a grep pattern, not an array"
+
+[[shellcheck]]
+file = "Server/8-Idle-Watcher/test_beefy_keep_awake.sh"
+code = "SC2034"
+count = 1
+reason = "unused variable in a test script, left as is"
+
+[[shellcheck]]
+file = "Server/9-Night-Schedule/install.sh"
+code = "SC2046"
+count = 2
+reason = "command substitution is split into words on purpose"
+
+[[hadolint]]
+file = "Docker/Antivirus/clamav/Dockerfile"
+code = "DL3018"
+count = 2
+reason = "apk packages are not version-pinned (Alpine drops old versions, a pin breaks the next rebuild)"
+
+[[hadolint]]
+file = "Docker/Antivirus/clamav/Dockerfile"
+code = "DL3025"
+count = 1
+reason = "HEALTHCHECK needs the shell form for the redirect and the || exit"
+
+[[hadolint]]
+file = "Docker/Seerr/download-now-image/Dockerfile"
+code = "DL3018"
+count = 1
+reason = "apk packages are not version-pinned (Alpine drops old versions, a pin breaks the next rebuild)"
+
