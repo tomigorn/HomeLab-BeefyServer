@@ -21,6 +21,7 @@ SQLITE_DBS=(
     bazarr/db/bazarr.db
     sabnzbd/admin/history1.db
     floppy/db/db.sqlite3
+    lingarr/local.db
 )
 PATHS=(
     "$STAGE" /srv/appdata "$H/Projects" "$H/.ssh" "$H/.config/systemd"

@@ -29,7 +29,7 @@ STUB
 chmod +x "$T/bin/"*
 
 S="$HERE/beefy-backup.sh"
-DBS="seerr/db/db.sqlite3 jellyfin/data/data/jellyfin.db jellyfin/data/data/introskipper/introskipper-v2.db radarr/radarr.db sonarr/sonarr.db prowlarr/prowlarr.db bazarr/db/bazarr.db sabnzbd/admin/history1.db floppy/db/db.sqlite3"
+DBS="seerr/db/db.sqlite3 jellyfin/data/data/jellyfin.db jellyfin/data/data/introskipper/introskipper-v2.db radarr/radarr.db sonarr/sonarr.db prowlarr/prowlarr.db bazarr/db/bazarr.db sabnzbd/admin/history1.db floppy/db/db.sqlite3 lingarr/local.db"
 setup() {
     rm -rf "$T/app" "$T/conf" "$T/stage" "$T/log" "$T/msg" "$T/staged"
     mkdir -p "$T/conf"
@@ -44,7 +44,7 @@ run() {
 
 setup; run; rc=$?
 [[ $rc == 0 && ! -s $T/msg ]] && ok "healthy backup passes quietly" || bad "healthy backup passes quietly" "rc=$rc $(cat "$T/out")"
-[[ $(grep -c '\.db\|sqlite3' "$T/staged") == 9 ]] && ok "nine SQLite dumps staged before restic runs" || bad "nine SQLite dumps staged before restic runs" "$(cat "$T/staged")"
+[[ $(grep -c '\.db\|sqlite3' "$T/staged") == 10 ]] && ok "ten SQLite dumps staged before restic runs" || bad "ten SQLite dumps staged before restic runs" "$(cat "$T/staged")"
 grep -q "dumps/dt5.pgdump" "$T/staged" && ok "DT5 postgres dump staged" || bad "DT5 postgres dump staged"
 grep -q -- "-Fc -Z0" "$T/log" && ok "DT5 dump uncompressed so restic dedups it" || bad "DT5 dump uncompressed so restic dedups it"
 grep -q -- "--exclude $T/app/jellyfin/data/data/jellyfin.db-wal" "$T/log" && grep -q -- "--exclude $T/app/seerr/db/db.sqlite3 " "$T/log" && ok "live DB files and their WAL excluded" || bad "live DB files and their WAL excluded" "$(grep backup "$T/log")"
@@ -78,7 +78,7 @@ kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
 grep -q "^OOB=\${OOB:-/usr/local/lib/beefy-oob/scripts/oob-alert.sh}$" "$S" && ok "alerts through the root-owned oob-alert copy" || bad "alerts through the root-owned oob-alert copy" "$(grep ^OOB= "$S")"
 
 L=$(env CONF="$T/conf" "$S" --list)
-for want in "sqlite /srv/appdata/jellyfin/data/data/jellyfin.db" "sqlite /srv/appdata/seerr/db/db.sqlite3" "sqlite /srv/appdata/floppy/db/db.sqlite3" \
+for want in "sqlite /srv/appdata/jellyfin/data/data/jellyfin.db" "sqlite /srv/appdata/seerr/db/db.sqlite3" "sqlite /srv/appdata/floppy/db/db.sqlite3" "sqlite /srv/appdata/lingarr/local.db" \
     "path /srv/appdata" "path /home/buntu/Projects" "path /etc" "path /var/lib/beefy-mover" \
     "exclude /srv/appdata/dt5-db" "exclude /srv/appdata/jellyfin/data/data/trickplay" "exclude /srv/appdata/jellyfin/data/metadata/People" "exclude /srv/appdata/jellyfin/cache"; do
     grep -qxF "$want" <<<"$L" && ok "plan: $want" || bad "plan: $want"
