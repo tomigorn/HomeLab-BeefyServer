@@ -375,7 +375,7 @@ def main(argv=None):
     ap.add_argument("--host", required=True)
     ap.add_argument("--prom", required=True)
     ap.add_argument("--json", required=True)
-    ap.add_argument("--no-help", action="store_true", help="no HELP/TYPE lines (beefy's copy reaches fastpi through beefy-idle-pull)")
+    ap.add_argument("--no-help", action="store_true", help="no HELP/TYPE lines: both hosts write the same families and node-exporter rejects the merge when only one file has them")
     ap.add_argument("--print", action="store_true")
     a = ap.parse_args(argv)
     try:
