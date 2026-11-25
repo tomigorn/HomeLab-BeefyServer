@@ -1,0 +1,10 @@
+[Unit]
+Description=Repo-vs-live drift check in the night window
+
+[Timer]
+# 04:19 is free in Server/9-Night-Schedule.md; fastpi's arch-page reads the result at 04:35
+OnCalendar=*-*-* 04:19:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target

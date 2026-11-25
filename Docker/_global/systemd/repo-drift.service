@@ -1,0 +1,33 @@
+[Unit]
+Description=Repo-vs-live drift: compose, units, scripts, /etc and uncommitted files against the repo
+Documentation=file:///home/buntu/Projects/Server/9-Night-Schedule.md
+After=docker.service
+
+[Service]
+Type=oneshot
+User=buntu
+Group=buntu
+# read-only Docker API of the Cup agent's socket proxy (172.19.0.3), so no sudo is needed
+Environment=DRIFT_DOCKER_HOST=tcp://172.19.0.3:2375
+ExecStart=/usr/bin/python3 -I /home/buntu/Projects/Docker/_global/scripts/repo_drift.py --host beefy --no-help --prom /home/buntu/.local/state/repo-drift/drift.prom --json /home/buntu/.local/state/repo-drift/drift.json
+TimeoutStartSec=600
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/buntu/.local/state/repo-drift
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET
