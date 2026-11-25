@@ -1,0 +1,30 @@
+[Unit]
+Description=Weekly restore test of every beefy database from fastpi's backup repo
+Documentation=file:///home/buntu/Projects/Server/10-Backup.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/beefy-restore-test
+# the window ends 04:45 and waits for this unit (cap 45 min): hard stop well before
+TimeoutStartSec=1500
+Nice=10
+IOSchedulingClass=idle
+CacheDirectory=restic
+StateDirectory=beefy-restore-test
+StateDirectoryMode=0755
+# Sandbox: reads everything, writes only its scratch/metric dir, the restic cache and the lock; the throwaway postgres runs through the docker socket.
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/beefy-restore-test /var/cache/restic /run/lock
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true

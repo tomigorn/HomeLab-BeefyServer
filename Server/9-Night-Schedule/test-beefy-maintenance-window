@@ -38,6 +38,7 @@ grep -q "^UNITS=.*seerr-rebuild.service" "$W" && ok "default list waits for the 
 grep -q "^UNITS=.*rebuild-local.service" "$W" && ok "default list waits for the local image rebuilds" || bad "default list waits for the local image rebuilds"
 grep -q "^UNITS=.*retention-delete.service" "$W" && ok "default list waits for the storage retention delete run" || bad "default list waits for the storage retention delete run"
 grep -q "^UNITS=.*recycle-bin.service" "$W" && ok "default list waits for the recycle bin cleanup" || bad "default list waits for the recycle bin cleanup"
+grep -q "^UNITS=.*beefy-restore-test.service" "$W" && ok "default list waits for the weekly database restore test" || bad "default list waits for the weekly database restore test"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

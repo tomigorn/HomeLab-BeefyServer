@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly beefy database restore test inside the maintenance window
+Documentation=file:///home/buntu/Projects/Server/10-Backup.md
+
+[Timer]
+# Wednesday 04:02, free slot before the 04:06 batch of window jobs; restores last night's 04:26 snapshot; never wakes beefy
+OnCalendar=Wed *-*-* 04:02:00 Europe/Zurich
+Persistent=false
+
+[Install]
+WantedBy=timers.target

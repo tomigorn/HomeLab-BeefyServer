@@ -20,7 +20,8 @@ sudo install -d -m 0755 -o root -g root /usr/local/lib/beefy-oob /usr/local/lib/
 sudo install -d -m 0700 -o root -g root /usr/local/lib/beefy-oob/secrets
 sudo install -m 0755 -o root -g root "$G/scripts/oob-alert.sh" /usr/local/lib/beefy-oob/scripts/oob-alert.sh
 sudo install -m 0600 -o root -g root "$G/secrets/oob-alert.env" /usr/local/lib/beefy-oob/secrets/oob-alert.env
-sudo install -m 0644 "$HERE/beefy-backup.service" "$HERE/beefy-backup.timer" /etc/systemd/system/
+sudo install -m 0750 -o root -g root "$HERE/beefy-restore-test.sh" /usr/local/sbin/beefy-restore-test
+sudo install -m 0644 "$HERE/beefy-backup.service" "$HERE/beefy-backup.timer" "$HERE/beefy-restore-test.service" "$HERE/beefy-restore-test.timer" /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now beefy-backup.timer
-systemctl list-timers beefy-backup.timer --no-pager
+sudo systemctl enable --now beefy-backup.timer beefy-restore-test.timer
+systemctl list-timers beefy-backup.timer beefy-restore-test.timer --no-pager

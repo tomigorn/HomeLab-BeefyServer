@@ -10,14 +10,26 @@ restic, encrypted, deduplicated, to fastpi's **append-only** REST server: beefy 
 | Credentials | `/root/.config/restic/` (700): `beefy.pass` (repo key), `fastpi-rest.pass` (REST login), `fastpi-rest.crt`; written by fastpi `setup-beefy-repo.sh`, never printed |
 | Retention | on fastpi 05:07: 7 daily, 4 weekly, 6 monthly; prune Sunday, check 10 % Wednesday |
 | Failure | Telegram at once from beefy (root-owned copy `/usr/local/lib/beefy-oob/scripts/oob-alert.sh` of `Docker/_global/scripts/oob-alert.sh`, installed by `install.sh`); fastpi alerts `BeefyBackupStale` (> 36 h) from the repo itself |
-| Restore test | fastpi's monthly `restore-test.sh` (first Tuesday 04:33) also checks this repo: check 5 %, restore a sample, `quick_check` of every dump, DT5 dump `pg_restore -l`, KEK valid |
-| Install | `Server/10-Backup/install.sh` (restic 0.19.1 by sha256, script to `/usr/local/sbin/beefy-backup`, timer). Tests: `./test_beefy_backup.sh` |
+| Restore test | `beefy-restore-test.sh` on beefy, Wednesday 04:02 (`beefy-restore-test.timer`, the window waits for it): restores the latest nightly snapshot into a scratch dir (`/var/lib/beefy-restore-test`, removed after), `integrity_check` + key table rows per SQLite DB, DT5 `pg_restore` into a throwaway postgres (same image as `dt5-db`, `--network none`, 4 GB RAM limit, stopped afterwards) + row counts. Metrics `db_restore_test_ok{host="beefy",db,engine}` and `..._last_success_timestamp_seconds` in `/var/lib/beefy-restore-test/restore-test.prom`, pulled by fastpi `beefy-idle-pull` (alerts `DbRestoreTest*`, fastpi `Docker/grafana/prometheus/rules/restore-tests.yml`); Telegram on failure. fastpi's weekly test also checks this repo (check 5 %, `quick_check`, DT5 `pg_restore -l`, KEK). Tests: `./test_beefy_restore_test.sh` |
+| Install | `Server/10-Backup/install.sh` (restic 0.19.1 by sha256, scripts to `/usr/local/sbin/beefy-backup` and `beefy-restore-test`, timers). Tests: `./test_beefy_backup.sh` |
 
 ## Contents (`beefy-backup.sh --list`)
-- Consistent dumps in `/var/lib/beefy-backup-staging`: SQLite `.backup` of Seerr, Jellyfin (`jellyfin.db`, Intro Skipper), Radarr, Sonarr, Prowlarr, Bazarr, SABnzbd history, Floppy; DT5 `pg_dump -Fc -Z0` (uncompressed so restic dedups). Live DB files excluded.
+- Consistent dumps in `/var/lib/beefy-backup-staging`: SQLite `.backup` of Seerr, Jellyfin (`jellyfin.db`, Intro Skipper), Radarr, Sonarr, Prowlarr, Bazarr, SABnzbd history, Floppy, Lingarr (`local.db`, since 2026-11-25); DT5 `pg_dump -Fc -Z0` (uncompressed so restic dedups). Live DB files excluded.
 - `/srv/appdata` (Jellyfin config, users, plugin configs, library + studio images; DT5 KEK `dt5/.dependency-track/keys`), `~/Projects` (incl. gitignored `secrets/`, `.env`), `~/.ssh`, `~/.config/systemd`, Claude rules + memory, `/etc`, `/var/lib/beefy-mover`, crontabs
 - Left out (re-creatable): DT5 raw DB dir (dump instead), DT v4 dirs (retired), `*.tgz` in appdata, Jellyfin cache/log/transcodes/trickplay (1.4 GB)/People images (0.5 GB)/IMDb ratings db, *arr logs + MediaCover, SAB `Downloads`, Floppy snapshots, floppy-redis, flaresolverr, recyclarr resources, `~/backups` (holds fastpi's own repo)
 - *arr built-in zips: daily, 14 kept (`Docker/Movie-Downloads/scripts/arr-backup-schedule.sh`), included with appdata
+
+## Database inventory (2026-11-25)
+| DB | Service | Engine | In backup | Restore-tested |
+|---|---|---|---|---|
+| dt5 | Dependency-Track 5 (`dt5-db`) | Postgres | yes (`pg_dump -Fc -Z0`) | yes (full `pg_restore`, PROJECT, COMPONENT, VULNERABILITY rows) |
+| seerr, jellyfin, jellyfin-intro-skipper, radarr, sonarr, prowlarr, bazarr, sabnzbd-history, floppy | same names | SQLite | yes (`.backup`) | yes |
+| lingarr | Lingarr | SQLite | yes (since 2026-11-25; before a raw file copy) | yes |
+| `Hangfire.db` | Lingarr job queue | SQLite | raw file copy only | no (queue state) |
+| jellyfin-beta `jellyfin.db`, intro skipper | Jellyfin beta | SQLite | raw file copy only | no |
+| `jellyfin-popular-state/state.db` | Jellyfin popular job | SQLite | raw file copy only | no |
+| `imdbratings.db` | Jellyfin IMDb plugin | SQLite | no (re-creatable) | no |
+| floppy-redis | Floppy | Redis | no (cache) | no |
 
 Size 2026-10-29: snapshot 2.7 GiB processed (DT5 dump 2.0 GiB), repo 0.94 GiB, first run 22 s.
 
