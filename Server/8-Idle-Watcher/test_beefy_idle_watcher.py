@@ -820,5 +820,19 @@ class TestInhibit(unittest.TestCase):
             biw.os.listdir = orig
 
 
+class TestRunFailsClosed(unittest.TestCase):
+    def test_non_zero_exit_is_none_not_empty_output(self):
+        self.assertIsNone(biw._run(["sh", "-c", "echo partial; exit 1"]))
+
+    def test_success_returns_stdout(self):
+        self.assertEqual(biw._run(["sh", "-c", "echo ok"]), "ok\n")
+
+    def test_container_lookups_keep_partial_output(self):
+        self.assertEqual(biw._run(["sh", "-c", "echo /a 12; exit 1"], strict=False), "/a 12\n")
+
+    def test_missing_command_is_none(self):
+        self.assertIsNone(biw._run(["/nonexistent/probe"]))
+
+
 if __name__ == "__main__":
     unittest.main()

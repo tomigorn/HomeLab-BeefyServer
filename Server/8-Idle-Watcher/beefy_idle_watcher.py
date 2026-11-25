@@ -842,9 +842,13 @@ def load_config(env):
 # I/O glue
 # ----------------------------------------------------------------------------
 
-def _run(cmd):
+def _run(cmd, strict=True):
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if strict and r.returncode != 0:
+            log("WARN: %s exited %d: %s" % (" ".join(cmd), r.returncode, r.stderr.strip()[:200]))
+            return None
+        return r.stdout
     except Exception as e:
         # Return None (NOT "") so a failed probe propagates an error and the cycle
         # fails BUSY, rather than silently parsing to "idle" (fail-open -> could
@@ -884,7 +888,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-VERSION = "1.11.0"   # bump on each release; logged at startup so journald records it
+VERSION = "1.11.1"   # bump on each release; logged at startup so journald records it
 
 
 # Elapsed time uses the MONOTONIC clock, never the wall clock: an NTP correction or
@@ -894,7 +898,7 @@ _now = time.monotonic
 
 
 def _container_pid(name):
-    out = _run(["docker", "inspect", "-f", "{{.State.Pid}}", name]) if name else None
+    out = _run(["docker", "inspect", "-f", "{{.State.Pid}}", name], strict=False) if name else None
     pid = (out or "").strip()
     return pid if pid.isdigit() and pid != "0" else None
 
@@ -935,7 +939,7 @@ class I915Busy:
 def _container_cgroups(names):
     """{name: cgroup dir} of the running containers among names, from one docker inspect."""
     names = [n for n in names if n]
-    out = _run(["docker", "inspect", "-f", "{{.Name}} {{.State.Pid}}"] + names) if names else None
+    out = _run(["docker", "inspect", "-f", "{{.Name}} {{.State.Pid}}"] + names, strict=False) if names else None
     dirs = {}
     for line in (out or "").splitlines():
         f = line.split()

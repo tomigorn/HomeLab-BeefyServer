@@ -104,6 +104,8 @@ Each is small and independent; a probe answers exactly "is *this* signal busy?"
 | Sessions, batches (shared file) | `beefy-keep-awake on` → `/run/beefy-keep-awake` | `beefy-keep-awake off` |
 | mover / ssd-rebalance / apt | own file `mover`, `ssd-rebalance`, `apt` in the dir | at the end |
 
+**Failed probe = busy** (since v1.11.1): a probe command (`ss`, `conntrack`, `ip`, `docker ps`, `ps`) that exits non-zero, times out or is missing counts as busy (`probe_error`), never as idle.
+
 Helper: `Server/8-Idle-Watcher/beefy-keep-awake` → `/usr/local/sbin/` (install.sh, sudoers rule for buntu); `beefy-keep-awake status` lists the holds. Test: `bash Server/8-Idle-Watcher/test_beefy_keep_awake.sh`.
 
 ## Config (`/etc/beefy-idle.conf`)
