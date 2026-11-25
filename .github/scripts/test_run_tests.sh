@@ -28,6 +28,8 @@ grep -q 'tests: 4 passed, 0 failed, 1 skipped' <<< "$out" && ok "summary" || bad
 out=$(bash "$T/.github/scripts/run-tests.sh" 2>&1); rc=$?
 [ "$rc" = 1 ] && ok "failing test: exit 1" || bad "exit $rc"
 grep -q '^FAIL a/tests/blackbox/test_blackbox.py' <<< "$out" && ok "failure named" || bad "failure not named"
+out=$(GITHUB_ACTIONS=true bash "$T/.github/scripts/run-tests.sh" 2>&1)
+grep -q '^::error title=a/tests/blackbox/test_blackbox.py::' <<< "$out" && ok "GitHub annotation" || bad "no annotation: $out"
 
 out=$(bash "$T/.github/scripts/run-tests.sh" b 2>&1)
 grep -q 'tests: 3 passed, 0 failed, 0 skipped' <<< "$out" && ok "path prefix filter" || bad "filter: $out"

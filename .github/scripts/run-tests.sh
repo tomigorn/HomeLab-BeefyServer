@@ -36,6 +36,7 @@ for t in "${TESTS[@]}"; do
         rc=$?
         fail=$((fail+1)); failed+=("$t"); echo "FAIL $t (exit $rc)"
         printf '%s\n' "$out" | tail -n 25 | sed 's/^/     | /'
+        [ "${GITHUB_ACTIONS:-}" = true ] && echo "::error title=$t::$(printf '%s' "$out" | tail -n 8 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')"
     fi
 done
 echo "tests: $pass passed, $fail failed, $skip skipped"
