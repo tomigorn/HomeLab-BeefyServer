@@ -29,6 +29,8 @@ Check: `scripts/policy_check.py` (all rules as a check, exceptions in `policy-ex
 | 65111 | movie-vpn-status (read_only) | | |
 | 70 | dt5-db (v4 dt-db until the rollback window ends) | | |
 | 65112 | clamav | 1100, 65118 | none |
+| 65112:1100 | clamav-queue (read_only; shares clamav's uid: planned 65133, see below) | 65118 | none |
+| 0 | clamav-hostscan (`network_mode: none`, read_only, see Root by design) | | DAC_READ_SEARCH, DAC_OVERRIDE, CHOWN |
 | 65113 | cup-agent | | |
 | 65114 | cup-socket-proxy-ro | 973 docker | |
 | 65115 | cup-socket-proxy-unix | | |
@@ -45,10 +47,19 @@ Check: `scripts/policy_check.py` (all rules as a check, exceptions in `policy-ex
 | 65129 | subtitle-lingarr | | |
 | 65130 | subtitle-libretranslate (internal network, no egress) | | |
 | 65131 | activity-gate (nginx, read_only; group 65131 reads `Activity-Gate/secrets`) | | |
+| 65132 | jellyfin-beta (PUID/PGID) | | |
 | 65116 | gluetun files (PUID; process root) | | NET_ADMIN, NET_RAW, NET_BIND_SERVICE, DAC_OVERRIDE, CHOWN |
 | 0 | portainer_agent | | none (full socket by design, `AGENT_SECRET` required) |
 
-Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65132+.
+Groups: `media` 1100 (`/srv/video`), `hook-secret` 65117 (`Movie-Downloads/secrets/hook`), `textfile-writers` 65118 (`/var/lib/clamav-scan/textfile`). `buntu` is in `media` and `hook-secret`. Next free uid: 65134+ (65133 reserved for clamav-queue).
+
+### clamav-queue own uid (prepared, not applied)
+clamav-queue and clamav share 65112, so clamd (internet egress for freshclam) can read `Antivirus/secrets/vt_api_key` (0400 65112), and the two cannot be told apart in `/proc`. Planned: clamav-queue `user: "65133:1100"`. Attended, nothing queued (`sudo docker exec clamav-queue ls /data/.clamav-queue` empty):
+
+1. Backup: `sudo tar czf ~/backups/clamav-queue-uid-$(date +%F).tgz /var/lib/clamav-scan/textfile Docker/Antivirus/secrets/vt_api_key` and `sudo stat -c '%u:%g %a %n' /srv/dlpool/.clamav-queue` into a note.
+2. `sudo docker stop clamav-queue`; `sudo chown 65133 Docker/Antivirus/secrets/vt_api_key /var/lib/clamav-scan/textfile/{clamav-hook.prom,.virustotal-limits.json,quality-results.jsonl,virustotal-results.jsonl} /srv/dlpool/.clamav-queue`.
+3. compose `user: "65133:1100"`, `sudo docker compose up -d clamav-queue`, `bash ../_global/scripts/post-update-check.sh Antivirus`, healthy within 2 min, next download scanned (`clamav-results.jsonl`).
+4. Rollback: compose back to 65112, `chown 65112` the same paths, `up -d clamav-queue`.
 
 ## Root by design
 | Container | Why |
