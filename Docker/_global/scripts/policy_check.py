@@ -78,7 +78,7 @@ def split_user(user):
     return uid.strip(), gid.strip()
 
 
-def check_service(s, images, default_image=""):
+def check_service(s, images, default_image="", offline=False):
     """Violations of one service as (rule, detail) pairs, except user_unique."""
     v = []
     mode = s.get("network_mode") or ""
@@ -113,7 +113,8 @@ def check_service(s, images, default_image=""):
     elif not (hc and hc.get("test")):
         has = images.healthcheck(probe) if probe else None
         if has is None:
-            v.append(("healthcheck", "image not local"))
+            if not offline:
+                v.append(("healthcheck", "image not local"))
         elif not has:
             v.append(("healthcheck", ""))
 
@@ -160,6 +161,7 @@ def main(argv=None):
                "Add an exception: [[exception]] project/service/rule/reason in Docker/_global/policy-exceptions.toml.")
     ap.add_argument("projects", nargs="*", metavar="PROJECT", help="project folder(s) under Docker/ (default: all)")
     ap.add_argument("--root", default=os.path.normpath(os.path.join(HERE, "..", "..")), help="Docker/ folder")
+    ap.add_argument("--offline", action="store_true", help="images are not pulled (CI): skip the healthcheck rule for an image that is not local")
     ap.add_argument("--exceptions", default=os.path.join(HERE, "..", "policy-exceptions.toml"), help="exceptions file")
     a = ap.parse_args(argv)
 
@@ -201,7 +203,7 @@ def main(argv=None):
     violations = []
     for p in selected:
         for name, s in sorted(configs.get(p, {}).items()):
-            v = check_service(s, images, f"{names[p]}-{name}")
+            v = check_service(s, images, f"{names[p]}-{name}", a.offline)
             uid = split_user(s.get("user") or "")[0]
             others = sorted(uids.get(uid, set()) - {projects[p][0]})
             if others:
@@ -219,6 +221,8 @@ def main(argv=None):
     for e in exceptions:
         p, n, r = e["project"], e["service"], e["rule"]
         if a.projects and p not in selected:
+            continue
+        if a.offline and r == "healthcheck":
             continue
         if p not in projects:
             why = "project gone"

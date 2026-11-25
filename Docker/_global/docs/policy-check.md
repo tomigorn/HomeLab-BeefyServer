@@ -14,7 +14,7 @@
 
 | | |
 |---|---|
-| Run | `python3 Docker/_global/scripts/policy_check.py [PROJECT ...]` (all by default); prints `project/service: rule (detail)`, exit 0 clean, 1 violation or stale exception, 2 error |
+| Run | `python3 Docker/_global/scripts/policy_check.py [PROJECT ...]` (all by default); prints `project/service: rule (detail)`, exit 0 clean, 1 violation or stale exception, 2 error. `--offline` (CI): an image that is not local is not judged for `healthcheck`, healthcheck exceptions are never stale |
 | Stacks | `docker-compose.yaml` (+ `.override.yaml`); a `docker-compose.<v>.yaml` is its own stack `<Project>:<v>`; all profiles |
 | Exception | add to `Docker/_global/policy-exceptions.toml`, reviewed like code; remove it with the fix (a stale entry fails):<br>`[[exception]]` `project = "Traefik"` `service = "traefik"` `rule = "healthcheck"` `reason = "…"` (all four required) |
 | Wired | fastpi's `smoke-test.sh` (HomeLab-FastPi): one line per host (gate). `post-update-check.sh <Project>`: `== policy (report only)`, never fails or rolls back an update; skipped for `all` |

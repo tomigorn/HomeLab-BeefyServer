@@ -164,6 +164,18 @@ class PolicyCheck(unittest.TestCase):
         self.assertEqual(self.lines(self.run_check()[1]), [
             "P/disabled: healthcheck (disabled)", "P/missing: healthcheck", "P/notlocal: healthcheck (image not local)"])
 
+    def test_offline_skips_images_not_local(self):
+        self.project("P", [svc("missing", drop=("healthcheck", "image"), extra="image: nohc:1.0"),
+                           svc("notlocal", drop=("healthcheck", "image"), extra="image: gone:2.0")])
+        rc, out, _ = self.run_check("--offline")
+        self.assertEqual((rc, self.lines(out)), (1, ["P/missing: healthcheck"]))
+
+    def test_offline_keeps_healthcheck_exceptions(self):
+        self.project("P", [svc("notlocal", drop=("healthcheck", "image"), extra="image: gone:2.0")])
+        self.exceptions({"project": "P", "service": "notlocal", "rule": "healthcheck", "reason": "image has none"})
+        rc, out, _ = self.run_check("--offline")
+        self.assertEqual((rc, self.lines(out)), (0, []), out)
+
     # --- image_pinned
     def test_image_pinned(self):
         dig = "sha256:" + "a" * 64
