@@ -52,6 +52,12 @@ services:
     security_opt:
       - no-new-privileges:true
     mem_limit: 64m
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:2375/version"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 # #########################################################
 # UNIX BRIDGE #############################################
@@ -78,6 +84,13 @@ services:
     security_opt:
       - no-new-privileges:true
     mem_limit: 32m
+    # Asks the Docker API through the bridged socket (the sleep keeps stdin open until the reply is in).
+    healthcheck:
+      test: ["CMD-SHELL", "(printf 'GET /_ping HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n'; sleep 1) | socat - UNIX-CONNECT:/sock/docker.sock | grep -q '200 OK'"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 # #########################################################
 # CUP AGENT ###############################################
