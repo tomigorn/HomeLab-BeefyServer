@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Indexer bar (README "Indexer bar"): counts Prowlarr searches (queries + RSS) and grabs per indexer inside its limit window from indexer-bar/limits.toml, adds the subscription deadlines and the SSD/HDD fill level (statvfs of each branch), and writes usage.json (names and counts only) for the bar the proxy shows above Seerr.
+"""Indexer bar (README "Indexer bar"): counts Prowlarr searches (queries + RSS) and grabs per indexer inside its limit window from indexer-bar/limits.toml, adds the subscription deadlines (fastpi Due-Dates, show = "seerr": https://due-dates.holy-grail.ch/due-dates.json over the LAN, cached in IB_DUE_CACHE and asked again after 10 min; fastpi down = the cached copy) and the SSD/HDD fill level (statvfs of each branch), and writes usage.json (names and counts only) for the bar the proxy shows above Seerr.
 Subtitle providers (limits.toml [subtitles.*]) from Bazarr: downloads per UTC day from its history, paused providers from /api/providers. Exact usage and limits from the provider accounts (SubDL /api/v1/me every 5 min, OpenSubtitles /api/v1/infos/user every 10 min, keys in secrets/indexer-bar from scripts/subtitle-keys.sh, cache in IB_ACCOUNT_STATE); without them SubDL searches are estimated from Bazarr's finished jobs (≈, state in IB_SUB_STATE).
-Premium (★): every row whose name has a [[subscriptions]] entry, or premium = true in limits.toml, or an OpenSubtitles VIP account.
+Premium (★): every row whose name has a subscription entry, or premium = true in limits.toml, or an OpenSubtitles VIP account.
 Storage also goes to IB_STORAGE_PROM (default ~/.local/state/indexer-bar/storage.prom) for fastpi's alerts.
 Prowlarr unreachable: usage.json says ok=false (the bar shows "usage unavailable"), subscriptions stay. Run by systemd/indexer-usage.timer.
 Usage: scripts/indexer-usage.py"""
 import datetime as dt
 import hashlib
+import http.client
 import json
 import os
 import pathlib
 import re
+import socket
+import ssl
 import sys
 import tempfile
 import tomllib
@@ -45,6 +48,10 @@ PROM = pathlib.Path.home() / ".local/state/indexer-bar/storage.prom"
 SUB_STATE = pathlib.Path.home() / ".local/state/indexer-bar/subtitle-searches.json"
 ACCOUNT_STATE = pathlib.Path.home() / ".local/state/indexer-bar/subtitle-accounts.json"
 SECRETS = ROOT / "secrets" / "indexer-bar"
+DUE_HOST = "due-dates.holy-grail.ch"
+DUE_ADDR = "192.168.1.2"
+DUE_CACHE = pathlib.Path.home() / ".local/state/indexer-bar/due-dates.json"
+DUE_TTL = 600
 SUBDL_ME = "https://api.subdl.com/api/v1/me"
 OPENSUBS_API = "https://api.opensubtitles.com/api/v1"
 USER_AGENT = "indexer-bar v1"
@@ -395,6 +402,65 @@ def storage_prom(disks, now):
     return "\n".join(lines) + "\n"
 
 
+def parse_due(text, bar="seerr"):
+    """fastpi's due-dates.json -> the entries shown on this bar, as limits.toml-style subscriptions."""
+    try:
+        items = json.loads(text)["items"]
+    except (ValueError, KeyError, TypeError) as e:
+        raise ValueError(f"not a due-dates list: {e}") from None
+    out = []
+    for i in items:
+        if bar not in i.get("show", []):
+            continue
+        if "title" not in i or not (i.get("lifetime") or i.get("date")):
+            raise ValueError(f"due-dates entry {i.get('id')!r}: needs title and date or lifetime")
+        s = {"name": i["title"], "kind": i.get("category")}
+        if i.get("lifetime"):
+            s["lifetime"] = True
+        else:
+            s["expires"] = dt.date.fromisoformat(i["date"])
+        out.append(s)
+    return out
+
+
+def fetch_due(host=DUE_HOST, addr=DUE_ADDR, timeout=5):
+    """GET https://<host>/due-dates.json from fastpi's LAN address (the name has no public DNS record); None on any error."""
+    try:
+        raw = socket.create_connection((addr, 443), timeout=timeout)
+        conn = http.client.HTTPSConnection(host, timeout=timeout)
+        conn.sock = ssl.create_default_context().wrap_socket(raw, server_hostname=host)
+        conn.request("GET", "/due-dates.json", headers={"User-Agent": USER_AGENT})
+        r = conn.getresponse()
+        body = r.read().decode()
+        conn.close()
+        return body if r.status == 200 else None
+    except (OSError, http.client.HTTPException, UnicodeDecodeError) as e:
+        print(f"indexer-usage: due dates from fastpi unavailable: {type(e).__name__}", file=sys.stderr)
+        return None
+
+
+def due_subscriptions(fetch, cache, now, ttl=DUE_TTL):
+    """Subscriptions from fastpi's Due-Dates list, cached (beefy may wake before fastpi answers); None without any copy."""
+    cache = pathlib.Path(cache)
+    try:
+        fresh = now - cache.stat().st_mtime < ttl
+    except OSError:
+        fresh = False
+    if not fresh:
+        text = fetch()
+        try:
+            if text is not None:
+                parse_due(text)
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                write(cache, text)
+        except ValueError as e:
+            print(f"indexer-usage: due dates from fastpi ignored: {e}", file=sys.stderr)
+    try:
+        return parse_due(cache.read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def load_config(path):
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
@@ -473,6 +539,10 @@ def client(config_xml, base, key=None, prefix="/api/v1", header="X-Api-Key"):
 
 def main():
     cfg = load_config(os.environ.get("IB_CONFIG", ROOT / "indexer-bar" / "limits.toml"))
+    due = due_subscriptions(lambda: fetch_due(os.environ.get("IB_DUE_HOST", DUE_HOST), os.environ.get("IB_DUE_ADDR", DUE_ADDR)),
+                            os.environ.get("IB_DUE_CACHE", DUE_CACHE), dt.datetime.now(UTC).timestamp())
+    if due is not None:
+        cfg["subscriptions"] = cfg["subscriptions"] + due
     out = os.environ.get("IB_OUT", "/srv/appdata/indexer-bar/usage.json")
     try:
         api = client(os.environ.get("IB_PROWLARR_CONFIG", "/srv/appdata/prowlarr/config.xml"), os.environ.get("IB_PROWLARR_URL", "http://127.0.0.1:9696"))

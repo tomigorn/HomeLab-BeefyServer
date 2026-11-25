@@ -1,0 +1,930 @@
+{
+ "version": 1,
+ "generated": "2026-11-25T14:37:16Z",
+ "items": [
+  {
+   "id": "potemkin-recycle-bin",
+   "title": "Battleship Potemkin leaves the recycle bin",
+   "kind": "info",
+   "category": "",
+   "date": "2026-11-29",
+   "lifetime": false,
+   "source": "manual",
+   "lead": [
+    30,
+    7,
+    0
+   ],
+   "alert": "none",
+   "show": [],
+   "notes": "Delete early test title, 7-day cleanup; its unmonitored Radarr entry and the canary's Seerr request stay."
+  },
+  {
+   "id": "noip-lang-tool",
+   "title": "lang-tool.ddns.net",
+   "kind": "ddns",
+   "category": "No-IP hostname",
+   "date": "2026-12-10",
+   "lifetime": false,
+   "source": "manual",
+   "lead": [
+    5,
+    3,
+    1,
+    0
+   ],
+   "alert": "telegram",
+   "show": [],
+   "confirmed": "2026-11-10",
+   "url": "https://my.noip.com/dynamic-dns"
+  },
+  {
+   "id": "noip-wg-aemtli",
+   "title": "wg-aemtli.ddns.net",
+   "kind": "ddns",
+   "category": "No-IP hostname",
+   "date": "2026-12-10",
+   "lifetime": false,
+   "source": "manual",
+   "lead": [
+    5,
+    3,
+    1,
+    0
+   ],
+   "alert": "telegram",
+   "show": [],
+   "confirmed": "2026-11-10",
+   "url": "https://my.noip.com/dynamic-dns"
+  },
+  {
+   "id": "news-cve-backup",
+   "title": "News + CVE backup decision",
+   "kind": "reminder",
+   "category": "",
+   "date": "2026-12-22",
+   "lifetime": false,
+   "source": "manual",
+   "lead": [
+    7,
+    0
+   ],
+   "alert": "telegram",
+   "show": [],
+   "notes": "~/backups/decommission-news-cve-2026-11-22 on fastpi (2.1 GB disk space, SSD), kept in case the decommission missed something.",
+   "howto": "Delete it if nothing was missed: fastpi, ~: rm -r ~/backups/decommission-news-cve-2026-11-22. Or keep it and set a later date."
+  },
+  {
+   "id": "tls:home.holy-grail.ch",
+   "title": "TLS certificate home.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2026-12-27",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:stonks.holy-grail.ch",
+   "title": "TLS certificate stonks.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2026-12-31",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:claude-mockups.holy-grail.ch",
+   "title": "TLS certificate claude-mockups.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-01",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:loyalty-cards.holy-grail.ch",
+   "title": "TLS certificate loyalty-cards.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-02",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:loyalty-sync.holy-grail.ch",
+   "title": "TLS certificate loyalty-sync.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-02",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:sso.holy-grail.ch",
+   "title": "TLS certificate sso.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-03",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:bazarr.holy-grail.ch",
+   "title": "TLS certificate bazarr.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-04",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:prowlarr.holy-grail.ch",
+   "title": "TLS certificate prowlarr.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-04",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:qbittorrent.holy-grail.ch",
+   "title": "TLS certificate qbittorrent.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-04",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:radarr.holy-grail.ch",
+   "title": "TLS certificate radarr.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-04",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:sabnzbd.holy-grail.ch",
+   "title": "TLS certificate sabnzbd.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-04",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:jellyfin.holy-grail.ch",
+   "title": "TLS certificate jellyfin.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-06",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:cloud.holy-grail.ch",
+   "title": "TLS certificate cloud.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-13",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:adguard.holy-grail.ch",
+   "title": "TLS certificate adguard.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-16",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:avatars.holy-grail.ch",
+   "title": "TLS certificate avatars.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-16",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:grafana.holy-grail.ch",
+   "title": "TLS certificate grafana.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-16",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:ha.holy-grail.ch",
+   "title": "TLS certificate ha.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-16",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:portainer.holy-grail.ch",
+   "title": "TLS certificate portainer.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-16",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:traefik.holy-grail.ch",
+   "title": "TLS certificate traefik.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-16",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:wg-easy.holy-grail.ch",
+   "title": "TLS certificate wg-easy.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-16",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:requests.holy-grail.ch",
+   "title": "TLS certificate requests.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-17",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:sonarr.holy-grail.ch",
+   "title": "TLS certificate sonarr.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-17",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:tracker.holy-grail.ch",
+   "title": "TLS certificate tracker.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-17",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:lang-tool.ddns.net",
+   "title": "TLS certificate lang-tool.ddns.net",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-21",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:vpn-status-beefy.holy-grail.ch",
+   "title": "TLS certificate vpn-status-beefy.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-21",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:vpn-status-mouse.holy-grail.ch",
+   "title": "TLS certificate vpn-status-mouse.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-21",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:specs.holy-grail.ch",
+   "title": "TLS certificate specs.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-22",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:dt.holy-grail.ch",
+   "title": "TLS certificate dt.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-23",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:wiki.holy-grail.ch",
+   "title": "TLS certificate wiki.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-23",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:books.holy-grail.ch",
+   "title": "TLS certificate books.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-24",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:prowlarr-audiobooks.holy-grail.ch",
+   "title": "TLS certificate prowlarr-audiobooks.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-24",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:qbittorrent-audiobooks.holy-grail.ch",
+   "title": "TLS certificate qbittorrent-audiobooks.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-24",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:sabnzbd-audiobooks.holy-grail.ch",
+   "title": "TLS certificate sabnzbd-audiobooks.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-24",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "mam-vip",
+   "title": "MAM VIP",
+   "kind": "subscription",
+   "category": "MyAnonamouse class",
+   "date": "2027-01-27",
+   "lifetime": false,
+   "source": "manual",
+   "lead": [
+    30,
+    7,
+    0
+   ],
+   "alert": "telegram",
+   "show": [
+    "books"
+   ]
+  },
+  {
+   "id": "tls:notes.holy-grail.ch",
+   "title": "TLS certificate notes.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-29",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:audiobookshelf.holy-grail.ch",
+   "title": "TLS certificate audiobookshelf.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-01-31",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:activity.holy-grail.ch",
+   "title": "TLS certificate activity.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-09",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:cup.holy-grail.ch",
+   "title": "TLS certificate cup.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-09",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:stack.holy-grail.ch",
+   "title": "TLS certificate stack.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-10",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:wiki-admin.holy-grail.ch",
+   "title": "TLS certificate wiki-admin.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-12",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:wg-chores-demo.holy-grail.ch",
+   "title": "TLS certificate wg-chores-demo.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-13",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:wg-chores.holy-grail.ch",
+   "title": "TLS certificate wg-chores.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-13",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:jellyfin-beta.holy-grail.ch",
+   "title": "TLS certificate jellyfin-beta.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-14",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "holy-grail-ch",
+   "title": "holy-grail.ch",
+   "kind": "domain",
+   "category": "domain, GoDaddy (DNS Cloudflare)",
+   "date": "2027-02-17",
+   "lifetime": false,
+   "source": "manual",
+   "lead": [
+    30,
+    7,
+    0
+   ],
+   "alert": "telegram",
+   "show": [],
+   "registrar": "GoDaddy",
+   "renew": "yearly at godaddy.com",
+   "dns": "Cloudflare"
+  },
+  {
+   "id": "tls:report.holy-grail.ch",
+   "title": "TLS certificate report.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-19",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:music.holy-grail.ch",
+   "title": "TLS certificate music.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-21",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:backdrop-carousel.holy-grail.ch",
+   "title": "TLS certificate backdrop-carousel.holy-grail.ch",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-22",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "tls:wg-aemtli.ddns.net",
+   "title": "TLS certificate wg-aemtli.ddns.net",
+   "kind": "certificate",
+   "category": "Let's Encrypt via Traefik",
+   "date": "2027-02-22",
+   "lifetime": false,
+   "source": "tls",
+   "lead": [
+    21,
+    7
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "protonvpn-plus",
+   "title": "ProtonVPN Plus",
+   "kind": "subscription",
+   "category": "VPN",
+   "date": "2027-06-15",
+   "lifetime": false,
+   "source": "manual",
+   "lead": [
+    30,
+    7,
+    0
+   ],
+   "alert": "telegram",
+   "show": [
+    "seerr",
+    "books"
+   ]
+  },
+  {
+   "id": "authentik:avatar-picker-api",
+   "title": "Authentik token avatar-picker-api",
+   "kind": "token",
+   "category": "rotated weekly",
+   "date": "2027-10-31",
+   "lifetime": false,
+   "source": "authentik",
+   "lead": [
+    30
+   ],
+   "alert": "prometheus",
+   "show": []
+  },
+  {
+   "id": "dockerhub-wg-chores",
+   "title": "Docker Hub token github-actions-wg-chores",
+   "kind": "token",
+   "category": "WG Chores image builds",
+   "date": "2027-11-15",
+   "lifetime": false,
+   "source": "manual",
+   "lead": [
+    30,
+    7,
+    0
+   ],
+   "alert": "telegram",
+   "show": [],
+   "url": "https://app.docker.com/settings/personal-access-tokens",
+   "howto": "New token on hub.docker.com, put it into the GitHub secret DOCKERHUB_TOKEN of WG Chores, delete the old token. WG Chores image builds stop without it."
+  },
+  {
+   "id": "eweka",
+   "title": "Eweka",
+   "kind": "subscription",
+   "category": "Usenet provider",
+   "date": "2028-02-19",
+   "lifetime": false,
+   "source": "manual",
+   "lead": [
+    30,
+    7,
+    0
+   ],
+   "alert": "telegram",
+   "show": [
+    "seerr"
+   ],
+   "notes": "Renewed 2026-11-16 with the Black Friday deal (EUR 44.85 for 15 months), next billing 2028-02-19 at EUR 71.88/year. Good price: Black Friday deal EUR 37.50 for 15 months (= EUR 2.50/month) in 2024 and 2025, starts early November, ends early December; regular ~EUR 6/month (EUR 71.88/year). Often new customers only."
+  },
+  {
+   "id": "treasure-maps",
+   "title": "Treasure Maps",
+   "kind": "subscription",
+   "category": "indexer",
+   "date": "2031-11-17",
+   "lifetime": false,
+   "source": "manual",
+   "lead": [
+    30,
+    7,
+    0
+   ],
+   "alert": "telegram",
+   "show": [
+    "seerr"
+   ],
+   "notes": "Supporter until 2031-11-17"
+  },
+  {
+   "id": "nzbgeek",
+   "title": "NZBgeek",
+   "kind": "subscription",
+   "category": "indexer",
+   "date": null,
+   "lifetime": true,
+   "source": "manual",
+   "lead": [
+    30,
+    7,
+    0
+   ],
+   "alert": "telegram",
+   "show": [
+    "seerr"
+   ]
+  },
+  {
+   "id": "nzbplanet",
+   "title": "NzbPlanet",
+   "kind": "subscription",
+   "category": "indexer",
+   "date": null,
+   "lifetime": true,
+   "source": "manual",
+   "lead": [
+    30,
+    7,
+    0
+   ],
+   "alert": "telegram",
+   "show": [
+    "seerr"
+   ]
+  }
+ ]
+}

@@ -4,6 +4,7 @@ Usage: python3 tests/test_indexer_usage.py"""
 import datetime as dt
 import importlib.util
 import json
+import os
 import pathlib
 import tempfile
 import unittest
@@ -181,12 +182,68 @@ class Subscriptions(unittest.TestCase):
             iu.subscriptions([{"name": "Z"}], dt.date(2026, 10, 26))
 
 
+class DueDates(unittest.TestCase):
+    FIXTURE = (ROOT / "tests" / "fixtures" / "due-dates.json").read_text()
+    NOW = utc(2026, 11, 25, 15, 0).timestamp()
+
+    def test_parse_keeps_the_entries_shown_on_the_seerr_bar(self):
+        subs = iu.parse_due(self.FIXTURE)
+        self.assertEqual({s["name"] for s in subs}, {"Treasure Maps", "Eweka", "ProtonVPN Plus", "NZBgeek", "NzbPlanet"})
+        self.assertIn({"name": "Eweka", "kind": "Usenet provider", "expires": dt.date(2028, 2, 19)}, subs)
+        self.assertIn({"name": "NZBgeek", "kind": "indexer", "lifetime": True}, subs)
+        self.assertEqual(len(iu.subscriptions(subs, dt.date(2026, 11, 25))), 5)
+
+    def test_parse_rejects_garbage(self):
+        for bad in ("nope", "{}", json.dumps({"items": [{"title": "x", "show": ["seerr"]}]})):
+            with self.assertRaises(ValueError, msg=bad):
+                iu.parse_due(bad)
+
+    def cache(self, d, text=None, age=0):
+        p = pathlib.Path(d) / "due-dates.json"
+        if text is not None:
+            p.write_text(text)
+            t = self.NOW - age
+            os.utime(p, (t, t))
+        return p
+
+    def test_fresh_cache_is_used_without_asking_fastpi(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as d:
+            p = self.cache(d, self.FIXTURE, age=60)
+            subs = iu.due_subscriptions(lambda: calls.append(1) or "x", p, self.NOW)
+        self.assertEqual(calls, [])
+        self.assertEqual(len(subs), 5)
+
+    def test_old_cache_is_refreshed(self):
+        newer = json.loads(self.FIXTURE)
+        for i in newer["items"]:
+            if i["title"] == "Eweka":
+                i["date"] = "2029-02-19"
+        with tempfile.TemporaryDirectory() as d:
+            p = self.cache(d, self.FIXTURE, age=3600)
+            subs = iu.due_subscriptions(lambda: json.dumps(newer), p, self.NOW)
+            self.assertIn({"name": "Eweka", "kind": "Usenet provider", "expires": dt.date(2029, 2, 19)}, subs)
+            self.assertIn("2029-02-19", p.read_text())
+
+    def test_fastpi_down_or_garbage_keeps_the_cache(self):
+        for answer in (None, "garbage"):
+            with tempfile.TemporaryDirectory() as d:
+                p = self.cache(d, self.FIXTURE, age=86400 * 30)
+                subs = iu.due_subscriptions(lambda: answer, p, self.NOW)
+                self.assertEqual(len(subs), 5)
+                self.assertEqual(p.read_text(), self.FIXTURE)
+
+    def test_nothing_at_all_is_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(iu.due_subscriptions(lambda: None, self.cache(d), self.NOW))
+
+
 class Config(unittest.TestCase):
     def test_repo_config_loads(self):
         cfg = iu.load_config(ROOT / "indexer-bar" / "limits.toml")
         self.assertEqual(cfg["indexers"]["Treasure Maps"], {"downloads": 400, "window": "rolling"})
         self.assertEqual(cfg["indexers"]["NzbPlanet"], {"searches": 20000, "window": "day"})
-        self.assertEqual({s["name"] for s in cfg["subscriptions"]}, {"Treasure Maps", "Eweka", "ProtonVPN Plus", "NZBgeek", "NzbPlanet"})
+        self.assertEqual(cfg["subscriptions"], [])
 
     def test_bad_window_is_an_error(self):
         with tempfile.TemporaryDirectory() as d:

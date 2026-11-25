@@ -27,30 +27,5 @@ approx = ["searches"]
 [subtitles.opensubtitlescom]
 name = "OpenSubtitles"
 
-# Paid services: shown with days left, and a ★ on every bar row with the same name. After a renewal change only the date.
-# expires = the day it ends (YYYY-MM-DD, no quotes), or lifetime = true.
-[[subscriptions]]
-name = "Treasure Maps"
-kind = "indexer"
-expires = 2031-11-17
-
-# Eweka: renewed 2026-11-16 with the Black Friday deal (EUR 44.85 for 15 months), next billing 2028-02-19 at EUR 71.88/year. Good price: Black Friday deal €37.50 for 15 months (= €2.50/month) in 2024 and 2025, starts early November, ends early December; regular ~€6/month (€71.88/year). Often new customers only.
-[[subscriptions]]
-name = "Eweka"
-kind = "Usenet provider"
-expires = 2028-02-19
-
-[[subscriptions]]
-name = "ProtonVPN Plus"
-kind = "VPN"
-expires = 2027-06-15
-
-[[subscriptions]]
-name = "NZBgeek"
-kind = "indexer"
-lifetime = true
-
-[[subscriptions]]
-name = "NzbPlanet"
-kind = "indexer"
-lifetime = true
+# Paid services (days left, ★ on every bar row with the same name) come from fastpi: Docker/Due-Dates/due-dates.toml in HomeLab-FastPi, entries with show = ["seerr"]. Renew there, not here.
+# A [[subscriptions]] entry here (name, kind, expires = YYYY-MM-DD or lifetime = true) is added to that list; keep it for something only this bar knows.
