@@ -307,6 +307,8 @@ def parts_scan(path, name=None):
                 sig = instream(x)
                 if sig:
                     return "parts-infected", sig, {"minutes": minutes, "video": True, "parts": len(parts)}
+    except Retry:
+        raise
     except (ScanError, OSError, subprocess.SubprocessError) as e:
         return "parts-error", None, {"why": type(e).__name__, "minutes": minutes, "video": True}
     return "parts-clean", None, {"minutes": minutes, "video": True, "parts": len(parts)}
@@ -474,7 +476,11 @@ def main(argv):
     if argv[:1] == ["--worker"]:
         return worker("--once" in argv[1:])
     if argv[:1] == ["--parts"] and len(argv) == 2:
-        verdict, sig, extra = parts_scan(argv[1])
+        try:
+            verdict, sig, extra = parts_scan(argv[1])
+        except Retry as e:
+            print("ClamAV parts scan: %s: no verdict (%s), try again" % (argv[1], e))
+            return 2
         record(argv[1], verdict, "parts", sig, **extra)
         print("ClamAV parts scan: %s: %s%s" % (argv[1], verdict, " (%s)" % sig if sig else ""))
         if sig:
@@ -659,7 +665,14 @@ def process_job(jobdir):
         orig = paths.get(n) or link
         alive()
         if n in parts:
-            verdict, sig, extra = parts_scan(link, orig)
+            try:
+                verdict, sig, extra = parts_scan(link, orig)
+            except Retry as e:
+                TRIES[link] = TRIES.get(link, 0) + 1
+                if isinstance(e, Unreachable) or TRIES[link] < 3:
+                    print("ERROR: %s, job %s kept" % (e, os.path.basename(jobdir)))
+                    return False
+                verdict, sig, extra = "parts-error", None, {"why": type(e).__name__, "video": True}
             size = os.path.getsize(link) if os.path.exists(link) else None
             sha = None if sig or size is None else sha256_file(link)
             record(orig, verdict, "queue", sig, size, **extra, **hashed(sha))

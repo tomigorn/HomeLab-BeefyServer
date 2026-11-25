@@ -759,6 +759,18 @@ if "-map" in a and b"SUBS:" in data:
         self.assertEqual(self.jobs(), [])
         self.assertEqual(self.clamd.streams, [b"clean video"])
 
+    def test_worker_keeps_a_parts_job_while_clamd_is_unreachable(self):
+        mkv = self.big_video(b"ATT:font-bytes")
+        f = self.fakes()
+        self.queued(HOOK_MAX_BYTES="10", **f)
+        r = self.worker(HOOK_MAX_BYTES="10", CLAMD_PORT=str(free_port()), **f)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(len(self.jobs()), 1)
+        self.assertNotIn("parts-error", [x["verdict"] for x in self.results()])
+        self.worker(HOOK_MAX_BYTES="10", **f)
+        self.assertEqual(self.jobs(), [])
+        self.assertEqual((self.results()[-1]["path"], self.results()[-1]["verdict"]), (mkv, "parts-clean"))
+
     def test_worker_keeps_the_job_when_clamd_gives_no_verdict(self):
         self.write("movie.mkv", b"clean video")
         self.queued()
