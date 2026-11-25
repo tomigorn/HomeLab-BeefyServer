@@ -22,11 +22,17 @@ want() { # want <service...>: true when SERVICES is empty or names one of them
 
 run() { echo "== $1"; # shellcheck disable=SC1090
   source "$DIR/$1.sh"; }
+# Container policy of the project (policy_check.py), report only: smoke-test.sh gates it, an old violation must not roll back an update. Env: POLICY_CHECK.
+policy_report() {
+  local out; out=$(${POLICY_CHECK:-python3 "$(dirname "$0")/policy_check.py"} "$1" 2>&1)
+  (( $? == 2 )) && return 0
+  echo "== policy (report only)"; sed 's/^/  /' <<<"$out"; }
 if [[ ${1,,} == all ]]; then for p in $(projects); do run "$p"; done
 else
   p=$(projects | grep -ixF -- "$1" | head -1)
   [[ -n $p ]] || { echo "no customization checks for $1 (have: $(projects | xargs))"; exit 2; }
   run "$p"
+  policy_report "$p"
 fi
 echo "post-update: ${#FAILED[@]} failed, $PASS passed"
 (( ${#FAILED[@]} == 0 )) || { echo "FAILED: ${FAILED[*]}"; exit 1; }

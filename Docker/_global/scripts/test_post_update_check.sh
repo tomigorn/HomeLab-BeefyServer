@@ -49,6 +49,17 @@ EOF
 out=$("$S" Long 2>&1)
 (( $(grep 'FAIL long.out' <<<"$out" | wc -c) < 140 )) && ok "a failing value is cut short" || bad "a failing value is cut short" "$out"
 
+# Container policy (policy_check.py): reported for one project, never fails the check, skipped for all.
+printf '#!/bin/sh\necho "Good/app: cap_drop"; echo "policy: 1 violations, 0 excepted, 0 stale exceptions"; exit 1\n' > "$T/policy"
+printf '#!/bin/sh\necho "policy: unknown project" >&2; exit 2\n' > "$T/policy-unknown"
+chmod +x "$T/policy" "$T/policy-unknown"
+out=$(POLICY_CHECK="$T/policy" "$S" Good 2>&1); rc=$?
+[[ $rc == 0 && $out == *"== policy (report only)"*"Good/app: cap_drop"* ]] && ok "policy violations are reported, not failed" || bad "policy violations are reported, not failed" "rc=$rc $out"
+out=$(POLICY_CHECK="$T/policy-unknown" "$S" Good 2>&1)
+[[ $out != *"== policy"* ]] && ok "no compose project -> no policy section" || bad "no compose project -> no policy section" "$out"
+out=$(POLICY_CHECK="$T/policy" "$S" all 2>&1)
+[[ $out != *"== policy"* ]] && ok "all skips the policy report" || bad "all skips the policy report" "$out"
+
 # update-project.sh: a failing customization check rolls back; a passing one keeps the update.
 mkdir -p "$T/bin" "$T/Demo"
 cat > "$T/bin/docker" <<'STUB'
