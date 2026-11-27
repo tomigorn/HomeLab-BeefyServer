@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""download-now/delete_early.py: the "Delete early" backend (README "Delete early") — group check from the forward-auth header, the test film, library and season checks, the weekly quota, Origin/JSON, job files for the beefy runner, answers only by the asked person, restore rights, the title state from the runner's state file.
+"""download-now/delete_early.py: the "Delete early" backend (README "Delete early") — group check from the forward-auth header, the test film, library and season checks, the weekly quota, Origin/JSON, job files for the beefy runner, answers only by the asked person, restore rights, the title state from the runner's state file, the plan preview (fan-favourite setters, viewers mid-watch), bulk deletes (My library).
 Usage: python3 tests/test_delete_early_api.py"""
 import datetime
 import importlib.util
@@ -63,6 +63,8 @@ class World:
         self.deps.retention_keep = str(self.d / "store" / "keep.json")
         self.deps.delete_jobs = str(self.jobs)
         self.deps.delete_state = str(self.state)
+        self.watching = self.d / "delete-early-watching.json"
+        self.keep = self.d / "store" / "keep.json"
 
     def headers(self, who, groups=GROUPS, origin=ORIGIN):
         h = {"X-Api-Key": "k", "X-Api-User": who, "Origin": origin, "Content-Type": "application/json"} if who else {}
@@ -83,6 +85,9 @@ class World:
 
     def jobs_list(self):
         return [json.loads(p.read_text()) for p in sorted(self.jobs.glob("*.req"))]
+
+    def bulk(self, who, items, groups=GROUPS):
+        return self.post(who, "bulk", {"items": [{"type": k.split("/")[0], "tmdbId": int(k.split("/")[1])} for k in items]}, groups)
 
     def runner_state(self, items):
         self.state.write_text(json.dumps({"items": {i["id"]: i for i in items}}))
@@ -132,13 +137,16 @@ class Delete(Base):
         code, r = self.w.post("joe", "delete", {"type": "movie", "tmdbId": 10})
         self.assertEqual((code, r["state"]), (202, "queued"))
         (job,) = self.w.jobs_list()
-        self.assertEqual({k: job[k] for k in ("op", "kind", "tmdb", "season", "user", "userName", "account", "requesters", "keep", "title")},
-                         {"op": "delete", "kind": "movie", "tmdb": 10, "season": None, "user": 5, "userName": "Joe Bloggs", "account": "joe", "requesters": [7], "keep": False, "title": "New Film"})
+        self.assertEqual({k: job[k] for k in ("op", "kind", "tmdb", "season", "user", "userName", "account", "requesters", "title")},
+                         {"op": "delete", "kind": "movie", "tmdb": 10, "season": None, "user": 5, "userName": "Joe Bloggs", "account": "joe", "requesters": [7], "title": "New Film"})
         self.assertEqual(job["id"], r["id"])
 
-    def test_keep_forever_is_passed_on(self):
-        self.w.post("jane", "delete", {"type": "movie", "tmdbId": 11})
-        self.assertTrue(self.w.jobs_list()[0]["keep"])
+    def test_automatic_keep_forever_never(self):
+        for who in ("jane", "joe", "admin"):
+            de.RECENT.clear()
+            self.assertEqual(self.w.post(who, "delete", {"type": "movie", "tmdbId": 11}), (403, {"error": "kept"}), who)
+        self.assertEqual(self.w.get("joe", "type=movie&tmdb=11")[1]["reason"], "kept")
+        self.assertEqual(self.w.job_files(), [])
 
     def test_test_film_never(self):
         code, r = self.w.post("admin", "delete", {"type": "movie", "tmdbId": 653})
@@ -208,6 +216,52 @@ class Quota(Base):
         code, r = self.w.post("jane", "delete", {"type": "movie", "tmdbId": 10})
         self.assertEqual((code, r["error"]), (429, "quota"))
         self.assertEqual(self.w.get("jane", "type=movie&tmdb=10")[1]["quota"], {"used": 10, "max": 10})
+
+
+class Plan(Base):
+    def test_temporary_title_goes_to_the_bin_at_once(self):
+        self.assertEqual(self.w.get("joe", "type=movie&tmdb=10")[1]["plan"], [])
+
+    def test_fan_favourite_asks_the_setter_not_the_setter_themself(self):
+        self.w.keep.write_text(json.dumps({"titles": {"movie/10": {"keep": True, "marks": {"7": {"at": "2026-12-19T10:00:00+00:00", "name": "Jane Doe"}}}}}))
+        self.assertEqual(self.w.get("joe", "type=movie&tmdb=10")[1]["plan"], [{"reason": "fan", "names": ["Jane Doe"]}])
+        self.assertEqual(self.w.get("jane", "type=movie&tmdb=10")[1]["plan"], [])
+
+    def test_viewers_mid_watch_from_the_runner_snapshot(self):
+        self.w.watching.write_text(json.dumps({"updated": "2026-12-20T11:40:00+00:00", "titles": {"movie/10": [{"uid": 9, "name": "Viewer"}, {"uid": 7, "name": "Jane Doe"}]}}))
+        self.assertEqual(self.w.get("jane", "type=movie&tmdb=10")[1]["plan"], [{"reason": "watching", "names": ["Viewer"]}])
+
+    def test_unreadable_snapshot_is_no_watcher(self):
+        self.w.watching.write_text("{")
+        self.assertEqual(self.w.get("jane", "type=movie&tmdb=10")[1]["plan"], [])
+
+
+class Bulk(Base):
+    def test_writes_one_job_per_title(self):
+        code, r = self.w.bulk("jane", ["movie/10", "tv/20"])
+        self.assertEqual((code, len(r["ids"])), (202, 2))
+        self.assertEqual(sorted((j["kind"], j["tmdb"], j["season"]) for j in self.w.jobs_list()), [("movie", 10, None), ("tv", 20, None)])
+
+    def test_up_to_the_remaining_limit_only(self):
+        self.w.runner_state([item(str(i), tmdb=100 + i) for i in range(9)])
+        self.assertEqual(self.w.bulk("jane", ["movie/10", "tv/20"]), (429, {"error": "quota"}))
+        self.assertEqual(self.w.job_files(), [])
+
+    def test_any_refused_title_sends_nothing(self):
+        code, r = self.w.bulk("jane", ["movie/10", "movie/653", "movie/11", "movie/30"])
+        self.assertEqual((code, r), (409, {"error": "refused", "titles": {"movie/653": "protected", "movie/11": "kept", "movie/30": "library"}}))
+        self.assertEqual(self.w.job_files(), [])
+
+    def test_busy_title_is_refused(self):
+        self.w.runner_state([item("a")])
+        self.assertEqual(self.w.bulk("jane", ["movie/10"]), (409, {"error": "refused", "titles": {"movie/10": "already"}}))
+
+    def test_shape(self):
+        for bad in ([], ["movie/10", "movie/10"], [f"movie/{i}" for i in range(1, 12)]):
+            de.RECENT.clear()
+            self.assertEqual(self.w.bulk("jane", bad)[0], 400, bad)
+        self.assertEqual(self.w.bulk("jane", ["movie/10"], groups=None)[0], 403)
+        self.assertEqual(self.w.bulk("viewer", ["movie/10"])[0], 403)
 
 
 class Answers(Base):

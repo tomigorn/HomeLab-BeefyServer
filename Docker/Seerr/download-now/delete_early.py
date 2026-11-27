@@ -1,6 +1,6 @@
-"""Delete early backend (README "Delete early"): /_download-now/delete-early/ — GET state of a title, POST delete / answer / restore.
-Who: a Seerr session with a request right (or ADMIN) whose forward-auth header X-authentik-groups (set by fastpi's Traefik from Authentik on every request) names streaming-requesters; no header = nobody. The test film never.
-This backend holds no key that deletes: it writes job files (<dir>/*.req) for Movie-Downloads' scripts/delete-early.py, which checks Keep forever and who is mid-watch, deletes into the recycle bin, restores and notifies, and keeps the state file read here."""
+"""Delete early backend (README "Delete early", "My library"): /_download-now/delete-early/ — GET state of a title (with the plan: who must OK it), POST delete / bulk / answer / restore.
+Who: a Seerr session with a request right (or ADMIN) whose forward-auth header X-authentik-groups (set by fastpi's Traefik from Authentik on every request) names streaming-requesters; no header = nobody. Never: the test film, automatic keep forever. Rules: retention_rules.delete_plan.
+This backend holds no key that deletes: it writes job files (<dir>/*.req) for Movie-Downloads' scripts/delete-early.py, which checks the plan again (fan-favourite setters, who is mid-watch), deletes into the recycle bin, restores and notifies, and keeps the state file and the mid-watch snapshot read here."""
 import datetime
 import json
 import os
@@ -13,10 +13,11 @@ import urllib.parse
 import retention_api as ra
 import retention_rules as rr
 
-GROUP = "streaming-requesters"
-WEEK_MAX = 10
-WEEK = datetime.timedelta(days=7)
+GROUP = rr.GROUP
+WEEK_MAX = rr.DELETE_WEEK_MAX
+WEEK = rr.WEEK
 BODY_MAX = 1024
+BULK_BODY_MAX = 2048
 MIN_GAP = 3
 PER_HOUR = 30
 ACTIVE = ("queued", "pending", "approved", "deleted")
@@ -30,14 +31,8 @@ class StateUnreadable(Exception):
     pass
 
 
-def in_group(headers):
-    h = {k.lower(): v for k, v in headers.items()}
-    v = h.get("x-authentik-groups")
-    return isinstance(v, str) and GROUP in [g.strip() for g in v.split("|")]
-
-
-def may_request(me):
-    return bool(ra.perms(me) & (ra.ADMIN | ra.REQUEST | ra.REQUEST_MOVIE | ra.REQUEST_TV))
+in_group = ra.in_group
+may_request = ra.may_request
 
 
 def when(s):
@@ -146,11 +141,31 @@ def refusal(me, headers, kind, tmdb, entry):
         return "group"
     if not may_request(me):
         return "permission"
-    if rr.protected(rr.key(kind, tmdb), []) or (entry or {}).get("protected"):
-        return "protected"
-    if not isinstance(entry, dict):
-        return "library"
-    return None
+    return rr.delete_plan(rr.key(kind, tmdb), [], entry, {}, [], me.get("id"))["refused"]
+
+
+def watching_file(deps):
+    w = getattr(deps, "delete_watching", None)
+    return w or str(pathlib.Path(deps.delete_state).with_name("delete-early-watching.json"))
+
+
+def watchers_of(deps, key):
+    """[(Seerr uid, name)] mid-watch from the runner's snapshot (refreshed every 30 min; the runner checks again when it deletes)."""
+    try:
+        data = json.loads(pathlib.Path(watching_file(deps)).read_text())
+        rows = data["titles"].get(key) or []
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return []
+    return [(r.get("uid"), r.get("name")) for r in rows if isinstance(r, dict)]
+
+
+def plan(deps, me, kind, tmdb, media, entry_key, entry, store=None):
+    """The asks this delete would need: [{reason, names}] (fan setters, viewers mid-watch)."""
+    store = store if store is not None else ra.store_or_empty(deps.retention_keep)
+    tvdb = (entry or {}).get("tvdb") or (ra.tvdb_of(media) if kind == "tv" else None)
+    setters = {u: m.get("name") for u, m in ra.title_marks(store, (rr.key(kind, tmdb), entry_key), tvdb).items()}
+    p = rr.delete_plan(rr.key(kind, tmdb), [], entry, setters, watchers_of(deps, entry_key), me.get("id"))
+    return [{"reason": a["reason"], "names": a["names"]} for a in p["asks"]]
 
 
 def public(it, me, now):
@@ -224,15 +239,66 @@ def do_delete(dn, deps, me, req, auth, headers, now):
             return 429, {"error": "quota"}
         if limited(me["id"]):
             return 429, {"error": "too many"}
-        st = ra.title_state(dn, deps, me, kind, tmdb, media, now.date(), lookup=False)
-        jid = secrets.token_hex(8)
-        job = {"op": "delete", "id": jid, "user": me["id"], "userName": me.get("displayName") or me.get("username") or f"user {me['id']}", "account": account(headers),
-               "kind": kind, "tmdb": tmdb, "tvdb": ra.tvdb_of(media) if kind == "tv" else None, "season": season,
-               "title": (media or {}).get("title") or (media or {}).get("name") or (entry or {}).get("t") or "", "year": (entry or {}).get("y"),
-               "requesters": requesters(media), "keep": bool(st.get("keep")), "at": now.isoformat(timespec="seconds")}
-        write_job(deps.delete_jobs, f"delete-{jid}", job)
+        jid = new_job(deps, me, headers, kind, tmdb, season, media, entry, now)
     print(f"delete-early: user {me['id']} asks to delete {rr.key(kind, tmdb)} {'whole' if season is None else f'season {season}'}", flush=True)
     return 202, {"state": "queued", "id": jid}
+
+
+def new_job(deps, me, headers, kind, tmdb, season, media, entry, now):
+    jid = secrets.token_hex(8)
+    job = {"op": "delete", "id": jid, "user": me["id"], "userName": me.get("displayName") or me.get("username") or f"user {me['id']}", "account": account(headers),
+           "kind": kind, "tmdb": tmdb, "tvdb": ra.tvdb_of(media) if kind == "tv" else None, "season": season,
+           "title": (media or {}).get("title") or (media or {}).get("name") or (entry or {}).get("t") or "", "year": (entry or {}).get("y"),
+           "requesters": requesters(media), "at": now.isoformat(timespec="seconds")}
+    write_job(deps.delete_jobs, f"delete-{jid}", job)
+    return jid
+
+
+def do_bulk(dn, deps, me, req, auth, headers, now):
+    """Whole titles from My library, at most the deletions left this week; any refused title = nothing sent."""
+    items = req.get("items")
+    if not isinstance(items, list) or not 0 < len(items) <= WEEK_MAX:
+        return 400, {"error": "bad request"}
+    wanted = []
+    for x in items:
+        kind, tmdb = (x or {}).get("type") if isinstance(x, dict) else None, (x or {}).get("tmdbId") if isinstance(x, dict) else None
+        if kind not in ("movie", "tv") or not isinstance(tmdb, int) or isinstance(tmdb, bool) or not 0 < tmdb < 10 ** 10 or (kind, tmdb) in wanted:
+            return 400, {"error": "bad request"}
+        wanted.append((kind, tmdb))
+    if not in_group(headers):
+        return 403, {"error": "group"}
+    if not may_request(me):
+        return 403, {"error": "permission"}
+    found, refused = [], {}
+    for kind, tmdb in wanted:
+        try:
+            media = deps.seerr(f"/{kind}/{tmdb}", auth)
+        except dn.ApiError:
+            media = None
+        _, entry = library_entry(deps, kind, tmdb, media)
+        why = refusal(me, headers, kind, tmdb, entry) if media is not None else "library"
+        if why:
+            refused[rr.key(kind, tmdb)] = why
+        found.append((kind, tmdb, media, entry))
+    with LOCK:
+        try:
+            state = read_state(deps.delete_state)
+        except StateUnreadable as e:
+            print(f"delete-early: runner state unreadable ({e}), nothing queued", flush=True)
+            return 503, {"error": "state"}
+        jobs = read_jobs(deps.delete_jobs)
+        for kind, tmdb, _, _ in found:
+            if rr.key(kind, tmdb) not in refused and busy(state, jobs, kind, tmdb, None, now):
+                refused[rr.key(kind, tmdb)] = "already"
+        if refused:
+            return 409, {"error": "refused", "titles": refused}
+        if used(state, jobs, me["id"], now) + len(found) > WEEK_MAX:
+            return 429, {"error": "quota"}
+        if limited(me["id"]):
+            return 429, {"error": "too many"}
+        ids = [new_job(deps, me, headers, kind, tmdb, None, media, entry, now) for kind, tmdb, media, entry in found]
+    print(f"delete-early: user {me['id']} asks to delete {len(ids)} titles: {', '.join(rr.key(k, t) for k, t, _, _ in found)}", flush=True)
+    return 202, {"state": "queued", "ids": ids}
 
 
 def find_item(deps, iid):
@@ -303,7 +369,7 @@ def get_state(dn, deps, me, url, auth, headers, now):
         media = deps.seerr(f"/{kind}/{tmdb}", auth)
     except dn.ApiError:
         media = None
-    _, entry = library_entry(deps, kind, tmdb, media)
+    ek, entry = library_entry(deps, kind, tmdb, media)
     try:
         state = read_state(deps.delete_state)
     except StateUnreadable:
@@ -312,7 +378,8 @@ def get_state(dn, deps, me, url, auth, headers, now):
     why = refusal(me, headers, kind, tmdb, entry)
     queued = [scope_of(j.get("season")) for j in jobs if j.get("op") == "delete" and j.get("kind") == kind and j.get("tmdb") == tmdb]
     return 200, {"key": rr.key(kind, tmdb), "allowed": why is None, "reason": why, "quota": {"used": used(state, jobs, me["id"], now), "max": WEEK_MAX},
-                 "seasons": seasons_of(media) if kind == "tv" else [], "queued": queued, "items": title_items(state, me, kind, tmdb, now)}
+                 "seasons": seasons_of(media) if kind == "tv" else [], "queued": queued, "items": title_items(state, me, kind, tmdb, now),
+                 "plan": plan(deps, me, kind, tmdb, media, ek, entry) if why is None else []}
 
 
 def handle(dn, method, path, headers, body, deps, now=None):
@@ -321,12 +388,12 @@ def handle(dn, method, path, headers, body, deps, now=None):
     sub = url.path[len("/_download-now/delete-early/"):]
     h = {k.lower(): v for k, v in headers.items()}
     req = {}
-    if method == "POST" and sub in ("delete", "answer", "restore"):
+    if method == "POST" and sub in ("delete", "bulk", "answer", "restore"):
         if h.get("origin") not in deps.origins:
             return 403, {"error": "origin"}
         if h.get("content-type", "").split(";")[0].strip() != "application/json":
             return 415, {"error": "json only"}
-        if len(body or b"") > BODY_MAX:
+        if len(body or b"") > (BULK_BODY_MAX if sub == "bulk" else BODY_MAX):
             return 413, {"error": "too-big"}
         try:
             req = json.loads(body or b"{}")
@@ -349,6 +416,8 @@ def handle(dn, method, path, headers, body, deps, now=None):
         return get_state(dn, deps, me, url, auth, headers, now)
     if sub == "delete":
         return do_delete(dn, deps, me, req, auth, headers, now)
+    if sub == "bulk":
+        return do_bulk(dn, deps, me, req, auth, headers, now)
     if sub == "answer":
         return do_answer(deps, me, req, headers, now)
     return do_restore(deps, me, req, headers, now)
