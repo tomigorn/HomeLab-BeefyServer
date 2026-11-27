@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""download-now/retention_api.py: the "Keep forever" backend (README "Storage retention") — title state, batch for cards, the would-delete list (managers), keep toggles with the permission rule, Origin/JSON, limits and the keep store, against a fake Seerr and fake Radarr/Sonarr.
+"""download-now/retention_api.py: the "Keep forever" backend (README "Storage retention", "My library") — title state, batch for cards, the would-delete list (managers), fan-favourite marks (group, setter only, 5 per 7 days), Origin/JSON, limits and the keep store, against a fake Seerr and fake Radarr/Sonarr.
 Usage: python3 tests/test_retention_api.py"""
 import datetime
 import importlib.util
@@ -21,9 +21,9 @@ import retention_api as ra  # noqa: E402
 
 ORIGIN = "https://requests.example.com"
 TODAY = datetime.date(2026, 12, 20)
-ADMIN = {"id": 1, "permissions": 2}
-JANE = {"id": 7, "permissions": 32}
-JOE = {"id": 5, "permissions": 32}
+ADMIN = {"id": 1, "permissions": 2, "displayName": "Owner"}
+JANE = {"id": 7, "permissions": 32, "displayName": "Jane"}
+JOE = {"id": 5, "permissions": 32, "displayName": "Joe"}
 VIEWER = {"id": 9, "permissions": 0}
 USERS = {"admin": ADMIN, "jane": JANE, "joe": JOE, "viewer": VIEWER}
 
@@ -82,13 +82,22 @@ class World:
         self.deps.retention_file = str(self.data)
         self.deps.retention_keep = str(self.keep)
 
-    def get(self, who, path):
-        return ra.handle(dn, "GET", "/_download-now/retention/" + path, {"X-Api-Key": "k", "X-Api-User": who} if who else {}, b"", self.deps, today=TODAY)
+    def get(self, who, path, group=True):
+        h = {"X-Api-Key": "k", "X-Api-User": who} if who else {}
+        if who and group:
+            h["X-authentik-groups"] = "family|streaming-requesters"
+        return ra.handle(dn, "GET", "/_download-now/retention/" + path, h, b"", self.deps, today=TODAY)
 
-    def post(self, who, body, origin=ORIGIN, ctype="application/json"):
+    def post(self, who, body, origin=ORIGIN, ctype="application/json", group=True):
         h = {"X-Api-Key": "k", "X-Api-User": who, "Origin": origin, "Content-Type": ctype}
+        if group:
+            h["X-authentik-groups"] = "streaming-requesters"
         raw = body if isinstance(body, bytes) else json.dumps(body).encode()
         return ra.handle(dn, "POST", "/_download-now/retention/keep", h, raw, self.deps, today=TODAY)
+
+    def mark(self, who, kind, tmdb, on=True):
+        ra.RECENT.clear()
+        return self.post(who, {"type": kind, "tmdbId": tmdb, "keep": on})
 
 
 class Base(unittest.TestCase):
@@ -114,23 +123,25 @@ class Title(Base):
     def test_temporary_title_with_dates_and_rights(self):
         code, r = self.w.get("jane", "title?type=movie&tmdb=10")
         self.assertEqual(code, 200)
-        self.assertEqual((r["known"], r["state"], r["deleteOn"], r["soon"], r["ssdUntil"], r["tier"], r["canKeep"], r["canUnkeep"], r["deleteEnabled"]),
-                         (True, "temporary", "2026-12-30", False, "2026-10-31", "hdd", True, True, False))
+        self.assertEqual((r["known"], r["state"], r["deleteOn"], r["soon"], r["ssdUntil"], r["tier"], r["canMark"], r["canUnmark"], r["deleteEnabled"], r["marks"], r["markQuota"]),
+                         (True, "temporary", "2026-12-30", False, "2026-10-31", "hdd", True, False, False, [], {"used": 0, "max": 5}))
 
     def test_clock_from_the_last_play_is_shown(self):
         r = self.w.get("jane", "title?type=movie&tmdb=10")[1]
         self.assertEqual((r["imported"], r["lastPlayed"], r["anchor"], r["anchorBy"]), ("2026-09-01", "2026-10-01", "2026-10-01", "play"))
 
-    def test_unkeep_needs_requester_or_admin(self):
-        self.assertFalse(self.w.get("jane", "title?type=movie&tmdb=11")[1]["canUnkeep"])
-        self.assertTrue(self.w.get("joe", "title?type=movie&tmdb=11")[1]["canUnkeep"])
-        self.assertTrue(self.w.get("admin", "title?type=movie&tmdb=11")[1]["canUnkeep"])
-        r = self.w.get("viewer", "title?type=movie&tmdb=11")[1]
-        self.assertEqual((r["canKeep"], r["canUnkeep"]), (False, False))
+    def test_automatic_keep_forever_is_locked_for_everyone(self):
+        for who in ("jane", "joe", "admin", "viewer"):
+            r = self.w.get(who, "title?type=movie&tmdb=11")[1]
+            self.assertEqual((r["state"], r["source"], r["canMark"], r["canUnmark"]), ("keep", "default", False, False), who)
+
+    def test_marking_needs_the_group_and_a_request_right(self):
+        self.assertFalse(self.w.get("viewer", "title?type=movie&tmdb=10")[1]["canMark"])
+        self.assertFalse(self.w.get("jane", "title?type=movie&tmdb=10", group=False)[1]["canMark"])
 
     def test_protected_title_cannot_be_switched(self):
         r = self.w.get("admin", "title?type=movie&tmdb=653")[1]
-        self.assertEqual((r["state"], r["source"], r["canKeep"], r["canUnkeep"]), ("keep", "protected", False, False))
+        self.assertEqual((r["state"], r["source"], r["canMark"], r["canUnmark"]), ("keep", "protected", False, False))
 
     def test_postponed_title(self):
         r = self.w.get("jane", "title?type=tv&tmdb=20")[1]
@@ -182,7 +193,7 @@ class List(Base):
         code, r = self.w.get("admin", "list")
         self.assertEqual(code, 200)
         self.assertEqual([i["key"] for i in r["items"]], ["movie/10", "tv/21", "tv/20"])
-        self.assertEqual(r["counts"], {"titles": 5, "keep": 2, "temporary": 3, "old": 2, "niche": 0, "goated": 0, "override": 0, "protected": 1, "soon": 0})
+        self.assertEqual(r["counts"], {"titles": 5, "keep": 2, "temporary": 3, "old": 2, "niche": 0, "goated": 0, "fan": 0, "protected": 1, "soon": 0})
         self.assertEqual(r["promote"][0]["seasons"], [2])
         self.assertFalse(r["deleteEnabled"])
 
@@ -193,14 +204,15 @@ class Series(Base):
         self.assertEqual((r["known"], r["key"], r["entryKey"]), (True, "tv/22", "tv/21"))
 
     def test_override_found_by_tvdb(self):
-        self.w.keep.write_text(json.dumps({"titles": {"tv/99": {"keep": True, "tvdb": 4020}}}))
+        self.w.keep.write_text(json.dumps({"titles": {"tv/99": {"keep": True, "tvdb": 4020, "marks": {"5": {"at": "2026-12-19T10:00:00+01:00", "name": "Joe"}}}}}))
         r = self.w.get("jane", "title?type=tv&tmdb=20")[1]
-        self.assertEqual((r["state"], r["source"]), ("keep", "override"))
+        self.assertEqual((r["state"], r["source"], r["marks"]), ("keep", "fan", [{"name": "Joe", "mine": False}]))
         self.assertEqual(self.w.get("jane", "titles?keys=tv/20")[1]["titles"]["tv/20"]["state"], "keep")
 
     def test_keep_stores_the_tvdb_id_with_the_series(self):
         self.assertEqual(self.w.post("jane", {"type": "tv", "tmdbId": 20, "keep": True})[0], 200)
-        self.assertEqual(json.loads(self.w.keep.read_text())["titles"]["tv/20"], {"keep": True, "tvdb": 4020, "by": 7, "at": json.loads(self.w.keep.read_text())["titles"]["tv/20"]["at"]})
+        rec = json.loads(self.w.keep.read_text())["titles"]["tv/20"]
+        self.assertEqual(rec, {"keep": True, "tvdb": 4020, "by": 7, "at": rec["at"], "marks": {"7": {"at": rec["at"], "name": "Jane"}}})
 
 
 class Conflicts(Base):
@@ -209,11 +221,12 @@ class Conflicts(Base):
         self.assertEqual(self.w.get("jane", "title?type=tv&tmdb=20")[1]["state"], "keep")
         self.assertEqual(self.w.get("jane", "titles?keys=tv/20")[1]["titles"]["tv/20"]["state"], "keep")
 
-    def test_choice_for_a_series_updates_every_record_of_its_tvdb_id(self):
-        self.w.keep.write_text(json.dumps({"titles": {"tv/99": {"keep": True, "tvdb": 4020}}}))
+    def test_removing_my_mark_on_a_series_removes_it_from_every_record_of_its_tvdb_id(self):
+        self.w.keep.write_text(json.dumps({"titles": {"tv/99": {"keep": True, "tvdb": 4020, "by": 7, "at": "2026-12-19T10:00:00+01:00"}}}))
         code, r = self.w.post("jane", {"type": "tv", "tmdbId": 20, "keep": False})
         self.assertEqual((code, r["state"]), (200, "temporary"))
-        self.assertEqual(json.loads(self.w.keep.read_text())["titles"]["tv/99"]["keep"], False)
+        rec = json.loads(self.w.keep.read_text())["titles"]["tv/99"]
+        self.assertEqual((rec["keep"], rec["marks"]), (False, {}))
 
 
 class Store(Base):
@@ -288,27 +301,62 @@ class Lookups(Base):
 
 
 class Keep(Base):
-    def test_anyone_who_may_request_can_keep_any_title(self):
-        code, r = self.w.post("jane", {"type": "movie", "tmdbId": 11, "keep": True})
-        self.assertEqual((code, r["state"], r["source"]), (200, "keep", "override"))
+    def test_any_group_member_marks_a_temporary_title(self):
+        code, r = self.w.post("jane", {"type": "movie", "tmdbId": 10, "keep": True})
+        self.assertEqual((code, r["state"], r["source"], r["marks"], r["canMark"], r["canUnmark"]), (200, "keep", "fan", [{"name": "Jane", "mine": True}], False, True))
         code, r = self.w.post("jane", {"type": "tv", "tmdbId": 20, "keep": True})
         self.assertEqual(code, 429)
         ra.RECENT.clear()
         self.assertEqual(self.w.post("jane", {"type": "tv", "tmdbId": 20, "keep": True})[0], 200)
         store = json.loads(self.w.keep.read_text())
-        self.assertEqual(store["titles"]["movie/11"]["keep"], True)
-        self.assertEqual(store["titles"]["movie/11"]["by"], 7)
+        self.assertEqual((store["titles"]["movie/10"]["keep"], store["titles"]["movie/10"]["by"]), (True, 7))
+        self.assertEqual([(m["by"], m["key"]) for m in store["marked"]], [(7, "movie/10"), (7, "tv/20")])
         self.assertEqual(stat.S_IMODE(os.stat(self.w.keep).st_mode), 0o640)
 
-    def test_unkeep_only_requester_or_admin(self):
-        self.assertEqual(self.w.post("jane", {"type": "movie", "tmdbId": 11, "keep": False})[0], 403)
-        self.assertEqual(self.w.post("joe", {"type": "movie", "tmdbId": 11, "keep": False})[1]["state"], "temporary")
-        ra.RECENT.clear()
-        self.assertEqual(self.w.post("admin", {"type": "movie", "tmdbId": 11, "keep": True})[0], 200)
+    def test_second_person_adds_a_second_mark(self):
+        self.w.mark("jane", "movie", 10)
+        code, r = self.w.mark("joe", "movie", 10)
+        self.assertEqual((code, [m["name"] for m in r["marks"]]), (200, ["Jane", "Joe"]))
+
+    def test_only_the_setter_removes_a_mark_admin_included(self):
+        self.w.mark("jane", "movie", 10)
+        self.assertEqual(self.w.mark("admin", "movie", 10, False), (403, {"error": "not your mark"}))
+        self.assertEqual(self.w.mark("joe", "movie", 10, False)[0], 403)
+        code, r = self.w.mark("jane", "movie", 10, False)
+        self.assertEqual((code, r["state"], r["marks"]), (200, "temporary", []))
+
+    def test_automatic_keep_forever_cannot_be_unmarked_or_marked(self):
+        self.assertEqual(self.w.mark("joe", "movie", 11, False)[0], 403)
+        self.assertEqual(self.w.mark("admin", "movie", 11, False)[0], 403)
+        self.assertEqual(self.w.mark("jane", "movie", 11)[0], 403)
+
+    def test_sixth_mark_in_seven_days_is_refused_and_removing_does_not_free_it(self):
+        for i in range(31, 36):
+            self.w.media[f"movie/{i}"] = media("movie", i, [], "2025-01-01")
+        for i in range(31, 36):
+            self.assertEqual(self.w.mark("jane", "movie", i)[0], 200, i)
+        self.assertEqual(self.w.mark("jane", "movie", 31, False)[0], 200)
+        self.assertEqual(self.w.mark("jane", "movie", 10), (429, {"error": "mark-quota"}))
+        r = self.w.get("jane", "title?type=movie&tmdb=10")[1]
+        self.assertEqual((r["canMark"], r["markQuota"]), (False, {"used": 5, "max": 5}))
+        self.assertEqual(self.w.mark("joe", "movie", 10)[0], 200)
+
+    def test_marks_older_than_seven_days_free_their_slot(self):
+        old = [{"by": 7, "key": f"movie/{i}", "at": "2026-12-12T10:00:00+01:00"} for i in range(5)]
+        self.w.keep.write_text(json.dumps({"titles": {}, "marked": old}))
+        self.assertEqual(self.w.mark("jane", "movie", 10)[0], 200)
+
+    def test_marking_twice_is_a_no_op(self):
+        self.w.mark("jane", "movie", 10)
+        self.assertEqual(self.w.mark("jane", "movie", 10)[0], 200)
+        self.assertEqual(len(json.loads(self.w.keep.read_text())["marked"]), 1)
+
+    def test_no_group_header_refused(self):
+        self.assertEqual(self.w.post("jane", {"type": "movie", "tmdbId": 10, "keep": True}, group=False), (403, {"error": "group"}))
 
     def test_viewer_and_protected_refused(self):
         self.assertEqual(self.w.post("viewer", {"type": "movie", "tmdbId": 10, "keep": True})[0], 403)
-        self.assertEqual(self.w.post("admin", {"type": "movie", "tmdbId": 653, "keep": False})[0], 403)
+        self.assertEqual(self.w.post("admin", {"type": "movie", "tmdbId": 653, "keep": True})[0], 403)
 
     def test_origin_json_and_shape(self):
         self.assertEqual(self.w.post("jane", {"type": "movie", "tmdbId": 10, "keep": True}, origin="https://evil.example")[0], 403)
@@ -332,9 +380,9 @@ class Keep(Base):
         self.assertEqual(self.w.post("jane", {"type": "movie", "tmdbId": 77, "keep": True})[0], 404)
 
     def test_state_reflects_the_store(self):
-        self.w.post("joe", {"type": "movie", "tmdbId": 11, "keep": False})
-        r = self.w.get("jane", "titles?keys=movie/11")[1]
-        self.assertEqual(r["titles"]["movie/11"]["state"], "temporary")
+        self.w.post("joe", {"type": "movie", "tmdbId": 10, "keep": True})
+        r = self.w.get("jane", "titles?keys=movie/10")[1]
+        self.assertEqual((r["titles"]["movie/10"]["state"], r["titles"]["movie/10"]["source"]), ("keep", "fan"))
 
 
 class Routing(Base):

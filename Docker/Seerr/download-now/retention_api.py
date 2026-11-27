@@ -1,6 +1,6 @@
-"""Storage retention backend (README "Storage retention"): /_download-now/retention/ — title state for the title page and the request dialog, a batch for request cards, the would-delete list for managers, and the "Keep forever" toggle.
-Data: retention.json written by Movie-Downloads' scripts/retention.py (read-only mount), the keep store keep.json (this backend's, 65127:buntu 2750, read by the classifier). Rules: retention_rules.py.
-Who: any Seerr session reads; keep = ADMIN or a request right; back to temporary = a requester of the title or ADMIN / MANAGE_REQUESTS; the test film never changes. POST only with Origin + JSON."""
+"""Storage retention backend (README "Storage retention", "My library"): /_download-now/retention/ — title state for the title page and the request dialog, a batch for request cards, the would-delete list for managers, and the fan-favourite marks.
+Data: retention.json written by Movie-Downloads' scripts/retention.py (read-only mount), the keep store keep.json (this backend's, 65127:buntu 2750, read by the classifier): per title the marks {uid: {at, name}} and keep (= any mark), the log "marked" for the weekly count. Rules: retention_rules.py.
+Who: any Seerr session reads; a mark = a streaming-requesters member (forward-auth header) with a request right, at most 5 per 7 days; only its setter removes it; automatic keep forever and the test film never change. POST only with Origin + JSON."""
 import datetime
 import json
 import os
@@ -25,6 +25,7 @@ LOOKUP_PER_MIN = 20
 LOOKUP_HITS = {}
 LOCK = threading.Lock()
 now_ts = time.time
+MARK_LOG_DAYS = 30
 
 
 class StoreUnreadable(Exception):
@@ -36,8 +37,40 @@ def perms(me):
     return p if isinstance(p, int) and not isinstance(p, bool) else 0
 
 
-def may_keep(me):
+def may_request(me):
     return bool(perms(me) & (ADMIN | REQUEST | REQUEST_MOVIE | REQUEST_TV))
+
+
+def in_group(headers):
+    """X-authentik-groups (set by fastpi's Traefik from Authentik on every request, overwritten) names streaming-requesters; no header = nobody."""
+    h = {k.lower(): v for k, v in (headers or {}).items()}
+    v = h.get("x-authentik-groups")
+    return isinstance(v, str) and rr.GROUP in [g.strip() for g in v.split("|")]
+
+
+def may_act(me, headers):
+    return in_group(headers) and may_request(me)
+
+
+def store_or_empty(path):
+    try:
+        return read_store(path)
+    except StoreUnreadable:
+        return {"titles": {}}
+
+
+def records(store, key, tvdb):
+    return [(k, v) for k, v in store["titles"].items() if isinstance(v, dict) and (k == key or (tvdb and v.get("tvdb") == tvdb))]
+
+
+def title_marks(store, keys, tvdb):
+    """{uid: {at, name}} of every record of the title (its keys or the series' TVDB id)."""
+    out = {}
+    for k in dict.fromkeys(keys):
+        for _, rec in records(store, k, tvdb):
+            for u, m in rr.marks(rec).items():
+                out.setdefault(u, m)
+    return out
 
 
 def manager(me):
@@ -213,13 +246,14 @@ def _lookup(dn, deps, kind, tmdb, media, today):
         return rr.reasons(kind, year, today.year)
 
 
-def title_state(dn, deps, me, kind, tmdb, media, today, lookup=True):
+def title_state(dn, deps, me, kind, tmdb, media, today, lookup=True, headers=None, now=None):
     doc = read_doc(deps.retention_file)
     k = rr.key(kind, tmdb)
     ek, entry = find_entry(doc, kind, tmdb, media)
-    ovs = overrides(deps.retention_keep)
-    found = [v for v in (override_for(ovs, k, None), override_for(ovs, ek, entry if entry else {"tvdb": tvdb_of(media) if kind == "tv" else None})) if v is not None]
-    ov = True if True in found else False if found else None
+    store = store_or_empty(deps.retention_keep)
+    tvdb = (entry or {}).get("tvdb") or (tvdb_of(media) if kind == "tv" else None)
+    marks = title_marks(store, (k, ek), tvdb)
+    ov = True if marks else None
     out = {"key": k, "entryKey": ek, "known": isinstance(entry, dict), "deleteEnabled": bool(doc.get("deleteEnabled")), "updated": doc.get("updated")}
     if out["known"]:
         out.update({f: entry.get(f) for f in ("imported", "lastPlayed", "anchor", "anchorBy", "ssdUntil", "hddFrom", "tier", "reasons", "default")})
@@ -228,9 +262,13 @@ def title_state(dn, deps, me, kind, tmdb, media, today, lookup=True):
         why = lookup_default(dn, deps, kind, tmdb, media, today, me.get("id")) if lookup else rr.reasons(kind, year_of(media, kind), today.year)
         out.update(reasons=why, default=bool(why))
         out.update(card({"default": bool(why), "due": None, "protected": rr.protected(k, [])}, ov, today, None))
-    locked = out["source"] == "protected"
-    out["canKeep"] = not locked and may_keep(me)
-    out["canUnkeep"] = not locked and (manager(me) or dn.owns(me, media))
+    now = now or datetime.datetime.combine(today, datetime.time(12), datetime.timezone.utc)
+    uid = me.get("id")
+    used = rr.marks_used(store.get("marked"), uid, now)
+    out["marks"] = [{"name": m.get("name"), "mine": u == uid} for u, m in sorted(marks.items(), key=lambda x: (str(x[1].get("at") or ""), str(x[1].get("name") or "")))]
+    out["markQuota"] = {"used": used, "max": rr.MARK_WEEK_MAX}
+    out["canMark"] = not locked(out) and uid not in marks and may_act(me, headers) and used < rr.MARK_WEEK_MAX
+    out["canUnmark"] = out["source"] != "protected" and uid in marks
     return out
 
 
@@ -249,7 +287,7 @@ def dn_tmdb(s):
 def full_list(deps, today):
     doc = read_doc(deps.retention_file)
     ovs, since = overrides(deps.retention_keep), enabled_on(doc)
-    items, counts = [], {"titles": 0, "keep": 0, "temporary": 0, "old": 0, "niche": 0, "goated": 0, "override": 0, "protected": 0, "soon": 0}
+    items, counts = [], {"titles": 0, "keep": 0, "temporary": 0, "old": 0, "niche": 0, "goated": 0, "fan": 0, "protected": 0, "soon": 0}
     for k, e in doc["titles"].items():
         if not isinstance(e, dict) or not rr.parse_key(k):
             continue
@@ -259,7 +297,7 @@ def full_list(deps, today):
         for r in e.get("reasons") or []:
             if r in counts:
                 counts[r] += 1
-        counts["override"] += st["source"] == "override"
+        counts["fan"] += st["source"] == "fan"
         counts["protected"] += st["source"] == "protected"
         if not st["keep"] and st["deleteOn"]:
             counts["soon"] += st["soon"]
@@ -279,10 +317,17 @@ def limited(uid):
     return False
 
 
-def keep(dn, deps, me, req, auth, today):
+def locked(st):
+    return st["source"] == "protected" or (st["source"] == "default" and st["keep"])
+
+
+def keep(dn, deps, me, req, auth, today, headers=None, now=None):
+    """keep true = set my fan-favourite mark, false = remove my own mark (nobody else's)."""
     kind, tmdb, want = req.get("type"), req.get("tmdbId"), req.get("keep")
     if kind not in ("movie", "tv") or not isinstance(tmdb, int) or isinstance(tmdb, bool) or not 0 < tmdb < 10 ** 10 or not isinstance(want, bool):
         return 400, {"error": "bad request"}
+    if want and not in_group(headers):
+        return 403, {"error": "group"}
     with LOCK:
         if limited(me["id"]):
             return 429, {"error": "too many"}
@@ -290,30 +335,48 @@ def keep(dn, deps, me, req, auth, today):
         media = deps.seerr(f"/{kind}/{tmdb}", auth)
     except dn.ApiError:
         return 404, {"error": "unknown title"}
-    before = title_state(dn, deps, me, kind, tmdb, media, today)
-    if not (before["canKeep"] if want else before["canUnkeep"]):
-        return 403, {"error": "forbidden"}
-    k = rr.key(kind, tmdb)
+    now = now or datetime.datetime.now().astimezone()
+    k, uid = rr.key(kind, tmdb), me["id"]
     with LOCK:
         try:
             store = read_store(deps.retention_keep)
         except StoreUnreadable as e:
             print(f"retention: keep store unreadable ({e}), not written", flush=True)
             return 503, {"error": "store"}
-        rec = {"keep": want, "by": me["id"], "at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")}
-        if kind == "tv" and tvdb_of(media):
-            rec["tvdb"] = tvdb_of(media)
-            for other in store["titles"].values():
-                if isinstance(other, dict) and other.get("tvdb") == rec["tvdb"]:
-                    other.update(keep=want, by=me["id"], at=rec["at"])
-        store["titles"][k] = rec
+        before = title_state(dn, deps, me, kind, tmdb, media, today, lookup=False, headers=headers, now=now)
+        mine = any(m["mine"] for m in before["marks"])
+        if want and mine:
+            return 200, before
+        if not want and not mine:
+            return 403, {"error": "not your mark"}
+        if want and not before["canMark"]:
+            if not may_act(me, headers) or locked(before):
+                return 403, {"error": "forbidden"}
+            return 429, {"error": "mark-quota"}
+        at = now.isoformat(timespec="seconds")
+        tvdb = before.get("tvdb") if isinstance(before.get("tvdb"), int) else (tvdb_of(media) if kind == "tv" else None)
+        if want:
+            rec = store["titles"].get(k) if isinstance(store["titles"].get(k), dict) else {}
+            ms = {str(u): m for u, m in rr.marks(rec).items()}
+            ms[str(uid)] = {"at": at, "name": me.get("displayName") or me.get("username") or f"user {uid}"}
+            rec.update(marks=ms, keep=True, by=uid, at=at)
+            if tvdb:
+                rec["tvdb"] = tvdb
+            store["titles"][k] = rec
+            cut = now - datetime.timedelta(days=MARK_LOG_DAYS)
+            store["marked"] = [m for m in store.get("marked") or [] if isinstance(m, dict) and (rr._when(m.get("at")) or cut) > cut] + [{"by": uid, "key": k, "at": at}]
+        else:
+            for rk, rec in records(store, k, tvdb) + records(store, before["entryKey"], tvdb):
+                ms = {str(u): m for u, m in rr.marks(rec).items() if u != uid}
+                rec.update(marks=ms, keep=bool(ms), by=uid, at=at)
         write_store(deps.retention_keep, store)
-    print(f"retention: user {me['id']} set {k} to {'keep forever' if want else 'temporary'}", flush=True)
-    return 200, title_state(dn, deps, me, kind, tmdb, media, today)
+    print(f"retention: user {uid} {'marked' if want else 'unmarked'} {k} as fan favourite", flush=True)
+    return 200, title_state(dn, deps, me, kind, tmdb, media, today, headers=headers, now=now)
 
 
 def handle(dn, method, path, headers, body, deps, today=None):
-    today = today or datetime.date.today()
+    now = datetime.datetime.combine(today, datetime.time(12), datetime.timezone.utc) if today else datetime.datetime.now().astimezone()
+    today = today or now.date()
     url = urllib.parse.urlsplit(path)
     sub = url.path[len("/_download-now/retention/"):]
     h = {k.lower(): v for k, v in headers.items()}
@@ -343,7 +406,7 @@ def handle(dn, method, path, headers, body, deps, today=None):
     if not isinstance(me, dict) or not isinstance(me.get("id"), int) or isinstance(me.get("id"), bool):
         return 403, {"error": "forbidden"}
     if sub == "keep":
-        return keep(dn, deps, me, req, auth, today)
+        return keep(dn, deps, me, req, auth, today, headers, now)
     if sub == "list":
         return (200, full_list(deps, today)) if manager(me) else (403, {"error": "forbidden"})
     if sub == "titles":
@@ -362,4 +425,4 @@ def handle(dn, method, path, headers, body, deps, today=None):
     except dn.ApiError:
         media = None
     wants_default = (urllib.parse.parse_qs(url.query).get("default") or [""])[0] == "1"
-    return 200, title_state(dn, deps, me, w[0], w[1], media, today, lookup=wants_default)
+    return 200, title_state(dn, deps, me, w[0], w[1], media, today, lookup=wants_default, headers=headers, now=now)
