@@ -209,7 +209,8 @@ email) are not set up: Settings -> Notifications.
 | a film or series | **Request**, leave the profile on the default (4K HDR, 1080p fallback) |
 | it now, not tonight | untick **Can wait — download tonight (cheaper power)** ([Can wait](#can-wait)) |
 | it now, at daytime power price (already requested: your own request, or any title for admins) | title page → **⚡ Download now — at daytime power price** ([Download now](#download-now)) |
-| it kept on the server for good | tick **♾️ Keep forever** (old, niche and top-rated titles are ticked already; [Storage retention](#storage-retention)) |
+| it kept on the server for good | tick **♾️ Keep forever** = your ⭐ fan-favourite mark (old, niche and top-rated titles are ticked and locked already; [My library](#my-library)) |
+| see, keep or delete what is on the server | sidebar **My library** ([My library](#my-library)) |
 | an old or niche title | nothing: on add it moves to **4K preferred · older versions allowed** by itself (released ≤ 12 years ago, or ≥ 2 years old with few votes) |
 | force the older-versions profile for a new title | **Advanced** → Quality Profile **4K preferred · older versions allowed** |
 | a must-have audio language | **Advanced** → Tags `audio-<language>`: not grabbed without it |
@@ -315,7 +316,7 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 
 ## Menu links
 
-`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds three entries after Series in the desktop sidebar, the phone drawer and the phone bottom bar:
+`indexer-bar/www/menu-links.js` (injected like `can-wait.js`) adds four entries after Series in the desktop sidebar, the phone drawer and the phone bottom bar:
 
 `indexer-bar/www/menu-links.css` (linked before `</head>`) keeps Seerr's sidebar and phone bar invisible until the script marks `html[data-hg-menu]` (on the frame after our entries are in, not waiting for images), so a fresh load (e.g. coming from books.holy-grail.ch) shows the menu once, complete, instead of entries jumping in; shown anyway after 2.5 s. `menu-links.js` is the first deferred script after `tip.js` and adds nothing before React has hydrated Seerr's server-rendered page (React's `__reactFiber$…` key on `#__next`'s first element, checked every frame, 10 s at most): an entry put in earlier made React throw error #418 and redraw the whole page.
 
@@ -324,6 +325,7 @@ The request dialog has a checkbox, ticked by default: ☑ **Can wait — downloa
 | **Audiobooks** (German UI: **Hörbücher**) | `https://books.holy-grail.ch/` (AudioBookRequest on fastpi, public via Cloudflare, Holy Grail login, group `streaming-requesters`), same tab | while the bar has at most 5 items with it |
 | **Manual interaction** (**Manuell beheben**) + amber count of open problems (none at 0; in the sidebar on the icon's corner and the label on one line, so the entry never grows; at the end in the phone drawer); active look on its page | `/manual` inside Seerr ([Manual interaction](#manual-interaction)), with Seerr's own router showing its 404 page under `/manual` (no reload: Next reloads the whole page for a path it has no page for, the menu flashed) | while the bar has at most 6 items with it (so phones without a "more" list still reach it) |
 | **Collections** (**Sammlungen**), active look on its page | `/collections` inside Seerr ([Collections](#collections)), same in-app navigation as Manual interaction | while the bar has at most 7 items with it (regular users have no More list, so it is the 7th icon) |
+| **My library** (**Meine Bibliothek**), active look on its page | `/my-library` inside Seerr ([My library](#my-library)), same in-app navigation | while the bar has at most 8 items with it (the 8th icon for regular users) |
 
 Count: `GET /_download-now/manual/count` once per page load, again on Seerr navigation at most every 5 min; no session or an error = no badge. Links and URL: `LINKS` at the top of the file. Seerr without a `/discover/tv` link: no entry, nothing breaks. Only menu links count: `/discover/tv` links inside `<main>` (Discover's **Popular Series** row title) are skipped, otherwise an "Audiobooks" title lands squeezed beside it (fixed 2026-10-28; Discover gets no own Audiobooks row, the menu entry covers it).
 
@@ -699,48 +701,74 @@ Modern titles leave the server 3 months after the download or the last play (wat
 
 | Where | What |
 |---|---|
-| Request dialog | ☑ **♾️ Keep forever** (DE **♾️ Für immer behalten**) right below Can wait, preset from the title's state (in the library: its state; not yet: the category default from a Radarr/Sonarr lookup; unknown title: unticked). Changed and the request created (2xx) → stored for that title; unchanged → nothing stored |
-| Title page | facts row **On the server** (DE **Auf dem Server**) after Status / Size / Requested via: pill `🗑 Leaves on 26 Jan 2027 (3 months after the last play)` (or `… after the download` when nobody played it since) / `♾️ Kept forever` / orange `Leaving soon · 19 Nov` (7 days before), hint box: downloaded, last played, SSD until, HDD from, deleted on or kept because, postponed, observe note; button **♾️ Keep forever** / **Let it leave** when allowed. Titles not in the library yet: no row |
+| Request dialog | ☑ **♾️ Keep forever** (DE **♾️ Für immer behalten**) right below Can wait = your own ⭐ fan-favourite mark: automatic Keep forever ticked and locked, your mark ticked (untick removes it), someone else's mark named, none left this week = locked (not yet in the library: the category default from a Radarr/Sonarr lookup). Changed and the request created (2xx) → stored; unchanged → nothing stored |
+| Title page | facts row **On the server** (DE **Auf dem Server**) after Status / Size / Requested via: pill `🗑 Leaves on 26 Jan 2027 (3 months after the last play)` (or `… after the download` when nobody played it since) / `♾️ Kept forever` / `⭐ Fan favourite` / orange `Leaving soon · 19 Nov` (7 days before), hint box: downloaded, last played, SSD until, HDD from, deleted on or kept because (reasons, "fan favourite of Jane, you"), postponed, observe note; button **⭐ Fan favourite** / **Remove my mark** when allowed. Titles not in the library yet: no row |
 | Requests rows and cards | the same pill in the Status field (phones: `🗑 26 Jan`, `♾️`, `Leaving soon`), one batch call per page |
 | Collections page (managers) | section **Leaving the server**: counts (kept by reason, temporary, leaving in 7 days), every temporary title by date (size, SSD/HDD, postponed / HDD full / grace), series that would move back to the SSD |
 
 | Part | What |
 |---|---|
-| Who | read: every Seerr session; **Keep forever**: anyone who may request (ADMIN, REQUEST, REQUEST_MOVIE, REQUEST_TV), on any title; **back to temporary**: a requester of the title or ADMIN / MANAGE_REQUESTS (owner's rule in the spec); the test film never changes |
-| Backend | `download-now/retention_api.py`, `/_download-now/retention/`: GET `title?type=&tmdb=[&default=1]` (`default=1` only from the dialog: a title not in the library gets its category default from a Radarr/Sonarr lookup, cached 10 min), `titles?keys=movie/1,tv/2` (≤ 100), `list` (ADMIN / MANAGE_REQUESTS); POST `keep` `{type, tmdbId, keep}` with Origin + JSON, body ≤ 1 KiB, every 3 s and 30 per hour per user. Session gate in nginx like the rest |
-| Data | `retention.json` (Movie-Downloads `retention.py`, read-only via `/run/indexer-bar`); choices `/srv/appdata/seerr-retention/keep.json` (rw `/retention`, 65127:buntu 2750, file 0640 + `.bak`, unreadable or missing next to its `.bak` = never overwritten; written to a temp file with fsync, the old file hard-linked to `.bak`, then atomically replaced (never a moment without the file); per title `keep`, `by` user id, `at`, a series also `tvdb`) |
+| Who | read: every Seerr session; marks: rules in [My library](#my-library) (automatic Keep forever locked, fan marks by group members, only the setter removes one) |
+| Backend | `download-now/retention_api.py`, `/_download-now/retention/`: GET `title?type=&tmdb=[&default=1]` (`default=1` only from the dialog: a title not in the library gets its category default from a Radarr/Sonarr lookup, cached 10 min), `titles?keys=movie/1,tv/2` (≤ 100), `list` (ADMIN / MANAGE_REQUESTS); POST `keep` `{type, tmdbId, keep}` (true = set my mark, false = remove my own) with Origin + JSON, body ≤ 1 KiB, every 3 s and 30 per hour per user. Session gate in nginx like the rest |
+| Data | `retention.json` (Movie-Downloads `retention.py`, read-only via `/run/indexer-bar`); choices `/srv/appdata/seerr-retention/keep.json` (rw `/retention`, 65127:buntu 2750, file 0640 + `.bak`, unreadable or missing next to its `.bak` = never overwritten; written to a temp file with fsync, the old file hard-linked to `.bak`, then atomically replaced (never a moment without the file); per title `marks` `{uid: {at, name}}`, `keep` (= any mark, read by `retention.py`), `by`, `at`, a series also `tvdb`; top-level `marked` log for the 5-per-week count, 30 days kept; old records `keep: true` = a mark by `by`) |
 | Ids | `retention.json` keys a series by Seerr's TMDB id (mapped from Sonarr through Seerr's media rows); a title page or choice whose TMDB id is not there is matched by the series' TVDB id (Seerr `externalIds.tvdbId`), choices count for both ids; records of one series that disagree: keep wins, and a new choice for a series is written to every record with its TVDB id. A permission error on the store counts as unreadable (503), never as missing. Default lookups (`default=1`): at most 20 uncached per user and minute, beyond that the year alone decides |
 | Script | `indexer-bar/www/retention.js` (injected last), every text as `textContent`, hints via `tip.js`, EN/DE |
-| Log | `sudo docker logs seerr-download-now \| grep retention` (one line per choice: user id, title, keep / temporary) |
+| Log | `sudo docker logs seerr-download-now \| grep retention` (one line per mark: user id, title, marked / unmarked) |
 | Tests | `python3 tests/test_retention_api.py`, `python3 tests/test_retention_rules.py`; JS `retention.test.mjs`; browser `tests/test_retention_layout.py` (1280 / 390 px, command in its docstring) |
 
 ## Delete early
 
-A requester deletes a film, a whole series or one season before the 3-month [Storage retention](#storage-retention) ends (owner 2026-11-22). The files go to the 7-day recycle bin and can be restored; the title stays in Seerr (status *unknown*: a film shows **Request** at once, a series' seasons after the nightly availability sync).
+A requester deletes a film, a whole series or one season before the 3-month [Storage retention](#storage-retention) ends (owner 2026-11-22; rules since 2026-11-27 in [My library](#my-library)). The files go to the 7-day recycle bin and can be restored; the title stays in Seerr (status *unknown*: a film shows **Request** at once, a series' seasons after the nightly availability sync).
 
 | Where | What |
 |---|---|
 | Title page | fact row **Delete early** (DE **Früher löschen**) after **On the server**: button **🗑 Delete early**, series with a choice *Whole series* / *Season n*; a confirm box (7 days in the bin, deletions left this week) before anything is sent |
-| Asked person | box *"Jane wants to delete this film: it is marked ♾️ Keep forever. Answer until …"* with **✅ Approve** / **✖ Deny**; the deleter sees *Waiting for … to OK it until …* |
+| Confirm | *Goes to the recycle bin at once.* or *Becomes a request first: Jane (fan favourite), Ann (watching it)* (the server's plan) |
+| Asked person | box *"Joe wants to delete this film: you marked it ⭐ fan favourite. Answer until …"* with **✅ Approve** / **✖ Deny** (also on My library); the deleter sees *Waiting for … to OK it until …* |
 | In the bin | *🗑 In the recycle bin until … (deleted by …)* with **↩ Restore** for the deleter, a requester of the title or ADMIN / MANAGE_REQUESTS |
 
 | Rule | What |
 |---|---|
 | Who | a Seerr session with a request right (or ADMIN) **and** the forward-auth header `X-authentik-groups` naming `streaming-requesters` (fastpi Traefik, Authentik app `requests`, set on every request); no header = refused for everyone, also the admin key |
-| Never | the test film Nosferatu (TMDB 653), a `keep-test` title, a title without files |
-| Needs an OK | **♾️ Keep forever** and the deleter did not request it → a requester (none: the owner); someone else **mid-watch** (played in the last 30 days, not finished) → that viewer (no Seerr account: the owner). Each asked person: Telegram where known, Jellyfin pop-up on their live sessions, the box above. No answer in 7 days = not deleted |
+| Never | the test film Nosferatu (TMDB 653), a `keep-test` title, automatic **♾️ Keep forever**, a title without files |
+| Needs an OK | a **⭐ fan favourite** someone else marked → each setter; someone else **mid-watch** (played in the last 30 days, not finished) → that viewer (no Seerr account: the owner). Each asked person: Telegram where known, Jellyfin pop-up on their live sessions, the box above. No answer in 7 days = not deleted |
 | Limit | 10 deletions per user in 7 days (pending ones count, denied ones not), checked here and by the runner |
 | Notice | the requester is told when someone else deleted their title: who, the bin date and the title page link (Restore) |
 | Same title twice | refused while it is queued, waiting for an OK or in the bin (a whole series also blocks its seasons) |
 
 | Part | What |
 |---|---|
-| Backend | `download-now/delete_early.py`, `/_download-now/delete-early/`: GET `state?type=&tmdb=`, POST `delete` `{type, tmdbId, season}`, `answer` `{id, approve}`, `restore` `{id}` (Origin + JSON, body ≤ 1 KiB, every 3 s, 30 per hour); session gate in nginx like the rest. Holds no key that deletes: writes job files only |
+| Backend | `download-now/delete_early.py`, `/_download-now/delete-early/`: GET `state?type=&tmdb=` (with `plan`: who must OK it), POST `delete` `{type, tmdbId, season}`, `bulk` `{items: [{type, tmdbId}]}` (whole titles, ≤ deletions left, any refused = nothing sent, body ≤ 2 KiB), `answer` `{id, approve}`, `restore` `{id}` (Origin + JSON, body ≤ 1 KiB, every 3 s, 30 per hour); session gate in nginx like the rest. Holds no key that deletes: writes job files only |
 | Jobs | `/srv/appdata/seerr-delete-early/*.req` (65127:buntu 2770, rw mount `/delete-early`), carried out by Movie-Downloads `scripts/delete-early.py` (`../Movie-Downloads/README.md` "Delete early") |
-| State | the runner's `~/.local/state/movie-downloads/delete-early.json`, read through `/run/scouts` |
+| State | the runner's `~/.local/state/movie-downloads/delete-early.json` and `delete-early-watching.json` (who is mid-watch, every 30 min, for the plan), read through `/run/scouts` |
 | Audit | `~/.local/state/movie-downloads/delete-early-audit.jsonl` (requested, pending, approved, denied, expired, refused, deleted, failed, restored; Seerr user id and Holy Grail account); `sudo docker logs seerr-download-now \| grep delete-early` |
 | Script | `indexer-bar/www/retention.js` (EN/DE, every text as `textContent`) |
 | Tests | `python3 tests/test_delete_early_api.py`; JS `delete-early.test.mjs`; runner `python3 ../Movie-Downloads/tests/test_delete_early.py` |
+
+## My library
+
+Sidebar **My library** (DE **Meine Bibliothek**), `/my-library`: every downloaded title and the Delete early recycle bin, with the actions (owner 2026-11-27). One rule set for the title page, My library, the API, the delete runner, the nightly retention and the Jellyfin pop-ups: `download-now/retention_rules.py`.
+
+| Rule | What |
+|---|---|
+| ♾️ Keep forever (automatic) | old ≥ 12 years, niche, IMDb ≥ 8.0 with ≥ 25k votes: always on, nobody removes it, never deleted early |
+| ⭐ Fan favourite | any `streaming-requesters` member marks any title (title page, My library, request box); at most 5 marks per person in 7 days (removing does not free one); only the setter removes it, admin included |
+| Keep forever | still SSD → HDD, retention never deletes it |
+| Delete early | any group member, any title; never Nosferatu, `keep-test`, automatic Keep forever; a fan favourite → OK of each setter (own mark: no); someone else mid-watch → that viewer (no account: the owner); 10 per person in 7 days (pending counts, denied not); 7-day bin, title stays requestable; restore by deleter, requester or admin; requester told with undo link; audit log ([Delete early](#delete-early)) |
+
+| Page | What |
+|---|---|
+| Top | weekly counts *2 of 10 deletions left this week · 4 of 5 fan-favourite marks left*; box **Waiting for your OK** with **✅ Approve** / **✖ Deny** |
+| Filters | All · Mine (requested or marked by me; hidden when Seerr does not answer) · Temporary · Keep forever · Leaving soon · In recycle bin; search by title |
+| Row | title (link), film/series, size, SSD/HDD; pill `🗑 Temporary · leaves 15 Feb` / `♾️ Keep forever` (+ reasons) / `⭐ Fan favourite` (+ "fan favourite of Jane, you") / `Leaving soon · 30 Nov` / `In the recycle bin until 3 Dec`; pending: *Waiting for Jane to OK it until …*; buttons **⭐ Fan favourite**, **Remove my mark**, **🗑 Delete**, **↩ Restore** as the server allows |
+| Bulk | checkboxes on deletable titles, at most the deletions left; **🗑 Delete selected (n)** → one confirm: *To the recycle bin now* / *Becomes a request first: title — Jane (fan favourite)*; single **🗑 Delete** uses the same confirm |
+| Phone | rows wrap, actions below the title, no horizontal scroll at 390 px |
+
+| Part | What |
+|---|---|
+| Backend | `download-now/my_library.py`, GET `/_download-now/library/list` (session gate in nginx; all decisions from `retention_api` / `delete_early`); "Mine" from Seerr `GET /request?requestedBy=` with the caller's session, cached 60 s |
+| Script | `indexer-bar/www/my-library.js` (injected last, page like Collections: Seerr's 404 hidden, `bar-early.js` + `menu-links.css` hide it on a fresh load), EN/DE, every text as `textContent` |
+| Tests | `python3 tests/test_my_library.py`, `test_retention_rules.py`, `test_retention_api.py`, `test_delete_early_api.py`; JS `my-library.test.mjs`, `retention.test.mjs`, `delete-early.test.mjs`, `menu-links.test.mjs`; browser `tests/test_my_library_layout.py` (1280 / 390 px, command in its docstring) |
 
 ## Delete a title
 
