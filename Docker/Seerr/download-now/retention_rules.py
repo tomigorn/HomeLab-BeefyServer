@@ -1,4 +1,4 @@
-"""Storage retention rules (README "Storage retention"), shared by the Seerr backend and Movie-Downloads' scripts/retention.py: keep-forever default by category, stage dates, postponement, space rule, keep overrides, grace after switch-on. Pure functions, no I/O."""
+"""Storage retention, Keep forever and Delete early rules (README "Storage retention", "My library"), the one rule set of the Seerr backend, Movie-Downloads' scripts/retention.py and scripts/delete-early.py: automatic keep forever by category, fan-favourite marks, stage dates, postponement, space rule, grace after switch-on, who must OK an early delete and the limits. Pure functions, no I/O."""
 import datetime
 import re
 
@@ -16,6 +16,14 @@ TEST_FILM = "movie/653"
 TEST_TAG = "keep-test"
 SWISS_TAG = "audio-swiss-german"
 NICHE_PROFILES = ("older versions allowed", "swiss german")
+MARK_WEEK_MAX = 5
+DELETE_WEEK_MAX = 10
+WEEK = datetime.timedelta(days=7)
+ASK_DAYS = 7
+BIN_DAYS = 7
+WATCH_DAYS = 30
+OWNER = 1
+GROUP = "streaming-requesters"
 KEY = re.compile(r"^(movie|tv)/([1-9][0-9]{0,9})$")
 
 
@@ -44,13 +52,13 @@ def schedule(imported):
 
 
 def effective(entry, override, today, enabled_on=None):
-    """State of one title: entry from retention.json, override True/False/None from the keep store, enabled_on = the day deletion was switched on (None = observe)."""
+    """State of one title: entry from retention.json, override True = someone's fan-favourite mark (False / None: none; automatic keep forever can't be switched off), enabled_on = the day deletion was switched on (None = observe)."""
     out = {"state": "keep", "keep": True, "source": "default", "deleteOn": None, "soon": False, "overdue": False, "why": None, "postponed": None}
     if entry.get("protected"):
         out["source"] = "protected"
         return out
-    keep = bool(entry.get("default")) if override is None else bool(override)
-    out["source"] = "default" if override is None else "override"
+    keep = bool(entry.get("default")) or override is True
+    out["source"] = "fan" if keep and not entry.get("default") else "default"
     if keep:
         return out
     out.update(state="temporary", keep=False)
@@ -80,3 +88,77 @@ def parse_key(k):
 
 def protected(k, tags):
     return k == TEST_FILM or TEST_TAG in (tags or ())
+
+
+def _uid(v):
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 and not isinstance(v, bool) else None
+
+
+def _when(s):
+    try:
+        d = datetime.datetime.fromisoformat(str(s))
+        return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def marks(rec):
+    """{uid: {at, name}} of the fan-favourite marks in a keep.json record; an old record with keep true is a mark by whoever ticked it (by; none recorded: 0, removable by nobody)."""
+    if not isinstance(rec, dict):
+        return {}
+    if isinstance(rec.get("marks"), dict):
+        return {_uid(k): {"at": v.get("at"), "name": v.get("name")} for k, v in rec["marks"].items() if _uid(k) and isinstance(v, dict)}
+    if rec.get("keep") is True:
+        return {_uid(rec.get("by")) or 0: {"at": rec.get("at"), "name": None}}
+    return {}
+
+
+def fan_override(rec):
+    return True if marks(rec) else None
+
+
+def marks_used(log, uid, now):
+    """Marks the person set in the last 7 days; removing one does not free its slot."""
+    return sum(1 for m in log or [] if isinstance(m, dict) and m.get("by") == uid and (_when(m.get("at")) or now - 2 * WEEK) > now - WEEK)
+
+
+def may_add_mark(log, uid, now):
+    return marks_used(log, uid, now) < MARK_WEEK_MAX
+
+
+def may_remove_mark(rec, uid):
+    return uid in marks(rec)
+
+
+def automatic(entry):
+    return isinstance(entry, dict) and bool(entry.get("default")) and not entry.get("protected")
+
+
+def delete_plan(key, tags, entry, setters, watchers, deleter):
+    """An early delete: refused (protected, kept = automatic keep forever, library = not on the server) or the OKs it needs: each setter of a fan-favourite mark, each other viewer mid-watch (no Seerr account: the owner); the deleter never asks themself."""
+    if protected(key, tags) or (entry or {}).get("protected"):
+        return {"refused": "protected", "asks": []}
+    if not isinstance(entry, dict):
+        return {"refused": "library", "asks": []}
+    if automatic(entry):
+        return {"refused": "kept", "asks": []}
+    asks = []
+    fans = []
+    for u, n in (setters or {}).items():
+        sid = u or OWNER
+        if sid != deleter and sid not in [f for f, _ in fans]:
+            fans.append((sid, n))
+    if fans:
+        asks.append({"reason": "fan", "approvers": [u for u, _ in fans], "names": [n for _, n in fans]})
+    seen = set()
+    for uid, name in watchers or []:
+        sid = uid if uid else OWNER
+        if sid == deleter or sid in seen:
+            continue
+        seen.add(sid)
+        asks.append({"reason": "watching", "approvers": [sid], "names": [name]})
+    return {"refused": None, "asks": asks}

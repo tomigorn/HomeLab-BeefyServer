@@ -69,11 +69,17 @@ class Effective(unittest.TestCase):
         e = rr.effective(entry(default=True), None, self.today)
         self.assertEqual((e["state"], e["keep"], e["source"], e["deleteOn"]), ("keep", True, "default", None))
 
-    def test_override_beats_the_default_both_ways(self):
-        self.assertEqual(rr.effective(entry(), True, self.today)["state"], "keep")
-        self.assertEqual(rr.effective(entry(), True, self.today)["source"], "override")
-        e = rr.effective(entry(default=True), False, self.today)
-        self.assertEqual((e["state"], e["source"], e["deleteOn"]), ("temporary", "override", "2027-01-30"))
+    def test_fan_mark_keeps_a_temporary_title(self):
+        e = rr.effective(entry(), True, self.today)
+        self.assertEqual((e["state"], e["keep"], e["source"], e["deleteOn"]), ("keep", True, "fan", None))
+
+    def test_automatic_keep_forever_cannot_be_switched_off(self):
+        for ov in (False, None, True):
+            e = rr.effective(entry(default=True), ov, self.today)
+            self.assertEqual((e["state"], e["source"], e["deleteOn"]), ("keep", "default", None), ov)
+
+    def test_no_mark_is_temporary(self):
+        self.assertEqual(rr.effective(entry(), False, self.today)["state"], "temporary")
 
     def test_test_film_is_always_kept(self):
         e = rr.effective(entry(protected=True), False, self.today)
@@ -116,6 +122,95 @@ class Keys(unittest.TestCase):
         self.assertTrue(rr.protected("movie/653", []))
         self.assertTrue(rr.protected("movie/1", ["keep-test"]))
         self.assertFalse(rr.protected("tv/653", []))
+
+
+NOW = datetime.datetime(2026, 11, 27, 12, 0, tzinfo=datetime.timezone.utc)
+
+
+def at(days_ago):
+    return (NOW - datetime.timedelta(days=days_ago)).isoformat(timespec="seconds")
+
+
+class Marks(unittest.TestCase):
+    def test_marks_of_a_record(self):
+        rec = {"keep": True, "marks": {"5": {"at": at(1), "name": "Jane"}, "9": {"at": at(2), "name": "Max"}}}
+        self.assertEqual(rr.marks(rec), {5: {"at": at(1), "name": "Jane"}, 9: {"at": at(2), "name": "Max"}})
+
+    def test_old_keep_record_is_a_mark_by_whoever_ticked_it(self):
+        self.assertEqual(rr.marks({"keep": True, "by": 7, "at": at(3)}), {7: {"at": at(3), "name": None}})
+        self.assertEqual(rr.marks({"keep": True}), {0: {"at": None, "name": None}})
+
+    def test_old_let_it_leave_record_is_no_mark(self):
+        self.assertEqual(rr.marks({"keep": False, "by": 5, "at": at(3)}), {})
+        self.assertEqual(rr.marks(None), {})
+        self.assertEqual(rr.marks({"marks": {"x": {}, "0": {}, "3": "no"}}), {})
+
+    def test_five_marks_per_person_in_seven_days(self):
+        log = [{"by": 5, "key": f"movie/{i}", "at": at(i)} for i in range(1, 6)] + [{"by": 6, "key": "movie/9", "at": at(1)}]
+        self.assertEqual(rr.marks_used(log, 5, NOW), 5)
+        self.assertEqual(rr.MARK_WEEK_MAX, 5)
+        self.assertFalse(rr.may_add_mark(log, 5, NOW))
+        self.assertTrue(rr.may_add_mark(log, 6, NOW))
+
+    def test_older_than_seven_days_frees_the_slot(self):
+        log = [{"by": 5, "key": "movie/1", "at": at(7.5)}, {"by": 5, "key": "movie/2", "at": at(6)}]
+        self.assertEqual(rr.marks_used(log, 5, NOW), 1)
+
+    def test_removing_a_mark_keeps_the_slot_used(self):
+        log = [{"by": 5, "key": "movie/1", "at": at(1)}]
+        self.assertEqual(rr.marks_used(log, 5, NOW), 1)
+
+    def test_only_the_setter_removes_a_mark(self):
+        rec = {"keep": True, "marks": {"5": {"at": at(1), "name": "Jane"}}}
+        self.assertTrue(rr.may_remove_mark(rec, 5))
+        self.assertFalse(rr.may_remove_mark(rec, 1))
+
+    def test_override_from_marks(self):
+        self.assertTrue(rr.fan_override({"marks": {"5": {"at": at(1)}}}))
+        self.assertIsNone(rr.fan_override({"keep": False, "by": 5}))
+
+
+class Plan(unittest.TestCase):
+    def plan(self, **kw):
+        args = {"key": "movie/10", "tags": [], "entry": entry(), "setters": {}, "watchers": [], "deleter": 5}
+        args.update(kw)
+        return rr.delete_plan(**args)
+
+    def test_temporary_title_goes_to_the_bin_at_once(self):
+        self.assertEqual(self.plan(), {"refused": None, "asks": []})
+
+    def test_never_the_test_film_keep_test_or_automatic_keep(self):
+        self.assertEqual(self.plan(key="movie/653")["refused"], "protected")
+        self.assertEqual(self.plan(tags=["keep-test"])["refused"], "protected")
+        self.assertEqual(self.plan(entry=entry(protected=True))["refused"], "protected")
+        self.assertEqual(self.plan(entry=entry(default=True))["refused"], "kept")
+
+    def test_not_on_the_server(self):
+        self.assertEqual(self.plan(entry=None)["refused"], "library")
+
+    def test_fan_favourite_asks_each_setter_but_not_the_deleter(self):
+        p = self.plan(setters={7: "Jane", 8: "Max", 5: "Me"})
+        self.assertEqual(p["asks"], [{"reason": "fan", "approvers": [7, 8], "names": ["Jane", "Max"]}])
+        self.assertEqual(self.plan(setters={5: "Me"})["asks"], [])
+
+    def test_mark_without_a_recorded_setter_is_answered_by_the_owner(self):
+        self.assertEqual(self.plan(setters={0: None})["asks"], [{"reason": "fan", "approvers": [rr.OWNER], "names": [None]}])
+
+    def test_someone_else_watching_asks_that_viewer_own_watching_not(self):
+        p = self.plan(watchers=[(9, "Ann"), (5, "Me"), (9, "Ann")])
+        self.assertEqual(p["asks"], [{"reason": "watching", "approvers": [9], "names": ["Ann"]}])
+
+    def test_viewer_without_account_is_answered_by_the_owner(self):
+        p = self.plan(watchers=[(None, None)])
+        self.assertEqual(p["asks"], [{"reason": "watching", "approvers": [rr.OWNER], "names": [None]}])
+        self.assertEqual(self.plan(watchers=[(None, None)], deleter=rr.OWNER)["asks"], [])
+
+    def test_fan_first_then_watchers(self):
+        p = self.plan(setters={7: "Jane"}, watchers=[(9, "Ann")])
+        self.assertEqual([a["reason"] for a in p["asks"]], ["fan", "watching"])
+
+    def test_limits(self):
+        self.assertEqual((rr.DELETE_WEEK_MAX, rr.ASK_DAYS, rr.BIN_DAYS, rr.WATCH_DAYS), (10, 7, 7, 30))
 
 
 if __name__ == "__main__":
