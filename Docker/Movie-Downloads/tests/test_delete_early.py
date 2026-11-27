@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""scripts/delete-early.py: the "Delete early" runner (README "Delete early") against fake Radarr, Sonarr, Jellyfin, Seerr and a fake pool: direct deletes into the recycle bin, Keep forever and mid-watch approvals, answers, the 7-day expiry, the weekly quota, the test film, seasons, restore, notices and the audit log.
+"""scripts/delete-early.py: the "Delete early" runner (README "Delete early") against fake Radarr, Sonarr, Jellyfin, Seerr and a fake pool: direct deletes into the recycle bin, automatic Keep forever refused, fan-favourite and mid-watch approvals, the mid-watch snapshot for the confirm preview, answers, the 7-day expiry, the weekly quota, the test film, seasons, restore, notices and the audit log.
 Usage: python3 tests/test_delete_early.py"""
 import contextlib
 import datetime
@@ -38,6 +38,10 @@ class Arr:
             return self.tags
         if path == "/command":
             return {"id": 1}
+        if path == "/movie":
+            return w.movies
+        if path == "/series":
+            return w.series
         if self.app == "radarr":
             if path.startswith("/movie?tmdbId="):
                 tmdb = int(path.split("=")[1])
@@ -94,6 +98,12 @@ class Jf:
         if path.startswith("/Users/") and "/Items/" in path:
             uid, item = path.split("/")[2], path.split("/")[4].split("?")[0]
             return {"Id": item, "UserData": w.userdata.get((uid, item), {})}
+        if path.startswith("/Users/") and "SortBy=DatePlayed" in path:
+            uid = path.split("/")[2]
+            items = [{"Id": "m1", "Type": "Movie", "Path": "/media/movies/New Film (2025)/New Film (2025).mkv"}] + [
+                {"Id": e, "Type": "Episode", "SeriesId": "s1", "ParentIndexNumber": n, "Path": f"/media/tv/New Show (2025)/Season 0{n}/x.mkv"} for e, n in (("e1", 1), ("e2", 1), ("e3", 2))]
+            out = [dict(i, UserData=w.userdata.get((uid, i["Id"]), {})) for i in items]
+            return {"Items": sorted(out, key=lambda i: i["UserData"].get("LastPlayedDate") or "", reverse=True)}
         if path.startswith("/Users/") and "ParentId=s1" in path:
             uid = path.split("/")[2]
             return {"Items": [{"Id": e, "ParentIndexNumber": s, "UserData": w.userdata.get((uid, e), {})} for e, s in (("e1", 1), ("e2", 1), ("e3", 2))]}
@@ -149,7 +159,8 @@ class World:
         self.notices = []
         self.retention = self.d / "retention.json"
         self.retention.write_text(json.dumps({"titles": {"movie/10": {"t": "New Film", "default": False, "protected": False},
-                                                         "movie/12": {"t": "Kept", "default": True, "protected": False}}}))
+                                                         "movie/12": {"t": "Kept", "default": True, "protected": False},
+                                                         "tv/20": {"t": "New Show", "kind": "tv", "default": False, "protected": False, "tvdb": 4020}}}))
         self.keep = self.d / "keep.json"
         self.identity = self.d / "identity.json"
         self.identity.write_text(json.dumps({"jellyfin": {JF_JOE: "sub-joe"}, "seerr": {"5": "sub-joe"}}))
@@ -191,9 +202,12 @@ class World:
         name = f"{op}-{kw.get('id')}-{kw.get('user')}"
         (self.jobs / f"{name}.req").write_text(json.dumps(body))
 
-    def delete(self, jid="j1", user=7, kind="movie", tmdb=10, season=None, requesters=(7,), keep=False, tvdb=None, title="New Film"):
+    def delete(self, jid="j1", user=7, kind="movie", tmdb=10, season=None, requesters=(7,), tvdb=None, title="New Film"):
         self.job("delete", id=jid, user=user, userName={7: "Jane Doe", 5: "Joe Bloggs", 12: "Ann Example"}.get(user, f"user {user}"), account="x",
-                 kind=kind, tmdb=tmdb, tvdb=tvdb, season=season, title=title, year=2025, requesters=list(requesters), keep=keep)
+                 kind=kind, tmdb=tmdb, tvdb=tvdb, season=season, title=title, year=2025, requesters=list(requesters))
+
+    def mark(self, key="movie/10", **marks):
+        self.keep.write_text(json.dumps({"titles": {key: {"keep": True, "marks": {u: {"at": "2026-12-19T10:00:00+00:00", "name": n} for u, n in marks.items()}}}}))
 
     def state(self):
         return json.loads(self.env.state.read_text())["items"]
@@ -309,30 +323,46 @@ class Seasons(Base):
 
 
 class Approval(Base):
-    def test_keep_forever_needs_the_requester(self):
-        self.w.delete(user=5, requesters=(7,), keep=True)
+    def test_fan_favourite_needs_the_person_who_set_the_mark(self):
+        self.w.mark(**{"12": "Ann Example"})
+        self.w.delete(user=5, requesters=(7,))
         self.run_once()
         it = self.w.state()["j1"]
         self.assertEqual((it["state"], it["expires"]), ("pending", "2026-12-27T12:00:00+00:00"))
-        self.assertEqual([(a["reason"], a["approvers"], a["names"]) for a in it["asks"]], [("keep", [7], ["Jane Doe"])])
+        self.assertEqual([(a["reason"], a["approvers"], a["names"]) for a in it["asks"]], [("fan", [12], ["Ann Example"])])
         self.assertEqual(self.w.binned(), [])
-        self.assertEqual([(n[0], n[1]) for n in self.w.notices], [(7, "ask")])
+        self.assertEqual([(n[0], n[1]) for n in self.w.notices], [(12, "ask")])
 
-    def test_keep_forever_from_the_store_too(self):
-        self.w.delete(user=5, tmdb=10, requesters=(7,), keep=False)
-        self.w.keep.write_text(json.dumps({"titles": {"movie/10": {"keep": True}}}))
+    def test_every_setter_must_ok(self):
+        self.w.mark(**{"12": "Ann Example", "7": "Jane Doe"})
+        self.w.delete(user=5)
         self.run_once()
-        self.assertEqual(self.w.state()["j1"]["state"], "pending")
+        self.assertEqual(self.w.state()["j1"]["asks"][0]["approvers"], [12, 7])
 
-    def test_keep_forever_without_a_requester_asks_the_owner(self):
-        self.w.delete(user=5, requesters=(), keep=True)
+    def test_old_keep_record_asks_whoever_ticked_it(self):
+        self.w.keep.write_text(json.dumps({"titles": {"movie/10": {"keep": True, "by": 7, "at": "2026-11-17T10:00:00+01:00"}}}))
+        self.w.delete(user=5)
         self.run_once()
-        self.assertEqual(self.w.state()["j1"]["asks"][0]["approvers"], [1])
+        self.assertEqual(self.w.state()["j1"]["asks"][0]["approvers"], [7])
 
-    def test_own_keep_forever_title_goes_at_once(self):
-        self.w.delete(user=7, requesters=(7,), keep=True)
+    def test_own_mark_goes_at_once(self):
+        self.w.mark(**{"7": "Jane Doe"})
+        self.w.delete(user=7)
         self.run_once()
         self.assertEqual(self.w.state()["j1"]["state"], "deleted")
+
+    def test_requester_alone_is_not_asked_only_told(self):
+        self.w.delete(user=5, requesters=(7,))
+        self.run_once()
+        self.assertEqual(self.w.state()["j1"]["state"], "deleted")
+        self.assertIn((7, "deleted"), [(n[0], n[1]) for n in self.w.notices])
+
+    def test_automatic_keep_forever_is_refused(self):
+        self.w.retention.write_text(json.dumps({"titles": {"movie/10": {"t": "New Film", "default": True, "reasons": ["old"], "protected": False}}}))
+        self.w.delete(user=1)
+        self.run_once()
+        self.assertEqual((self.w.state()["j1"]["state"], self.w.state()["j1"]["why"]), ("refused", "kept"))
+        self.assertEqual(self.w.binned(), [])
 
     def test_someone_else_mid_watch_must_ok(self):
         self.w.userdata[(JF_JOE, "m2")] = {"PlaybackPositionTicks": 5, "Played": False, "LastPlayedDate": "2026-12-10T20:00:00Z"}
@@ -370,7 +400,8 @@ class Approval(Base):
         self.assertEqual(self.w.state()["j1"]["state"], "deleted")
 
     def pending(self):
-        self.w.delete(user=5, requesters=(7,), keep=True)
+        self.w.mark(**{"7": "Jane Doe"})
+        self.w.delete(user=5, requesters=(7,))
         self.run_once()
         self.w.notices.clear()
 
@@ -409,6 +440,32 @@ class Approval(Base):
         self.w.job("answer", id="j1", user=7, userName="Jane Doe", approve=True)
         self.run_once()
         self.assertEqual(self.w.binned(), [])
+
+
+class Watching(Base):
+    def test_snapshot_lists_viewers_mid_watch_by_title(self):
+        self.w.userdata[(JF_JOE, "m1")] = {"PlaybackPositionTicks": 5, "Played": False, "LastPlayedDate": "2026-12-10T20:00:00Z"}
+        self.w.userdata[(JF_ANN, "e1")] = {"Played": True, "LastPlayedDate": "2026-12-15T20:00:00Z"}
+        self.w.userdata[(JF_JANE, "m1")] = {"PlaybackPositionTicks": 0, "Played": True, "LastPlayedDate": "2026-12-11T20:00:00Z"}
+        self.run_once()
+        snap = json.loads((self.w.state_dir / "delete-early-watching.json").read_text())
+        self.assertEqual(snap["titles"], {"movie/10": [{"uid": 5, "name": "Joe Bloggs"}], "tv/20": [{"uid": 1, "name": "Owner"}]})
+        self.assertEqual(snap["updated"], NOW.isoformat(timespec="seconds"))
+
+    def test_old_plays_and_finished_series_are_not_listed(self):
+        self.w.userdata[(JF_JOE, "m1")] = {"PlaybackPositionTicks": 5, "Played": False, "LastPlayedDate": "2026-11-01T20:00:00Z"}
+        for e in ("e1", "e2", "e3"):
+            self.w.userdata[(JF_ANN, e)] = {"Played": True, "LastPlayedDate": "2026-12-15T20:00:00Z"}
+        self.run_once()
+        self.assertEqual(json.loads((self.w.state_dir / "delete-early-watching.json").read_text())["titles"], {})
+
+    def test_jellyfin_down_keeps_the_old_snapshot(self):
+        (self.w.state_dir / "delete-early-watching.json").write_text(json.dumps({"updated": "x", "titles": {"movie/10": [{"uid": 5, "name": "Joe Bloggs"}]}}))
+        def down(path, method="GET", body=None):
+            raise OSError("down")
+        self.w.env.jf = down
+        self.run_once()
+        self.assertEqual(json.loads((self.w.state_dir / "delete-early-watching.json").read_text())["updated"], "x")
 
 
 class Quota(Base):
@@ -510,7 +567,7 @@ class Notices(unittest.TestCase):
 
 class Messages(unittest.TestCase):
     def test_texts_in_both_languages(self):
-        info = {"who": "Joe Bloggs", "title": "New Film", "scope": None, "link": "https://requests.holy-grail.ch/movie/10", "until": "2026-12-27T12:00:00+00:00", "reason": "keep"}
+        info = {"who": "Joe Bloggs", "title": "New Film", "scope": None, "link": "https://requests.holy-grail.ch/movie/10", "until": "2026-12-27T12:00:00+00:00", "reason": "fan"}
         for event in ("ask", "deleted", "denied", "expired", "approved"):
             for lang in ("en", "de"):
                 head, text = de.message(event, info, lang)
@@ -518,6 +575,8 @@ class Messages(unittest.TestCase):
         self.assertIn("https://requests.holy-grail.ch/movie/10", de.message("deleted", info, "en")[1])
         self.assertIn("27", de.message("deleted", info, "de")[1])
         self.assertIn("Staffel 2", de.message("ask", dict(info, scope=2), "de")[1])
+        self.assertIn("Fan favourite", de.message("ask", info, "en")[1])
+        self.assertIn("Fan-Liebling", de.message("ask", info, "de")[1])
 
 
 if __name__ == "__main__":

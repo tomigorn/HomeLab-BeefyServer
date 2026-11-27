@@ -192,6 +192,19 @@ class Classify(unittest.TestCase):
         self.assertEqual((e["movie/1002"]["tier"], e["movie/1002"]["hddBytes"]), ("hdd", 10 * GIB))
         self.assertEqual((e["tv/2001"]["tier"], e["tv/2001"]["hddBytes"]), ("split", int(5 * GIB * 2 / 3)))
 
+    def test_keep_forever_still_moves_from_the_ssd_to_the_hdd(self):
+        plain, kept = self.run_it(), self.run_it(overrides={"movie/1001": True})
+        self.assertEqual((kept["movie/1001"]["tier"], kept["movie/1001"]["hddFrom"]), (plain["movie/1001"]["tier"], plain["movie/1001"]["hddFrom"]))
+        self.assertEqual(kept["movie/1002"]["tier"], "hdd")
+
+    def test_plan_lines_name_fan_favourites(self):
+        e = self.run_it()
+        doc = {"titles": {k: e[k] for k in ("movie/1001", "movie/1002", "movie/653")}, "enabledOn": None}
+        lines = "\n".join(rt.plan_lines(doc, {"movie/1001": True}, TODAY))
+        self.assertIn("keep (fan: fan favourite)", lines)
+        self.assertIn("keep (default: old)", lines)
+        self.assertIn("keep (protected: old)", lines)
+
     def test_own_collection_postpones_watching_only_marks(self):
         e = self.run_it(progress={"movie/1001"}, collections={"movie/1002", "tv/2001"})
         self.assertEqual((e["movie/1001"]["postponed"], e["movie/1001"]["watching"]), (None, True))
@@ -531,6 +544,12 @@ class Delete(unittest.TestCase):
         self.run_it(overrides={"movie/1001": True, "tvdb/9014": True})
         self.assertEqual(self.deletes(), ["/episodefile/bulk"])
         self.assertFalse(any(c[2] in ("/series/15", "/movie/4") for c in self.arr.calls))
+
+    def test_a_let_it_leave_record_never_frees_an_automatic_keep_forever_title(self):
+        soon = {k: {"since": "2027-01-01", "p": False} for k in ("movie/1001", "movie/1002", "tv/2001", "tv/3999", "tv/2005", "movie/653")}
+        self.e["movie/1002"]["due"] = "2027-01-01"
+        self.run_it(overrides={"movie/1002": False}, n=night(soon=soon))
+        self.assertFalse(any(c[2] in ("/movie/2", "/moviefile/102") for c in self.arr.calls))
 
     def test_id_mismatch_stops_the_run(self):
         self.assertEqual(self.run_it(arr=Fake(wrong="/movie/1"))[0], 1)

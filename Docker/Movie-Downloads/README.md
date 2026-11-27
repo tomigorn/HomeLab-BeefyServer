@@ -275,8 +275,8 @@ Spec `docs/superpowers/specs/2026-11-15-storage-retention-design.md` (owner 2026
 | old | released ≥ 12 years ago (year, same as the old-or-niche hook) |
 | niche | the hook's niche rule (≥ 2 years old and < 100 TMDB votes film / < 1000 votes series), tag `audio-swiss-german`, or the older-versions / Swiss German profile on a title that is not old. Rare languages: not detectable yet |
 | goated | IMDb ≥ 8.0 with ≥ 25 000 votes (Radarr `ratings.imdb`; series: Sonarr `ratings`). IMDb Top 250 is not in the local data |
-| never deleted | Keep forever (default or someone's choice in Seerr), the test film Nosferatu (TMDB 653, tag `keep-test`), a series without a Seerr media row (unmapped) |
-| choice | Seerr "♾️ Keep forever" (`../Seerr/README.md` "Storage retention"), stored in `/srv/appdata/seerr-retention/keep.json` (a series with its TVDB id too) |
+| never deleted | Keep forever (default, can't be switched off; or someone's ⭐ fan-favourite mark in Seerr; both still move SSD → HDD), the test film Nosferatu (TMDB 653, tag `keep-test`), a series without a Seerr media row (unmapped) |
+| choice | Seerr ⭐ fan-favourite marks (`../Seerr/README.md` "My library"), stored in `/srv/appdata/seerr-retention/keep.json` (`keep` = any mark; a series with its TVDB id too); an old "Let it leave" record (`keep: false`) no longer frees an automatic Keep forever title |
 | ids | films by TMDB id; series by Seerr's TMDB id, mapped from Sonarr through Seerr's media rows (`externalServiceId`, else TVDB id): Sonarr and Seerr can disagree on a series' TMDB id (seen 2026-11-16: 319013 vs 312697). Protected (never temporary): a series without a TVDB id, without a Seerr row, matched by a row whose Sonarr id and TVDB id disagree, whose Sonarr or TVDB id is claimed by two rows, or that shares its key with another series. Two choices for one series under different ids: keep wins |
 
 | Part | What |
@@ -317,11 +317,11 @@ Every deleted library file (retention, Delete a title, upgrades, language and qu
 
 ### Delete early
 
-Seerr's **Delete early** button (`../Seerr/README.md` "Delete early", owner 2026-11-22) queues a job; `scripts/delete-early.py` (as buntu) carries it out.
+Seerr's **Delete early** button and My library (`../Seerr/README.md` "Delete early", "My library", owner 2026-11-22 / 2026-11-27) queue a job; `scripts/delete-early.py` (as buntu) carries it out.
 
 | Job | What the runner does |
 |---|---|
-| delete | refused: test film / `keep-test`, no files, 11th delete of the user in 7 days. Asks first: Keep forever (job flag or `retention.json` + keep store) and the deleter is no requester → a requester, none → the owner (Seerr user 1); someone else mid-watch (Jellyfin: a film with a resume point on any version, a series or season with an episode played in the last 30 days and not every episode played) → that viewer (Jellyfin user → Seerr user by Seerr's Jellyfin link or the identity map's subject; none → the owner). Else, under the media lock: the same steps as retention (unmonitor + tag `retention-deleted`, files through Radarr/Sonarr into the [Recycle bin](#recycle-bin), phone versions moved the same way, `retention-gone.json` = *Left the server* list), side files (`<video>.de.srt`) recorded and moved with it; a season: only its files, season and its episodes unmonitored, no tag. A whole title's Seerr status goes to *unknown* (`POST /media/<id>/unknown`): a film shows **Request** at once, a series' seasons after the nightly availability sync; the Seerr row and its requests stay (no [Clear Data](#delete-a-title)) |
+| delete | rules: Seerr's `retention_rules.delete_plan`. Refused: test film / `keep-test`, automatic Keep forever (`retention.json`), not in `retention.json`, no files, 11th delete of the user in 7 days. Asks first: a ⭐ fan-favourite mark someone else set (keep store) → each setter (an old mark without a setter → the owner, Seerr user 1); someone else mid-watch (Jellyfin: a film with a resume point on any version, a series or season with an episode played in the last 30 days and not every episode played) → that viewer (Jellyfin user → Seerr user by Seerr's Jellyfin link or the identity map's subject; none → the owner). Else, under the media lock: the same steps as retention (unmonitor + tag `retention-deleted`, files through Radarr/Sonarr into the [Recycle bin](#recycle-bin), phone versions moved the same way, `retention-gone.json` = *Left the server* list), side files (`<video>.de.srt`) recorded and moved with it; a season: only its files, season and its episodes unmonitored, no tag. A whole title's Seerr status goes to *unknown* (`POST /media/<id>/unknown`): a film shows **Request** at once, a series' seasons after the nightly availability sync; the Seerr row and its requests stay (no [Clear Data](#delete-a-title)) |
 | answer | only an asked person counts; one no = denied, all yes = deleted; 7 days without an answer = expired (not deleted) |
 | restore | the deleter, a requester or a manager, while in the bin: each file moved back to its old path (the newest copy in the bin, never over an existing file), monitored again, tag removed, `RescanMovie` / `RescanSeries`, Jellyfin told (`/Library/Media/Updated`), Seerr status *available*, off the *Left the server* list |
 
@@ -329,8 +329,8 @@ Seerr's **Delete early** button (`../Seerr/README.md` "Delete early", owner 2026
 |---|---|
 | Units | `systemd/delete-early.path` (a job file appears), `delete-early.timer` (every 30 min while awake: expiry, approved deletes the media lock held back), `delete-early.service` (writes the state dir, the job folder, `/run/lock`, `/srv/video/media`, `/srv/video/.recyclebin`) |
 | Notices | Jellyfin pop-up on the person's live sessions (Jellyfin display language EN/DE); Telegram (EN) for the owner through `_global/secrets/oob-alert.env`, others only when listed in `secrets/delete-early-telegram.json` (`{"<Seerr user id>": "<chat id>"}`, gitignored; nobody today) |
-| State | `~/.local/state/movie-downloads/delete-early.json`, audit `delete-early-audit.jsonl` (one JSON line per event) |
-| Check | `scripts/delete-early.py --list`, `journalctl -u delete-early`, `md.delete-early` |
+| State | `~/.local/state/movie-downloads/delete-early.json`, audit `delete-early-audit.jsonl` (one JSON line per event); every run `delete-early-watching.json` (`{key: [{uid, name}]}` from each Jellyfin user's 300 most recent plays, for the confirm preview in Seerr; Jellyfin down = old file kept) |
+| Check | `scripts/delete-early.py --list`, `journalctl -u delete-early`, `md.delete-early`, `md.delete-early-watching` |
 | Install | `sudo install -d -o 65127 -g buntu -m 2770 /srv/appdata/seerr-delete-early`, `sudo install -m 0644 systemd/delete-early.service systemd/delete-early.path systemd/delete-early.timer /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now delete-early.path delete-early.timer` |
 | Off | `sudo systemctl disable --now delete-early.path delete-early.timer` (jobs then wait; the Seerr button still queues them) |
 | Tests | `python3 tests/test_delete_early.py` |

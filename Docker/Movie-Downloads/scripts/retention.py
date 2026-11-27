@@ -797,7 +797,7 @@ def plan_lines(doc, overrides, today):
         rows.append((st["deleteOn"] or "9999", k, e, st))
     out = []
     for _, k, e, st in sorted(rows):
-        what = f"keep ({st['source']}: {'unmapped series' if e.get('unmapped') else ','.join(e['reasons']) or 'test film' if st['source'] != 'override' else 'override'})" if st["keep"] else f"delete {st['deleteOn']} ({st['why']})"
+        what = f"keep ({st['source']}: {'unmapped series' if e.get('unmapped') else 'fan favourite' if st['source'] == 'fan' else ','.join(e['reasons']) or 'test film'})" if st["keep"] else f"delete {st['deleteOn']} ({st['why']})"
         out.append(f"  {what:38} {e['tier']:5} {human(e['size']):>10}  imported {e['imported']}  clock {e.get("anchor")}  SSD until {e['ssdUntil']}  {k}  {e['t']} ({e['y']})" + (f"  postponed: {e['postponed']}" if e["postponed"] else ""))
     return out
 

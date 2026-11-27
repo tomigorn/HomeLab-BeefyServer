@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Delete early runner (README "Delete early", Seerr README "Delete early"): carries out what Seerr's download-now backend queued in /srv/appdata/seerr-delete-early/*.req.
-delete: refused for the test film / keep-test, a title without files, the 11th delete of a user in 7 days; asks for an OK when the title is Keep forever and the deleter did not request it (the requester, none: the owner) or someone else is mid-watch (started in the last 30 days, not finished; the viewer, no Seerr account: the owner); else deletes the way retention does (unmonitor + tag retention-deleted, files through Radarr/Sonarr into the 7-day recycle bin, phone versions moved the same way, Left the server list) under the media lock.
+delete: refused for the test film / keep-test, automatic Keep forever, a title without files, the 11th delete of a user in 7 days; asks for an OK when someone else set a fan-favourite mark (that person) or someone else is mid-watch (started in the last 30 days, not finished; the viewer, no Seerr account: the owner) - rules: Seerr's retention_rules.delete_plan; else deletes the way retention does (unmonitor + tag retention-deleted, files through Radarr/Sonarr into the 7-day recycle bin, phone versions moved the same way, Left the server list) under the media lock.
 answer: the asked person's OK or no; all OK = delete, one no = denied; no answer in 7 days = expired (denied). restore: files back from the bin, monitored again, Radarr/Sonarr rescan, Jellyfin told.
+Every run also writes delete-early-watching.json (who is mid-watch per title, for My library's confirm preview).
 Notices: Jellyfin pop-up on the person's live sessions, Telegram for the owner (and anyone in secrets/delete-early-telegram.json). State ~/.local/state/movie-downloads/delete-early.json (read by the backend), audit delete-early-audit.jsonl.
 Usage: scripts/delete-early.py [--list] | -h"""
 import argparse
@@ -27,22 +28,23 @@ _spec.loader.exec_module(rt)
 rr = rt.rr
 
 TZ = ZoneInfo("Europe/Zurich")
-OWNER = 1
-ASK_DAYS = 7
-BIN_DAYS = 7
-WATCH_DAYS = 30
-WEEK_MAX = 10
+OWNER = rr.OWNER
+ASK_DAYS = rr.ASK_DAYS
+BIN_DAYS = rr.BIN_DAYS
+WATCH_DAYS = rr.WATCH_DAYS
+WEEK_MAX = rr.DELETE_WEEK_MAX
+RECENT_PLAYS = 300
 COUNTED = ("pending", "approved", "deleted", "restored", "failed")
 LINK = "https://requests.holy-grail.ch"
 MONTHS = {"en": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
           "de": ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sept.", "Okt.", "Nov.", "Dez."]}
 TEXT = {
-    "en": {"head": "🗑 Delete early", "season": " (season {n})", "keep": "it is marked ♾️ Keep forever", "watching": "you have started watching it",
+    "en": {"head": "🗑 Delete early", "season": " (season {n})", "keep": "it is marked ♾️ Keep forever", "fan": "you marked it ⭐ Fan favourite", "watching": "you have started watching it",
            "ask": "{who} wants to delete {title}{scope}: {reason}. Approve or deny on its page until {until}: {link}",
            "deleted": "{who} deleted {title}{scope}. It stays in the recycle bin until {until}; undo on its page: {link}",
            "approved": "{title}{scope} is deleted ({who} agreed). In the recycle bin until {until}: {link}",
            "denied": "{who} said no: {title}{scope} stays.", "expired": "No answer within 7 days: {title}{scope} stays."},
-    "de": {"head": "🗑 Früher löschen", "season": " (Staffel {n})", "keep": "es ist als ♾️ Für immer behalten markiert", "watching": "du hast angefangen, es zu schauen",
+    "de": {"head": "🗑 Früher löschen", "season": " (Staffel {n})", "keep": "es ist als ♾️ Für immer behalten markiert", "fan": "du hast es als ⭐ Fan-Liebling markiert", "watching": "du hast angefangen, es zu schauen",
            "ask": "{who} möchte {title}{scope} löschen: {reason}. Auf der Titelseite bis {until} zustimmen oder ablehnen: {link}",
            "deleted": "{who} hat {title}{scope} gelöscht. Es bleibt bis {until} im Papierkorb; rückgängig auf der Titelseite: {link}",
            "approved": "{title}{scope} ist gelöscht ({who} war einverstanden). Im Papierkorb bis {until}: {link}",
@@ -196,18 +198,71 @@ def watchers(env, kind, item, season, now):
     return out
 
 
-def kept_forever(env, it):
-    if it.get("keep"):
-        return True
-    key = rr.key(it["kind"], it["tmdb"])
+def title_rules(env, it):
+    """(retention.json entry, {setter uid: name}) of the title: by its key, a series also by its TVDB id."""
+    key, tvdb = rr.key(it["kind"], it["tmdb"]), it.get("tvdb")
     try:
-        entry = json.loads(env.retention.read_text())["titles"].get(key)
-    except (OSError, ValueError, KeyError, AttributeError):
-        entry = None
-    overrides, _ = rt.read_overrides(env.keep)
-    if isinstance(entry, dict):
-        return rr.effective(entry, rt.override_for(overrides, key, entry), env.now().date())["keep"]
-    return bool(overrides.get(key))
+        titles = json.loads(env.retention.read_text())["titles"]
+    except (OSError, ValueError, KeyError, TypeError):
+        titles = {}
+    entry = titles.get(key) if isinstance(titles.get(key), dict) else next((e for e in titles.values() if isinstance(e, dict) and tvdb and e.get("tvdb") == tvdb), None)
+    try:
+        store = json.loads(env.keep.read_text())["titles"]
+    except (OSError, ValueError, KeyError, TypeError):
+        store = {}
+    setters = {}
+    for k, rec in store.items() if isinstance(store, dict) else []:
+        if isinstance(rec, dict) and (k == key or (tvdb and rec.get("tvdb") == tvdb)):
+            for u, m in rr.marks(rec).items():
+                setters.setdefault(u, m.get("name"))
+    return entry, setters
+
+
+def watching_snapshot(env, now, who):
+    """{key: [{uid, name}]} of everyone mid-watch (started in the last 30 days, not finished), from each Jellyfin user's recent plays; a viewer without a Seerr account is the owner."""
+    jf_to, names = who
+    since = now - datetime.timedelta(days=WATCH_DAYS)
+    movies = {rt.rel_of(m.get("path"), "/data/"): rr.key("movie", m["tmdbId"]) for m in env.radarr("/movie") or [] if isinstance(m, dict) and m.get("tmdbId")}
+    try:
+        titles = json.loads(env.retention.read_text())["titles"]
+    except (OSError, ValueError, KeyError, TypeError):
+        titles = {}
+    by_tvdb = {e["tvdb"]: k for k, e in titles.items() if isinstance(e, dict) and e.get("tvdb")}
+    shows = {rt.rel_of(x.get("path"), "/data/"): by_tvdb.get(x.get("tvdbId")) or (rr.key("tv", x["tmdbId"]) if x.get("tmdbId") else None) for x in env.sonarr("/series") or [] if isinstance(x, dict)}
+    out = {}
+    for u in env.jf("/Users") or []:
+        jid = norm((u or {}).get("Id"))
+        if not jid:
+            continue
+        sid = jf_to.get(jid) or OWNER
+        recent = (env.jf(f"/Users/{jid}/Items?Recursive=true&IncludeItemTypes=Movie,Episode&SortBy=DatePlayed&SortOrder=Descending&Limit={RECENT_PLAYS}"
+                         "&Fields=Path&EnableUserData=true&EnableImages=false") or {}).get("Items") or []
+        series = {}
+        for i in recent:
+            ud = i.get("UserData") or {}
+            last = when(ud.get("LastPlayedDate"))
+            if not last or last < since:
+                continue
+            parts = str(i.get("Path") or "").strip("/").split("/")
+            folder = "/".join(parts[:3])
+            if i.get("Type") == "Movie" and mid_movie(ud, since) and movies.get(folder):
+                out.setdefault(movies[folder], {})[sid] = names.get(sid, f"user {sid}")
+            elif i.get("Type") == "Episode" and i.get("SeriesId") and shows.get(folder):
+                series[i["SeriesId"]] = shows[folder]
+        for series_id, key in series.items():
+            eps = (env.jf(f"/Users/{jid}/Items?ParentId={series_id}&Recursive=true&IncludeItemTypes=Episode&EnableImages=false&EnableUserData=true") or {}).get("Items") or []
+            if eps and not all((e.get("UserData") or {}).get("Played") for e in eps):
+                out.setdefault(key, {})[sid] = names.get(sid, f"user {sid}")
+    return {k: [{"uid": u, "name": n} for u, n in v.items()] for k, v in out.items()}
+
+
+def write_watching(env, now, who):
+    try:
+        titles = watching_snapshot(env, now, who)
+    except Exception as e:  # noqa: BLE001
+        print(f"delete-early: mid-watch snapshot not updated ({type(e).__name__})", flush=True)
+        return
+    rt.write_atomic(env.state.with_name("delete-early-watching.json"), {"updated": now.isoformat(timespec="seconds"), "titles": titles})
 
 
 # ---- arr ----
@@ -399,16 +454,13 @@ def on_delete(env, data, job, now, who):
             raise Refused("quota")
         _, x = arr_item(env, it)
         jf_to, names = who
-        asks = []
-        if kept_forever(env, it) and it["by"] not in (it.get("requesters") or []):
-            approvers = [u for u in it.get("requesters") or [] if u != it["by"]] or [OWNER]
-            asks.append({"reason": "keep", "approvers": approvers, "names": [names.get(u, f"user {u}") for u in approvers], "answer": None})
-        mine = {j for j, s in jf_to.items() if s == it["by"]}
-        for jid in sorted(watchers(env, it["kind"], x, it.get("season"), now) - mine):
-            sid = jf_to.get(jid, OWNER)
-            if sid == it["by"] or any(a["reason"] == "watching" and a["approvers"] == [sid] for a in asks):
-                continue
-            asks.append({"reason": "watching", "approvers": [sid], "names": [names.get(sid, f"user {sid}")], "answer": None})
+        entry, setters = title_rules(env, it)
+        setters = {u: names.get(u or OWNER) or n or f"user {u or OWNER}" for u, n in setters.items()}
+        viewing = [(jf_to.get(jid), names.get(jf_to.get(jid) or OWNER, f"user {jf_to.get(jid) or OWNER}")) for jid in sorted(watchers(env, it["kind"], x, it.get("season"), now))]
+        plan = rr.delete_plan(rr.key(it["kind"], it["tmdb"]), [], entry, setters, viewing, it["by"])
+        if plan["refused"]:
+            raise Refused(plan["refused"])
+        asks = [dict(a, answer=None) for a in plan["asks"]]
     except Refused as e:
         it["why"] = str(e)
         touch(env, it, "refused")
@@ -533,7 +585,7 @@ def run(env):
             with contextlib.suppress(OSError):
                 p.unlink()
     jobs.sort(key=lambda j: (str(j[0].get("at") or ""), j[1].name))
-    who = None
+    who = people(env) if jobs else None
     for job, path in jobs:
         op, done = job.get("op"), True
         if op == "delete":
@@ -549,6 +601,7 @@ def run(env):
                 path.unlink()
     run_approved(env, data, now)
     save(env, data)
+    write_watching(env, now, who or people(env))
     return 0
 
 
