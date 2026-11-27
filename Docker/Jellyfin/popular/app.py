@@ -751,7 +751,7 @@ class Core:
         return 404, {"error": "not found"}
 
     def watched(self, headers, query):
-        """Internal (WatchedHandler, 8100): the Jellyfin items a user played, newest first, as {"movie": [TMDB ids], "tv": [TVDB ids]} for the report site's "recently watched" sort (Seerr README "Problem reports").
+        """Internal (WatchedHandler, 8100): the Jellyfin items a user played or started (any play, even seconds: a LastPlayedDate), newest play first, as {"movie": [TMDB ids], "tv": [TVDB ids]} for the report site's "recently watched" sort (Seerr README "Problem reports").
         The user is the Jellyfin user whose name equals ?user= (case-insensitive, exactly one); only the shared secret in X-Watched-Secret lets a caller ask."""
         h = {str(k).lower(): v for k, v in headers.items()}
         want, got = self.cfg.watched_secret, h.get("x-watched-secret")
@@ -768,11 +768,11 @@ class Core:
             uid = str(hits[0].get("Id") or "").replace("-", "").lower() if len(hits) == 1 else None
             if not uid or not ITEM_ID_RE.match(uid):
                 return 404, {"error": "no such user"}
-            played = (self.jellyfin_admin("GET", f"/Items?userId={uid}&Recursive=true&Filters=IsPlayed&IncludeItemTypes=Movie%2CEpisode&SortBy=DatePlayed&SortOrder=Descending"
-                                                 f"&Fields=ProviderIds&EnableTotalRecordCount=false&Limit={WATCHED_SCAN}") or {}).get("Items") or []
+            played = (self.jellyfin_admin("GET", f"/Items?userId={uid}&Recursive=true&IncludeItemTypes=Movie%2CEpisode&SortBy=DatePlayed&SortOrder=Descending"
+                                                 f"&Fields=ProviderIds%2CUserData&EnableTotalRecordCount=false&Limit={WATCHED_SCAN}") or {}).get("Items") or []
             movies, series = [], []
             for it in played:
-                if not isinstance(it, dict):
+                if not isinstance(it, dict) or not isinstance(it.get("UserData"), dict) or not it["UserData"].get("LastPlayedDate"):
                     continue
                 if it.get("Type") == "Movie":
                     self.add_id(movies, (it.get("ProviderIds") or {}).get("Tmdb"))

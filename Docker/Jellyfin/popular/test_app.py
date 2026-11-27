@@ -2106,17 +2106,25 @@ class DownloadChoice(PhoneBase):
 
 
 WSECRET = "w" * 40
+FINISHED = {"Played": True, "PlaybackPositionTicks": 0, "LastPlayedDate": "2026-11-20T20:00:00Z"}
+PARTLY = {"Played": False, "PlaybackPositionTicks": 9000000000, "LastPlayedDate": "2026-11-19T20:00:00Z"}
+SHORT = {"Played": False, "PlaybackPositionTicks": 0, "LastPlayedDate": "2026-11-18T20:00:00Z"}
+NEVER = {"Played": False, "PlaybackPositionTicks": 0}
 PLAYED = [
-    {"Id": "m1", "Type": "Movie", "ProviderIds": {"Tmdb": "603"}},
-    {"Id": "e1", "Type": "Episode", "SeriesId": "aaaa0000000000000000000000000001", "ProviderIds": {"Tvdb": "9999"}},
-    {"Id": "m2", "Type": "Movie", "ProviderIds": {"Imdb": "tt1"}},
-    {"Id": "e2", "Type": "Episode", "SeriesId": "bbbb0000000000000000000000000002"},
-    {"Id": "e3", "Type": "Episode", "SeriesId": "aaaa0000000000000000000000000001"},
-    {"Id": "m3", "Type": "Movie", "ProviderIds": {"Tmdb": "11"}},
-    {"Id": "m4", "Type": "Movie", "ProviderIds": {"Tmdb": "603"}},
+    {"Id": "m1", "Type": "Movie", "ProviderIds": {"Tmdb": "603"}, "UserData": SHORT},
+    {"Id": "e1", "Type": "Episode", "SeriesId": "aaaa0000000000000000000000000001", "ProviderIds": {"Tvdb": "9999"}, "UserData": PARTLY},
+    {"Id": "m2", "Type": "Movie", "ProviderIds": {"Imdb": "tt1"}, "UserData": FINISHED},
+    {"Id": "e2", "Type": "Episode", "SeriesId": "bbbb0000000000000000000000000002", "UserData": FINISHED},
+    {"Id": "e3", "Type": "Episode", "SeriesId": "aaaa0000000000000000000000000001", "UserData": FINISHED},
+    {"Id": "m3", "Type": "Movie", "ProviderIds": {"Tmdb": "11"}, "UserData": PARTLY},
+    {"Id": "m4", "Type": "Movie", "ProviderIds": {"Tmdb": "603"}, "UserData": FINISHED},
+    {"Id": "m5", "Type": "Movie", "ProviderIds": {"Tmdb": "777"}, "UserData": NEVER},
+    {"Id": "e4", "Type": "Episode", "SeriesId": "cccc0000000000000000000000000003", "UserData": NEVER},
+    {"Id": "m6", "Type": "Movie", "ProviderIds": {"Tmdb": "778"}},
 ]
 JF_SERIES = {"aaaa0000000000000000000000000001": {"Id": "aaaa0000000000000000000000000001", "ProviderIds": {"Tvdb": "81189"}},
-          "bbbb0000000000000000000000000002": {"Id": "bbbb0000000000000000000000000002", "ProviderIds": {"Tmdb": "5"}}}
+          "bbbb0000000000000000000000000002": {"Id": "bbbb0000000000000000000000000002", "ProviderIds": {"Tmdb": "5"}},
+          "cccc0000000000000000000000000003": {"Id": "cccc0000000000000000000000000003", "ProviderIds": {"Tvdb": "424242"}}}
 
 
 class Watched(Base):
@@ -2137,7 +2145,7 @@ class Watched(Base):
         if url.path == "/Items" and "ids" in q:
             return {"Items": [JF_SERIES[i] for i in q["ids"].split(",") if i in JF_SERIES]}
         if url.path == "/Items":
-            return {"Items": PLAYED}
+            return {"Items": getattr(self, "played", PLAYED)}
         raise AssertionError(path)
 
     def get(self, user="jane", secret=WSECRET, query=None):
@@ -2149,11 +2157,24 @@ class Watched(Base):
         self.assertEqual(code, 200)
         self.assertEqual(data, {"movie": [603, 11], "tv": [81189]})
 
-    def test_asks_jellyfin_for_the_users_played_items_newest_first(self):
+    def test_asks_jellyfin_for_the_users_items_by_last_play_newest_first(self):
         self.get()
         items = [p for (_, p) in self.calls if p.startswith("/Items?") and "ids=" not in p][0]
-        for part in ("userId=40e05f0a9e964fd9b225eb1379dfcfa4", "Filters=IsPlayed", "SortBy=DatePlayed", "SortOrder=Descending", "IncludeItemTypes=Movie%2CEpisode", "Fields=ProviderIds"):
+        for part in ("userId=40e05f0a9e964fd9b225eb1379dfcfa4", "SortBy=DatePlayed", "SortOrder=Descending", "IncludeItemTypes=Movie%2CEpisode", "Fields=ProviderIds%2CUserData", "Limit=1000"):
             self.assertIn(part, items)
+        self.assertNotIn("Filters=", items)
+
+    def test_finished_partly_played_and_short_plays_count_never_played_does_not(self):
+        self.played = [it for it in PLAYED if it["Id"] in ("m1", "m3", "m2", "m5", "m6")]
+        self.assertEqual(self.get()[1]["movie"], [603, 11])
+
+    def test_started_episode_puts_its_series_in_the_list(self):
+        self.played = [it for it in PLAYED if it["Id"] in ("e1", "e4")]
+        self.assertEqual(self.get()[1]["tv"], [81189])
+
+    def test_at_most_200_films_and_200_series(self):
+        self.played = [{"Id": f"m{i}", "Type": "Movie", "ProviderIds": {"Tmdb": str(i + 1)}, "UserData": SHORT} for i in range(250)]
+        self.assertEqual(self.get()[1]["movie"], list(range(1, 201)))
 
     def test_user_matched_by_name_case_insensitive(self):
         self.assertEqual(self.get("JANE")[0], 200)
