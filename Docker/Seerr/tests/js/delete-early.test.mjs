@@ -50,6 +50,7 @@ test("film: a Delete early button that asks before it deletes", async () => {
   assert.match(row(w).textContent, /Delete this film now\?/);
   assert.match(row(w).textContent, /7 days in the recycle bin/);
   assert.match(row(w).textContent, /8 of 10 deletions left this week/);
+  assert.match(row(w).textContent, /Goes to the recycle bin at once/);
   btn(w, "data-hg-delete-cancel").click();
   await settle();
   assert.equal(btn(w, "data-hg-delete-confirm"), null);
@@ -59,6 +60,16 @@ test("film: a Delete early button that asks before it deletes", async () => {
   await settle();
   assert.deepEqual(sent.map((s) => [s.url, JSON.parse(s.body)]), [["/_download-now/delete-early/delete", { type: "movie", tmdbId: 1, season: null }]]);
   assert.equal(sent[0].headers["Content-Type"], "application/json");
+});
+
+test("confirm names who must OK it first, from the server's plan", async () => {
+  const plan = [{ reason: "fan", names: ["Jane Doe"] }, { reason: "watching", names: ["Ann"] }];
+  const w = load("retention.js", FACTS, fakeXHR({ [S("type=movie&tmdb=1")]: { ...FREE, plan } }, []));
+  await settle();
+  btn(w, "data-hg-delete-start").click();
+  await settle();
+  assert.match(row(w).textContent, /Becomes a request first: Jane Doe \(fan favourite\), Ann \(watching it\)/);
+  assert.doesNotMatch(row(w).textContent, /recycle bin at once/);
 });
 
 test("series: whole series or one season", async () => {
@@ -77,7 +88,7 @@ test("series: whole series or one season", async () => {
 });
 
 test("no row without the right or for the test film", async () => {
-  for (const reason of ["group", "permission", "protected", "library"]) {
+  for (const reason of ["group", "permission", "protected", "library", "kept"]) {
     const w = load("retention.js", FACTS, fakeXHR({ [S("type=movie&tmdb=1")]: { ...FREE, allowed: false, reason } }, []));
     await settle();
     assert.equal(row(w), null, reason);

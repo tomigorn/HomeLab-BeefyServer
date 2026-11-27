@@ -42,9 +42,9 @@ PAGES = {
     "/movie/10": HEAD + "<main><h1>Invented New Film</h1>" + FACTS + "</main>" + SCRIPTS,
     "/requests": HEAD + "<main><h1>Requests</h1>" + row("movie/10", "Invented New Film") + row("movie/11", "Invented Classic With A Rather Long Title") + row("tv/20", "Invented Show") + "</main>" + SCRIPTS,
 }
-TITLE_OLD = {"key": "movie/30", "known": False, "state": "keep", "keep": True, "source": "default", "default": True, "reasons": ["old"], "deleteOn": None, "canKeep": True, "canUnkeep": True, "deleteEnabled": False}
+TITLE_OLD = {"key": "movie/30", "known": False, "state": "keep", "keep": True, "source": "default", "default": True, "reasons": ["old"], "deleteOn": None, "canMark": False, "canUnmark": False, "marks": [], "markQuota": {"used": 0, "max": 5}, "deleteEnabled": False}
 TITLE_NEW = {"key": "movie/10", "known": True, "state": "temporary", "keep": False, "source": "default", "default": False, "reasons": [], "deleteOn": "2027-02-14", "soon": False, "overdue": False,
-             "imported": "2026-11-16", "ssdUntil": "2026-12-16", "hddFrom": "2026-12-16", "tier": "ssd", "lastPlayed": "2026-11-16", "anchorBy": "play", "canKeep": True, "canUnkeep": True, "deleteEnabled": False}
+             "imported": "2026-11-16", "ssdUntil": "2026-12-16", "hddFrom": "2026-12-16", "tier": "ssd", "lastPlayed": "2026-11-16", "anchorBy": "play", "canMark": True, "canUnmark": False, "marks": [], "markQuota": {"used": 0, "max": 5}, "deleteEnabled": False}
 CARDS = {"titles": {"movie/10": {"state": "temporary", "deleteOn": "2027-02-14", "soon": False}, "movie/11": {"state": "keep", "source": "default"},
                     "tv/20": {"state": "temporary", "deleteOn": "2026-11-19", "soon": True}}, "deleteEnabled": False}
 

@@ -1,4 +1,4 @@
-// Storage retention (README "Storage retention"): "♾️ Keep forever" box in the request dialog (preset from the title's state, stored after the request was created), a fact row with the date pill and a toggle on the title page, a pill in the Status field of request rows and cards, and the would-delete list for managers on the Collections page. Data from /_download-now/retention/; anything unexpected = Seerr unchanged.
+// Storage retention (README "Storage retention", "My library"): "♾️ Keep forever" box in the request dialog (= my own ⭐ fan-favourite mark, preset from the title's state, stored after the request was created), a fact row with the date pill and the mark button on the title page, a pill in the Status field of request rows and cards, and the would-delete list for managers on the Collections page. Data from /_download-now/retention/; anything unexpected = Seerr unchanged.
 (function () {
   "use strict";
   var TITLE = /^(Request (Movie|Series|Collection)( in 4K)?|(Film|Serie|Sammlung)( in 4K)? anfragen)$/;
@@ -13,37 +13,43 @@
   var TEXT = {
     en: {
       box: "♾️ Keep forever", loading: "…",
-      boxKeep: "Kept on the server for good ({why}). Untick to let it leave 3 months after the download or the last play.",
-      boxTemp: "Leaves the server 3 months after the download or the last play (watching resets the clock). Tick to keep it for good.",
-      boxUnknown: "Tick to keep it for good. Otherwise it leaves 3 months after the download or the last play, unless it is old, niche or top-rated.",
+      boxKeep: "Kept on the server for good ({why}).",
+      boxMine: "Your ⭐ fan-favourite mark keeps it for good. Untick to remove your mark.",
+      boxTemp: "Leaves the server 3 months after the download or the last play (watching resets the clock). Tick to mark it ⭐ fan favourite and keep it for good ({left} of {max} marks left this week).",
+      boxTheirs: "Kept for good: {why}. Tick to add your own mark ({left} of {max} marks left this week).",
+      boxFull: "You used your {max} fan-favourite marks this week.",
+      boxUnknown: "Tick to mark it ⭐ fan favourite and keep it for good. Otherwise it leaves 3 months after the download or the last play, unless it is old, niche or top-rated.",
       fact: "On the server", kept: "♾️ Kept forever", leaves: "🗑 Leaves on {d}", afterPlay: "(3 months after the last play)", afterImport: "(3 months after the download)", played: "Last played:", soon: "Leaving soon · {d}", short: "🗑 {d}", soonShort: "Leaving soon",
-      keep: "♾️ Keep forever", unkeep: "Let it leave", busy: "…", failed: "❌ Not saved",
-      why: { old: "released 12 or more years ago", niche: "niche", goated: "top-rated on IMDb", override: "someone chose it", protected: "the permanent test film" },
+      keep: "⭐ Fan favourite", unkeep: "Remove my mark", busy: "…", failed: "❌ Not saved", fanPill: "⭐ Fan favourite",
+      why: { old: "released 12 or more years ago", niche: "niche", goated: "top-rated on IMDb", fan: "fan favourite", protected: "the permanent test film" }, fanOf: "fan favourite of {names}", you: "you",
       hKept: "♾️ Kept forever", hTemp: "🗑 Temporary", imported: "Downloaded:", ssd: "SSD until:", hdd: "HDD from:", del: "Deleted on:", because: "Kept because:",
       postponed: "Postponed:", pReason: { "in-progress": "someone is still watching it (at most 30 days)", collection: "it is in a household collection (at most 30 days)" },
       space: "Earlier because the HDD is over 85 % full.", grace: "14 days of grace after cleanup was switched on.",
       observe: "Cleanup is not switched on yet: nothing is deleted until the owner switches it on.",
       listTitle: "Leaving the server", listObserve: "Observe mode: nothing is deleted until cleanup is switched on. These are the dates it would use.",
       listOn: "Cleanup is on. Files are deleted in the night window; the titles stay requestable.",
-      counts: "{n} titles · {k} kept forever ({o} old, {ni} niche, {g} top-rated, {ov} by choice) · {t} temporary · {s} leaving within 7 days",
+      counts: "{n} titles · {k} kept forever ({o} old, {ni} niche, {g} top-rated, {ov} fan favourites) · {t} temporary · {s} leaving within 7 days",
       none: "Nothing scheduled to leave.", more: "Show all {n}", promote: "Would move back to the SSD (played from the HDD, observe only):", season: "Season",
       tier: { ssd: "SSD", hdd: "HDD", split: "SSD + HDD" }, whyList: { due: "", space: "HDD full", postponed: "postponed", grace: "grace" }
     },
     de: {
       box: "♾️ Für immer behalten", loading: "…",
-      boxKeep: "Bleibt für immer auf dem Server ({why}). Abwählen, dann geht es 3 Monate nach dem Download oder dem letzten Abspielen.",
-      boxTemp: "Geht 3 Monate nach dem Download oder dem letzten Abspielen vom Server (Schauen setzt die Frist zurück). Anwählen, um es für immer zu behalten.",
-      boxUnknown: "Anwählen, um es für immer zu behalten. Sonst geht es 3 Monate nach dem Download oder dem letzten Abspielen, ausser es ist alt, eine Nische oder top bewertet.",
+      boxKeep: "Bleibt für immer auf dem Server ({why}).",
+      boxMine: "Deine ⭐ Fan-Liebling-Markierung behält es für immer. Abwählen, um deine Markierung zu entfernen.",
+      boxTemp: "Geht 3 Monate nach dem Download oder dem letzten Abspielen vom Server (Schauen setzt die Frist zurück). Anwählen, um es als ⭐ Fan-Liebling für immer zu behalten (noch {left} von {max} Markierungen diese Woche).",
+      boxTheirs: "Bleibt für immer: {why}. Anwählen, um es auch zu markieren (noch {left} von {max} Markierungen diese Woche).",
+      boxFull: "Du hast diese Woche alle {max} Fan-Liebling-Markierungen gebraucht.",
+      boxUnknown: "Anwählen, um es als ⭐ Fan-Liebling für immer zu behalten. Sonst geht es 3 Monate nach dem Download oder dem letzten Abspielen, ausser es ist alt, eine Nische oder top bewertet.",
       fact: "Auf dem Server", kept: "♾️ Für immer behalten", leaves: "🗑 Geht am {d}", afterPlay: "(3 Monate nach dem letzten Abspielen)", afterImport: "(3 Monate nach dem Download)", played: "Zuletzt geschaut:", soon: "Geht bald · {d}", short: "🗑 {d}", soonShort: "Geht bald",
-      keep: "♾️ Für immer behalten", unkeep: "Gehen lassen", busy: "…", failed: "❌ Nicht gespeichert",
-      why: { old: "vor 12 oder mehr Jahren erschienen", niche: "Nische", goated: "top bewertet auf IMDb", override: "so gewählt", protected: "der feste Testfilm" },
+      keep: "⭐ Fan-Liebling", unkeep: "Meine Markierung entfernen", busy: "…", failed: "❌ Nicht gespeichert", fanPill: "⭐ Fan-Liebling",
+      why: { old: "vor 12 oder mehr Jahren erschienen", niche: "Nische", goated: "top bewertet auf IMDb", fan: "Fan-Liebling", protected: "der feste Testfilm" }, fanOf: "Fan-Liebling von {names}", you: "dir",
       hKept: "♾️ Für immer behalten", hTemp: "🗑 Vorübergehend", imported: "Heruntergeladen:", ssd: "SSD bis:", hdd: "HDD ab:", del: "Gelöscht am:", because: "Behalten, weil:",
       postponed: "Verschoben:", pReason: { "in-progress": "jemand schaut es noch (höchstens 30 Tage)", collection: "es ist in einer Sammlung des Haushalts (höchstens 30 Tage)" },
       space: "Früher, weil die HDD über 85 % voll ist.", grace: "14 Tage Schonfrist nach dem Einschalten der Aufräumung.",
       observe: "Die Aufräumung ist noch nicht eingeschaltet: nichts wird gelöscht, bis der Besitzer sie einschaltet.",
       listTitle: "Verlässt den Server", listObserve: "Beobachtungsmodus: nichts wird gelöscht, bis die Aufräumung eingeschaltet ist. Das sind die Daten, die sie nehmen würde.",
       listOn: "Die Aufräumung ist eingeschaltet. Dateien werden im Nachtfenster gelöscht; die Titel bleiben anfragbar.",
-      counts: "{n} Titel · {k} für immer ({o} alt, {ni} Nische, {g} top bewertet, {ov} gewählt) · {t} vorübergehend · {s} gehen in 7 Tagen",
+      counts: "{n} Titel · {k} für immer ({o} alt, {ni} Nische, {g} top bewertet, {ov} Fan-Lieblinge) · {t} vorübergehend · {s} gehen in 7 Tagen",
       none: "Nichts geht demnächst.", more: "Alle {n} zeigen", promote: "Käme zurück auf die SSD (von der HDD geschaut, nur beobachtet):", season: "Staffel",
       tier: { ssd: "SSD", hdd: "HDD", split: "SSD + HDD" }, whyList: { due: "", space: "HDD voll", postponed: "verschoben", grace: "Schonfrist" }
     }
@@ -94,11 +100,15 @@
   }
 
   function whyText(st, l) {
-    var w = TEXT[l].why;
+    var t = TEXT[l], w = t.why;
     if (st.source === "protected") return w.protected;
-    if (st.source === "override") return w.override;
+    if (st.source === "fan" || (st.source !== "default" && (st.marks || []).length)) {
+      return (st.marks || []).length ? fill(t.fanOf, { names: st.marks.map(function (m) { return m.mine ? t.you : m.name || "?"; }).join(", ") }) : w.fan;
+    }
     return (st.reasons || []).map(function (r) { return w[r] || r; }).join(", ");
   }
+
+  function mine(st) { return (st.marks || []).some(function (m) { return m.mine; }); }
 
   // ---- request dialog ----
   function dialogKey() {
@@ -130,10 +140,16 @@
       hint.textContent = TEXT[l].boxUnknown;
       return;
     }
-    box.__hg = { key: key, initial: !!st.keep };
-    input.checked = !!st.keep;
-    input.disabled = st.source === "protected";
-    hint.textContent = st.keep ? fill(TEXT[l].boxKeep, { why: whyText(st, l) }) : TEXT[l].boxTemp;
+    var t = TEXT[l], own = mine(st), q = st.markQuota || {}, left = Math.max(0, (q.max || 0) - (q.used || 0));
+    var locked = st.source === "protected" || (st.source === "default" && !!st.keep);
+    input.checked = locked || own;
+    input.disabled = locked || !(own ? st.canUnmark : st.canMark);
+    box.__hg = { key: key, initial: input.checked };
+    if (locked) hint.textContent = fill(t.boxKeep, { why: whyText(st, l) });
+    else if (own) hint.textContent = t.boxMine;
+    else if (!st.canMark && q.max && left === 0) hint.textContent = fill(t.boxFull, { max: q.max });
+    else if ((st.marks || []).length) hint.textContent = fill(t.boxTheirs, { why: whyText(st, l), left: left, max: q.max || 5 });
+    else hint.textContent = fill(t.boxTemp, { left: left, max: q.max || 5 });
   }
 
   function attachDialogs(doc) {
@@ -163,8 +179,8 @@
   function pendingFor(body) {
     var box = typeof document !== "undefined" && document.querySelector("#" + BOX);
     if (!box || !body || (body.mediaType !== "movie" && body.mediaType !== "tv")) return null;
-    var id = Number(body.mediaId), want = !!box.querySelector("input").checked, info = box.__hg || {};
-    if (!(id > 0)) return null;
+    var input = box.querySelector("input"), id = Number(body.mediaId), want = !!input.checked, info = box.__hg || {};
+    if (!(id > 0) || input.disabled) return null;
     var key = body.mediaType + "/" + id;
     if (info.key) {
       if (info.key !== key || info.initial === null || want === info.initial) return null;
@@ -244,9 +260,9 @@
   }
 
   function pillFor(doc, st, l, attr) {
-    var t = TEXT[l], kind = st.state === "keep" ? "keep" : st.soon ? "soon" : "temp";
-    var long = kind === "keep" ? t.kept : kind === "soon" ? fill(t.soon, { d: day(st.deleteOn, l) }) : fill(t.leaves, { d: day(st.deleteOn, l) });
-    var short = kind === "keep" ? "♾️" : kind === "soon" ? t.soonShort : fill(t.short, { d: day(st.deleteOn, l) });
+    var t = TEXT[l], kind = st.state === "keep" ? "keep" : st.soon ? "soon" : "temp", fan = kind === "keep" && st.source === "fan";
+    var long = kind === "keep" ? (fan ? t.fanPill : t.kept) : kind === "soon" ? fill(t.soon, { d: day(st.deleteOn, l) }) : fill(t.leaves, { d: day(st.deleteOn, l) });
+    var short = kind === "keep" ? (fan ? "⭐" : "♾️") : kind === "soon" ? t.soonShort : fill(t.short, { d: day(st.deleteOn, l) });
     var p = el(doc, "span", { "class": "hg-keep-pill hg-keep-" + kind, tabindex: "0" });
     p.setAttribute(attr, kind);
     if (attr === "data-hg-keep-pill" && kind !== "keep" && st.anchorBy) long += " " + (st.anchorBy === "play" ? t.afterPlay : t.afterImport);
@@ -263,11 +279,11 @@
     return null;
   }
 
-  function toggle(doc, key, st, btn) {
+  function toggle(doc, key, want, btn) {
     var l = lang(doc), kt = key.split("/");
     btn.disabled = true;
     btn.textContent = TEXT[l].busy;
-    request("POST", API + "keep", { type: kt[0], tmdbId: Number(kt[1]), keep: st.state !== "keep" }).then(function (next) {
+    request("POST", API + "keep", { type: kt[0], tmdbId: Number(kt[1]), keep: want }).then(function (next) {
       state.titles[key] = { at: Date.now(), st: next };
       var row = doc.querySelector("[data-hg-keep-fact]");
       if (row) row.parentNode.removeChild(row);
@@ -288,7 +304,7 @@
     if (!panel || !st || !st.known) { if (row) row.parentNode.removeChild(row); return; }
     var anchor = factAnchor(panel);
     if (!anchor) { if (row) row.parentNode.removeChild(row); return; }
-    var sig = [key, st.state, st.deleteOn, st.soon, st.canKeep, st.canUnkeep, st.source].join("|");
+    var sig = [key, st.state, st.deleteOn, st.soon, st.canMark, st.canUnmark, st.source, JSON.stringify(st.marks || [])].join("|");
     if (row && row.getAttribute("data-hg-keep-fact") !== sig) { row.parentNode.removeChild(row); row = null; }
     if (!row) {
       var l = lang(doc);
@@ -298,10 +314,10 @@
       var pill = pillFor(doc, st, l, "data-hg-keep-pill");
       value.appendChild(pill);
       tip(pill, hintContent(st, l, !st.deleteEnabled));
-      var can = st.state === "keep" ? st.canUnkeep && st.source !== "protected" : st.canKeep;
-      if (can) {
-        var btn = el(doc, "button", { type: "button", "class": "hg-keep-toggle", "data-hg-keep-toggle": "" }, st.state === "keep" ? TEXT[l].unkeep : TEXT[l].keep);
-        btn.addEventListener("click", function (e) { e.preventDefault(); toggle(doc, key, st, btn); });
+      var own = mine(st), want = own ? false : st.canMark ? true : null;
+      if (want !== null && (want || st.canUnmark)) {
+        var btn = el(doc, "button", { type: "button", "class": "hg-keep-toggle", "data-hg-keep-toggle": "" }, want ? TEXT[l].keep : TEXT[l].unkeep);
+        btn.addEventListener("click", function (e) { e.preventDefault(); toggle(doc, key, want, btn); });
         value.appendChild(btn);
       }
       row.appendChild(value);
@@ -315,26 +331,26 @@
     en: {
       fact: "Delete early", start: "🗑 Delete early", whole: "Whole series", season: "Season {n}", film: "this film", series: "the whole series", seasonOf: "season {n}",
       ask: "Delete {what} now?", askNote: "The files stay 7 days in the recycle bin and can be restored; the title stays requestable. {left} of {max} deletions left this week.",
-      askKeep: "If it is marked ♾️ Keep forever or someone else is watching it, they are asked first.",
+      planNow: "Goes to the recycle bin at once.", planAsk: "Becomes a request first: {list}", planReason: { fan: "fan favourite", watching: "watching it" },
       confirm: "🗑 Delete", cancel: "Cancel", busy: "…", queued: "⏳ Working on it…",
-      wants: "{who} wants to delete {what}: {reason}. Answer until {d}.", reason: { keep: "it is marked ♾️ Keep forever", watching: "you have started watching it" },
+      wants: "{who} wants to delete {what}: {reason}. Answer until {d}.", reason: { keep: "it is marked ♾️ Keep forever", fan: "you marked it ⭐ fan favourite", watching: "you have started watching it" },
       approve: "✅ Approve", deny: "✖ Deny", waiting: "⏳ Waiting for {names} to OK it until {d}.",
       bin: "🗑 In the recycle bin until {d} (deleted by {who}{scope}).", restore: "↩ Restore", restored: "↩ Restored{scope}.",
       denied: "✖ Not deleted{scope}: {names} said no.", expired: "✖ Not deleted{scope}: no answer within 7 days.", refusedRow: "✖ Not deleted{scope}: {why}.",
       scope: ", season {n}",
-      errors: { quota: "at most 10 deletions a week", already: "already being deleted", protected: "this title is protected", library: "not on the server", group: "only requesters may delete", forbidden: "not allowed", closed: "already decided", season: "unknown season", failed: "something went wrong", "not in the bin": "no longer in the recycle bin" }
+      errors: { quota: "at most 10 deletions a week", already: "already being deleted", protected: "this title is protected", kept: "kept forever automatically", library: "not on the server", group: "only requesters may delete", forbidden: "not allowed", closed: "already decided", season: "unknown season", failed: "something went wrong", "not in the bin": "no longer in the recycle bin" }
     },
     de: {
       fact: "Früher löschen", start: "🗑 Früher löschen", whole: "Ganze Serie", season: "Staffel {n}", film: "diesen Film", series: "die ganze Serie", seasonOf: "Staffel {n}",
       ask: "{What} jetzt löschen?", askNote: "Die Dateien bleiben 7 Tage im Papierkorb und lassen sich wiederherstellen; der Titel bleibt anfragbar. Noch {left} von {max} Löschungen diese Woche.",
-      askKeep: "Ist er als ♾️ Für immer behalten markiert oder schaut ihn jemand anderes, wird zuerst gefragt.",
+      planNow: "Kommt sofort in den Papierkorb.", planAsk: "Wird zuerst eine Anfrage: {list}", planReason: { fan: "Fan-Liebling", watching: "schaut es" },
       confirm: "🗑 Löschen", cancel: "Abbrechen", busy: "…", queued: "⏳ Wird erledigt…",
-      wants: "{who} möchte {what} löschen: {reason}. Antwort bis {d}.", reason: { keep: "als ♾️ Für immer behalten markiert", watching: "du hast angefangen, es zu schauen" },
+      wants: "{who} möchte {what} löschen: {reason}. Antwort bis {d}.", reason: { keep: "als ♾️ Für immer behalten markiert", fan: "du hast es als ⭐ Fan-Liebling markiert", watching: "du hast angefangen, es zu schauen" },
       approve: "✅ Zustimmen", deny: "✖ Ablehnen", waiting: "⏳ Wartet bis {d} auf das OK von {names}.",
       bin: "🗑 Im Papierkorb bis {d} (gelöscht von {who}{scope}).", restore: "↩ Wiederherstellen", restored: "↩ Wiederhergestellt{scope}.",
       denied: "✖ Nicht gelöscht{scope}: {names} hat abgelehnt.", expired: "✖ Nicht gelöscht{scope}: keine Antwort innert 7 Tagen.", refusedRow: "✖ Nicht gelöscht{scope}: {why}.",
       scope: ", Staffel {n}",
-      errors: { quota: "höchstens 10 Löschungen pro Woche", already: "wird schon gelöscht", protected: "dieser Titel ist geschützt", library: "nicht auf dem Server", group: "nur Anfragende dürfen löschen", forbidden: "nicht erlaubt", closed: "schon entschieden", season: "unbekannte Staffel", failed: "etwas ist schiefgegangen", "not in the bin": "nicht mehr im Papierkorb" }
+      errors: { quota: "höchstens 10 Löschungen pro Woche", already: "wird schon gelöscht", protected: "dieser Titel ist geschützt", kept: "automatisch für immer behalten", library: "nicht auf dem Server", group: "nur Anfragende dürfen löschen", forbidden: "nicht erlaubt", closed: "schon entschieden", season: "unbekannte Staffel", failed: "etwas ist schiefgegangen", "not in the bin": "nicht mehr im Papierkorb" }
     }
   };
   var del = { titles: {}, loading: {}, confirm: null, scope: {}, error: {}, timer: null };
@@ -459,7 +475,10 @@
         box.appendChild(el(doc, "strong", {}, fill(t.ask, { what: w, What: w.charAt(0).toUpperCase() + w.slice(1) })));
         var q = st.quota || {};
         box.appendChild(el(doc, "div", { "class": "hg-delete-note" }, fill(t.askNote, { left: Math.max(0, (q.max || 10) - (q.used || 0)), max: q.max || 10 })));
-        box.appendChild(el(doc, "div", { "class": "hg-delete-note" }, t.askKeep));
+        var plan = st.plan || [];
+        box.appendChild(el(doc, "div", { "class": "hg-delete-note", "data-hg-delete-plan": "" }, plan.length ? fill(t.planAsk, { list: plan.map(function (a) {
+          return (a.names || []).map(function (n) { return n || "?"; }).join(", ") + " (" + (t.planReason[a.reason] || a.reason) + ")";
+        }).join(", ") }) : t.planNow));
         var bar = el(doc, "div", { "class": "hg-delete-buttons" });
         bar.appendChild(dButton(doc, "data-hg-delete-confirm", t.confirm, function (b) { b.disabled = true; b.textContent = t.busy; dAct(key, "delete", { type: kind, tmdbId: Number(m[2]), season: season }); }));
         bar.appendChild(dButton(doc, "data-hg-delete-cancel", t.cancel, function () { del.confirm = null; run(); }));
@@ -543,7 +562,7 @@
     sec.appendChild(el(doc, "h2", {}, t.listTitle));
     sec.appendChild(el(doc, "p", { "class": "hg-keep-note" }, data.deleteEnabled ? t.listOn : t.listObserve));
     var c = data.counts || {};
-    sec.appendChild(el(doc, "p", { "class": "hg-keep-counts" }, fill(t.counts, { n: c.titles || 0, k: c.keep || 0, o: c.old || 0, ni: c.niche || 0, g: c.goated || 0, ov: c.override || 0, t: c.temporary || 0, s: c.soon || 0 })));
+    sec.appendChild(el(doc, "p", { "class": "hg-keep-counts" }, fill(t.counts, { n: c.titles || 0, k: c.keep || 0, o: c.old || 0, ni: c.niche || 0, g: c.goated || 0, ov: c.fan || 0, t: c.temporary || 0, s: c.soon || 0 })));
     var items = data.items || [];
     if (!items.length) sec.appendChild(el(doc, "p", { "class": "hg-keep-note" }, t.none));
     var ul = el(doc, "ul", { "class": "hg-keep-items" });

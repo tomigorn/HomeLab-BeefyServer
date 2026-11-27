@@ -30,8 +30,9 @@ function fakeXHR(routes, sent, posts = {}) {
 }
 const settle = async () => { for (let i = 0; i < 12; i++) await tick(); };
 const TEMP = { key: "movie/1", known: true, state: "temporary", keep: false, source: "default", default: false, reasons: [], deleteOn: "2027-02-15", soon: false, overdue: false,
-  imported: "2026-11-17", ssdUntil: "2026-12-17", hddFrom: "2026-12-17", tier: "ssd", canKeep: true, canUnkeep: true, deleteEnabled: false };
-const OLD = { ...TEMP, state: "keep", keep: true, default: true, reasons: ["old"], deleteOn: null };
+  imported: "2026-11-17", ssdUntil: "2026-12-17", hddFrom: "2026-12-17", tier: "ssd", canMark: true, canUnmark: false, marks: [], markQuota: { used: 0, max: 5 }, deleteEnabled: false };
+const OLD = { ...TEMP, state: "keep", keep: true, default: true, reasons: ["old"], deleteOn: null, canMark: false };
+const FAN = { ...TEMP, state: "keep", keep: true, source: "fan", deleteOn: null, marks: [{ name: "Me", mine: true }], canMark: false, canUnmark: true, markQuota: { used: 1, max: 5 } };
 const T = (q) => "/_download-now/retention/title?" + q;
 const D = (q) => T(q) + "&default=1";
 const FACTS = `<div class="media-page"><div class="media-overview-right"><div class="media-facts">
@@ -48,7 +49,7 @@ test("request dialog: the box sits right below Can wait, preset from the title's
   assert.ok(box);
   assert.match(box.textContent, /♾️ Keep forever/);
   assert.equal(box.querySelector("input").checked, true);
-  assert.equal(box.querySelector("input").disabled, false);
+  assert.equal(box.querySelector("input").disabled, true);
   assert.match(box.textContent, /released 12 or more years ago/);
   assert.equal(box.nextElementSibling.querySelector('[data-testid="modal-ok-button"]').textContent, "Request");
   if (can) assert.equal(can.nextElementSibling, box);
@@ -88,6 +89,27 @@ test("submit: a changed box is stored after the request was created, an unchange
   assert.equal(keep.headers["Content-Type"], "application/json");
 });
 
+test("dialog box is my own fan-favourite mark: mine ticked and removable, someone else's named, none left = disabled", async () => {
+  let w = load("retention.js", modal("Request Movie"), fakeXHR({ [D("type=movie&tmdb=1")]: FAN }, []));
+  await settle();
+  let box = w.document.querySelector("#hg-keep-forever");
+  assert.equal(box.querySelector("input").checked, true);
+  assert.equal(box.querySelector("input").disabled, false);
+  assert.match(box.textContent, /Your ⭐ fan-favourite mark/);
+  const theirs = { ...FAN, marks: [{ name: "Jane", mine: false }], canMark: true, canUnmark: false };
+  w = load("retention.js", modal("Request Movie"), fakeXHR({ [D("type=movie&tmdb=1")]: theirs }, []));
+  await settle();
+  box = w.document.querySelector("#hg-keep-forever");
+  assert.equal(box.querySelector("input").checked, false);
+  assert.match(box.textContent, /fan favourite of Jane/);
+  assert.match(box.textContent, /5 of 5 marks left this week|4 of 5 marks left this week/);
+  w = load("retention.js", modal("Request Movie"), fakeXHR({ [D("type=movie&tmdb=1")]: { ...TEMP, canMark: false, markQuota: { used: 5, max: 5 } } }, []));
+  await settle();
+  box = w.document.querySelector("#hg-keep-forever");
+  assert.equal(box.querySelector("input").disabled, true);
+  assert.match(box.textContent, /used your 5 fan-favourite marks this week/);
+});
+
 test("submit for another title than the dialog's state is left alone", async () => {
   const sent = [];
   const w = load("retention.js", modal("Request Movie"), fakeXHR({ [D("type=movie&tmdb=1")]: TEMP }, sent));
@@ -100,20 +122,23 @@ test("submit for another title than the dialog's state is left alone", async () 
   assert.equal(sent.filter((s) => s.url.includes("retention")).length, 0);
 });
 
-test("title page: a fact row with the date pill and a Keep forever toggle", async () => {
+test("title page: a fact row with the date pill and a Fan favourite button", async () => {
   const sent = [];
-  const w = load("retention.js", FACTS, fakeXHR({ [T("type=movie&tmdb=1")]: TEMP }, sent, { "/_download-now/retention/keep": [200, OLD] }));
+  const w = load("retention.js", FACTS, fakeXHR({ [T("type=movie&tmdb=1")]: TEMP }, sent, { "/_download-now/retention/keep": [200, FAN] }));
   await settle();
   const row = w.document.querySelector("[data-hg-keep-fact]");
   assert.ok(row);
   assert.equal(row.previousElementSibling.firstElementChild.textContent, "Status");
   assert.match(row.textContent, /🗑 Leaves on 15 Feb 2027/);
   const btn = row.querySelector("button[data-hg-keep-toggle]");
-  assert.match(btn.textContent, /♾️ Keep forever/);
+  assert.match(btn.textContent, /⭐ Fan favourite/);
   btn.click();
   await settle();
   assert.deepEqual(JSON.parse(sent[0].body), { type: "movie", tmdbId: 1, keep: true });
-  assert.match(w.document.querySelector("[data-hg-keep-fact]").textContent, /♾️ Kept forever/);
+  const after = w.document.querySelector("[data-hg-keep-fact]");
+  assert.match(after.textContent, /⭐ Fan favourite/);
+  assert.match(after.querySelector("button[data-hg-keep-toggle]").textContent, /Remove my mark/);
+  assert.match(hintOf(w, after.querySelector("[data-hg-keep-pill]")).text, /Kept because: fan favourite of you/);
 });
 
 test("title page: the pill hint names the stages and observe mode", async () => {
@@ -130,7 +155,7 @@ test("title page: leaving soon is orange, kept titles without the right have no 
   const pill = w.document.querySelector("[data-hg-keep-pill]");
   assert.equal(pill.getAttribute("data-hg-keep-pill"), "soon");
   assert.match(pill.textContent, /Leaving soon/);
-  w = load("retention.js", FACTS, fakeXHR({ [T("type=movie&tmdb=1")]: { ...OLD, canUnkeep: false } }, []));
+  w = load("retention.js", FACTS, fakeXHR({ [T("type=movie&tmdb=1")]: OLD }, []));
   await settle();
   assert.match(w.document.querySelector("[data-hg-keep-fact]").textContent, /♾️ Kept forever/);
   assert.equal(w.document.querySelector("[data-hg-keep-toggle]"), null);
@@ -156,7 +181,7 @@ test("request rows and cards: a pill in the Status field from one batch call", a
 });
 
 test("admin list on the Collections page, with counts and observe note; none for others", async () => {
-  const list = { deleteEnabled: false, counts: { titles: 3, keep: 1, temporary: 2, old: 1, niche: 0, goated: 0, override: 0, protected: 0, soon: 1 },
+  const list = { deleteEnabled: false, counts: { titles: 3, keep: 1, temporary: 2, old: 1, niche: 0, goated: 0, fan: 0, protected: 0, soon: 1 },
     items: [{ key: "movie/9", t: "Invented Film", y: 2025, kind: "movie", deleteOn: "2026-11-20", why: "due", soon: true, size: 2 ** 34, tier: "hdd" }], promote: [{ key: "tv/4", title: "Invented Show", seasons: [2], played: "2026-11-15T20:00:00Z" }] };
   const page = `<main data-hg-collections><div id="hg-collections"><h1>Collections</h1></div></main>`;
   let w = load("retention.js", page, fakeXHR({ "/_download-now/retention/list": list }, []), "https://requests.example.com/collections");
