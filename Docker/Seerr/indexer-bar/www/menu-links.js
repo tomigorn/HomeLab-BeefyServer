@@ -1,14 +1,16 @@
-// Extra entries in Seerr's sidebar and mobile menu (README "Menu links"), placed after "Series"; Manual interaction carries the count of open problems; Collections opens the own lists page. If Seerr changes its menu, the entries just do not appear.
+// Extra entries in Seerr's sidebar and mobile menu (README "Menu links"), placed after "Series"; Manual interaction carries the count of open problems; Collections opens the own lists page, My library the own library page. If Seerr changes its menu, the entries just do not appear.
 (function () {
   "use strict";
   var BOOK = "M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25";
   var WRENCH = "M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z";
   var STACK = "M6 6.878V6a2.25 2.25 0 0 1 2.25-2.25h7.5A2.25 2.25 0 0 1 18 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 0 0 4.5 9v.878m13.5-3A2.25 2.25 0 0 1 19.5 9v.878m0 0a2.246 2.246 0 0 0-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0 1 21 12v6a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18v-6c0-.98.626-1.813 1.5-2.122";
+  var FILM = "M4.5 4.5h15v15h-15z M8.25 4.5v15 M15.75 4.5v15 M4.5 9h3.75 M4.5 15h3.75 M15.75 9h3.75 M15.75 15h3.75";
   // bar: the phone bottom bar takes the entry while it has at most this many links with it
   var LINKS = [
     { id: "audiobooks", label: "Audiobooks", de: "Hörbücher", href: "https://books.holy-grail.ch/", icon: BOOK, bar: 5 },
     { id: "manual", label: "Manual interaction", de: "Manuell beheben", href: "/manual", route: true, icon: WRENCH, bar: 6, count: true },
-    { id: "collections", label: "Collections", de: "Sammlungen", href: "/collections", route: true, icon: STACK, bar: 7 }
+    { id: "collections", label: "Collections", de: "Sammlungen", href: "/collections", route: true, icon: STACK, bar: 7 },
+    { id: "library", label: "My library", de: "Meine Bibliothek", href: "/my-library", route: true, icon: FILM, bar: 8 }
   ];
   var COUNT_URL = "/_download-now/manual/count";
   var count = null, asked = 0;

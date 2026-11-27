@@ -379,6 +379,9 @@ def handle(method, path, headers, body, deps):
     if url.path.startswith("/_download-now/delete-early/"):
         import delete_early
         return delete_early.handle(sys.modules[__name__], method, path, headers, body, deps)
+    if url.path.startswith("/_download-now/library/"):
+        import my_library
+        return my_library.handle(sys.modules[__name__], method, path, headers, body, deps)
     if url.path.startswith("/_download-now/manual/"):
         import manual
         return manual.handle(sys.modules[__name__], method, path, headers, body, deps)
